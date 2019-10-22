@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# This script is a clean up for the EM-ODP project src files.
+#
+# Usage
+# ./scripts/em_odp_check <path/filename>
+set -e
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+IGNORE='NEW_TYPEDEFS,'
+IGNORE+='COMPARISON_TO_NULL,'
+IGNORE+='PREFER_KERNEL_TYPES,'
+IGNORE+='CAMELCASE,' #Suppress warning from PRIu64
+IGNORE+='MACRO_WITH_FLOW_CONTROL,'
+IGNORE+='LONG_LINE_STRING,'
+IGNORE+='PREFER_PRINTF,'
+IGNORE+='CONST_STRUCT,'
+IGNORE+='FUNCTION_ARGUMENTS,'
+IGNORE+='MACRO_ARG_REUSE,'
+IGNORE+='SPDX_LICENSE_TAG'
+
+$DIR/cleanfile $1 2> /dev/null
+$DIR/checkpatch.pl -f --no-tree --ignore $IGNORE --mailback --strict --terse --no-summary --show-types $1 2> /dev/null

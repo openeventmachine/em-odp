@@ -1,0 +1,127 @@
+/*
+ *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   All rights reserved.
+ *
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions
+ *   are met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the copyright holder nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
+ *
+ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+ /**
+  * @file
+  * Event Machine ODP API extensions
+  *
+  */
+
+#include <em_include.h>
+#include <event_machine/platform/event_machine_odp_ext.h>
+
+odp_queue_t
+em_odp_queue_odp(const em_queue_t queue)
+{
+	queue_elem_t *queue_elem;
+
+	queue_elem = queue_elem_get(queue);
+	if (unlikely(queue_elem == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_ODP_EXT,
+			       "queue_elem ptr NULL!");
+		return ODP_QUEUE_INVALID;
+	}
+
+	return queue_elem->odp_queue;
+}
+
+em_queue_t
+em_odp_queue_em(const odp_queue_t queue)
+{
+	queue_elem_t *const queue_elem = odp_queue_context(queue);
+
+	if (unlikely(queue_elem == NULL))
+		return EM_QUEUE_UNDEF;
+
+	return queue_elem->queue;
+}
+
+uint32_t
+em_odp_event_hdr_size(void)
+{
+	return sizeof(event_hdr_t);
+}
+
+odp_event_t
+em_odp_event2odp(em_event_t event)
+{
+	return event_em2odp(event);
+}
+
+odp_event_t *
+em_odp_events2odp(em_event_t events[])
+{
+	return events_em2odp(events);
+}
+
+em_event_t em_odp_event2em(odp_event_t event)
+{
+	return event_odp2em(event);
+}
+
+em_event_t *
+em_odp_events2em(odp_event_t odp_events[])
+{
+	return events_odp2em(odp_events);
+}
+
+int
+pkt_enqueue(odp_packet_t pkt_tbl[], const int num, const em_queue_t queue)
+{
+	queue_elem_t *const q_elem = queue_elem_get(queue);
+	odp_event_t odp_event_tbl[num];
+	int sent;
+
+	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
+
+	if (q_elem->type == EM_QUEUE_TYPE_LOCAL) {
+		em_event_t *const event_tbl = events_odp2em(odp_event_tbl);
+		event_hdr_t *ev_hdr_tbl[num];
+
+		pkts_to_event_hdrs(pkt_tbl, event_tbl, ev_hdr_tbl/*out*/, num);
+		/* Send into an EM local queue */
+		sent = send_local_multi(event_tbl, ev_hdr_tbl, num, q_elem);
+	} else {
+		const odp_queue_t odp_queue = q_elem->odp_queue;
+		/* Enqueue the events into em-odp */
+		sent = odp_queue_enq_multi(odp_queue, odp_event_tbl, num);
+	}
+
+	if (unlikely(sent < num)) {
+		sent = unlikely(sent < 0) ? 0 : sent;
+		odp_packet_free_multi(&pkt_tbl[sent], num - sent);
+		/*
+		 * Simple double-free detection: No need to decrement
+		 * 'ev_hdr->allocated', never enqueued into EM
+		 */
+	}
+
+	return sent;
+}

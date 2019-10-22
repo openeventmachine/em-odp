@@ -1,0 +1,184 @@
+Copyright (c) 2013-2019, Nokia Solutions and Networks
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+===============================================================================
+CHANGE NOTES - Event Machine on ODP (em-odp)
+===============================================================================
+
+The version numbering scheme reflects the used EM API version:
+  a.b.c(-d)
+      a.b = OpenEM API version supported
+       .c = implementation number supporting OpenEM API version a.b
+       -d = fix number, added if needed
+  So this means that e.g. version 1.2.1-1 stands for
+      a.b = 1.2: supports OpenEM API v1.2
+       .c =  .1: second implementation supporting API 1.2 (starts at .0)
+       -d =  -1: first bugfix for 1.2.1
+
+- See em-odp/README for usage and compilation instructions.
+- See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v2.1.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.1 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  Backwards compatible with EM 2.0 API as long as all fields of em_conf_t given
+  to em_init() are intialized properly (inludes the new em_conf_t::api_hooks
+  field).
+- the EM_DEBUG #define has been removed and the behaviour made default.
+- EM Timer: check the timer attributes against odp-timer capabilities during
+  timer creation.
+- Detect packets from outside of EM and initialize them as events before further
+  EM processing.
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v2.0.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.0 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API
+  Note: This is a larger enhancement release with new or modified arguments
+        requiring changes to legacy code. All main features remain.
+- Example/test application updated to use API v2.0.
+- New examples for new API v2.0 features:
+    - Local Queues:
+      programs/example:     queue/queue_types_local.c
+      programs/packet_io:   loopback_local.c
+                            multistage_local.c
+      programs/performance: queues_local.c
+    Output Queues:
+      All packet I/O examples have been updated to use output queues.
+    Sync APIs:
+      Example start-up has been modified to use _sync() versions of APIs.
+    etc.
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v1.4.0
+--------------------------------------------------------------------------------
+- Support for EM API v1.4 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  Add a queue configuration argument to em_queue_create/_static(..., *conf).
+  The 'conf' argument is optional (can be NULL) and can be used to pass extra
+  attributes to the system specific implementation.
+  See 'em_queue_conf_t' in include/event_machine/api/event_machine_types.h and
+  the supported conf->flags in
+  include/event_machine/platform/event_machine_hw_types.h:
+  - conf->min_events can be used to request the 'minimum number of events' that
+    a queue should be able to contain.
+  - conf->flags can be used to request certain properties for the queue.
+    At the time of writing odp supports these flags only for unscheduled queues.
+    An unscheduled queue can be created as 'single-producer & single-consumer'
+    by setting the following flags:
+      unsch_conf->flags  = EM_QUEUE_FLAG_ENQ_NOT_MTSAFE;
+      unsch_conf->flags |= EM_QUEUE_FLAG_DEQ_NOT_MTSAFE;
+    An unscheduled queue can be created as 'non-blocking & lock-free' by setting
+    the following flag:
+      unsch_conf->flags = EM_QUEUE_FLAG_NONBLOCKING_LF;
+
+  Event Pool name added - event pools can be given a name during creation and
+  that name can be used to find the event pool handle later.
+  The pool name given to em_pool_create(name, ...) can be used later on any
+  core to obtain the event pool handle. em_pool_find() and em_pool_get_name()
+  are new functions related to the added 'name'.
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v1.3.0
+--------------------------------------------------------------------------------
+- Support for EM API v1.3 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API
+- Support for EM add-ons APIs, here the EM event timer API v1.0, read about
+  add-on APIs in em-odp/include/event_machine/add-ons/README.
+  See new event timer examples/tests in em-odp/programs/example/add-ons/
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v1.2.3
+--------------------------------------------------------------------------------
+- eo: em_eo_start(): if EO local-start functions are used: enable all the EO's
+  queues only after the local-start funcs have been successfully run on all
+  cores.
+
+- eo: em_eo_stop(): the EO's global-stop function should be run only after all
+  local-stop functions have completed on all cores. The EO's global-stop
+  function can only be called after each core has seen and handled the
+  stop-request, even if no local-stop functions are used, to ensure that no
+  core is still processing EO-related code.
+
+- eo: em_eo_delete() should remove all the remaining queues from the EO and
+  delete them before deleting the actual EO.
+
+- bugfix: queue group: incorrect check for zero mask during queue group delete.
+  Calling em_queue_group_delete() could lead to an incorrectly reported error
+  if the core mask was not modified to zero before deleting the queue group.
+  Corrected.
+
+- event group: add the EM_EVENT_GROUP_SAFE_MODE option (enabled by default).
+  Guards event groups in undefined and error situations.
+  Excess and aborted group events don't belong to a valid group when received.
+  Most event group APIs check if the core local event group has expired during
+  the receive function. Impacts performance when event groups are used.
+  Set EM_EVENT_GROUP_SAFE_MODE to '0' to disable.
+
+- misc: code clean-ups.
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v1.2.2
+--------------------------------------------------------------------------------
+- ARM compilation and event alignment issues fixed
+
+- EM packet pool size and packet pool buffer size defined in configuration
+  parameters (event_machine_config.h)
+
+- Build system changes
+  - Installed header files added in library makefile
+  - Shared object version information added
+  - Unused package version number removed
+  - Minor gitignore fix
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v1.2.1
+--------------------------------------------------------------------------------
+- em_queue_group_get_name() implemented
+
+- Strict style checking taken in use
+  - Source files modified accordingly
+
+- ODP specific API extensions implemented for packet I/O
+  - EM internal includes removed from packet I/O setup
+
+- Requires ODP v1.10.0.0 / v1.10.1.0
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v1.2.0
+--------------------------------------------------------------------------------
+- First EM implementation on top of ODP, providing the same example
+  applications than OpenEM.
+
+- Support for EM API v1.2
+  - em_queue_group_get_name() not yet implemented, waiting for ODP support
+
+- Requires ODP v1.9.0.0

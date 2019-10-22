@@ -1,0 +1,11 @@
+prefix=@prefix@
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+includedir=@includedir@
+
+Name: libemodp
+Description: EM-ODP LIB
+Version: @EMODP_LIBSO_VERSION@
+Libs: -L${libdir} -lemodp
+Libs.private: @ODP_LIBS@
+Cflags: -I${includedir}

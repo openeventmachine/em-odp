@@ -1,0 +1,163 @@
+Copyright (c) 2013-2019, Nokia Solutions and Networks
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+===============================================================================
+Event Machine on Open Data Plane - em-odp
+===============================================================================
+em-odp is an implementation of the Event Machine (EM) on top of the Open Data
+Plane (ODP) framework. Many ODP implementations exist, both generic and HW or
+SoC optimized, and all should be suitable for em-odp to utilize and run upon.
+For development, e.g. odp for linux-generic could be most suitable, while a SoC
+optimized version would provide the best performance on a specific target.
+em-odp provides the EM API for the applications while ODP acts as a portability
+layer as well as providing APIs and services outside the scope of EM, e.g.
+pkt-io or crypto APIs.
+
+===============================================================================
+Compilation
+===============================================================================
+First clone the ODP code (here using the ODP linux-generic version):
+> git clone https://github.com/OpenDataPlane/odp.git
+Go to odp folder, create a build folder (optional) and configure,
+compile and install odp (optionally with a user specified installation folder):
+> ./bootstrap
+> mkdir build && cd build
+> ../configure --prefix=<odp install path>
+If testing for performance, also give the --disable-abi-compat option to enable
+more inlining of code. Try also --disable-shared if a static lib is OK for you.
+(> ../configure --prefix=<odp install path> --disable-abi-compat \
+   --disable-shared)
+> make && make install
+
+Tested against odp v1.22.0.0 and up to odp commit (at the time of writing the
+latest on the odp git master branch):
+	Commit: dda80b5e5e143ff05ed0f8b0ce0f502be71eaa8b [dda80b5]
+	Commit Date: Monday, 21 October 2019 15:24.24
+	configure: disable static test applications without static odp lib
+
+Trying to build static test applications without static ODP library would
+fail.
+
+Clone EM-ODP code:
+> git clone <em-odp repo>
+Here <em-odp repo> can be e.g. https://github.com/openeventmachine/em-odp.git.
+Go to the em-odp folder, optionally create a build folder, then configure,
+compile and install em-odp. Separate build folders are useful if you want to run
+em-odp with different odp installations or configurations.
+> ./bootstrap
+> mkdir build && cd build
+> ../configure --prefix=<em-odp install path> --with-odp-path=<odp install path>
+> make && make install
+Run some example application to test the functionality (path from build/), e.g.
+> ./programs/example/fractal/fractal -c 0xe -t
+
+===============================================================================
+Debug compilation
+===============================================================================
+For debugging activities it may be useful to compile separate libs/executables
+of ODP and EM-ODP. The configuration script has to be run with different
+options, other commands as above.
+
+ODP debug configuration:
+> ../configure --prefix=<odp debug install path> CFLAGS='-O0 -g3'
+EM-ODP debug configuration:
+> ../configure --prefix=<em-odp debug install path> \
+  --with-odp-path=<odp install path> CFLAGS='-O0 -g3'
+
+===============================================================================
+Packet-I/O (ODP-linux-generic + socket, dpdk or netmap based io)
+===============================================================================
+The default odp for linux-generic has pkt-io support based on linux networking
+and sockets that is quite slow but works nicely for development purposes.
+The linux-generic version of ODP also supports netmap or dpdk based packet i/o,
+especially on x86-targets. Use dpdk or netmap based packet io on x86 targets
+for better performance.
+
+netmap-io:
+In order to use netmap io you have to download, compile and install netmap for
+your Linux distribution. Code and instructions can be found from
+https://github.com/luigirizzo/netmap.
+See the supported netmap versions from the odp documentation.
+After netmap installation you need to configure and compile odp to use it:
+> ../configure --prefix=<odp install path> --with-netmap-path=<path to netmap>
+> make && make install
+Recompile em-odp and start an example packet io application.
+
+dpdk-io:
+DPDK can be used to accelerate packet io on x86 targets with the linux-generic
+version of ODP.
+This is different from the separate odp-dpdk implementation described below,
+but requires the same DPDK installation.
+DPDK can be installed via e.g. apt-get or yum or compiled from source code from
+https://www.dpdk.org/.
+See the supported dpdk versions from the odp documentation.
+
+DPDK compilation from source code:
+> cd dpdk
+> make config T=x86_64-native-linuxapp-gcc O=x86_64-native-linuxapp-gcc
+> make install T=x86_64-native-linuxapp-gcc DESTDIR=<dpdk install path> \
+  EXTRA_CFLAGS="-fPIC"
+Note that 'DESTDIR' is required when compiling to generate a similar
+installation as installing via apt-get would generate, use e.g.
+DESTDIR=./install
+After DPDK installation, configure and compile odp linux-generic:
+> cd odp/build/ #assume odp/bootstrap already run
+> ../configure --prefix=<odp install path> --with-dpdk-path=<dpdk install path>
+> make && make install
+Recompile em-odp and make sure the --with-odp-path points to the odp with
+dpdk-pktio installed above, then start an example packet io application.
+Note that DPDK interfaces are accessed using only indexes and not "ethX" names.
+> cd em-odp/build
+> sudo ./programs/packet_io/loopback -c 0xe -t -i 0,1
+
+===============================================================================
+Using odp-dpdk (note: different from odp linux-generic + dpdk pkt-io)
+===============================================================================
+There is also an ODP version that is optimized to be run on top of Intel DPDK
+- this version is called odp-dpdk.
+Note that also odp for linux-generic can use dpdk for packet-io, but the
+optimized odp-dpdk utilizes dpdk internally for other functionality also.
+
+DPDK instructions can be found from http://dpdk.org/doc/guides/
+
+Get the odp-dpdk code:
+> git clone https://github.com/OpenDataPlane/odp-dpdk.git
+The odp-dpdk readme file (<odp-dpdk>/platform/linux-dpdk/README) describes how
+to configure and compile dpdk and odp-dpdk on top of it.
+ODP compilations as above but different installation directories i.e.
+> ../configure --prefix=<odp-dpdk install path>
+
+Tested against odp-dpdk v1.22.0.0_DPDK_18.11 (at the time of writing the
+latest on the odp-dpdk git master branch):
+	Commit: f1c978da2c1e1cab3c08af2f42aeaa53b381eca4 [f1c978d]
+	Commit Date: Friday, 23 August 2019 15:03.16
+	linux-dpdk: bump recommended dpdk version to 18.11
+
+EM-ODP compilation with odp-dpdk:
+> mkdir build-dpdk && cd build-dpdk
+> ../configure --with-odp-path=<odp-dpdk install path> --prefix=...

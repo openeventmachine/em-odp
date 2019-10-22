@@ -1,0 +1,204 @@
+-------------------------------------------------------------------------------
+OpenEM API Release Notes
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+API 2.1 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=1)
+-------------------------------------------------------------------------------
+  Backwards compatible with EM 2.0 API as long as all fields of em_conf_t given
+  to em_init() is intialized properly (inludes the new em_conf_t::api_hooks
+  field).
+
+ 1. EO-start buffering of sent events changed to apply only to scheduled queues:
+    Events sent to scheduled queues from an EO-start function are buffered.
+    The buffered events will be sent into the queues when the EO-start
+    functions have returned - otherwise it would not be possible to send events
+    to the EO's own queues as the EO is not yet in a started state. No buffering
+    is done when sending to queues that are not scheduled.
+    See include/event_machine/api/event_machine_eo.h
+ 2. EM API-callback hooks:
+    EM API-callback hook functions can be registered for a selected set of
+    EM APIs. The EM APIs in question are mostly fast path APIs, like em_send(),
+    em_alloc() and em_free(). Control APIs generally do not need hook support.
+    A registered user provided hook function will be called by EM each time the
+    corresponding API is called.
+    API-callback hooks enables the user to gather statistics, trace program and
+    event flow etc. API hooks should not change the state of the events etc.
+    they receive as arguments, nor should they call the same API from within the
+    hook to avoid hook recursion.
+    Hook support is only available when EM_API_HOOKS_ENABLE != 0.
+    Currently hook functions can be registered/unregistered with:
+      em_hooks_register_alloc() and em_hooks_unregister_alloc()
+      em_hooks_register_free() and em_hooks_unregister_free()
+      em_hooks_register_send() and em_hooks_unregister_send()
+    Hooks can also be registered during EM initialization by setting
+    em_conf_t::api_hooks when calling em_init().
+    Note: EM_API_HOOKS_ENABLE must be set to '1' to enable API-hooks (default=1)
+    See include/event_machine/platform/event_machine_hooks.h
+ 3. EM pool info and statistics:
+    em_pool_info() - retieve information about an EM event pool
+    em_pool_info_print() - print EM Pool information for a given event pool
+    em_pool_info_print_all() - print EM Pool information for all event pools.
+    Note: EM_POOL_STATISTICS_ENABLE must be defined as '1' to enable event pool
+    statistics to ge gathered (default=0)
+    EM_POOL_STATISTICS_ENABLE must be set to '1' for usage statistics,
+    otherwise only basic info is output omitting pool usage information
+    (= all zeros).
+    See include/event_machine/platform/event_machine_pool.h
+
+-------------------------------------------------------------------------------
+API 2.0 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=0)
+-------------------------------------------------------------------------------
+ 1. Introducing local queues for fast pipelining: EM_QUEUE_TYPE_LOCAL
+    Local queues are special virtual queues bypassing the scheduler for
+    fast core-local pipelining without load balancing or atomic processing.
+    Use em_sched_context_type_current() to determine the inherited scheduling
+    context type (none, atomic or ordered) when handling events from a
+    local queue.
+    See event_machine_queue.h and event_machine_scheduler.h
+ 2. Introducing output queues for system specific implementation of SW-HW
+    interfaces, e.g. towards packet output or accelerators: EM_QUEUE_TYPE_OUTPUT
+    See event_machine_queue.h
+ 3. Added optional 'conf' argument also to atomic-group queue creation for
+    attributes and platform specific configuration.
+    See event_machine_atomic_group.h.
+ 4. Added optional 'conf' argument to EO start for passing configuration.
+    See event_machine_eo.h.
+ 5. Added alternative synchronous (blocking) versions of "asynchronous
+    API functions with notifications" to make it possible to do a simple robust
+    startup & shutdown. The synchronous API-functions do not return until the
+    operation has been fully completed on all cores (the asynchronous APIs with
+    notifications might return while the operation is still ongoing, thus
+    notifications should be used to signal completion).
+    Synchronous APIs are named with the '_sync' ending:
+        - em_eo_add_queue_sync()
+        - em_eo_remove_queue_sync(),
+        - em_eo_remove_queue_all_sync(), set arg 'delete_queues = true' to also
+                                         delete all of the EO's queues.
+        - em_eo_start_sync()
+        - em_eo_stop_sync()
+        - em_queue_group_create_sync()
+        - em_queue_group_delete_sync()
+        - em_queue_group_modify_sync()
+    Note that the other cores must be running the dispatch loop when a core is
+    calling a _sync() function, otherwise the _sync()-operation might never
+    complete.
+    See event_machine_eo.h and event_machine_queue_group.h.
+ 6. Simplified queue and EO management - Queue enable and disable is removed
+    and handled implicitly by EO-add-queue or EO-remove-queue calls.
+    See event_machine_queue.h and event_machine_eo.h.
+ 7. Events sent from within an EO-start function are buffered and sent
+    after the start-operation has completed. Otherwise it would not be
+    possible to reliably send events from the EO start-function to the
+    EO's own queues.
+ 8. Added further _find() functions: atomic group, queue, EO and pool.
+    Can be used to lookup objects by name.
+ 9. Added em_queue_current() and em_eo_current() to obtain the currently
+    active queue or EO.
+10. Added em_eo_get_context(eo) to return the EO context of an EO.
+11. Added functions to iterate through all objects:
+      - EOs & associated queues:
+           - em_eo_get_first(), em_eo_get_next()
+           - em_eo_queue_get_first(), em_eo_queue_get_next()
+      - queue groups & associated queues:
+           - em_queue_group_get_first(), em_queue_group_get_next()
+           - em_queue_group_queue_get_first(), em_queue_group_queue_get_next()
+      - atomic groups & associated queues:
+          - em_atomic_group_get_first(), em_atomic_group_get_next()
+          - em_atomic_group_queue_get_first(), em_atomic_group_queue_get_next()
+      - queues:
+          - em_queue_get_first(), em_queue_get_next()
+      - event groups:
+          - em_event_group_get_first(), em_event_group_get_next()
+      - pools:
+          - em_pool_get_first(), em_pool_get_next()
+    See each header for details (_get_first(), _get_next())
+12. Slight EM header file reorganization.
+    - EM init&term APIs moved into their own header file:
+      include/event_machine/platform/event_machine_init.h and
+    - EM Event Pool APIs moved into their own header file:
+      include/event_machine/platform/event_machine_pool.h
+    - em_dispatch() moved into the 'dispatcher' API:
+      include/event_machine/api/event_machine_dispatcher.h
+    - em_event_pointer() moved into the 'event' API:
+      include/event_machine/api/event_machine_event.h
+
+This is a larger enhancement release with new or modified arguments requiring
+changes to legacy code. All main features remain.
+
+-------------------------------------------------------------------------------
+API 1.4 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=4)
+-------------------------------------------------------------------------------
+1. Added an optional 'conf' argument to queue creation for attributes and
+   platform specific configuration.
+   See event_machine_queue.h.
+2. Event Pool name added - event pools can be given a name during creation and
+   that name can be used to find the event pool handle later.
+   See event_machine_hw_specific.h.
+
+-------------------------------------------------------------------------------
+API 1.3 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=3)
+-------------------------------------------------------------------------------
+ 1. Enhancement and clarification of ordered queue behavior. New clarified
+    ordering concept is similar to what ODP currently defines. See queue
+    documentation for details.
+ 2. Added add-ons - directory for extra APIs not part of the standard base
+    definition. See README at add-ons/
+ 3. Clarification of event group behavior for exceptional situations. See
+    event group documentation.
+ 4. New API to send multiple events (em_send_multi, em_send_group_multi) for
+    potential performance gain.
+ 5. New API to receive multiple events from unscheduled queues.
+ 6. Event timer API (add-on). See add-ons/event_machine_timer.h
+ 7. Added API to change event type (if compatible). See event_machine_event.h
+ 8. UNDEF - values of -1 (FFFFFFFF) deprecated. Implementation should use
+    value 0 for any UNDEF. This makes it safer to initialize data to 0.
+
+Backwards compatible.
+
+-------------------------------------------------------------------------------
+API 1.2 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=2)
+-------------------------------------------------------------------------------
+ 1. Introduced a slightly modified header structure (headers by service group).
+    Application only needs to include event_machine.h. Event group is now also
+    part of the standard API.
+ 2. Added possibility to explicitly signal end of event group handling,
+    see em_event_group_processing_end()
+ 3. Added possibility to assign a received event to an event group,
+    see em_event_group_assign()
+ 4. Added recovery to event groups,
+    see em_event_group_abort(), em_event_group_get_notif()
+ 5. Added a hint to the scheduler, see em_preschedule()
+ 6. Added common dispatcher callbacks for debug, statistics or new services,
+    see em_dispatch_register_enter_cb(), em_dispatch_unregister_enter_cb(),
+        em_dispatch_register_exit_cb(),  em_dispatch_unregister_exit_cb()
+ 7. Added APIs for unscheduled queues along with a new queue type,
+    see em_queue_dequeue(), EM_QUEUE_TYPE_UNSCHEDULED(arg to em_queue_create())
+ 8. Added API call to ask for the event size, see em_event_get_size()
+ 9. Added missing APIs to ask for the names of objects (like queue groups)
+10. Clarified documentation
+
+Backwards compatible.
+
+-------------------------------------------------------------------------------
+API 1.1 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=1)
+-------------------------------------------------------------------------------
+1. Atomic Group concept added (see event_machine_atomic_group.h)
+2. Option to send notifications to an event group added.
+   See declaration of em_notif_t (moved to event_machine_hw_types.h)
+3. em_event_group_is_ready() added and
+   clarified usage rules of em_event_group_apply()
+4. Minor documentation clarifications
+
+Backwards compatible with one EXCEPTION (item 2):
+  Introducing a new input field to an existing structure is potentially
+  dangerous to existing code behavior as it is not initialized unless the
+  application initialized the structure with 0 using e.g. memset() with
+  sizeof(em_notif_t).
+  EM_EVENT_GROUP_UNDEF or value 0 as .egroup should cause the legacy behaviour
+  in all implementations.
+
+-------------------------------------------------------------------------------
+API 1.0 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=0)
+-------------------------------------------------------------------------------
+Initial API
