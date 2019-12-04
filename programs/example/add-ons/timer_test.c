@@ -180,6 +180,8 @@ typedef struct timer_app_shm_t {
 	app_eo_ctx_t eo_context;
 	/* Event timer handle */
 	em_timer_t tmr;
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } timer_app_shm_t;
 
 /* EM-thread locals */
@@ -314,6 +316,11 @@ void test_start(appl_conf_t *const appl_conf)
 	em_timer_attr_t attr;
 	em_queue_t queue;
 	em_status_t stat;
+	app_eo_ctx_t *eo_ctx;
+	em_event_t event;
+	app_msg_t *msg;
+	struct timespec ts;
+	uint64_t period;
 
 	/*
 	 * Store the event pool to use, use the EM default pool if no other
@@ -348,6 +355,7 @@ void test_start(appl_conf_t *const appl_conf)
 			  (em_receive_func_t)app_eo_receive,
 			  &m_shm->eo_context);
 	test_fatal_if(eo == EM_EO_UNDEF, "Failed to create EO!");
+	eo_ctx = &m_shm->eo_context;
 
 	/* atomic queue for control */
 	queue = em_queue_create("Control Q",
@@ -384,6 +392,39 @@ void test_start(appl_conf_t *const appl_conf)
 	/* Start EO */
 	stat = em_eo_start_sync(eo, NULL, NULL);
 	test_fatal_if(stat != EM_OK, "Failed to start EO!");
+
+	/* create periodic timer for heartbeat */
+	eo_ctx->heartbeat_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_PERIODIC,
+					      eo_ctx->my_q);
+	test_fatal_if(eo_ctx->heartbeat_tmo == EM_TMO_UNDEF, "Can't allocate heartbeat_tmo!\n");
+
+	event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW, m_shm->pool);
+	test_fatal_if(event == EM_EVENT_UNDEF, "Can't allocate event (%ldB)!\n",
+		      sizeof(app_msg_t));
+
+	msg = em_event_pointer(event);
+	msg->command = APP_CMD_HEARTBEAT;
+	eo_ctx->hz = em_timer_get_freq(m_shm->tmr);
+	if (eo_ctx->hz < 100)
+		APPL_ERROR("WARNING - timer hz very low!\n");
+
+	/* linux time check */
+	test_fatal_if(clock_getres(APP_LINUX_CLOCK_SRC, &ts) != 0, "clock_getres() failed!\n");
+
+	period = ts.tv_nsec + (ts.tv_sec * 1000000000ULL);
+	eo_ctx->linux_hz = 1000000000ULL / period;
+	APPL_PRINT("Linux reports clock running at %" PRIu64 " hz\n",
+		   eo_ctx->linux_hz);
+
+	/* start heartbeat */
+	period = (APP_HEARTBEAT_MS * eo_ctx->hz) / 1000;
+	test_fatal_if(period < 1, "timer resolution is too low!\n");
+
+	stat = em_tmo_set_rel(eo_ctx->heartbeat_tmo, period, event);
+	test_fatal_if(stat != EM_OK, "Can't activate heartbeat tmo!\n");
+
+	APPL_PRINT("%s done, test repetition interval %ds\n\n", __func__,
+		   (int)((APP_HEARTBEAT_MS * APP_CHECK_LIMIT) / 1000));
 }
 
 void
@@ -440,10 +481,6 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	em_timer_attr_t attr;
 	em_timer_t tmr;
 	int num_timers;
-	em_event_t event;
-	app_msg_t *msg;
-	uint64_t period;
-	struct timespec ts;
 
 	(void)eo;
 	(void)conf;
@@ -475,49 +512,6 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	eo_ctx->min_diff_l = INT64_MAX;
 	eo_ctx->max_diff_l = 0;
 
-	/* create periodic timer for heartbeat */
-	eo_ctx->heartbeat_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_PERIODIC,
-					      eo_ctx->my_q);
-	if (eo_ctx->heartbeat_tmo == EM_TMO_UNDEF) {
-		APPL_ERROR("Can't allocate heartbeat_tmo!\n");
-		return EM_ERR_ALLOC_FAILED;
-	}
-
-	event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW, m_shm->pool);
-	if (event == EM_EVENT_UNDEF) {
-		APPL_ERROR("Can't allocate event (%ldB)!\n",
-			   sizeof(app_msg_t));
-		return EM_ERR_ALLOC_FAILED;
-	}
-	msg = em_event_pointer(event);
-	msg->command = APP_CMD_HEARTBEAT;
-	eo_ctx->hz = em_timer_get_freq(m_shm->tmr);
-	if (eo_ctx->hz < 100)
-		APPL_ERROR("WARNING - timer hz very low!\n");
-
-	/* linux time check */
-	if (clock_getres(APP_LINUX_CLOCK_SRC, &ts) != 0) {
-		APPL_ERROR("clock_getres() failed!\n");
-		return EM_ERR;
-	}
-	period = ts.tv_nsec + (ts.tv_sec * 1000000000ULL);
-	eo_ctx->linux_hz = 1000000000ULL / period;
-	APPL_PRINT("Linux reports clock running at %" PRIu64 " hz\n",
-		   eo_ctx->linux_hz);
-
-	/* start heartbeat */
-	period = (APP_HEARTBEAT_MS * eo_ctx->hz) / 1000;
-	if (period < 1) {
-		APPL_ERROR("timer resolution is too low!\n");
-		return EM_ERR;
-	}
-	if (em_tmo_set_rel(eo_ctx->heartbeat_tmo, period, event) != EM_OK) {
-		APPL_ERROR("Can't activate heartbeat tmo!\n");
-		return EM_ERR;
-	}
-
-	APPL_PRINT("%s done, test repetition interval %ds\n\n", __func__,
-		   (int)((APP_HEARTBEAT_MS * APP_CHECK_LIMIT) / 1000));
 	return EM_OK;
 }
 
@@ -596,6 +590,11 @@ static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
 	int reuse = 0;
 
 	(void)q_ctx;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	VISUAL_DBG("e");
 

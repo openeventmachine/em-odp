@@ -68,17 +68,11 @@
 /* The number of data events to allocate and send */
 #define DATA_EVENTS  128
 
-/* The amount of per event data to work on to create some dummy load */
-#define DATA_PER_EVENT  1024
-
 /* em_event_group_increment() calls per received data event */
 #define EVENT_GROUP_INCREMENT  1
 
 /* Max number of cores */
 #define MAX_NBR_OF_CORES  256
-
-/* Spin value before restarting the test */
-#define DELAY_SPIN_COUNT  50000000
 
 /**
  * The event for this test case.
@@ -93,30 +87,24 @@ typedef struct {
 	uint64_t start_cycles;
 	/* Number of times to increment (per event) the event group count */
 	uint64_t increment;
-	/* Pointer to data area to use for dummy data processing */
-	uint8_t *data_ptr;
 } event_group_test_t;
 
 /**
  * EO context used by the test
  */
-typedef union {
-	struct {
-		/* This EO */
-		em_eo_t eo;
-		/* Event Group Id used by the EO */
-		em_event_group_t event_group;
-		/* Number of events to send before triggering a notif event */
-		int event_count;
-		/* Accumulator for a dummy sum */
-		uint64_t acc;
-		/* Total running cycles updated when receiving a notif event*/
-		uint64_t total_cycles;
-		/* Number of rounds, i.e. received notifications */
-		uint64_t total_rounds;
-	};
-	/* Pad EO context to cache line size */
-	uint8_t u8[ENV_CACHE_LINE_SIZE];
+typedef struct {
+	/* This EO */
+	em_eo_t eo;
+	/* Event Group Id used by the EO */
+	em_event_group_t event_group;
+	/* Number of events to send before triggering a notif event */
+	int event_count;
+	/* Total running cycles updated when receiving a notif event*/
+	uint64_t total_cycles;
+	/* Number of rounds, i.e. received notifications */
+	uint64_t total_rounds;
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } eo_context_t;
 
 COMPILE_TIME_ASSERT(sizeof(eo_context_t) == ENV_CACHE_LINE_SIZE,
@@ -125,11 +113,11 @@ COMPILE_TIME_ASSERT(sizeof(eo_context_t) == ENV_CACHE_LINE_SIZE,
 /**
  * Core-specific data
  */
-typedef union {
+typedef struct {
 	/* Counter of the received data events on a core */
 	uint64_t rcv_ev_cnt;
-	/* Pad to cache line size to avoid cache line sharing */
-	uint8_t u8[ENV_CACHE_LINE_SIZE];
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } core_stat_t;
 
 COMPILE_TIME_ASSERT(sizeof(core_stat_t) == ENV_CACHE_LINE_SIZE,
@@ -149,9 +137,6 @@ typedef struct {
 	 * using parallel queues.
 	 */
 	core_stat_t core_stats[MAX_NBR_OF_CORES] ENV_CACHE_LINE_ALIGNED;
-	/* Array containing dummy test data */
-	uint8_t event_group_test_data[DATA_EVENTS * DATA_PER_EVENT]
-		ENV_CACHE_LINE_ALIGNED;
 } egrp_shm_t;
 
 static ENV_LOCAL egrp_shm_t *egrp_shm;
@@ -168,9 +153,6 @@ egroup_stop(void *eo_context, em_eo_t eo);
 static void
 egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	       em_queue_t queue, void *q_ctx);
-
-static void
-delay_spin(const uint64_t spin_count);
 
 /**
  * Main function
@@ -231,7 +213,6 @@ test_start(appl_conf_t *const appl_conf)
 	em_eo_t eo;
 	em_queue_t queue;
 	em_status_t ret;
-	/* return value from the EO's start function 'group_start' */
 	em_status_t eo_start_ret = EM_ERROR;
 	eo_context_t *eo_ctx;
 	event_group_test_t *egroup_test;
@@ -267,13 +248,14 @@ test_start(appl_conf_t *const appl_conf)
 	 */
 	eo_ctx = &egrp_shm->eo_context;
 
-	eo = em_eo_create("group test appl", egroup_start, NULL, egroup_stop,
+	eo = em_eo_create("evgrp-test-eo", egroup_start, NULL, egroup_stop,
 			  NULL, egroup_receive, eo_ctx);
+	test_fatal_if(eo == EM_EO_UNDEF, "EO create failed\n");
 	eo_ctx->eo = eo;
 
-	queue = em_queue_create("group test parallelQ", EM_QUEUE_TYPE_PARALLEL,
-				EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT,
-				NULL);
+	queue = em_queue_create("evgrp-test-parallelQ",
+				EM_QUEUE_TYPE_PARALLEL, EM_QUEUE_PRIO_NORMAL,
+				EM_QUEUE_GROUP_DEFAULT, NULL);
 
 	ret = em_eo_add_queue_sync(eo, queue);
 	test_fatal_if(ret != EM_OK, "EO add queue:%" PRI_STAT ".\n"
@@ -281,23 +263,34 @@ test_start(appl_conf_t *const appl_conf)
 
 	/* Start the EO (triggers the EO's start function 'egroup_start') */
 	ret = em_eo_start_sync(eo, &eo_start_ret, NULL);
-
 	test_fatal_if(ret != EM_OK || eo_start_ret != EM_OK,
 		      "EO start failed, EO:%" PRI_EO "\n"
 		      "ret:%" PRI_STAT " EO-start-ret:%" PRI_STAT "",
 		      eo, ret, eo_start_ret);
+
+	/* Print the used event groups */
+	unsigned int num, i = 1;
+	em_event_group_t event_group;
+
+	event_group = em_event_group_get_first(&num);
+	if (event_group != EM_EVENT_GROUP_UNDEF)
+		APPL_PRINT("%s is using %u event groups:\n",
+			   appl_conf->name, num);
+	while (event_group != EM_EVENT_GROUP_UNDEF) {
+		APPL_PRINT("  evgrp-%d:%" PRI_EGRP "\n", i++, event_group);
+		event_group = em_event_group_get_next();
+	}
 
 	event = em_alloc(sizeof(event_group_test_t), EM_EVENT_TYPE_SW,
 			 egrp_shm->pool);
 	test_fatal_if(event == EM_EVENT_UNDEF, "Event allocation failed!");
 
 	egroup_test = em_event_pointer(event);
-
 	egroup_test->msg = MSG_START;
 
 	ret = em_send(event, queue);
 	test_fatal_if(ret != EM_OK,
-		      "Send %" PRI_STAT " Queue:%" PRI_QUEUE "", ret, queue);
+		      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "", ret, queue);
 }
 
 void
@@ -348,21 +341,20 @@ egroup_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 
 	(void)conf;
 
-	memset(eo_ctx, 0, sizeof(eo_context_t));
-
 	/* First event group */
 	eo_ctx->event_group = em_event_group_create();
 
 	if (eo_ctx->event_group == EM_EVENT_GROUP_UNDEF)
 		return EM_ERR_ALLOC_FAILED;
 
-	memset(egrp_shm->core_stats, 0, sizeof(egrp_shm->core_stats));
+	test_fatal_if(em_event_group_is_ready(eo_ctx->event_group) == EM_FALSE,
+		      "'event_group' should be ready to be applied");
 
 	APPL_PRINT("EO:%" PRI_EO " - event group %" PRI_EGRP " created\n",
 		   eo, eo_ctx->event_group);
 	/*
-	 * Require 'DATA_EVENTS' sent using the event_group before a
-	 * notification, see em_event_group_apply() later.
+	 * Require 'DATA_EVENTS' sent using the event_group before
+	 * a notification, see em_event_group_apply() later.
 	 */
 	eo_ctx->event_count = DATA_EVENTS;
 
@@ -378,15 +370,31 @@ egroup_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 static em_status_t
 egroup_stop(void *eo_context, em_eo_t eo)
 {
+	eo_context_t *eo_ctx = eo_context;
+	em_event_group_t egrp;
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
+	int num_notifs;
 	em_status_t ret;
-
-	(void)eo_context;
 
 	/* remove and delete all of the EO's queues */
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(ret != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
 		      ret, eo);
+
+	/* No more dispatching of the EO's events, egrps can be freed */
+
+	egrp = eo_ctx->event_group;
+	if (!em_event_group_is_ready(egrp)) {
+		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		ret = em_event_group_abort(egrp);
+		if (ret == EM_OK && num_notifs == 1)
+			em_free(notif_tbl[0].event);
+	}
+	ret = em_event_group_delete(egrp);
+	test_fatal_if(ret != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT " EO:%" PRI_EO "",
+		      egrp, ret, eo);
 
 	return EM_OK;
 }
@@ -403,18 +411,23 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 {
 	em_notif_t notif_tbl[1];
 	em_status_t ret;
-	eo_context_t *eo_ctx = eo_context;
+	eo_context_t *const eo_ctx = eo_context;
 	event_group_test_t *egroup_test;
 	uint64_t diff, start_cycles, end_cycles;
-	uint64_t sum;
 	uint64_t rcv_ev_cnt;
 	uint64_t cfg_ev_cnt;
 	int i;
+	int ready;
 
 	(void)type;
 	(void)q_ctx;
 
 	egroup_test = em_event_pointer(event);
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	switch (egroup_test->msg) {
 	case MSG_START:
@@ -425,11 +438,8 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		 */
 		APPL_PRINT("\n--- Start event group ---\n");
 
-		eo_ctx->acc = 0;
-
 		/* Reuse the start event as the notification event */
 		egroup_test->msg = MSG_DONE;
-		egroup_test->data_ptr = NULL;
 		egroup_test->start_cycles = env_get_cycle();
 		egroup_test->increment = 0;
 
@@ -458,46 +468,39 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		 * event configured above with em_event_group_apply()
 		 */
 		for (i = 0; i < eo_ctx->event_count; i++) {
-			em_event_t data;
-			event_group_test_t *group_test_2;
+			em_event_t ev_data;
+			event_group_test_t *egrp_test_data;
 
-			data = em_alloc(sizeof(event_group_test_t),
-					EM_EVENT_TYPE_SW, egrp_shm->pool);
-			test_fatal_if(data == EM_EVENT_UNDEF,
+			if (unlikely(appl_shm->exit_flag))
+				break;
+
+			ev_data = em_alloc(sizeof(event_group_test_t),
+					   EM_EVENT_TYPE_SW, egrp_shm->pool);
+			test_fatal_if(ev_data == EM_EVENT_UNDEF,
 				      "Event allocation failed!");
 
-			group_test_2 = em_event_pointer(data);
-
-			group_test_2->msg = MSG_DATA;
-			group_test_2->data_ptr =
-			  &egrp_shm->event_group_test_data[i * DATA_PER_EVENT];
-			group_test_2->start_cycles = 0;
+			egrp_test_data = em_event_pointer(ev_data);
+			egrp_test_data->msg = MSG_DATA;
+			egrp_test_data->start_cycles = 0;
 			/* How many times to increment and resend */
-			group_test_2->increment = EVENT_GROUP_INCREMENT;
-
+			egrp_test_data->increment = EVENT_GROUP_INCREMENT;
 			/* Send events using the event group. */
-			ret = em_send_group(data, queue, eo_ctx->event_group);
-			test_fatal_if(ret != EM_OK, "Send grp:%" PRI_STAT "\n"
-				      "Queue:%" PRI_QUEUE "", ret, queue);
+			ret = em_send_group(ev_data, queue,
+					    eo_ctx->event_group);
+			if (unlikely(ret != EM_OK)) {
+				em_free(ev_data);
+				test_fatal_if(!appl_shm->exit_flag,
+					      "Send grp:%" PRI_STAT "\n"
+					      "Queue:%" PRI_QUEUE "",
+					      ret, queue);
+			}
 		}
 		break;
 
 	case MSG_DATA:
-		/*
-		 * Do some dummy data processing:
-		 * Calculate a sum over the event and increment a shared
-		 * variable. For a correct result the shared variable
-		 * 'eo_ctx->acc' should be updated using an atomic add because
-		 * the used queue type is parallel. However, we don't care
-		 * about the result, as the target is only to prevent the
-		 * optimizer from removing the data processing loop.
-		 */
-		sum = 0;
-
-		for (i = 0; i < DATA_PER_EVENT; i++)
-			sum += egroup_test->data_ptr[i];
-
-		eo_ctx->acc += sum;
+		ready = em_event_group_is_ready(eo_ctx->event_group);
+		test_fatal_if(ready == EM_TRUE,
+			      "'event_group' should not be ready");
 
 		/* Update the count of data events received by this core */
 		egrp_shm->core_stats[em_core_id()].rcv_ev_cnt += 1;
@@ -515,15 +518,22 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			egroup_test->increment--;
 
 			/* Increment event count in group */
-			(void)em_event_group_increment(1);
+			ret = em_event_group_increment(1);
+			test_fatal_if(ret != EM_OK,
+				      "Event group incr:%" PRI_STAT "", ret);
 
 			/* Get the current event group */
 			event_group = em_event_group_current();
 
 			/* Resend event using the event group */
 			ret = em_send_group(event, queue, event_group);
-			test_fatal_if(ret != EM_OK, "Send grp:%" PRI_STAT "\n"
-				      "Queue:%" PRI_QUEUE "", ret, queue);
+			if (unlikely(ret != EM_OK)) {
+				em_free(event);
+				test_fatal_if(!appl_shm->exit_flag,
+					      "Send grp:%" PRI_STAT "\n"
+					      "Queue:%" PRI_QUEUE "",
+					      ret, queue);
+			}
 		} else {
 			em_free(event);
 		}
@@ -532,7 +542,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	case MSG_DONE:
 		/*
 		 * Notification event received!
-		 * Calculate the number of cycles it took and restart the test.
+		 * Calculate the number of processing cycles and restart.
 		 */
 		end_cycles = env_get_cycle();
 		start_cycles = egroup_test->start_cycles;
@@ -569,43 +579,30 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			      "%" PRIu64 " != %" PRIu64 "!",
 			      rcv_ev_cnt, cfg_ev_cnt);
 
-		/* OK, print results */
 		APPL_PRINT("Event group notification event received after\t"
 			   "%" PRIu64 " data events.\n"
 			   "Cycles curr:%" PRIu64 ", ave:%" PRIu64 "\n",
 			   rcv_ev_cnt, diff,
 			   eo_ctx->total_cycles / eo_ctx->total_rounds);
 
-		/* Restart the test after "some cycles" of delay */
-		delay_spin(DELAY_SPIN_COUNT);
+		/* Restart after some of delay to slow down result printouts */
+		delay_spin(env_core_hz() / 100);
 
 		memset(egrp_shm->core_stats, 0, sizeof(egrp_shm->core_stats));
 
 		egroup_test->msg = MSG_START;
 
 		ret = em_send(event, queue);
-		test_fatal_if(ret != EM_OK,
-			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-			      ret, queue);
+		if (unlikely(ret != EM_OK)) {
+			em_free(event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+				      ret, queue);
+		}
 		break;
 
 	default:
-		test_fatal_if(EM_TRUE, "Bad msg (%" PRIu64 ")!",
-			      egroup_test->msg);
+		test_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead,
+			   "Bad msg (%" PRIu64 ")!", egroup_test->msg);
 	};
-}
-
-/**
- * Delay execution by spinning
- */
-static void
-delay_spin(const uint64_t spin_count)
-{
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
-	uint64_t i;
-
-	env_atomic64_init(&dummy);
-
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
 }

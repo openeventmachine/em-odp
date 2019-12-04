@@ -64,8 +64,8 @@ load_global_err_cnt(void)
 	return cnt;
 }
 
-int
-vdefault_log(em_log_level_t level, const char *fmt, va_list args)
+ODP_PRINTF_FORMAT(2, 0)
+int vdefault_log(em_log_level_t level, const char *fmt, va_list args)
 {
 	int r;
 	FILE *logfd;

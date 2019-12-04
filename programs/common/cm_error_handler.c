@@ -37,6 +37,7 @@
 #include "event_machine/platform/env/environment.h"
 
 #include "cm_error_handler.h"
+#include "cm_setup.h"
 
 /**
  * Common default error handler for example applications
@@ -57,6 +58,29 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 
 	if (EM_ESCOPE(escope)) {
 		char error_str[256];
+
+		if (unlikely(appl_shm->exit_flag &&
+			     !EM_ERROR_IS_FATAL(error))) {
+			/*
+			 * Suppress non-fatal error logs during
+			 * application tear-down.
+			 */
+			switch (escope) {
+			case EM_ESCOPE_SEND: /* fallthrough */
+			case EM_ESCOPE_SEND_MULTI: /* fallthrough */
+			case EM_ESCOPE_SEND_GROUP: /* fallthrough */
+			case EM_ESCOPE_SEND_GROUP_MULTI:
+				/* Sending to a disabled queue */
+				return error;
+			case EM_ESCOPE_DISPATCH:
+				/* Dispatch event from a disabled queue */
+				if (error == EM_ERR_BAD_STATE)
+					return  error;
+				break;
+			default:
+				break;
+			}
+		}
 
 		em_error_format_string(error_str, sizeof(error_str), eo,
 				       error, escope, args);
@@ -90,8 +114,10 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 			error, escope, eo_str);
 		fprintf(stderr, "core:%02i %s:%i %s()\n",
 			core_id, base, line, func);
-
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
 		vfprintf(stderr, format, args);
+#pragma GCC diagnostic pop
 		fprintf(stderr, "\n\n");
 	}
 

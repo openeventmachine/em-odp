@@ -70,10 +70,10 @@
 "  -p, --process-per-core  Running OpenEM with one process per core.\n"	\
 "  -t, --thread-per-core   Running OpenEM with one thread per core.\n"	\
 "    Select EITHER -p OR -t, but not both!\n"				\
-"  -i, --eth interface     Select the ethernet interface to use\n"      \
 "\n"									\
 "Optional [APPL&EM-OPTIONS]\n"						\
 "  -d, --device-id         Set the device-id, hexadecimal (defaults to 0)\n" \
+"  -i, --eth-interface     Select the ethernet interface(s) to use\n"      \
 "  -r, --dispatch-rounds   Set number of dispatch rounds (testing mostly)\n" \
 "  -h, --help              Display help and exit.\n" \
 "\n"
@@ -83,6 +83,13 @@
  * cores to enter the main dispatch loop at roughly the same time.
  */
 #define STARTUP_DISPATCH_ROUNDS 16
+
+/**
+ * Dispatch rounds for em_dispatch() during program execution to regularly
+ * return from dipatch and inspect the 'appl_shm->exit_flag' value. Program
+ * termination will begin once a set 'appl_shm->exit_flags' has been noticed.
+ */
+#define EXIT_CHECK_DISPATCH_ROUNDS 20000
 
 /**
  * Dispatch rounds for em_dispatch() during termination to properly sync the
@@ -122,16 +129,23 @@ static odp_platform_init_t *
 set_platform_params(odp_platform_init_t *params);
 
 static void
-install_sigchld_handler(void);
+install_sig_handler(int signum, void (*sig_handler)(int), int flags);
 
 static void
-sigchld_handler(int sig);
+sigchld_handler(int sig ODP_UNUSED);
+static void
+sigint_handler(int signo ODP_UNUSED);
 
 static void
 usage(char *progname)
 {
 	APPL_PRINT(USAGE_FMT, NO_PATH(progname), NO_PATH(progname));
 }
+
+/**
+ * Global pointer to common application shared memory
+ */
+appl_shm_t *appl_shm;
 
 /**
  * ODP-thread table.
@@ -149,7 +163,6 @@ cm_setup(int argc, char *argv[])
 	appl_conf_t appl_conf_parse; /* tmp var filled during arg parsing */
 	appl_conf_t *appl_conf;
 	sync_t *sync;
-	appl_shm_t *appl_shm;
 	odp_shm_t shm;
 	odp_init_t init_params;
 	odp_platform_init_t plat_params[PLAT_PARAM_SIZE];
@@ -343,8 +356,17 @@ cm_setup(int argc, char *argv[])
 		 * Create a signal handler for the SIGCHLD signal that is sent
 		 * to the parent process when a forked child process dies.
 		 */
-		install_sigchld_handler();
+		install_sig_handler(SIGCHLD, sigchld_handler, 0);
 	}
+
+	/*
+	 * Create a signal handler for the SIGINT (Ctrl-C) signal to flag
+	 * program termination.
+	 * Set the 'SA_RESETHAND'-flag to reset the SIGINT handler to its
+	 * default disposition after the first handling to be able to stop
+	 * execution if the application misbehaves.
+	 */
+	install_sig_handler(SIGINT, sigint_handler, SA_RESETHAND);
 
 	/*
 	 * Reserve the odp thread table from shared memory so that
@@ -387,7 +409,8 @@ cm_setup(int argc, char *argv[])
 
 	/* Free packet io resources */
 	if (appl_conf->pktio.if_count > 0) {
-		/* Close the pktio instances, were stopped earlier */
+		/* Stop, close and free the pktio resources */
+		pktio_stop();
 		pktio_close();
 		pktio_deinit(appl_conf);
 		pktio_pool_destroy();
@@ -407,7 +430,8 @@ cm_setup(int argc, char *argv[])
 		APPL_EXIT_FAILURE("odp_term_global() failed:%d", ret);
 
 	APPL_PRINT("\nDone - exit\n\n");
-	exit(EXIT_SUCCESS);
+
+	return EXIT_SUCCESS;
 }
 
 static void
@@ -603,22 +627,62 @@ run_core_fn(void *arg)
 	env_atomic64_inc(&sync->enter_count);
 	do {
 		em_dispatch(STARTUP_DISPATCH_ROUNDS);
-	} while (env_atomic64_get(&sync->enter_count) < cores);
+		if (core_id == 0) {
+			/* Start pktio if configured */
+			if (appl_conf->pktio.if_count > 0)
+				pktio_start();
+			env_atomic64_inc(&sync->enter_count);
+		}
+	} while (env_atomic64_get(&sync->enter_count) <= cores);
 
 	/*
 	 * Enter the EM event dispatch loop (0==forever) on this EM-core.
 	 */
-	em_dispatch(appl_conf->dispatch_rounds);
+	uint32_t dispatch_rounds = appl_conf->dispatch_rounds;
+	uint32_t exit_check_rounds = EXIT_CHECK_DISPATCH_ROUNDS;
+	uint32_t rounds;
+
+	if (dispatch_rounds == 0) {
+		/*
+		 * Dispatch forever, in chunks of 'exit_check_rounds',
+		 * or until 'exit_flag' is set by SIGINT (CTRL-C).
+		 */
+		while (!appl_shm->exit_flag)
+			em_dispatch(exit_check_rounds);
+	} else {
+		/*
+		 * Dispatch for 'dispatch_rounds' in chunks of 'rounds',
+		 * or until 'exit_flag' is set by SIGINT (CTRL-C).
+		 */
+		rounds = MIN(dispatch_rounds, exit_check_rounds);
+		do {
+			em_dispatch(rounds);
+			dispatch_rounds -= rounds;
+		} while (dispatch_rounds > rounds && !appl_shm->exit_flag);
+
+		if (dispatch_rounds > 0) {
+			rounds = MIN(dispatch_rounds, rounds);
+			em_dispatch(rounds);
+		}
+	}
+	/*
+	 * Allow apps one more round with 'exit_flag' set to flush events from
+	 * the sched queues etc.
+	 */
+	if (!appl_shm->exit_flag)
+		appl_shm->exit_flag = 1; /* potential race with SIGINT-handler*/
+	em_dispatch(exit_check_rounds);
+
 	/*
 	 * Dispatch-loop done for application, prepare for controlled shutdown
 	 */
 
 	exit_count = env_atomic64_return_add(&sync->exit_count, 1);
 
-	/* First core to exit dispatch stops the pktio and application */
+	/* First core to exit dispatch stops the application */
 	if (exit_count == 0) {
 		if (appl_conf->pktio.if_count > 0)
-			pktio_stop();
+			pktio_halt(); /* halt further pktio rx & tx */
 		/*
 		 * Stop and delete created application EOs
 		 */
@@ -981,34 +1045,47 @@ set_platform_params(odp_platform_init_t *params)
 }
 
 /**
- * Create a signal handler for the SIGCHLD signal that is sent to the parent
- * process when a forked child process dies.
+ * Install a signal handler
  */
 static void
-install_sigchld_handler(void)
+install_sig_handler(int signum, void (*sig_handler)(int), int flags)
 {
 	struct sigaction sa;
 
 	sigemptyset(&sa.sa_mask);
 
-	sa.sa_flags = 0;
-	sa.sa_handler = sigchld_handler;
+	sa.sa_flags = SA_RESTART; /* restart interrupted system calls */
+	sa.sa_flags |= flags;
+	sa.sa_handler = sig_handler;
 
-	if (sigaction(SIGCHLD, &sa, NULL) == -1)
+	if (sigaction(signum, &sa, NULL) == -1)
 		APPL_EXIT_FAILURE("sigaction() fails (errno(%i)=%s)",
 				  errno, strerror(errno));
 }
 
 /**
- * Signal handler for SIGCHLD (parent receives when child process dies)
+ * Signal handler for SIGINT (e.g. Ctrl-C to stop the program)
  */
 static void
-sigchld_handler(int sig)
+sigint_handler(int signo ODP_UNUSED)
+{
+	if (appl_shm == NULL)
+		return;
+	appl_shm->exit_flag = 1;
+}
+
+/**
+ * Signal handler for SIGCHLD (parent receives when child process dies).
+ */
+static void
+sigchld_handler(int sig ODP_UNUSED)
 {
 	int status;
 	pid_t child;
 
-	(void)sig;  /* unused */
+	/* Child-process termination requested, normal tear-down, just return */
+	if (appl_shm->exit_flag)
+		return;
 
 	/* Nonblocking waits until no more dead children are found */
 	do {
@@ -1025,8 +1102,8 @@ sigchld_handler(int sig)
 	_exit(EXIT_SUCCESS);
 }
 
-int
-appl_vlog(em_log_level_t level, const char *fmt, va_list args)
+__attribute__((format(printf, 2, 0)))
+int appl_vlog(em_log_level_t level, const char *fmt, va_list args)
 {
 	int r;
 	FILE *logfd;
@@ -1057,4 +1134,18 @@ int appl_log(em_log_level_t level, const char *fmt, ...)
 	va_end(args);
 
 	return r;
+}
+
+/**
+ * Delay spinloop
+ */
+void delay_spin(const uint64_t spin_count)
+{
+	env_atomic64_t dummy; /* use atomic to avoid optimization */
+	uint64_t i;
+
+	env_atomic64_init(&dummy);
+
+	for (i = 0; i < spin_count; i++)
+		env_atomic64_inc(&dummy);
 }

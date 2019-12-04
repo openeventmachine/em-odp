@@ -130,15 +130,15 @@ COMPILE_TIME_ASSERT(NUM_SCHED_QUEUES + NUM_LOCAL_QUEUES == NUM_EOS,
 #define CORE_STATE_IDLE    1
 
 /* Result APPL_PRINT() format string */
-#define RESULT_PRINTF_HDR  "Cycles/Event  cpu-freq\n"
-#define RESULT_PRINTF_FMT  "%12.0f %5.0f MHz  %" PRIu64 "\n"
+#define RESULT_PRINTF_HDR  "Cycles/Event  Events/s  cpu-freq\n"
+#define RESULT_PRINTF_FMT  "%12.0f %7.0f M %5.0f MHz  %" PRIu64 "\n"
 
 /* Result APPL_PRINT() format string when MEASURE_LATENCY is used */
 #define RESULT_PRINTF_LATENCY_HDR \
-"Cycles/  Latency:\n" \
-" Event    sched-ave  sched-max  local-ave  local-max  cpu-freq\n"
+"Cycles/  Events/  Latency:\n" \
+" Event     Sec     sched-ave  sched-max  local-ave  local-max  cpu-freq\n"
 #define RESULT_PRINTF_LATENCY_FMT \
-"%6.0f %12.0f %10" PRIu64 " %10.0f %10" PRIu64 " %5.0f MHz  %" PRIu64 "\n"
+"%6.0f %7.2f M %11.0f %10" PRIu64 " %10.0f %10" PRIu64 " %5.0f MHz  %" PRIu64 "\n"
 
 /*
  * The number of scheduled queues to use in each test step.
@@ -214,8 +214,6 @@ typedef struct {
 	em_queue_prio_t prio;
 	/** Type of 'this_queue' */
 	em_queue_type_t type;
-	/** Number of events handled from this_queue' */
-	uint64_t count;
 	/* Pad size to a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } queue_context_t;
@@ -240,7 +238,7 @@ typedef struct {
  */
 typedef struct {
 	/* Event pool used by this application */
-	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+	em_pool_t pool;
 
 	test_status_t test_status ENV_CACHE_LINE_ALIGNED;
 
@@ -323,11 +321,13 @@ int main(int argc, char *argv[])
 static em_status_t
 error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 {
-	if (unlikely(escope == EM_ESCOPE_QUEUE_CREATE))
+	if (unlikely(escope == EM_ESCOPE_QUEUE_CREATE)) {
 		APPL_PRINT("\nUnable to create more queues\n\n"
 			   "Test finished\n");
-	else
+		raise(SIGINT);
+	} else {
 		error = test_error_handler(eo, error, escope, args);
+	}
 
 	return error;
 }
@@ -628,12 +628,19 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	     em_queue_t queue, void *q_context)
 {
 	uint64_t recv_time;
+	perf_event_t *perf_event;
 
-	if (MEASURE_LATENCY)
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
+	if (MEASURE_LATENCY) {
 		recv_time = env_get_cycle();
+		perf_event = em_event_pointer(event);
+	}
 
 	queue_context_t *q_ctx;
-	perf_event_t *perf_event;
 	em_queue_t dst_queue;
 	em_status_t ret;
 	int do_return;
@@ -642,7 +649,6 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)type;
 
 	q_ctx = q_context;
-	perf_event = em_event_pointer(event);
 
 	/*
 	 * Helper: Update the test state, count recv events,
@@ -655,27 +661,21 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	if (ALLOC_FREE_PER_EVENT)
 		event = alloc_free_per_event(event);
 
-	/*
-	 * Read/write q_ctx to make test case more realistic. Do it late so
-	 * that possible prefetching has more time to finish.
-	 */
 	dst_queue = q_ctx->next_queue;
+	test_fatal_if(queue != q_ctx->this_queue, "Queue config error");
 
-	test_fatal_if(queue != q_ctx->this_queue,
-		      "perf_test_queues: Queue config error");
-
-	q_ctx->count++;
-
-	if (MEASURE_LATENCY)
+	if (MEASURE_LATENCY) {
 		measure_latency(perf_event, q_ctx, recv_time);
-
-	/* Send the event to the next queue */
-	if (MEASURE_LATENCY)
 		perf_event->send_time = env_get_cycle();
+	}
+	/* Send the event to the next queue */
 	ret = em_send(event, dst_queue);
-	test_fatal_if(ret != EM_OK,
-		      "EM send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      ret, dst_queue);
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "EM send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+			      ret, dst_queue);
+	}
 }
 
 /**
@@ -843,7 +843,7 @@ create_and_link_queues(int start_queue, int num_queues)
 		   (num_queues * NUM_LOCAL_QUEUES) / NUM_EOS);
 
 	if (num_queues % NUM_EOS != 0) {
-		APPL_PRINT("%s() 'num_queues'=%i not multiple of NUM_EOS=%i\n",
+		APPL_PRINT("%s() 'num_queues'=%d not multiple of NUM_EOS=%d\n",
 			   __func__, num_queues, NUM_EOS);
 		return;
 	}
@@ -865,9 +865,9 @@ create_and_link_queues(int start_queue, int num_queues)
 			queue = em_queue_create("queue", type, prio, group,
 						NULL);
 			if (queue == EM_QUEUE_UNDEF) {
-				APPL_PRINT("Max nbr of supported queues: %i\n",
+				APPL_PRINT("Max nbr of supported queues: %d\n",
 					   i);
-				exit(EXIT_FAILURE);
+				return;
 			}
 
 			q_ctx = &perf_shm->queue_context_tbl[i + j];
@@ -919,7 +919,7 @@ print_test_statistics(test_status_t *test_status, int print_header,
 	uint64_t latency_lo_max = 0;
 	double latency_per_hi_ave;
 	double latency_per_lo_ave;
-	double cycles_per_event;
+	double cycles_per_event, events_per_sec;
 	int i;
 
 	for (i = 0; i < test_status->num_cores; i++) {
@@ -934,6 +934,8 @@ print_test_statistics(test_status_t *test_status, int print_header,
 	}
 
 	cycles_per_event = (double)total_cycles / (double)total_events;
+	events_per_sec = test_status->mhz * test_status->num_cores /
+			 cycles_per_event; /* Million events/s */
 	latency_per_hi_ave = (double)latency_hi_ave / (double)latency_events;
 	latency_per_lo_ave = (double)latency_lo_ave / (double)latency_events;
 
@@ -941,7 +943,7 @@ print_test_statistics(test_status_t *test_status, int print_header,
 		if (print_header)
 			APPL_PRINT(RESULT_PRINTF_LATENCY_HDR);
 		APPL_PRINT(RESULT_PRINTF_LATENCY_FMT,
-			   cycles_per_event,
+			   cycles_per_event, events_per_sec,
 			   latency_per_hi_ave, latency_hi_max,
 			   latency_per_lo_ave, latency_lo_max,
 			   test_status->mhz, test_status->print_count++);
@@ -949,8 +951,8 @@ print_test_statistics(test_status_t *test_status, int print_header,
 		if (print_header)
 			APPL_PRINT(RESULT_PRINTF_HDR);
 		APPL_PRINT(RESULT_PRINTF_FMT,
-			   cycles_per_event, test_status->mhz,
-			   test_status->print_count++);
+			   cycles_per_event, events_per_sec,
+			   test_status->mhz, test_status->print_count++);
 	}
 }
 

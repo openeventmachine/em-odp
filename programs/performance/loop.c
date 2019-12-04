@@ -1,5 +1,4 @@
 /*
- *   Copyright (c) 2012, Nokia Siemens Networks
  *   Copyright (c) 2019, Nokia Solutions and Networks
  *   All rights reserved.
  *
@@ -35,12 +34,13 @@
  * Event Machine performance test example
  *
  * Measures the average cycles consumed during an event send-sched-receive loop
- * for a certain number of EO pairs in the system. Test has a number of EO
- * pairs, that send ping-pong events. Depending on test dynamics (e.g. single
- * burst in atomic queue) only one EO of a pair might be active at a time.
+ * for a certain number of EOs in the system. The test has a number of EOs, each
+ * with one queue. Each EO receives events through its dedicated queue and
+ * sends them right back into the same queue, thus looping the events.
  *
- * Uses three different queue priority levels that affect scheduling (might
- * starve low prio queues if using a strict prio scheduler).
+ * Based on the 'pairs' performance test, but instead of forwarding events
+ * between queues, here we loop them back into the same queue (which is usually
+ * faster). Also 'loop' only uses one queue priority level.
  */
 
 #include <inttypes.h>
@@ -62,9 +62,6 @@
 
 /** Number of events per queue */
 #define NUM_EVENT_PER_QUEUE  8  /* Increase the value to tune performance */
-
-/** Number of ping-pong events per EO pair */
-#define NUM_EVENT  (2 * NUM_EVENT_PER_QUEUE)
 
 /** sizeof data[DATA_SIZE] in bytes in the event payload */
 #define DATA_SIZE  250
@@ -118,8 +115,6 @@ COMPILE_TIME_ASSERT(sizeof(perf_stat_t) == ENV_CACHE_LINE_SIZE,
  * Performance test EO context
  */
 typedef struct {
-	/* Next destination queue */
-	em_queue_t dest;
 	/** EO's own queue*/
 	em_queue_t queue;
 	/** EO handle */
@@ -154,7 +149,7 @@ typedef struct {
  */
 typedef struct {
 	/* Event pool used by this application */
-	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+	em_pool_t pool;
 	/* EO context array */
 	eo_context_array_elem_t perf_eo_context[NUM_EO] ENV_CACHE_LINE_ALIGNED;
 	/* Array of core specific data accessed by using core index. */
@@ -181,9 +176,6 @@ perf_receive(void *eo_context, em_event_t event, em_event_type_t type,
 static void
 print_result(perf_stat_t *const perf_stat);
 
-static int
-get_queue_priority(const int index);
-
 /**
  * Main function
  *
@@ -199,7 +191,7 @@ int main(int argc, char *argv[])
 }
 
 /**
- * Init of the Pairs performance test application.
+ * Init of the Loop performance test application.
  *
  * @attention Run on all cores.
  *
@@ -226,7 +218,7 @@ test_init(void)
 }
 
 /**
- * Startup of the Pairs performance test application.
+ * Startup of the Loop performance test application.
  *
  * @attention Run only on EM core 0.
  *
@@ -263,62 +255,37 @@ test_start(appl_conf_t *const appl_conf)
 		      "Undefined application event pool!");
 
 	/*
-	 * Create and start application pairs.
-	 * Send initial test events to the queues.
+	 * Create and start application EOs
+	 * Send initial test events to the EOs' queues
 	 */
-	for (int i = 0; i < NUM_EO / 2; i++) {
-		em_queue_t queue_a, queue_b;
-		eo_context_t *eo_ctx_a, *eo_ctx_b;
+	for (int i = 0; i < NUM_EO; i++) {
+		em_queue_t queue;
+		eo_context_t *eo_ctx;
 		em_eo_t eo;
 		em_status_t ret, start_ret = EM_OK;
 
-		/* Create both queues for the pair */
-		queue_a = em_queue_create("queue-A", QUEUE_TYPE,
-					  get_queue_priority(i),
-					  EM_QUEUE_GROUP_DEFAULT, NULL);
-		queue_b = em_queue_create("queue-B", QUEUE_TYPE,
-					  get_queue_priority(i),
-					  EM_QUEUE_GROUP_DEFAULT, NULL);
+		/* Create the EO's loop queue */
+		queue = em_queue_create("queue A", QUEUE_TYPE,
+					EM_QUEUE_PRIO_NORMAL,
+					EM_QUEUE_GROUP_DEFAULT, NULL);
 
-		/* Create EO "A" */
-		eo_ctx_a = &perf_shm->perf_eo_context[2 * i].eo_ctx;
+		/* Create the EO */
+		eo_ctx = &perf_shm->perf_eo_context[i].eo_ctx;
 
-		eo = em_eo_create("pairs-eo-a", perf_start, NULL, perf_stop,
-				  NULL, perf_receive, eo_ctx_a);
+		eo = em_eo_create("loop-eo", perf_start, NULL, perf_stop, NULL,
+				  perf_receive, eo_ctx);
 		test_fatal_if(eo == EM_EO_UNDEF,
-			      "EO(%d) creation failed!", 2 * i);
-		eo_ctx_a->dest = queue_b;
-		eo_ctx_a->queue = queue_a;
-		eo_ctx_a->eo = eo;
-		eo_ctx_a->next_seq = 0;
+			      "EO(%d) creation failed!", i);
 
-		ret = em_eo_add_queue_sync(eo, queue_a);
+		eo_ctx->queue = queue;
+		eo_ctx->eo = eo;
+		eo_ctx->next_seq = 0;
+
+		ret = em_eo_add_queue_sync(eo, queue);
 		test_fatal_if(ret != EM_OK,
 			      "EO add queue:%" PRI_STAT "\n"
 			      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
-			      ret, eo, queue_a);
-
-		ret = em_eo_start_sync(eo, &start_ret, NULL);
-		test_fatal_if(ret != EM_OK || start_ret != EM_OK,
-			      "EO start:%" PRI_STAT " %" PRI_STAT "",
-			      ret, start_ret);
-
-		/* Create EO "B" */
-		eo_ctx_b = &perf_shm->perf_eo_context[2 * i + 1].eo_ctx;
-
-		eo = em_eo_create("pairs-eo-b", perf_start, NULL, perf_stop,
-				  NULL, perf_receive, eo_ctx_b);
-
-		eo_ctx_b->dest = queue_a;
-		eo_ctx_b->queue = queue_b;
-		eo_ctx_b->eo = eo;
-		eo_ctx_b->next_seq = NUM_EVENT / 2;
-
-		ret = em_eo_add_queue_sync(eo, queue_b);
-		test_fatal_if(ret != EM_OK,
-			      "EO add queue:%" PRI_STAT "\n"
-			      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
-			      ret, eo, queue_b);
+			      ret, eo, queue);
 
 		ret = em_eo_start_sync(eo, &start_ret, NULL);
 		test_fatal_if(ret != EM_OK || start_ret != EM_OK,
@@ -326,32 +293,24 @@ test_start(appl_conf_t *const appl_conf)
 			      ret, start_ret);
 
 		/* Alloc and send test events */
-		for (int j = 0; j < NUM_EVENT; j++) {
+		for (int j = 0; j < NUM_EVENT_PER_QUEUE; j++) {
 			em_event_t event;
 			perf_event_t *perf_ev;
-			em_queue_t first_q;
 
 			event = em_alloc(sizeof(perf_event_t),
 					 EM_EVENT_TYPE_SW, perf_shm->pool);
 			test_fatal_if(event == EM_EVENT_UNDEF,
 				      "Event allocation failed (%i, %i)", i, j);
 
-			perf_ev = em_event_pointer(event);
-
-			if (j & 0x1) {
-				/* Odd: j = 1, 3, 5, ... */
-				perf_ev->seq = NUM_EVENT / 2 + j / 2;
-				first_q = queue_b;
-			} else {
-				/* Even: j = 0, 2, 4, ... */
-				perf_ev->seq = j / 2;
-				first_q = queue_a;
+			if (CHECK_SEQ_PER_EVENT) {
+				perf_ev = em_event_pointer(event);
+				perf_ev->seq = j;
 			}
 
-			ret = em_send(event, first_q);
+			ret = em_send(event, queue);
 			test_fatal_if(ret != EM_OK,
 				      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "",
-				      ret, first_q);
+				      ret, queue);
 		}
 	}
 	env_sync_mem();
@@ -449,9 +408,6 @@ perf_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	const int core = em_core_id();
 	uint64_t events = perf_shm->core_stat[core].events;
 	perf_event_t *perf_ev;
-	eo_context_t *const eo_ctx = eo_context;
-	const em_queue_t dst_queue = eo_ctx->dest;
-
 	em_status_t ret;
 	int seq;
 
@@ -495,7 +451,7 @@ perf_receive(void *eo_context, em_event_t event, em_event_type_t type,
 				   "Q:%" PRI_QUEUE " expected:%i eventseq:%i\n",
 				   eo_ctx->eo, queue, eo_ctx->next_seq, seq);
 
-		if (likely(eo_ctx->next_seq < (NUM_EVENT - 1)))
+		if (likely(eo_ctx->next_seq < (NUM_EVENT_PER_QUEUE - 1)))
 			eo_ctx->next_seq++;
 		else
 			eo_ctx->next_seq = 0;
@@ -518,37 +474,15 @@ perf_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			perf_ev->seq = seq;
 	}
 
-	ret = em_send(event, dst_queue);
+	ret = em_send(event, queue);
 	if (unlikely(ret != EM_OK)) {
 		em_free(event);
 		test_fatal_if(!appl_shm->exit_flag,
 			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-			      ret, dst_queue);
+			      ret, queue);
 	}
 
 	perf_shm->core_stat[core].events = events;
-}
-
-/**
- * Get queue priority value based on the index number.
- *
- * @param Queue index
- *
- * @return Queue priority value
- *
- * @note Priority distribution: 40% LOW, 40% NORMAL, 20% HIGH
- */
-static int
-get_queue_priority(const int queue_index)
-{
-	int remainder = queue_index % 5;
-
-	if (remainder <= 1)
-		return EM_QUEUE_PRIO_LOW;
-	else if (remainder <= 3)
-		return EM_QUEUE_PRIO_NORMAL;
-	else
-		return EM_QUEUE_PRIO_HIGH;
 }
 
 /**

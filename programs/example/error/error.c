@@ -113,6 +113,8 @@ typedef struct {
 	em_queue_t queue_a ENV_CACHE_LINE_ALIGNED;
 	em_queue_t queue_b;
 	em_queue_t queue_c;
+	/* Pad to cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } error_shm_t;
 
 static ENV_LOCAL error_shm_t *error_shm;
@@ -141,9 +143,6 @@ eo_specific_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 static em_status_t
 combined_error_handler(const char *handler_name, em_eo_t eo, em_status_t error,
 		       em_escope_t escope, va_list args);
-
-static void
-delay_spin(const uint64_t spin_count);
 
 /**
  * Main function
@@ -514,6 +513,11 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)type;
 	(void)q_ctx;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	error = em_event_pointer(event);
 	dest = error->dest;
 	error->dest = queue;
@@ -545,8 +549,12 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	delay_spin(DELAY_SPIN_COUNT);
 
 	ret = em_send(event, dest);
-	test_fatal_if(ret != EM_OK, "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      ret, dest);
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+			      ret, dest);
+	}
 
 	/* Request a fatal error to be generated every 8th event by 'EO C' */
 	if ((error->seq & 0x7) == 0x7) {
@@ -561,9 +569,12 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		error->fatal = 1;
 
 		ret = em_send(event, error_shm->queue_c);
-		test_fatal_if(ret != EM_OK,
-			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-			      ret, error_shm->queue_c);
+		if (unlikely(ret != EM_OK)) {
+			em_free(event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+				      ret, error_shm->queue_c);
+		}
 	}
 }
 
@@ -612,19 +623,4 @@ error_stop(void *eo_context, em_eo_t eo)
 		APPL_EXIT_FAILURE("EO:%" PRI_EO " rem all queues failed!", eo);
 
 	return EM_OK;
-}
-
-/**
- * Delay spinloop
- */
-static void
-delay_spin(const uint64_t spin_count)
-{
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
-	uint64_t i;
-
-	env_atomic64_init(&dummy);
-
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
 }

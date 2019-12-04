@@ -155,7 +155,6 @@ typedef union {
 		em_queue_t this_queue;
 		em_queue_t next_queue;
 		em_queue_prio_t prio;
-		uint64_t count;
 	};
 } queue_context_t;
 
@@ -187,7 +186,7 @@ typedef struct {
  */
 typedef struct {
 	/* Event pool used by this application */
-	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+	em_pool_t pool;
 	/* EO id */
 	em_eo_t eo;
 
@@ -633,6 +632,11 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)eo_context;
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	q_ctx = q_context;
 	events = cstat->events;
 	perf = em_event_pointer(event);
@@ -739,7 +743,7 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 		if (unlikely((int)ready_count == tstat->num_cores)) {
 			uint64_t latency_hi;
 			uint64_t latency_lo;
-			double cycles_per_event;
+			double cycles_per_event, events_per_sec;
 			uint64_t total_cycles = 0;
 			const uint64_t total_events = tstat->num_cores *
 						      EVENTS_PER_SAMPLE;
@@ -763,25 +767,27 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 				}
 			}
 
-			cycles_per_event =
-				(double)total_cycles / (double)total_events;
+			cycles_per_event = (double)total_cycles /
+					   (double)total_events;
+			events_per_sec = tstat->mhz * tstat->num_cores /
+					 cycles_per_event; /* Million events/s*/
 
 			if (MEASURE_LATENCY) {
 				const double latency_per_hi =
 				    (double)latency_hi / (double)total_events;
 				const double latency_per_lo =
 				    (double)latency_lo / (double)total_events;
-				APPL_PRINT("Cycles/Event: %.0f \t"
+				APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
 					   "Latency: Hi-prio=%.0f Lo-prio=%.0f \t"
 					   "@%.0f MHz(%" PRIu64 ")\n",
-					   cycles_per_event,
+					   cycles_per_event, events_per_sec,
 					   latency_per_hi, latency_per_lo,
 					   tstat->mhz,
 					   tstat->print_count++);
 			} else {
-				APPL_PRINT("Cycles/Event: %.0f \t"
+				APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
 					   "@%.0f MHz(%" PRIu64 ")\n",
-					   cycles_per_event,
+					   cycles_per_event, events_per_sec,
 					   tstat->mhz,
 					   tstat->print_count++);
 			}
@@ -796,15 +802,8 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 	cstat->events = events;
 
-	/*
-	 * Read/write q_ctx to make test case more realistic. Do it late so
-	 * that possible prefetching has more time to finish.
-	 */
 	dest_queue = q_ctx->next_queue;
-	test_fatal_if(queue != q_ctx->this_queue,
-		      "perf_test_queues: Queue config error");
-
-	q_ctx->count++;
+	test_fatal_if(queue != q_ctx->this_queue, "Queue config error");
 
 	if (MEASURE_LATENCY) {
 		if (unlikely(!tstat->reset_flag)) {
@@ -825,8 +824,12 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 
 	ret = em_send(event, dest_queue);
-	test_fatal_if(ret != EM_OK, "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      ret, dest_queue);
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "EM send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+			      ret, dest_queue);
+	}
 }
 
 /**

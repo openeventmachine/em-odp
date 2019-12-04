@@ -30,6 +30,14 @@
 
 #include "em_include.h"
 
+/*
+ * Sanity check that no extra padding is added to the event_hdr_t by
+ * alignment directives etc.
+ */
+typedef event_hdr_t _ev_hdr__size_check__arr_t[3];
+COMPILE_TIME_ASSERT(sizeof(_ev_hdr__size_check__arr_t) ==
+		    3 * sizeof(event_hdr_t), EVENT_HDR_SIZE_ERROR2);
+
 em_status_t
 event_init(void)
 {

@@ -159,7 +159,7 @@ typedef struct {
  */
 typedef struct {
 	/* Event pool used by this application */
-	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+	em_pool_t pool;
 	/* EO context array */
 	eo_context_array_elem_t perf_eo_context[NUM_EO] ENV_CACHE_LINE_ALIGNED;
 	/* Array of core specific data accessed by using its core index */
@@ -526,6 +526,11 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)type;
 	(void)q_ctx;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	if (unlikely(events == 0)) {
 		eo_context_t *const eo_ctx = eo_context;
 
@@ -572,8 +577,13 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 	perf_shm->core_stat[core].events = events;
 
 	ret = em_send(event, dest_queue);
-	test_fatal_if(ret != EM_OK, "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      ret, dest_queue);
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+			      ret, dest_queue);
+		return;
+	}
 
 	if (call_atomic_processing_end)
 		em_atomic_processing_end();
@@ -636,6 +646,11 @@ perf_receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)type;
 	(void)q_ctx;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	if (unlikely(events == 0)) {
 		/* Restart the measurement */
 		perf_shm->core_stat[core].begin_cycles = env_get_cycle();
@@ -652,8 +667,13 @@ perf_receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 	perf_shm->core_stat[core].events = events;
 
 	ret = em_send(event, dest_queue);
-	test_fatal_if(ret != EM_OK, "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      ret, dest_queue);
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+			      ret, dest_queue);
+		return;
+	}
 
 	if (call_atomic_processing_end)
 		em_atomic_processing_end();
@@ -704,7 +724,7 @@ do_dummy_work(unsigned int work_loops)
 	uint8_t *from, *to;
 	unsigned int i;
 
-	for (i = 0; i < work_loops; i++) {
+	for (i = 0; i < work_loops && !appl_shm->exit_flag; i++) {
 		/* Dummy workload after releasing atomic context */
 		workbuf_event = em_alloc(sizeof(perf_event_t),
 					 EM_EVENT_TYPE_SW, perf_shm->pool);
@@ -764,15 +784,19 @@ print_result(perf_stat_t *const perf_stat)
 	const uint32_t hz = env_core_hz();
 	const double mhz = ((double)hz) / 1000000.0;
 	const double cycles_per_event = perf_stat->cycles_per_event;
+	const double events_per_sec = mhz * em_core_count() /
+				      cycles_per_event; /* Million events/s*/
 	const uint64_t print_count = perf_stat->print_count++;
 
 	if (perf_stat->atomic_processing_end) {
 		APPL_PRINT("em_atomic_processing_end():%10.0f cycles/event\t"
-			   "@%.2f MHz (core-%02i %" PRIu64 ")\n",
-			   cycles_per_event, mhz, em_core_id(), print_count);
+			   "events/s:%.2f M  @%.2f MHz (core-%02i %" PRIu64 ")\n",
+			   cycles_per_event, events_per_sec, mhz,
+			   em_core_id(), print_count);
 	} else {
-		APPL_PRINT("normal atomic processing:%10.0f cycles/event\t"
-			   "@%.2f MHz (core-%02i %" PRIu64 ")\n",
-			   cycles_per_event, mhz, em_core_id(), print_count);
+		APPL_PRINT("normal atomic processing:%12.0f cycles/event\t"
+			   "events/s:%.2f M  @%.2f MHz (core-%02i %" PRIu64 ")\n",
+			   cycles_per_event, events_per_sec,
+			   mhz, em_core_id(), print_count);
 	}
 }

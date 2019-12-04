@@ -469,17 +469,43 @@ pktio_create(const char *dev, int num_workers)
 	/* Create Tx buffers */
 	pktio_tx_buffering_create(if_idx);
 
+	/* Start the pktio to complete configuration... */
 	ret = odp_pktio_start(pktio);
 	if (ret != 0)
 		APPL_EXIT_FAILURE("Unable to start %s\n", dev);
+	/*
+	 * ...and stop it immediately to block odp_pktin_recv() from receiving
+	 * pkts until application setup is ready.
+	 * The application will start pktio when ready through pktio_start().
+	 */
+	ret = odp_pktio_stop(pktio);
+	if (ret != 0)
+		APPL_EXIT_FAILURE("Unable to stop %s\n", dev);
 
-	APPL_PRINT("\tcreated pktio %s; scheduled input mode, queue output mode\n",
+	APPL_PRINT("\tcreated pktio %s; direct input mode, queue output mode\n",
 		   dev);
 	odp_pktio_print(pktio);
 
 	pktio_shm->pktio[if_idx] = pktio;
 
 	return if_idx;
+}
+
+void
+pktio_start(void)
+{
+	int if_num;
+	int ret;
+
+	for (if_num = 0; if_num < pktio_shm->if_count; if_num++) {
+		ret = odp_pktio_start(pktio_shm->pktio[if_num]);
+		if (unlikely(ret != 0))
+			APPL_EXIT_FAILURE("Unable to start if:%d", if_num);
+		APPL_PRINT("%s(): if:%d\n", __func__, if_num);
+	}
+
+	odp_mb_full();
+	pktio_shm->pktio_started = 1;
 }
 
 static inline int
@@ -525,6 +551,9 @@ pktio_rx(void)
 	int pkts_enqueued = 0; /* return value */
 
 	const odph_table_get_value f_get = pktio_shm->tbl_lookup.ops.f_get;
+
+	if (unlikely(!pktio_shm->pktio_started))
+		return 0;
 
 	ret = pktin_queue_acquire(&pktin_queue);
 	if (unlikely(ret != 0))
@@ -684,7 +713,7 @@ pktio_tx(em_event_t events[], const unsigned int num,
 	uint64_t prev_cnt;
 	int ret;
 
-	if (unlikely(num == 0))
+	if (unlikely(num == 0 || !pktio_shm->pktio_started))
 		return 0;
 
 	/*
@@ -764,6 +793,14 @@ pktio_tx_drain(void)
 }
 
 void
+pktio_halt(void)
+{
+	pktio_shm->pktio_started = 0;
+	odp_mb_full();
+	APPL_PRINT("\n%s() on EM-core %d\n", __func__, em_core_id());
+}
+
+void
 pktio_stop(void)
 {
 	int if_num;
@@ -773,6 +810,7 @@ pktio_stop(void)
 		ret = odp_pktio_stop(pktio_shm->pktio[if_num]);
 		if (unlikely(ret != 0))
 			APPL_EXIT_FAILURE("Unable to stop if:%i", if_num);
+		APPL_PRINT("%s(): if:%d\n", __func__, if_num);
 	}
 }
 

@@ -140,15 +140,15 @@
 #define CORE_STATE_IDLE    1
 
 /* Result APPL_PRINT() format string */
-#define RESULT_PRINTF_HDR  "Cycles/Event  cpu-freq\n"
-#define RESULT_PRINTF_FMT  "%12.0f %5.0f MHz  %" PRIu64 "\n"
+#define RESULT_PRINTF_HDR  "Cycles/Event  Events/s  cpu-freq\n"
+#define RESULT_PRINTF_FMT  "%12.0f %7.0f M %5.0f MHz  %" PRIu64 "\n"
 
 /* Result APPL_PRINT() format string when MEASURE_LATENCY is used */
 #define RESULT_PRINTF_LATENCY_HDR \
-"Cycles/  Latency:\n" \
-" Event    hi-ave  hi-max  lo-ave  lo-max  cpu-freq\n"
+"Cycles/  Events/  Latency:\n" \
+" Event     Sec     hi-ave  hi-max  lo-ave  lo-max  cpu-freq\n"
 #define RESULT_PRINTF_LATENCY_FMT \
-"%6.0f %9.0f %7" PRIu64 " %7.0f %7" PRIu64 " %5.0f MHz  %" PRIu64 "\n"
+"%6.0f %7.2f M %8.0f %7" PRIu64 " %7.0f %7" PRIu64 " %5.0f MHz  %" PRIu64 "\n"
 
 /*
  * The number of scheduled queues to use in each test step.
@@ -231,8 +231,6 @@ typedef struct {
 		em_queue_prio_t prio;
 		/** Number of events enqueued in 'storage' */
 		int stored_count;
-		/** Number of events received by this queue */
-		uint64_t count;
 	} sch_q;
 
 	struct unscheduled_queue_context {
@@ -240,8 +238,6 @@ typedef struct {
 		em_queue_t this_queue;
 		/** Next unscheduled queue */
 		em_queue_t next_queue;
-		/** Number of events received by this queue */
-		uint64_t count;
 	} unsch_q;
 
 	/** Pad to multiple of cache line size  */
@@ -268,7 +264,7 @@ typedef struct {
  */
 typedef struct {
 	/* Event pool used by this application */
-	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+	em_pool_t pool;
 
 	test_status_t test_status ENV_CACHE_LINE_ALIGNED;
 
@@ -351,11 +347,13 @@ int main(int argc, char *argv[])
 static em_status_t
 error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 {
-	if (unlikely(escope == EM_ESCOPE_QUEUE_CREATE))
+	if (unlikely(escope == EM_ESCOPE_QUEUE_CREATE)) {
 		APPL_PRINT("\nUnable to create more queues\n\n"
 			   "Test finished\n");
-	else
+		raise(SIGINT);
+	} else {
 		error = test_error_handler(eo, error, escope, args);
+	}
 
 	return error;
 }
@@ -449,7 +447,7 @@ test_start(appl_conf_t *const appl_conf)
 					       stop, NULL, receive_func,
 					       eo_ctx);
 		test_fatal_if(perf_shm->eo[i] == EM_EO_UNDEF,
-			      "EO create failed:%i", i, NUM_EOS);
+			      "EO create failed:%d", i, NUM_EOS);
 	}
 
 	APPL_PRINT("  EOs created\n");
@@ -498,6 +496,41 @@ test_stop(appl_conf_t *const appl_conf)
 		test_fatal_if(ret != EM_OK,
 			      "EO:%" PRI_EO " delete:%" PRI_STAT "",
 			      eo, ret);
+	}
+
+	/* Delete the unscheduled queues */
+	for (i = 0; i < NUM_QUEUES; i++) {
+		queue_context_t *q_ctx = &perf_shm->queue_context_tbl[i];
+		em_queue_t unsch_queue = q_ctx->unsch_q.this_queue;
+		em_event_t unsch_event;
+
+		if (unsch_queue == EM_QUEUE_UNDEF)
+			continue;
+
+		for (;;) {
+			unsch_event = em_queue_dequeue(unsch_queue);
+			if (unsch_event == EM_EVENT_UNDEF)
+				break;
+			em_free(unsch_event);
+		}
+		em_queue_delete(unsch_queue);
+	}
+	/* Delete the unscheduled 'storage' queues */
+	for (i = 0; i < NUM_QUEUES; i++) {
+		queue_context_t *q_ctx = &perf_shm->queue_context_tbl[i];
+		em_queue_t unsch_queue = q_ctx->sch_q.storage;
+		em_event_t unsch_event;
+
+		if (unsch_queue == EM_QUEUE_UNDEF)
+			continue;
+
+		for (;;) {
+			unsch_event = em_queue_dequeue(unsch_queue);
+			if (unsch_event == EM_EVENT_UNDEF)
+				break;
+			em_free(unsch_event);
+		}
+		em_queue_delete(unsch_queue);
 	}
 }
 
@@ -698,6 +731,11 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)eo_context;
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	q_ctx = q_context;
 
 	/*
@@ -775,17 +813,8 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 
 	test_fatal_if(num < 0 || num > NUM_STORAGE,
 		      "invalid number of events:%d", num);
-
-	/*
-	 * Read/write q_ctx to make test case more realistic. Do it late so
-	 * that possible prefetching has more time to finish.
-	 */
-
 	test_fatal_if(queue != q_ctx->sch_q.this_queue,
 		      "perf_test_queues: Queue config error");
-
-	q_ctx->sch_q.count += num;
-	q_ctx->unsch_q.count += num;
 
 	/* Enqueue the unscheduled event to the next unscheduled queue */
 	ret = em_send_multi(unsch_events, num, dst_unsch_queue);
@@ -804,9 +833,13 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 			perf_events[i]->send_time = send_time;
 	}
 	ret = em_send_multi(events, num, dst_queue);
-	test_fatal_if(ret != num,
-		      "EM send multi:%d queue:%" PRI_QUEUE "",
-		      ret, dst_queue);
+	if (unlikely(ret != num)) {
+		for (i = ret; i < num; i++)
+			em_free(events[i]);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "EM send multi:%d queue:%" PRI_QUEUE "",
+			      ret, dst_queue);
+	}
 }
 
 /**
@@ -974,7 +1007,7 @@ create_and_link_queues(int start_queue, int num_queues)
 		   num_queues, num_queues);
 
 	if (num_queues % NUM_EOS != 0) {
-		APPL_PRINT("%s() arg 'num_queues'=%i not multiple of NUM_EOS=%i\n",
+		APPL_PRINT("%s() arg 'num_queues'=%d not multiple of NUM_EOS=%d\n",
 			   __func__, num_queues, NUM_EOS);
 		return;
 	}
@@ -1002,16 +1035,45 @@ create_and_link_queues(int start_queue, int num_queues)
 					prio = EM_QUEUE_PRIO_HIGH;
 			}
 
+			q_ctx = &perf_shm->queue_context_tbl[i + j];
+
 			/*
-			 * Create a new scheduled queue
+			 * Create a scheduled queue + associated storage queue
 			 */
 			queue = em_queue_create("queue", QUEUE_TYPE, prio,
 						EM_QUEUE_GROUP_DEFAULT, NULL);
 			if (queue == EM_QUEUE_UNDEF) {
 				APPL_PRINT("Max nbr of supported queues: %d\n",
 					   3 * i);
-				exit(EXIT_FAILURE);
+				return;
 			}
+			storage_unscheduled =
+				em_queue_create("unscheduled_storage",
+						EM_QUEUE_TYPE_UNSCHEDULED,
+						EM_QUEUE_PRIO_UNDEF,
+						EM_QUEUE_GROUP_UNDEF,
+						&unsch_conf);
+			if (storage_unscheduled == EM_QUEUE_UNDEF) {
+				APPL_PRINT("Max nbr of supported queues: %d\n",
+					   3 * i + 1);
+				return;
+			}
+			ret = em_queue_set_context(queue, q_ctx);
+			test_fatal_if(ret != EM_OK,
+				      "em_queue_set_context:%" PRI_STAT "\n"
+				      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+				      ret, perf_shm->eo[j], queue);
+			/* Add the scheduled queue to an EO and enable it */
+			ret = em_eo_add_queue_sync(perf_shm->eo[j], queue);
+			test_fatal_if(ret != EM_OK,
+				      "EO add queue sync:%" PRI_STAT "\n"
+				      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+				      ret, perf_shm->eo[j], queue);
+			q_ctx->sch_q.this_queue = queue;
+			q_ctx->sch_q.storage = storage_unscheduled;
+			q_ctx->sch_q.next_queue = next_queue;
+			q_ctx->sch_q.prio = prio;
+
 			/*
 			 * Create a new unscheduled queue
 			 */
@@ -1022,35 +1084,14 @@ create_and_link_queues(int start_queue, int num_queues)
 						EM_QUEUE_GROUP_UNDEF,
 						&unsch_conf);
 			if (queue_unscheduled == EM_QUEUE_UNDEF) {
-				APPL_PRINT("Max nbr of supported queues: %i\n",
-					   3 * i + 1);
-				exit(EXIT_FAILURE);
-			}
-
-			storage_unscheduled =
-				em_queue_create("unscheduled_storage",
-						EM_QUEUE_TYPE_UNSCHEDULED,
-						EM_QUEUE_PRIO_UNDEF,
-						EM_QUEUE_GROUP_UNDEF,
-						&unsch_conf);
-			if (storage_unscheduled == EM_QUEUE_UNDEF) {
-				APPL_PRINT("Max nbr of supported queues: %i\n",
+				APPL_PRINT("Max nbr of supported queues: %d\n",
 					   3 * i + 2);
-				exit(EXIT_FAILURE);
+				return;
 			}
 
-			q_ctx = &perf_shm->queue_context_tbl[i + j];
-			/* Link queues */
-			q_ctx->sch_q.this_queue = queue;
-			q_ctx->sch_q.storage = storage_unscheduled;
-			q_ctx->sch_q.next_queue = next_queue;
-			q_ctx->sch_q.prio = prio;
-
+			/* Link unscheduled queues */
 			q_ctx->unsch_q.this_queue = queue_unscheduled;
 			q_ctx->unsch_q.next_queue = next_unscheduled;
-
-			next_queue = queue;
-			next_unscheduled = queue_unscheduled;
 
 			/*
 			 * Set the same top level queue context for both the
@@ -1060,33 +1101,19 @@ create_and_link_queues(int start_queue, int num_queues)
 			 * em_queue_get_context() for each event for the
 			 * unscheduled queues
 			 */
-			em_status_t status;
-
-			status = em_queue_set_context(queue_unscheduled,
-						      q_ctx);
-
-			test_fatal_if(status != EM_OK,
+			ret = em_queue_set_context(queue_unscheduled, q_ctx);
+			test_fatal_if(ret != EM_OK,
 				      "em_queue_set_context:%" PRI_STAT "\n"
 				      "Unscheduled queue:%" PRI_QUEUE "",
-				      status, queue_unscheduled);
+				      ret, queue_unscheduled);
 
-			status = em_queue_set_context(queue, q_ctx);
-
-			test_fatal_if(status != EM_OK,
-				      "em_queue_set_context:%" PRI_STAT "\n"
-				      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
-				      status, perf_shm->eo[j], queue);
 			/* Sanity check */
 			test_fatal_if(em_queue_get_context(queue) !=
 				      em_queue_get_context(queue_unscheduled),
 				      "em_queue_get_context failed.");
 
-			/* Add the scheduled queue to an EO and enable it */
-			ret = em_eo_add_queue_sync(perf_shm->eo[j], queue);
-			test_fatal_if(ret != EM_OK,
-				      "EO add queue sync:%" PRI_STAT "\n"
-				      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
-				      ret, perf_shm->eo[j], queue);
+			next_queue = queue;
+			next_unscheduled = queue_unscheduled;
 		}
 
 		/* Connect first scheduled queue to the last */
@@ -1112,7 +1139,7 @@ print_test_statistics(test_status_t *test_status, int print_header,
 	uint64_t latency_lo_max = 0;
 	double latency_per_hi_ave;
 	double latency_per_lo_ave;
-	double cycles_per_event;
+	double cycles_per_event, events_per_sec;
 	int i;
 
 	for (i = 0; i < test_status->num_cores; i++) {
@@ -1127,6 +1154,8 @@ print_test_statistics(test_status_t *test_status, int print_header,
 	}
 
 	cycles_per_event = (double)total_cycles / (double)total_events;
+	events_per_sec = test_status->mhz * test_status->num_cores /
+			 cycles_per_event; /* Million events/s */
 	latency_per_hi_ave = (double)latency_hi_ave / (double)latency_events;
 	latency_per_lo_ave = (double)latency_lo_ave / (double)latency_events;
 
@@ -1134,7 +1163,7 @@ print_test_statistics(test_status_t *test_status, int print_header,
 		if (print_header)
 			APPL_PRINT(RESULT_PRINTF_LATENCY_HDR);
 		APPL_PRINT(RESULT_PRINTF_LATENCY_FMT,
-			   cycles_per_event,
+			   cycles_per_event, events_per_sec,
 			   latency_per_hi_ave, latency_hi_max,
 			   latency_per_lo_ave, latency_lo_max,
 			   test_status->mhz, test_status->print_count++);
@@ -1142,8 +1171,8 @@ print_test_statistics(test_status_t *test_status, int print_header,
 		if (print_header)
 			APPL_PRINT(RESULT_PRINTF_HDR);
 		APPL_PRINT(RESULT_PRINTF_FMT,
-			   cycles_per_event, test_status->mhz,
-			   test_status->print_count++);
+			   cycles_per_event, events_per_sec,
+			   test_status->mhz, test_status->print_count++);
 	}
 }
 

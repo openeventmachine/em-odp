@@ -160,7 +160,9 @@ typedef struct {
  * Image buffer consisting of 'HEIGHT' horizontal lines
  */
 typedef struct {
-	h_line_t line[HEIGHT] ENV_CACHE_LINE_ALIGNED;
+	h_line_t line[HEIGHT];
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } buffer_t;
 
 /*
@@ -205,7 +207,7 @@ typedef struct {
 
 /** Imager EO context holds the buffer which limits very large images */
 typedef struct {
-	char  name[16];
+	char name[16];
 	em_eo_t eo;
 	struct timespec start_time;
 	struct timespec next_print_time;
@@ -260,7 +262,6 @@ typedef struct {
 		/* Event group for tracking the nbr of completed data events */
 		em_event_group_t egrp_imager;
 	} ENV_CACHE_LINE_ALIGNED;
-
 } fractal_shm_t;
 
 /* EM-core local pointer to shared memory */
@@ -306,6 +307,9 @@ run_system_cmds(void);
 
 static void
 create_data_events(void);
+
+static void
+free_data_events(void);
 
 /**
  * Main function
@@ -457,6 +461,10 @@ test_stop(appl_conf_t *const appl_conf)
 	const em_eo_t eo_worker = fractal_shm->eo_context_worker.eo;
 	const em_eo_t eo_imager = fractal_shm->eo_context_imager.eo;
 	em_status_t stat;
+	em_event_group_t egrp;
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
+	int num_notifs;
+
 	(void)appl_conf;
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -481,6 +489,22 @@ test_stop(appl_conf_t *const appl_conf)
 	stat = em_eo_delete(eo_imager);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("EO imager delete failed!");
+
+	/* No more dispatching of the EO's events, egrp can be freed */
+
+	egrp = fractal_shm->egrp_imager;
+	if (!em_event_group_is_ready(egrp)) {
+		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		stat = em_event_group_abort(egrp);
+		if (stat == EM_OK && num_notifs == 1)
+			em_free(notif_tbl[0].event);
+	}
+	stat = em_event_group_delete(egrp);
+	test_fatal_if(stat != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT "",
+		      egrp, stat);
+
+	free_data_events();
 }
 
 void
@@ -599,9 +623,34 @@ create_data_events(void)
 			image_data_event->x_start = x_start;
 			image_data_event->frame = 0;
 			/* Add to array */
+			test_fatal_if(index >= ALLOC_EVENTS,
+				      "Event-tbl too small");
 			fractal_shm->data_event_tbl[index++] = event;
 			image_data_event = NULL;
 			x_start += IMAGE_BLOCK_SIZE;
+		}
+	}
+}
+
+/**
+ * Frees all imager data events
+ */
+static void
+free_data_events(void)
+{
+	em_event_t event;
+	int y, x_start;
+	int index = 0;
+
+	/* Free event array */
+	for (y = 0; y < HEIGHT; y++) {
+		/* Pixels in curr horizontal line divided into smaller blocks*/
+		for (x_start = 0; x_start < WIDTH;
+		     x_start += IMAGE_BLOCK_SIZE) {
+			test_fatal_if(index >= ALLOC_EVENTS,
+				      "Event-tbl too small");
+			event = fractal_shm->data_event_tbl[index++];
+			em_free(event);
 		}
 	}
 }
@@ -674,6 +723,8 @@ pixel_handler_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 	(void)q_ctx;
 
 	em_free(event);
+	if (unlikely(appl_shm->exit_flag))
+		return;
 
 	/* Start filling worker queue */
 	for (i = 0; i < EVENTS_PER_IMAGE; i++) {
@@ -695,10 +746,13 @@ pixel_handler_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 		num_sent += em_send_multi(&fractal_shm->data_event_tbl[j],
 					  left_over,
 					  fractal_shm->queue_worker);
-
-	test_fatal_if(num_sent != EVENTS_PER_IMAGE,
-		      "em_send_multi():num_sent:%d queue:%" PRI_QUEUE "",
-		      num_sent, fractal_shm->queue_worker);
+	if (unlikely(num_sent != EVENTS_PER_IMAGE)) {
+		for (i = num_sent; i < EVENTS_PER_IMAGE; i++)
+			em_free(fractal_shm->data_event_tbl[i]);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "em_send_multi(): num_sent:%d Q:%" PRI_QUEUE "",
+			      num_sent, fractal_shm->queue_worker);
+	}
 }
 
 /**
@@ -781,6 +835,9 @@ worker_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 	(void)queue;
 	(void)q_ctx;
 
+	if (unlikely(appl_shm->exit_flag))
+		return;
+
 	/*
 	 * Each iteration, it calculates: newz = oldz*oldz + p, where p is the
 	 * current pixel, and oldz stars at the origin
@@ -824,9 +881,12 @@ worker_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 	event_group = fractal_shm->egrp_imager;
 	status = em_send_group(event, fractal_shm->queue_data_imager,
 			       event_group);
-	test_fatal_if(status != EM_OK,
-		      "em_send():%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      status, fractal_shm->queue_data_imager);
+	if (unlikely(status != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "em_send_group():%" PRI_STAT " Q:%" PRI_QUEUE "",
+			      status, fractal_shm->queue_data_imager);
+	}
 }
 
 /**
@@ -892,6 +952,9 @@ imager_receive_event(imager_eo_context_t *eo_ctx, em_event_t event,
 
 	switch (q_ctx->id) {
 	case DATA_QUEUE: {
+		if (unlikely(appl_shm->exit_flag))
+			return;
+
 		imager_data_event_t *const block = em_event_pointer(event);
 		const unsigned int y = block->y;
 		const unsigned int x_start = block->x_start;
@@ -917,6 +980,11 @@ imager_receive_event(imager_eo_context_t *eo_ctx, em_event_t event,
 
 		/* Notification: Current frame is ready */
 	case NOTIF_QUEUE: {
+		if (unlikely(appl_shm->exit_flag)) {
+			em_free(event);
+			return;
+		}
+
 		em_event_group_t event_group;
 
 		/* store the image buffer index to write into file */
@@ -952,16 +1020,19 @@ imager_receive_event(imager_eo_context_t *eo_ctx, em_event_t event,
 		eo_ctx->buf_idx = (eo_ctx->buf_idx + 1) % 2; /* 0,1,0,1,...*/
 
 		status = em_send(new_pixel_event, fractal_shm->queue_pixel);
-		test_fatal_if(status != EM_OK,
-			      "em_send():%" PRI_STAT " Q:%" PRI_QUEUE "",
-			      status, fractal_shm->queue_pixel);
+		if (unlikely(status != EM_OK)) {
+			em_free(new_pixel_event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "em_send:%" PRI_STAT " Q:%" PRI_QUEUE "",
+				      status, fractal_shm->queue_pixel);
+		}
 
 		/*
 		 * After requesting a new frame, write the currently ready
 		 * one from the buffer into the ramdisk file at
 		 * 'TMP_IMAGE_PATH' and then rename it to 'IMAGE_PATH'
 		 */
-		FILE *fp = fopen(TMP_IMAGE_PATH, "wb+");
+		FILE * fp = fopen(TMP_IMAGE_PATH, "wb+");
 
 		test_fatal_if(fp == NULL, "Can't open output file %s",
 			      TMP_IMAGE_PATH);

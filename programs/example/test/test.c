@@ -243,7 +243,7 @@ test_stop(appl_conf_t *const appl_conf)
 
 	printf("%s() on EM-core %d\n", __func__, core);
 
-	stat = em_eo_stop(eo, 0, NULL);
+	stat = em_eo_stop_sync(eo);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("test-eo stop failed!");
 	stat = em_eo_delete(eo);
@@ -413,6 +413,9 @@ test_eo_stop(void *eo_ctx, em_eo_t eo)
 	for (i = 0; i < NBR_TEST_QUEUES; i++) {
 		test_queue_ctx_t *const queue_ctx = &test_eo_ctx->queue_ctx[i];
 
+		stat = em_eo_remove_queue_sync(eo, queue_ctx->queue);
+		if (stat != EM_OK)
+			APPL_EXIT_FAILURE("removing queue from eo failed!");
 		stat = em_queue_delete(queue_ctx->queue);
 		if (stat != EM_OK)
 			APPL_EXIT_FAILURE("test-queue deletion failed!");
@@ -484,6 +487,11 @@ test_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	if (unlikely(queue == test_eo_ctx->notif_queue)) {
 		printf("%s(): EO start-local notif, cores ready: ", __func__);
 		setup_test_events(test_eo_ctx->queues, NBR_TEST_QUEUES);
@@ -531,8 +539,11 @@ test_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 	}
 
 	stat = em_send(event, queue_out);
-	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("event send failed!");
+	if (unlikely(stat != EM_OK)) {
+		em_free(event);
+		if (!appl_shm->exit_flag)
+			APPL_EXIT_FAILURE("event send failed!");
+	}
 }
 
 static em_status_t
@@ -541,7 +552,7 @@ test_eo_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 {
 	const char *str;
 
-	str   = va_arg(args, const char*);
+	str = va_arg(args, const char*);
 
 	printf("%s  EO %" PRI_EO "  error 0x%08X  escope 0x%X  core %d\n",
 	       str, eo, error, escope, em_core_id());

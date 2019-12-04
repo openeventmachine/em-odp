@@ -237,6 +237,7 @@ send_test_events(void)
 	em_event_t test_event;
 	egrp_test_t *egrp_event;
 	egrp_data_tbl *egrp_elem;
+	const em_queue_t paral_queue = egrp_shm->test_eo_ctx.paral_queue;
 	int i, j;
 
 	for (i = 0; i < EVENT_GROUPS; i++) {
@@ -252,7 +253,7 @@ send_test_events(void)
 		/* Set notif gen before lock section */
 		egrp_event->egrp_gen = egrp_elem->gen + 1;
 		notif_tbl[0].event = test_event;
-		notif_tbl[0].queue = egrp_shm->test_eo_ctx.paral_queue;
+		notif_tbl[0].queue = paral_queue;
 		notif_tbl[0].egroup = EM_EVENT_GROUP_UNDEF;
 
 		/* During lock em_event_group_apply() is called and group
@@ -284,12 +285,16 @@ send_test_events(void)
 			egrp_event->egrp_id = i;
 			egrp_event->egrp_gen = egrp_elem->gen;
 
-			ret = em_send_group(test_event,
-					    egrp_shm->test_eo_ctx.paral_queue,
+			ret = em_send_group(test_event, paral_queue,
 					    egrp_elem->grp);
-			test_fatal_if(ret != EM_OK,
+			if (likely(ret == EM_OK))
+				continue;
+			/* error: */
+			em_free(test_event);
+			test_fatal_if(!appl_shm->exit_flag,
 				      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "",
-				      ret, egrp_shm->test_eo_ctx.paral_queue);
+				      ret, paral_queue);
+			return; /* appl_shm->exit_flag set */
 		}
 	}
 }
@@ -442,6 +447,7 @@ send_start_event(void)
 	em_status_t ret;
 	em_event_t start_event;
 	egrp_test_t *start_event_ptr;
+	const em_queue_t paral_queue = egrp_shm->test_eo_ctx.paral_queue;
 
 	start_event = em_alloc(sizeof(egrp_test_t), EM_EVENT_TYPE_SW,
 			       egrp_shm->pool);
@@ -452,10 +458,13 @@ send_start_event(void)
 
 	start_event_ptr->msg = MSG_START;
 
-	ret = em_send(start_event, egrp_shm->test_eo_ctx.paral_queue);
-	test_fatal_if(ret != EM_OK,
-		      "Event send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-		      ret, egrp_shm->test_eo_ctx.paral_queue);
+	ret = em_send(start_event, paral_queue);
+	if (unlikely(ret != EM_OK)) {
+		em_free(start_event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "Event send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+			      ret, paral_queue);
+	}
 }
 
 void
@@ -506,7 +515,7 @@ abort_event_group(em_event_group_t event_group)
 {
 	em_status_t ret;
 	int returned_notifs, ready, i;
-	em_notif_t notif_tbl[1];
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
 
 	/* Get notification events */
 	returned_notifs = em_event_group_get_notif(event_group, 1, notif_tbl);
@@ -563,6 +572,13 @@ test_stop(appl_conf_t *const appl_conf)
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
 
+	/*
+	 * Allow the other cores to run the dispatch loop with the 'exit_flag'
+	 * set for a while to free the scheduled events as they are received.
+	 */
+	if (em_core_count() > 1)
+		delay_spin(env_core_hz() / 100);
+
 	eo = egrp_shm->test_eo_ctx.eo;
 
 	ret = em_eo_stop_sync(eo);
@@ -615,14 +631,34 @@ static em_status_t
 egroup_stop(void *eo_context, em_eo_t eo)
 {
 	em_status_t ret;
-
-	(void)eo_context;
+	eo_context_t *eo_ctx = eo_context;
+	em_event_group_t egrp;
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
+	int num_notifs;
 
 	/* remove and delete all of the EO's queues */
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(ret != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
 		      ret, eo);
+
+	/* No more dispatching of the EO's events, egrps can be freed */
+
+	for (int i = 0; i < EVENT_GROUPS; i++) {
+		egrp = eo_ctx->egrp_tbl[i].grp;
+		if (!em_event_group_is_ready(egrp)) {
+			num_notifs = em_event_group_get_notif(egrp, 1,
+							      notif_tbl);
+			ret = em_event_group_abort(egrp);
+			if (ret == EM_OK && num_notifs == 1)
+				em_free(notif_tbl[0].event);
+		}
+		ret = em_event_group_delete(egrp);
+		test_fatal_if(ret != EM_OK,
+			      "egrp:%" PRI_EGRP "\n"
+			      "delete:%" PRI_STAT " EO:%" PRI_EO "",
+			      egrp, ret, eo);
+	}
 
 	return EM_OK;
 }
@@ -656,6 +692,11 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)type;
 	(void)q_ctx;
 	(void)queue;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	switch (rcvd_event->msg) {
 	case MSG_START:
@@ -750,10 +791,13 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			} else {
 				ret = em_send_group(event, eo_ctx->paral_queue,
 						    current_egrp);
-				test_fatal_if(ret != EM_OK,
-					      "Send:%" PRI_STAT "\t"
-					      "Q:%" PRI_QUEUE "",
-					      ret, eo_ctx->paral_queue);
+				if (unlikely(ret != EM_OK)) {
+					em_free(event);
+					test_fatal_if(!appl_shm->exit_flag,
+						      "Send:%" PRI_STAT "\t"
+						      "Q:%" PRI_QUEUE "",
+						      ret, eo_ctx->paral_queue);
+				}
 			}
 
 			env_spinlock_unlock(&egrp_data->lock);

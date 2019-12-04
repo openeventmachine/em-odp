@@ -101,15 +101,18 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	em_event_type_t event_type = ev_hdr->event_type;
 
 	em_locm.current.q_elem = q_elem;
+	/* Check and set core local event group (before dispatch callback(s)) */
+	event_group_set_local(ev_hdr);
 
 	if (EM_DISPATCH_CALLBACKS_ENABLE)
 		dispatch_enter_cb(eo, &eo_ctx, &event, &event_type,
 				  &queue, &queue_ctx);
 
 	if (likely(event != EM_EVENT_UNDEF)) {
-		/* Check and set core local event group */
-		event_group_set_local(ev_hdr);
-		/* Call the EO receive function */
+		/*
+		 * Call the EO receive function
+		 * (only if the dispatch callback(s) did not free the event)
+		 */
 		eo_receive_func(eo_ctx, event, event_type,
 				queue, queue_ctx);
 	}
@@ -258,8 +261,10 @@ dispatch_round(void)
 				       num_events);
 		else
 			INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_DISPATCH,
-				       "Q:%" PRI_QUEUE " not ready, state=%d",
-				       queue_elem->queue, queue_elem->state);
+				       "Q:%" PRI_QUEUE " not ready, state=%d\n"
+				       "    drop:%d event(s)\n",
+				       queue_elem->queue, queue_elem->state,
+				       num_events);
 		return 0;
 	}
 

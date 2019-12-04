@@ -97,6 +97,8 @@ typedef struct timer_app_shm_t {
 	app_eo_ctx_t eo_context;
 	em_queue_t eo_q;
 	em_timer_t tmr;
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } timer_app_shm_t;
 
 /* EM-core locals */
@@ -179,6 +181,10 @@ void test_start(appl_conf_t *const appl_conf)
 	em_timer_attr_t attr;
 	em_queue_t queue;
 	em_status_t stat;
+	em_event_t event;
+	app_msg_t *msg;
+	app_eo_ctx_t *eo_ctx;
+	uint64_t period;
 
 	/*
 	 * Store the event pool to use, use the EM default pool if no other
@@ -213,6 +219,7 @@ void test_start(appl_conf_t *const appl_conf)
 			  (em_receive_func_t)app_eo_receive,
 			  &m_shm->eo_context);
 	test_fatal_if(eo == EM_EO_UNDEF, "Failed to create EO!");
+	eo_ctx = &m_shm->eo_context;
 
 	/* one basic queue */
 	queue = em_queue_create("Timer hello Q",
@@ -235,6 +242,35 @@ void test_start(appl_conf_t *const appl_conf)
 	/* Start EO */
 	stat = em_eo_start_sync(eo, NULL, NULL);
 	test_fatal_if(stat != EM_OK, "Failed to start EO!");
+
+	/* create periodic timer */
+	eo_ctx->periodic_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_PERIODIC,
+					     eo_ctx->my_q);
+	test_fatal_if(eo_ctx->periodic_tmo == EM_TMO_UNDEF, "Can't allocate tmo!\n");
+
+	/* allocate timeout event */
+	event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW, m_shm->pool);
+	test_fatal_if(event == EM_EVENT_UNDEF, "Can't allocate event!\n");
+
+	msg = em_event_pointer(event);
+	msg->command = APP_CMD_TMO;
+	msg->tmo = eo_ctx->periodic_tmo;
+	msg->count = 0;
+	eo_ctx->hz = em_timer_get_freq(m_shm->tmr); /* save for later */
+	if (eo_ctx->hz < 1000) { /* sanity check */
+		APPL_ERROR("WARNING - timer hz very low!\n");
+	}
+
+	/* pre-allocate random timeout */
+	eo_ctx->random_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_ONESHOT,
+					   eo_ctx->my_q);
+	test_fatal_if(eo_ctx->random_tmo == EM_TMO_UNDEF, "Can't allocate tmo!\n");
+
+	/* setup periodic timeout (the tick) */
+	period = eo_ctx->hz / 1000; /* ticks for 1 ms */
+	period *= APP_PERIOD_MS;
+	stat = em_tmo_set_rel(eo_ctx->periodic_tmo, period, event);
+	test_fatal_if(stat != EM_OK, "Can't activate tmo!\n");
 }
 
 void
@@ -257,6 +293,11 @@ test_stop(appl_conf_t *const appl_conf)
 	ret = em_eo_delete(eo);
 	test_fatal_if(ret != EM_OK,
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
+
+	ret = em_timer_delete(m_shm->tmr);
+	test_fatal_if(ret != EM_OK,
+		      "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
+		      m_shm->tmr, ret);
 }
 
 void
@@ -284,9 +325,6 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	em_timer_attr_t attr;
 	em_timer_t tmr;
 	int num_timers;
-	em_event_t event;
-	app_msg_t *msg;
-	uint64_t period;
 
 	(void)eo;
 	(void)conf;
@@ -311,44 +349,6 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 
 	/* init local EO context */
 	eo_ctx->my_q = m_shm->eo_q;
-
-	/* create periodic timer */
-	eo_ctx->periodic_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_PERIODIC,
-					     eo_ctx->my_q);
-	if (eo_ctx->periodic_tmo == EM_TMO_UNDEF) {
-		APPL_ERROR("Can't allocate tmo!\n");
-		return EM_ERR_ALLOC_FAILED;
-	}
-	/* allocate timeout event */
-	event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW, m_shm->pool);
-	if (event == EM_EVENT_UNDEF) {
-		APPL_ERROR("Can't allocate event!\n");
-		return EM_ERR_ALLOC_FAILED;
-	}
-	msg = em_event_pointer(event);
-	msg->command = APP_CMD_TMO;
-	msg->tmo = eo_ctx->periodic_tmo;
-	msg->count = 0;
-	eo_ctx->hz = em_timer_get_freq(m_shm->tmr); /* save for later */
-	if (eo_ctx->hz < 1000) { /* sanity check */
-		APPL_ERROR("WARNING - timer hz very low!\n");
-	}
-
-	/* pre-allocate random timeout */
-	eo_ctx->random_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_ONESHOT,
-					   eo_ctx->my_q);
-	if (eo_ctx->random_tmo == EM_TMO_UNDEF) {
-		APPL_ERROR("Can't allocate tmo!\n");
-		return EM_ERR_ALLOC_FAILED;
-	}
-
-	/* setup periodic timeout (the tick) */
-	period = eo_ctx->hz / 1000; /* ticks for 1 ms */
-	period *= APP_PERIOD_MS;
-	if (em_tmo_set_rel(eo_ctx->periodic_tmo, period, event)	!= EM_OK) {
-		APPL_ERROR("Can't activate tmo!\n");
-		return EM_ERR;
-	}
 
 	return EM_OK;
 }
@@ -426,6 +426,11 @@ static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
 
 	(void)queue;
 	(void)q_ctx;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	if (type == EM_EVENT_TYPE_SW) {
 		app_msg_t *msgin = (app_msg_t *)em_event_pointer(event);

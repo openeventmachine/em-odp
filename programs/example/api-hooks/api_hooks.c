@@ -112,9 +112,6 @@ static void
 ping_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 	     em_queue_t queue, void *q_ctx);
 
-static void
-delay_spin(const uint64_t spin_count);
-
 /* Callback & hook functions */
 static void
 enter_cb(em_eo_t eo, void **eo_ctx, em_event_t *event, em_event_type_t *type,
@@ -468,6 +465,11 @@ ping_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 
 	ping = em_event_pointer(event);
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	dest = ping->dest;
 	ping->dest = queue;
 
@@ -488,27 +490,12 @@ ping_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 
 	status = em_send(new_event, dest);
 	if (unlikely(status != EM_OK)) {
-		em_free(event);
-		test_error(0xec0de, 0xf000,
-			   "em_send():%" PRI_STAT "EO:%" PRI_EO "\n"
-			   "Rcv-Queue:%" PRI_QUEUE " Dst-Queue:%" PRI_QUEUE "",
-			   status, my_eo_ctx->this_eo, queue, dest);
+		em_free(new_event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "em_send():%" PRI_STAT "EO:%" PRI_EO "\n"
+			      "Rcv-Q:%" PRI_QUEUE " Dst-Q:%" PRI_QUEUE "",
+			      status, my_eo_ctx->this_eo, queue, dest);
 	}
-}
-
-/**
- * Delay spinloop
- */
-static void
-delay_spin(const uint64_t spin_count)
-{
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
-	uint64_t i;
-
-	env_atomic64_init(&dummy);
-
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
 }
 
 /**

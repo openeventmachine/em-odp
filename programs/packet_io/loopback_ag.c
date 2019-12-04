@@ -114,6 +114,8 @@
 
 #define NUM_PKTIN_QUEUES  (NUM_IP_ADDRS * NUM_PORTS_PER_IP)
 #define MAX_PKTOUT_QUEUES_PER_IF  EM_MAX_CORES
+#define MAX_ATOMIC_GROUPS  (ROUND_UP(NUM_PKTIN_QUEUES, QUEUES_PER_ATOMIC_GROUP)\
+			    / QUEUES_PER_ATOMIC_GROUP)
 
 #define IS_ODD(x)   (((x) & 0x1))
 #define IS_EVEN(x)  (!IS_ODD(x))
@@ -128,6 +130,8 @@ typedef struct {
 	int if_count;
 	/** interface ids as provided via appl_conf_t to test_start() */
 	int if_ids[MAX_NUM_IF];
+	/** all created atomic groups */
+	em_atomic_group_t agrps[MAX_ATOMIC_GROUPS];
 	/** default queue: pkts/events not matching any other input criteria */
 	em_queue_t default_queue;
 	/** all created input queues */
@@ -501,7 +505,7 @@ static void
 create_atomic_group_queues(const em_eo_t eo, eo_context_t *const eo_ctx)
 {
 	uint16_t port_offset = (uint16_t)-1;
-	uint32_t q_idx = 0;
+	uint32_t q_idx = 0, agrp_idx = 0;
 	queue_context_t *q_ctx;
 	em_queue_t queue;
 	em_atomic_group_t atomic_group = EM_ATOMIC_GROUP_UNDEF;
@@ -545,6 +549,9 @@ create_atomic_group_queues(const em_eo_t eo, eo_context_t *const eo_ctx)
 				test_fatal_if(atomic_group ==
 					      EM_ATOMIC_GROUP_UNDEF,
 					      "Atomic group creation failed!");
+				eo_ctx->agrps[agrp_idx++] = atomic_group;
+				test_fatal_if(agrp_idx > MAX_ATOMIC_GROUPS,
+					      "Too many atomic groups!");
 			}
 			/* Get prio for the next queue in the atomic group */
 			q_prio = ag_queue_priorities[ag_prio_idx++];
@@ -599,6 +606,8 @@ create_atomic_group_queues(const em_eo_t eo, eo_context_t *const eo_ctx)
 
 			/* Update the Queue Index */
 			q_idx++;
+			test_fatal_if(q_idx > NUM_PKTIN_QUEUES,
+				      "Too many queues!");
 		}
 	}
 }
@@ -645,6 +654,10 @@ stop_eo(void *eo_context, em_eo_t eo)
 {
 	eo_context_t *eo_ctx = eo_context;
 	em_status_t ret;
+	em_atomic_group_t agrp;
+	em_queue_t pktout_queue;
+	int if_id;
+	int i, j;
 
 	APPL_PRINT("EO %" PRI_EO ":%s stopping\n", eo, eo_ctx->name);
 
@@ -653,6 +666,27 @@ stop_eo(void *eo_context, em_eo_t eo)
 	test_fatal_if(ret != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
 		      ret, eo);
+
+	for (i = 0; i < MAX_ATOMIC_GROUPS; i++) {
+		agrp = eo_ctx->agrps[i];
+		if (agrp == EM_ATOMIC_GROUP_UNDEF)
+			break;
+		em_atomic_group_delete(agrp);
+	}
+
+	/* Delete the packet output queues created for each interface */
+	for (i = 0; i < eo_ctx->if_count; i++) {
+		if_id = eo_ctx->if_ids[i];
+		for (j = 0; j < eo_ctx->pktout_queues_per_if; j++) {
+			/* pktout queue tied to interface id 'if_id' */
+			pktout_queue = eo_ctx->pktout_queue[if_id][j];
+			test_fatal_if(pktout_queue == EM_QUEUE_UNDEF,
+				      "Pktout queue undef:%d,%d", i, j);
+			ret = em_queue_delete(pktout_queue);
+			test_fatal_if(ret != EM_OK,
+				      "Pktout queue delete failed:%d,%d", i, j);
+		}
+	}
 
 	return EM_OK;
 }
@@ -672,6 +706,11 @@ receive_eo_packet(void *eo_context, em_event_t event, em_event_type_t type,
 	em_status_t status;
 
 	(void)type;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	if (unlikely(queue == eo_ctx->default_queue))
 		APPL_PRINT("queue default: %" PRI_QUEUE "\n", queue);

@@ -86,9 +86,11 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	if (tmr_attr != NULL)
 		attr = *tmr_attr; /* copy */
 
-	odp_timer_capability_t odp_capa = {0}; /* all 0 */
+	odp_timer_capability_t odp_capa;
 	odp_timer_clk_src_t odp_clksrc;
 	int err;
+
+	memset(&odp_capa, 0, sizeof(odp_timer_capability_t));
 
 	err = timer_clksrc_em2odp(attr.clk_src, &odp_clksrc);
 	if (err) {
@@ -147,7 +149,9 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 		odp_capa.max_res.res_ns > EM_ODP_TIMER_RESOL_DEF_NS ?
 		odp_capa.max_res.res_ns : EM_ODP_TIMER_RESOL_DEF_NS;
 	uint64_t min_tmo = 0;
-	odp_timer_res_capability_t odp_res_capa = {0}; /* all 0 */
+	odp_timer_res_capability_t odp_res_capa;
+
+	memset(&odp_res_capa, 0, sizeof(odp_timer_res_capability_t));
 
 	if (attr.resolution == 0) {
 		if (attr.max_tmo == 0)
@@ -180,7 +184,9 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	/*
 	 * Set odp_timer_pool_param_t
 	 */
-	odp_timer_pool_param_t odp_tpool_param = {0}; /* all 0*/
+	odp_timer_pool_param_t odp_tpool_param;
+
+	memset(&odp_tpool_param, 0, sizeof(odp_timer_pool_param_t));
 
 	odp_tpool_param.res_ns = attr.resolution;
 	odp_tpool_param.min_tmo = min_tmo;
@@ -490,7 +496,7 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 	}
 
 	/* cancel and set tmo idle */
-	odp_event_t odp_ev;
+	odp_event_t odp_ev = ODP_EVENT_INVALID;
 	int ret = odp_timer_cancel(tmo->odp_timer, &odp_ev);
 
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);

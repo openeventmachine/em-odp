@@ -450,19 +450,28 @@ queue_delete(queue_elem_t *const queue_elem)
 		queue_group_rem_queue_list(queue_group_elem, queue_elem);
 	}
 
+	if (type == EM_QUEUE_TYPE_OUTPUT) {
+		env_spinlock_t *const lock = &queue_elem->output.lock;
+		q_elem_output_t *const q_out = &queue_elem->output;
+
+		env_spinlock_lock(lock);
+		/* Drain any remaining events from the output queue */
+		output_queue_drain(queue_elem);
+		env_spinlock_unlock(lock);
+
+		/* delete the fn-args storage if allocated in create */
+		if (q_out->output_fn_args_event != EM_EVENT_UNDEF) {
+			em_free(q_out->output_fn_args_event);
+			q_out->output_fn_args_event = EM_EVENT_UNDEF;
+		}
+	}
+
 	if (queue_elem->odp_queue != ODP_QUEUE_INVALID) {
 		if (odp_queue_destroy(queue_elem->odp_queue) < 0)
 			return EM_ERROR;
 	}
 
 	queue_elem->odp_queue = ODP_QUEUE_INVALID;
-
-	/* output-queue: delete the fn-args storage if allocated in create */
-	if (type == EM_QUEUE_TYPE_OUTPUT &&
-	    queue_elem->output.output_fn_args_event != EM_EVENT_TYPE_UNDEF) {
-		em_free(queue_elem->output.output_fn_args_event);
-		queue_elem->output.output_fn_args_event = EM_EVENT_TYPE_UNDEF;
-	}
 
 	/* Zero queue name */
 	em_shm->queue_tbl.name[queue_hdl2idx(queue)][0] = '\0';
@@ -685,7 +694,7 @@ queue_setup_output(queue_elem_t *const q_elem, em_queue_prio_t prio,
 
 	/* copy whole output conf */
 	q_elem->output.output_conf = *output_conf;
-	q_elem->output.output_fn_args_event = EM_EVENT_TYPE_UNDEF;
+	q_elem->output.output_fn_args_event = EM_EVENT_UNDEF;
 	if (output_conf->args_len == 0) {
 		/* 'output_fn_args' is ignored, if 'args_len' is 0 */
 		q_elem->output.output_conf.output_fn_args = NULL;
@@ -696,7 +705,7 @@ queue_setup_output(queue_elem_t *const q_elem, em_queue_prio_t prio,
 		/* alloc an event to copy the given fn-args into */
 		args_event = em_alloc(output_conf->args_len, EM_EVENT_TYPE_SW,
 				      EM_POOL_DEFAULT);
-		if (unlikely(args_event == EM_EVENT_TYPE_UNDEF)) {
+		if (unlikely(args_event == EM_EVENT_UNDEF)) {
 			*err_str = "output queue - alloc output_fn_args fails";
 			return -2;
 		}

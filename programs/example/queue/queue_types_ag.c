@@ -939,6 +939,11 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	if (unlikely(test_event->ev_id == EV_ID_START_EVENT)) {
 		/*
 		 * Start-up only, one time: initialize the test event sending.
@@ -1000,7 +1005,10 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 	cstat->events = core_events;
 
 	ret = em_send(event, dest_queue);
-	test_fatal_if(ret != EM_OK, "EO-A em_send failure");
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag, "EO-A em_send failure");
+	}
 
 	if (VERIFY_ATOMIC_ACCESS)
 		verify_atomic_access__end(eo_ctx);
@@ -1051,6 +1059,11 @@ receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 	em_status_t ret;
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	if (VERIFY_ATOMIC_ACCESS)
 		verify_atomic_access__begin(eo_ctx);
 
@@ -1090,7 +1103,10 @@ receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 	cstat->pt_count[eo_ctx->pair_type] += 1;
 
 	ret = em_send(event, dest_queue);
-	test_fatal_if(ret != EM_OK, "EO-B em_send failure");
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag, "EO-B em_send failure");
+	}
 
 	if (VERIFY_ATOMIC_ACCESS)
 		verify_atomic_access__end(eo_ctx);

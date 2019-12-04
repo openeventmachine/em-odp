@@ -55,7 +55,7 @@
  */
 typedef struct {
 	/* Destination queue for the reply event */
-	em_queue_t   dest;
+	em_queue_t dest;
 	/* Sequence number */
 	unsigned int seq;
 } ping_event_t;
@@ -83,21 +83,19 @@ typedef struct {
 /**
  * Test shared memory
  */
-typedef union {
-	struct {
-		/* Event pool used by this application */
-		em_pool_t pool;
-		/* Allocate EO contexts from shared memory region */
-		my_eo_context_t eo_context_a;
-		my_eo_context_t eo_context_b;
-		/* Queue context */
-		my_queue_context_t queue_context_a;
-		my_queue_context_t queue_context_b;
-		/* EO A's queue */
-		em_queue_t queue_a;
-	};
-	/* Pad to cache line size */
-	uint8_t u8[2 * ENV_CACHE_LINE_SIZE];
+typedef struct {
+	/* Event pool used by this application */
+	em_pool_t pool;
+	/* Allocate EO contexts from shared memory region */
+	my_eo_context_t eo_context_a;
+	my_eo_context_t eo_context_b;
+	/* Queue context */
+	my_queue_context_t queue_context_a;
+	my_queue_context_t queue_context_b;
+	/* EO A's queue */
+	em_queue_t queue_a;
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } test_shm_t;
 
 COMPILE_TIME_ASSERT((sizeof(test_shm_t) % ENV_CACHE_LINE_SIZE) == 0,
@@ -118,9 +116,6 @@ ping_stop(my_eo_context_t *eo_ctx, em_eo_t eo);
 static void
 ping_receive(my_eo_context_t *eo_ctx, em_event_t event, em_event_type_t type,
 	     em_queue_t queue, my_queue_context_t *q_ctx);
-
-static void
-delay_spin(const uint64_t spin_count);
 
 /* Callback functions */
 static void
@@ -389,7 +384,6 @@ ping_start(my_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 		      "EO:%" PRI_EO " queue:%" PRI_QUEUE "", status, eo, queue);
 
 	status = em_eo_add_queue_sync(eo, queue);
-
 	test_fatal_if(status != EM_OK,
 		      "EO add queue:%" PRI_STAT "\n"
 		      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "", status, eo, queue);
@@ -473,6 +467,11 @@ ping_receive(my_eo_context_t *eo_ctx, em_event_t event, em_event_type_t type,
 
 	ping = em_event_pointer(event);
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	dest = ping->dest;
 	ping->dest = queue;
 
@@ -483,26 +482,13 @@ ping_receive(my_eo_context_t *eo_ctx, em_event_t event, em_event_type_t type,
 	delay_spin(SPIN_COUNT);
 
 	status = em_send(event, dest);
-
-	test_fatal_if(status != EM_OK,
-		      "em_send():%" PRI_STAT "\n"
-		      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
-		      status, eo_ctx->this_eo, test_shm->queue_a);
-}
-
-/**
- * Delay spinloop
- */
-static void
-delay_spin(const uint64_t spin_count)
-{
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
-	uint64_t i;
-
-	env_atomic64_init(&dummy);
-
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
+	if (unlikely(status != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "em_send():%" PRI_STAT "\n"
+			      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
+			      status, eo_ctx->this_eo, dest);
+	}
 }
 
 /**

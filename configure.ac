@@ -7,7 +7,7 @@ AC_PREREQ([2.69])
 ############################
 m4_define([em_api_major_version], [2])
 m4_define([em_api_minor_version], [1])
-m4_define([em_api_implementation_version], [0])
+m4_define([em_api_implementation_version], [1])
 m4_define([em_api_implementation_fix], [0])
 
 m4_define([em_api_version], [em_api_major_version.em_api_minor_version])

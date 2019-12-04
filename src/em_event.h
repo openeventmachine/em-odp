@@ -87,7 +87,7 @@ event_em2odp(em_event_t em_event)
 static inline em_event_t
 event_odp2em(odp_event_t odp_event)
 {
-	return (em_event_t)odp_event;
+	return (em_event_t)(uintptr_t)odp_event;
 }
 
 static inline em_event_t *
@@ -199,7 +199,6 @@ events_to_event_hdrs(em_event_t events[], event_hdr_t *ev_hdrs[], const int num)
 			for (i = 0; i < num_type; i++) {
 				ev_hdrs[ev + i] =
 					odp_packet_user_area(odp_pkts[i]);
-				odp_prefetch(ev_hdrs[ev + i]);
 			}
 
 			event_hdr_t *init_hdrs[num_type];
@@ -225,7 +224,6 @@ events_to_event_hdrs(em_event_t events[], event_hdr_t *ev_hdrs[], const int num)
 				odp_buf =
 				odp_buffer_from_event(odp_events[ev + i]);
 				ev_hdrs[ev + i] = odp_buffer_addr(odp_buf);
-				odp_prefetch(ev_hdrs[ev + i]);
 			}
 		}
 		ev += num_type;
@@ -376,8 +374,8 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 static inline event_hdr_t *
 start_node_to_event_hdr(list_node_t *const list_node)
 {
-	event_hdr_t *const ev_hdr = (event_hdr_t *)((uint8_t *)list_node
-				     - offsetof(event_hdr_t, start_node));
+	event_hdr_t *const ev_hdr = (event_hdr_t *)(uintptr_t)
+		((uint8_t *)list_node - offsetof(event_hdr_t, start_node));
 
 	return likely(list_node != NULL) ? ev_hdr : NULL;
 }

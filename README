@@ -54,13 +54,13 @@ more inlining of code. Try also --disable-shared if a static lib is OK for you.
    --disable-shared)
 > make && make install
 
-Tested against odp v1.22.0.0 and up to odp commit (at the time of writing the
+Tested against odp v1.23.0.0 and up to odp commit (at the time of writing the
 latest on the odp git master branch):
-	Commit: dda80b5e5e143ff05ed0f8b0ce0f502be71eaa8b [dda80b5]
-	Commit Date: Monday, 21 October 2019 15:24.24
-	configure: disable static test applications without static odp lib
+  Commit: b9002efa6e12fafc901794aa5f6a99ef306d944b [b9002ef]
+  Commit Date: Thursday, 28 November 2019 11:57.11
+  validation: buffer: allow allocted buffer size to be larger than requested
 
-Trying to build static test applications without static ODP library would
+Trying to build static test applications without a static ODP library would
 fail.
 
 Clone EM-ODP code:
@@ -73,8 +73,10 @@ em-odp with different odp installations or configurations.
 > mkdir build && cd build
 > ../configure --prefix=<em-odp install path> --with-odp-path=<odp install path>
 > make && make install
+
 Run some example application to test the functionality (path from build/), e.g.
 > ./programs/example/fractal/fractal -c 0xe -t
+Stop by pressing Ctrl-C.
 
 ===============================================================================
 Debug compilation
@@ -152,11 +154,11 @@ to configure and compile dpdk and odp-dpdk on top of it.
 ODP compilations as above but different installation directories i.e.
 > ../configure --prefix=<odp-dpdk install path>
 
-Tested against odp-dpdk v1.22.0.0_DPDK_18.11 (at the time of writing the
+Tested against odp-dpdk v1.23.0.0_DPDK_18.11 (at the time of writing the
 latest on the odp-dpdk git master branch):
-	Commit: f1c978da2c1e1cab3c08af2f42aeaa53b381eca4 [f1c978d]
-	Commit Date: Friday, 23 August 2019 15:03.16
-	linux-dpdk: bump recommended dpdk version to 18.11
+  Commit: 4f6d7f4a897808865b6a4da37fd17837b5b5453f [4f6d7f4]
+  Date: Tuesday, 3 December 2019 8:57.13
+  Merge pull request #83
 
 EM-ODP compilation with odp-dpdk:
 > mkdir build-dpdk && cd build-dpdk

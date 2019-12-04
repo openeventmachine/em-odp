@@ -271,7 +271,9 @@ em_term(em_conf_t *conf)
 	int num_events;
 	int ret, i;
 
-	if (conf->event_timer)
+	(void)conf;
+
+	if (em_shm->conf.event_timer)
 		timer_term_global();
 
 	/*

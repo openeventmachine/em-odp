@@ -69,43 +69,73 @@ COMPILE_TIME_ASSERT(sizeof(em_event_t) == sizeof(odp_event_t),
  * SW & I/O originated events.
  */
 typedef struct {
-	/** This event */
-	em_event_t event;
-	/** Event size */
-	size_t event_size;
-	/** Event type */
-	em_event_type_t event_type;
+	/*
+	 * - Keep seldomly used data in the beginning of the ev-hdr.
+	 * - Keep data accessed every dispach round at the end, potentially in
+	 *   the same cache line as the event payload to reduce overall
+	 *   cache-misses.
+	 */
+
+	/**
+	 * EO-start send event buffering, event linked-list node
+	 */
+	list_node_t start_node;
+	/**
+	 * EO-start send event buffering, destination queue when sent
+	 */
+	em_queue_t start_queue;
+
+	/**
+	 * Handle of the EM pool the event was allocated from.
+	 * @note only used if EM_POOL_STATISTICS_ENABLE is set ('1')
+	 */
+	em_pool_t pool;
 	/**
 	 * Subpool index of the EM pool the event was allocated from.
 	 * @note only used if EM_POOL_STATISTICS_ENABLE is set ('1')
 	 */
 	int32_t subpool;
 	/**
-	 * Handle of the EM pool the event was allocated from.
-	 * @note only used if EM_POOL_STATISTICS_ENABLE is set ('1')
+	 * Atomic alloc/free counter to catch double free errors
 	 */
-	em_pool_t pool;
-
-	/** Event Group handle */
-	em_event_group_t egrp;
-	/** Event group element */
-	event_group_elem_t *egrp_elem;
-	/** Event group generation */
-	int32_t egrp_gen;
-
-	/** Catch double free errors */
 	env_atomic32_t allocated;
-
-	/** Queue element for associated queue (for AG or local queue) */
+	/**
+	 * Event size
+	 */
+	size_t event_size;
+	/**
+	 * Queue element for associated queue (for AG or local queue)
+	 */
 	queue_elem_t *q_elem;
 
-	/* EO start event buffering */
-	em_queue_t start_queue; /* EO start event buffering */
-	list_node_t start_node;
+	/**
+	 * This event handle
+	 *  - aligned to 64B boundary without enlarging sizeof(event_hdr_t)
+	 *    (using 'ODP_ALIGNED(64)' would enlarge the size to 128B)
+	 */
+	em_event_t event ODP_ALIGNED(32);
+	/**
+	 * Event type, contains major and major parts
+	 */
+	em_event_type_t event_type;
+
+	/**
+	 * Event group generation
+	 */
+	int32_t egrp_gen;
+	/**
+	 * Event Group handle
+	 */
+	em_event_group_t egrp;
+	/**
+	 * Event group element
+	 */
+	event_group_elem_t *egrp_elem;
+
+	void *end[0] ODP_ALIGNED(16); /* pad to next 16B boundary */
 } event_hdr_t;
 
-COMPILE_TIME_ASSERT(sizeof(event_hdr_t) % sizeof(uint64_t) == 0,
-		    EVENT_HDR_SIZE_ERROR);
+COMPILE_TIME_ASSERT(sizeof(event_hdr_t) == 96, EVENT_HDR_SIZE_ERROR);
 
 #ifdef __cplusplus
 }

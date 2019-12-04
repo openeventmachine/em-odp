@@ -78,7 +78,10 @@ em_error_format_string(char *str, size_t size, em_eo_t eo, em_status_t error,
 		 glob_err_cnt, loc_err_cnt, base, line, func);
 
 	if (ret > 0 && ret < (int64_t)size) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
 		ret += vsnprintf(str + ret, size - ret, format, args);
+#pragma GCC diagnostic pop
 		if (ret > 0 && ret < (int64_t)size)
 			ret += snprintf(str + ret, size - ret, "\n");
 	}

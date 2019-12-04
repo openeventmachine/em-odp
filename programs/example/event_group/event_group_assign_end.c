@@ -217,9 +217,6 @@ static void
 egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	       em_queue_t queue, void *q_ctx);
 
-static void
-delay_spin(const uint64_t spin_count);
-
 static uint64_t
 sum_received_events(core_stat_t core_stats[], int len);
 
@@ -484,15 +481,58 @@ egroup_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 static em_status_t
 egroup_stop(void *eo_context, em_eo_t eo)
 {
+	eo_context_t *eo_ctx = eo_context;
+	em_event_group_t egrp;
 	em_status_t ret;
-
-	(void)eo_context;
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
+	int num_notifs;
 
 	/* remove and delete all of the EO's queues */
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(ret != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
 		      ret, eo);
+
+	/* No more dispatching of the EO's events, egrps can be freed */
+
+	/* First normal event group */
+	egrp = eo_ctx->egrp.event_group;
+	if (!em_event_group_is_ready(egrp)) {
+		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		ret = em_event_group_abort(egrp);
+		if (ret == EM_OK && num_notifs == 1)
+			em_free(notif_tbl[0].event);
+	}
+	ret = em_event_group_delete(egrp);
+	test_fatal_if(ret != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT " EO:%" PRI_EO "",
+		      egrp, ret, eo);
+
+	/* Event group assigned to events sent without any event group */
+	egrp = eo_ctx->egrp_assign.event_group;
+	if (!em_event_group_is_ready(egrp)) {
+		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		ret = em_event_group_abort(egrp);
+		if (ret == EM_OK && num_notifs == 1)
+			em_free(notif_tbl[0].event);
+	}
+	ret = em_event_group_delete(egrp);
+	test_fatal_if(ret != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT " EO:%" PRI_EO "",
+		      egrp, ret, eo);
+
+	/* Event group used to track completion of the two event groups above*/
+	egrp = eo_ctx->all_done_event_group;
+	if (!em_event_group_is_ready(egrp)) {
+		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		ret = em_event_group_abort(egrp);
+		if (ret == EM_OK && num_notifs == 1)
+			em_free(notif_tbl[0].event);
+	}
+	ret = em_event_group_delete(egrp);
+	test_fatal_if(ret != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT " EO:%" PRI_EO "",
+		      egrp, ret, eo);
 
 	return EM_OK;
 }
@@ -527,6 +567,11 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)q_ctx;
 
 	egroup_test = em_event_pointer(event);
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	switch (egroup_test->msg) {
 	case MSG_START:
@@ -626,10 +671,14 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			em_send_group_multi(&ev_tbl[j], left_over,
 					    queue, send_event_group);
 		}
-		test_fatal_if(num_sent != ev_cnt,
-			      "Event send multi failed:%d (%d)\n"
-			      "Q:%" PRI_QUEUE "",
-			      num_sent, ev_cnt, queue);
+		if (unlikely(num_sent != ev_cnt)) {
+			for (i = num_sent; i < ev_cnt; i++)
+				em_free(ev_tbl[i]);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Event send multi failed:%d (%d)\n"
+				      "Q:%" PRI_QUEUE "",
+				      num_sent, ev_cnt, queue);
+		}
 		break;
 	} /* end case MSG_START & MSG_START_ASSIGN */
 
@@ -703,16 +752,18 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			    eo_ctx->egrp.event_group) {
 				/* Resend event using the event group */
 				ret = em_send_group(event, queue, event_group);
-				test_fatal_if(ret != EM_OK,
-					      "Send group:%" PRI_STAT "", ret);
 			} else {
 				/*
 				 * Resend the event without an event group,
 				 * instead assign it when received again
 				 */
 				ret = em_send(event, queue);
-				test_fatal_if(ret != EM_OK,
-					      "Send:%" PRI_STAT "", ret);
+			}
+			if (unlikely(ret != EM_OK)) {
+				em_free(event);
+				test_fatal_if(!appl_shm->exit_flag,
+					      "Send:%" PRI_STAT "\n"
+					      "Q:%" PRI_QUEUE "", ret, queue);
 			}
 		} else {
 			em_event_group_processing_end();
@@ -802,14 +853,20 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		delay_spin(DELAY_SPIN_COUNT);
 
 		ret = em_send(eo_ctx->egrp.event_start, queue);
-		test_fatal_if(ret != EM_OK,
-			      "Event send:%" PRI_STAT " Q:%" PRI_QUEUE "",
-			      ret, queue);
+		if (unlikely(ret != EM_OK)) {
+			em_free(eo_ctx->egrp.event_start);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "",
+				      ret, queue);
+		}
 
 		ret = em_send(eo_ctx->egrp_assign.event_start, queue);
-		test_fatal_if(ret != EM_OK,
-			      "Event send:%" PRI_STAT " Q:%" PRI_QUEUE "",
-			      ret, queue);
+		if (unlikely(ret != EM_OK)) {
+			em_free(eo_ctx->egrp_assign.event_start);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "",
+				      ret, queue);
+		}
 		break;
 
 	default:
@@ -843,19 +900,4 @@ update_test_cycles(uint64_t diff, egrp_context_t *const egrp_context)
 		egrp_context->total_cycles += diff;
 
 	egrp_context->total_rounds++;
-}
-
-/**
- * Delay execution by spinning
- */
-static void
-delay_spin(const uint64_t spin_count)
-{
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
-	uint64_t i;
-
-	env_atomic64_init(&dummy);
-
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
 }

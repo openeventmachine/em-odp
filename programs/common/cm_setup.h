@@ -35,9 +35,13 @@
 extern "C" {
 #endif
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <signal.h>
 
 #define APPL_NAME_LEN  (32)
 
@@ -125,11 +129,18 @@ typedef struct {
 	em_conf_t em_conf;
 	/** Application configuration */
 	appl_conf_t appl_conf;
+	/* Exit the EM-core dispatch loop if set to 1, set by SIGINT handler */
+	sig_atomic_t exit_flag;
 	/** Application synchronization vars */
 	sync_t sync ENV_CACHE_LINE_ALIGNED;
 	/* Pad size to a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } appl_shm_t;
+
+/**
+ * Global pointer to common application shared memory
+ */
+extern appl_shm_t *appl_shm;
 
 /**
  * Common setup function for the appliations,
@@ -153,6 +164,8 @@ int appl_vlog(em_log_level_t level, const char *fmt, va_list args);
 
 __attribute__((format(printf, 2, 3)))
 int appl_log(em_log_level_t level, const char *fmt, ...);
+
+void delay_spin(const uint64_t spin_count);
 
 #ifdef __cplusplus
 }

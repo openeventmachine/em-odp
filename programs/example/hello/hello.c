@@ -84,21 +84,19 @@ typedef struct {
 /**
  * Hello World shared memory
  */
-typedef union {
-	struct {
-		/* Event pool used by this application */
-		em_pool_t pool;
-		/* Allocate EO contexts from shared memory region */
-		my_eo_context_t eo_context_a;
-		my_eo_context_t eo_context_b;
-		/* Queue context */
-		my_queue_context_t queue_context_a;
-		my_queue_context_t queue_context_b;
-		/* EO A's queue */
-		em_queue_t queue_a;
-	};
+typedef struct {
+	/* Event pool used by this application */
+	em_pool_t pool;
+	/* Allocate EO contexts from shared memory region */
+	my_eo_context_t eo_context_a;
+	my_eo_context_t eo_context_b;
+	/* Queue context */
+	my_queue_context_t queue_context_a;
+	my_queue_context_t queue_context_b;
+	/* EO A's queue */
+	em_queue_t queue_a;
 	/* Pad to cache line size */
-	uint8_t u8[2 * ENV_CACHE_LINE_SIZE];
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } hello_shm_t;
 
 COMPILE_TIME_ASSERT((sizeof(hello_shm_t) % ENV_CACHE_LINE_SIZE) == 0,
@@ -120,9 +118,6 @@ static void
 hello_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 		    em_event_type_t type, em_queue_t queue,
 		    my_queue_context_t *q_ctx);
-
-static void
-delay_spin(const uint64_t spin_count);
 
 /**
  * Main function
@@ -256,6 +251,7 @@ test_stop(appl_conf_t *const appl_conf)
 	const em_eo_t eo_a = hello_shm->eo_context_a.this_eo;
 	const em_eo_t eo_b = hello_shm->eo_context_b.this_eo;
 	em_status_t stat;
+
 	(void)appl_conf;
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -420,6 +416,11 @@ hello_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 	hello_event_t *hello;
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	hello = em_event_pointer(event);
 
 	dest = hello->dest;
@@ -432,23 +433,11 @@ hello_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 	delay_spin(SPIN_COUNT);
 
 	status = em_send(event, dest);
-
-	test_fatal_if(status != EM_OK, "em_send():%" PRI_STAT "\n"
-		      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
-		      status, eo_ctx->this_eo, hello_shm->queue_a);
-}
-
-/**
- * Delay spinloop
- */
-static void
-delay_spin(const uint64_t spin_count)
-{
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
-	uint64_t i;
-
-	env_atomic64_init(&dummy);
-
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
+	if (unlikely(status != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag,
+			      "em_send():%" PRI_STAT "\n"
+			      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
+			      status, eo_ctx->this_eo, hello_shm->queue_a);
+	}
 }

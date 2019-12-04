@@ -373,6 +373,9 @@ test_stop(appl_conf_t *const appl_conf)
 {
 	const int core = em_core_id();
 	em_eo_t eo = qgrp_shm->app_eo_ctx.eo;
+	em_event_group_t egrp;
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
+	int num_notifs;
 	em_status_t err;
 
 	(void)appl_conf;
@@ -382,6 +385,20 @@ test_stop(appl_conf_t *const appl_conf)
 	err = em_eo_stop_sync(eo);
 	test_fatal_if(err != EM_OK,
 		      "EO stop:%" PRI_STAT " EO:%" PRI_EO "", err, eo);
+
+	/* No more dispatching of the EO's events, egrp can be freed */
+
+	egrp = qgrp_shm->app_eo_ctx.event_group;
+	if (!em_event_group_is_ready(egrp)) {
+		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		err = em_event_group_abort(egrp);
+		if (err == EM_OK && num_notifs == 1)
+			em_free(notif_tbl[0].event);
+	}
+	err = em_event_group_delete(egrp);
+	test_fatal_if(err != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT " EO:%" PRI_EO "",
+		      egrp, err, eo);
 }
 
 void
@@ -411,6 +428,11 @@ receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 	test_fatal_if(em_get_type_major(type) != EM_EVENT_TYPE_SW,
 		      "Unexpected event type: 0x%x", type);
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	switch (app_event->id) {
 	case EVENT_NOTIF:
@@ -632,8 +654,11 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 		app_event->notif.type = NOTIF_RESTART;
 		app_event->notif.used_group = eo_ctx->notif_qgrp;
 		err = em_send(event, eo_ctx->notif_queue);
-		test_fatal_if(err != EM_OK,
-			      "Send to notif queue:%" PRI_STAT "", err);
+		if (unlikely(err != EM_OK)) {
+			em_free(event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Send to notif queue:%" PRI_STAT "", err);
+		}
 	} else {
 		em_notif_t egroup_notif_tbl[1];
 		int i;
@@ -667,8 +692,12 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 
 			err = em_send_group(ev_data, eo_ctx->test_queue,
 					    eo_ctx->event_group);
-			test_fatal_if(err != EM_OK,
-				      "Send to test queue:%" PRI_STAT "", err);
+			if (unlikely(err != EM_OK)) {
+				em_free(ev_data);
+				test_fatal_if(!appl_shm->exit_flag,
+					      "Send to test queue:%" PRI_STAT "",
+					      err);
+			}
 		}
 	}
 }
@@ -818,8 +847,11 @@ receive_event_data(app_eo_ctx_t *const eo_ctx, em_event_t event,
 		/* Send the data event for another round */
 		err = em_send_group(event, eo_ctx->test_queue,
 				    eo_ctx->event_group);
-		test_fatal_if(err != EM_OK,
-			      "Send to test queue:%" PRI_STAT "", err);
+		if (unlikely(err != EM_OK)) {
+			em_free(event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "Send to test queue:%" PRI_STAT "", err);
+		}
 	} else if (event_count <= eo_ctx->modify_threshold) {
 		/*
 		 * Free the events for the last round, an event group

@@ -589,6 +589,8 @@ create_queue_per_flow(const em_eo_t eo, eo_context_t *const eo_ctx)
 
 			/* Update the Queue Context Index */
 			q_ctx_idx++;
+			test_fatal_if(q_ctx_idx > NUM_PKTIN_QUEUES,
+				      "Too many queues!");
 		}
 	}
 }
@@ -635,6 +637,9 @@ stop_eo(void *eo_context, em_eo_t eo)
 {
 	eo_context_t *eo_ctx = eo_context;
 	em_status_t ret;
+	em_queue_t pktout_queue;
+	int if_id;
+	int i, j;
 
 	APPL_PRINT("EO %" PRI_EO ":%s stopping\n", eo, eo_ctx->name);
 
@@ -643,6 +648,20 @@ stop_eo(void *eo_context, em_eo_t eo)
 	test_fatal_if(ret != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
 		      ret, eo);
+
+	/* Delete the packet output queues created for each interface */
+	for (i = 0; i < eo_ctx->if_count; i++) {
+		if_id = eo_ctx->if_ids[i];
+		for (j = 0; j < eo_ctx->pktout_queues_per_if; j++) {
+			/* pktout queue tied to interface id 'if_id' */
+			pktout_queue = eo_ctx->pktout_queue[if_id][j];
+			test_fatal_if(pktout_queue == EM_QUEUE_UNDEF,
+				      "Pktout queue undef:%d,%d", i, j);
+			ret = em_queue_delete(pktout_queue);
+			test_fatal_if(ret != EM_OK,
+				      "Pktout queue delete failed:%d,%d", i, j);
+		}
+	}
 
 	return EM_OK;
 }
@@ -661,6 +680,11 @@ receive_eo_packet(void *eo_context, em_event_t event, em_event_type_t type,
 	em_status_t status;
 
 	(void)type;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	in_port = pktio_input_port(event);
 

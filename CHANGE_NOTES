@@ -44,6 +44,18 @@ The version numbering scheme reflects the used EM API version:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine on ODP v2.1.1
+--------------------------------------------------------------------------------
+- Example programs support graceful Ctrl-C termination, see em-odp/programs.
+  Pressing Ctrl-C (once) initiates graceful example program termination instead
+  of abruptly killing it. A second press of Ctrl-C will always kill the program
+  immediately.
+- Added the programs/performance/loop example that simply loops received events
+  back into the queue they originated from and measures the per core
+  performance (cycles/core and millions-of-events/core).
+- Optimizations and performance improvements
+
+--------------------------------------------------------------------------------
 Event Machine on ODP v2.1.0
 --------------------------------------------------------------------------------
 - Support for EM API v2.1 (em-odp/include), see API changes in

@@ -188,6 +188,8 @@ typedef struct {
 	odp_pool_t pool;
 	/** Default queue to use for incoming pkts without a dedicated queue */
 	em_queue_t default_queue;
+	/** flag set after pktio_start() - prevent pkio rx&tx before started */
+	int pktio_started;
 	/** ODP pktio handles */
 	odp_pktio_t pktio[IF_MAX_NUM];
 
@@ -242,31 +244,21 @@ typedef struct {
 	odp_event_t ev_burst[MAX_PKT_BURST_TX];
 } pktio_locm_t;
 
-void
-pktio_mem_reserve(void);
-void
-pktio_mem_lookup(void);
-void
-pktio_mem_free(void);
+void pktio_mem_reserve(void);
+void pktio_mem_lookup(void);
+void pktio_mem_free(void);
 
-void
-pktio_pool_create(int if_count);
-void
-pktio_pool_destroy(void);
+void pktio_pool_create(int if_count);
+void pktio_pool_destroy(void);
 
-void
-pktio_init(appl_conf_t *const appl_conf);
-void
-pktio_deinit(appl_conf_t *const appl_conf);
+void pktio_init(appl_conf_t *const appl_conf);
+void pktio_deinit(appl_conf_t *const appl_conf);
 
-int
-pktio_create(const char *dev, int num_workers);
-void
-pktio_init_core(void);
-void
-pktio_stop(void);
-void
-pktio_close(void);
+int pktio_create(const char *dev, int num_workers);
+void pktio_start(void);
+void pktio_halt(void);
+void pktio_stop(void);
+void pktio_close(void);
 
 /**
  * @brief Poll input resources for pkts/events and enqueue into EM queues
@@ -277,8 +269,7 @@ pktio_close(void);
  *
  * @return number of pkts/events received from input and enqueued into EM
  */
-int
-input_poll(void);
+int input_poll(void);
 
 /**
  * @brief Drain buffered output - ensure low rate flows are also sent out.
@@ -294,8 +285,7 @@ input_poll(void);
  *
  * @return number of events successfully drained and sent for output
  */
-int
-output_drain(void);
+int output_drain(void);
 
 /**
  * @brief User provided EM output-queue callback function ('em_output_func_t')
@@ -313,9 +303,8 @@ output_drain(void);
  *
  * @return number of events successfully sent (equal to num if all successful)
  */
-int
-pktio_tx(em_event_t events[], const unsigned int num,
-	 const em_queue_t output_queue, void *output_fn_args);
+int pktio_tx(em_event_t events[], const unsigned int num,
+	     const em_queue_t output_queue, void *output_fn_args);
 /**
  * @typedef pktio_tx_fn_args_t
  * User defined arguments to the EM output queue callback function
@@ -332,33 +321,29 @@ typedef struct {
  * Received packets matching the set destination IP-addr/port
  * will end up in the EM-queue 'queue'.
  */
-void
-pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t l4_port_dst,
-		em_queue_t queue);
+void pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t l4_port_dst,
+		     em_queue_t queue);
 
 /**
  * Remove the association between a packet-IO flow and an EM-queue.
  *
  * No further received frames will end up in the EM-queue 'queue'
  */
-void
-pktio_rem_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t l4_port_dst,
-		em_queue_t queue);
+void pktio_rem_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t l4_port_dst,
+		     em_queue_t queue);
 
 /**
  * Set the default EM-queue for packet I/O
  */
-int
-pktio_default_queue(em_queue_t queue);
+int pktio_default_queue(em_queue_t queue);
 
 /**
  * Provide applications a way to do a hash-lookup (e.g. sanity check etc.)
  */
-em_queue_t
-pktio_lookup_sw(uint8_t proto, uint32_t ipv4_dst, uint16_t l4_port_dst);
+em_queue_t pktio_lookup_sw(uint8_t proto, uint32_t ipv4_dst,
+			   uint16_t l4_port_dst);
 
-odp_pool_t
-pktio_pool_get(void);
+odp_pool_t pktio_pool_get(void);
 
 static inline odp_packet_t
 pktio_odp_packet_get(em_event_t em_event)

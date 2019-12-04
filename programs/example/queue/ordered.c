@@ -569,8 +569,13 @@ eo_ordered_receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 	test_fatal_if(test_event->ev_id != EV_ID_ORDERED_EVENT,
 		      "Unexpected ev-id:%d", test_event->ev_id);
-	ordered = &test_event->ordered;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
+	ordered = &test_event->ordered;
 	ordered->out_of_order = 0;
 	ordered->last_in_order = 0;
 	ordered->is_copy = 0;
@@ -610,7 +615,11 @@ eo_ordered_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			copy_ordered->original = event; /* store original */
 
 			ret = em_send(copy_event, q_ctx->dest_queue);
-			test_fatal_if(ret != EM_OK, "event send:%" PRI_STAT "");
+			if (unlikely(ret != EM_OK)) {
+				em_free(copy_event);
+				test_fatal_if(!appl_shm->exit_flag,
+					      "event send:%" PRI_STAT "");
+			}
 			out_of_order = 1;
 			em_ordered_processing_end();
 		}
@@ -621,7 +630,11 @@ eo_ordered_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		sub_ordered->is_copy = 0;
 
 		ret = em_send(sub_event, q_ctx->dest_queue);
-		test_fatal_if(ret != EM_OK, "event send:%" PRI_STAT "");
+		if (unlikely(ret != EM_OK)) {
+			em_free(sub_event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "event send:%" PRI_STAT "");
+		}
 	}
 
 	if (interleave == i) {
@@ -629,7 +642,11 @@ eo_ordered_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		ordered->out_of_order = 0;
 		ordered->last_in_order = 1;
 		ret = em_send(event, q_ctx->dest_queue);
-		test_fatal_if(ret != EM_OK, "event send:%" PRI_STAT "");
+		if (unlikely(ret != EM_OK)) {
+			em_free(event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "event send:%" PRI_STAT "");
+		}
 	}
 }
 
@@ -655,6 +672,16 @@ eo_atomic_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	int out_of_order, last_in_order;
 
 	(void)type;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		if (test_event->ev_id == EV_ID_ORDERED_EVENT) {
+			ordered = &test_event->ordered;
+			if (ordered->is_copy)
+				em_free(ordered->original);
+		}
+		em_free(event);
+		return;
+	}
 
 	if (unlikely(test_event->ev_id == EV_ID_START_EVENT)) {
 		/*
@@ -697,7 +724,11 @@ eo_atomic_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		q_ctx->seq++;
 		q_ctx->sub_seq = 0;
 		ret = em_send(event, q_ctx->dest_queue);
-		test_fatal_if(ret != EM_OK, "event send:%" PRI_STAT "");
+		if (unlikely(ret != EM_OK)) {
+			em_free(event);
+			test_fatal_if(!appl_shm->exit_flag,
+				      "event send:%" PRI_STAT "");
+		}
 	} else if (!out_of_order) {
 		q_ctx->sub_seq++;
 		em_free(event);

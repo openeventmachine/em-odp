@@ -213,6 +213,9 @@ typedef struct {
 static ENV_LOCAL packet_multi_stage_shm_t *pkt_shm;
 
 static em_status_t
+mstage_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
+		     va_list args);
+static em_status_t
 start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
 
 static em_status_t
@@ -280,7 +283,7 @@ test_init(void)
 	if (core == 0) {
 		pkt_shm = env_shared_reserve("PktMStageShMem",
 					     sizeof(packet_multi_stage_shm_t));
-		em_register_error_handler(test_error_handler);
+		em_register_error_handler(mstage_error_handler);
 	} else {
 		pkt_shm = env_shared_lookup("PktMStageShMem");
 	}
@@ -308,10 +311,10 @@ test_start(appl_conf_t *const appl_conf)
 	em_eo_t eo_1st, eo_2nd, eo_3rd;
 	em_queue_t default_queue, pktout_queue;
 	em_queue_t queue_1st, queue_2nd, queue_3rd;
+	em_queue_t tmp_q;
 	em_queue_conf_t queue_conf;
 	em_output_queue_conf_t output_conf; /* platform specific */
 	pktio_tx_fn_args_t pktio_tx_fn_args; /* user defined content */
-	em_queue_t tmp_q;
 	queue_context_1st_t *q_ctx_1st;
 	queue_context_2nd_t *q_ctx_2nd;
 	queue_context_3rd_t *q_ctx_3rd;
@@ -440,7 +443,7 @@ test_start(appl_conf_t *const appl_conf)
 	ret = em_eo_add_queue_sync(eo_1st, default_queue);
 	test_fatal_if(ret != EM_OK,
 		      "Add queue failed:%" PRI_STAT "\n"
-		      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
+		      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
 		      ret, eo_1st, default_queue);
 
 	/* Zero the Queue context arrays */
@@ -602,7 +605,9 @@ test_stop(appl_conf_t *const appl_conf)
 {
 	const int core = em_core_id();
 	em_status_t ret;
-	int i;
+	em_queue_t pktout_queue;
+	int if_id;
+	int i, j;
 
 	(void)appl_conf;
 
@@ -618,6 +623,19 @@ test_stop(appl_conf_t *const appl_conf)
 		ret = em_eo_delete(eo);
 		test_fatal_if(ret != EM_OK,
 			      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
+	}
+
+	for (i = 0; i < pkt_shm->if_count; i++) {
+		if_id = pkt_shm->if_ids[i];
+		for (j = 0; j < pkt_shm->pktout_queues_per_if; j++) {
+			/* pktout queue tied to interface id 'if_id' */
+			pktout_queue = pkt_shm->pktout_queue[if_id][j];
+			test_fatal_if(pktout_queue == EM_QUEUE_UNDEF,
+				      "Pktout queue undef:%d,%d", i, j);
+			ret = em_queue_delete(pktout_queue);
+			test_fatal_if(ret != EM_OK,
+				      "Pktout queue delete failed:%d,%d", i, j);
+		}
 	}
 }
 
@@ -714,6 +732,11 @@ receive_packet_eo_1st(void *eo_context, em_event_t event, em_event_type_t type,
 
 	(void)type;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	/* Drop everything from the default queue */
 	if (unlikely(queue == eo_ctx->default_queue)) {
 		static ENV_LOCAL uint64_t drop_cnt = 1;
@@ -770,6 +793,11 @@ receive_packet_eo_2nd(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)eo_context;
 	(void)queue;
 
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
+
 	/* Send to the next stage for further processing. */
 	status = em_send(event, q_ctx->dst_queue);
 
@@ -793,6 +821,11 @@ receive_packet_eo_3rd(void *eo_context, em_event_t event, em_event_type_t type,
 	(void)type;
 	(void)eo_context;
 	(void)queue;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free(event);
+		return;
+	}
 
 	in_port = pktio_input_port(event);
 
@@ -920,4 +953,21 @@ set_pktout_queues(int q_idx, em_queue_t pktout_queue[/*out*/])
 		id = pkt_shm->if_ids[i];
 		pktout_queue[id] = pkt_shm->pktout_queue[id][pktout_idx];
 	}
+}
+
+static em_status_t
+mstage_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
+		     va_list args)
+{
+	/*
+	 * Don't report/log/print em_send() errors, instead return the error
+	 * code and let the application free the event that failed to be sent.
+	 * This avoids a print/log storm in an overloaded situation, i.e. when
+	 * sending input packets at a higher rate that can be sustained.
+	 */
+	if (!EM_ERROR_IS_FATAL(error) &&
+	    (escope == EM_ESCOPE_SEND || escope == EM_ESCOPE_SEND_MULTI))
+		return error;
+
+	return test_error_handler(eo, error, escope, args);
 }
