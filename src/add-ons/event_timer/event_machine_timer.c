@@ -111,16 +111,20 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	/*
 	 * Determine attr.num_tmo
 	 */
+
+	/* Account for pool buf-stashing on each core, assume max512 per core */
+	const uint32_t default_num_tmo = em_core_count() * 512 + 1024 - 1;
+
 	if (odp_capa.max_timers == 0) {
 		/* 0 = limited only by the available pool memory size */
 		if (attr.num_tmo == 0)
-			attr.num_tmo = EM_ODP_DEFAULT_TIMEOUTS;
+			attr.num_tmo = default_num_tmo;
 		/* else use attr.num_tmo as given */
 	} else {
 		/* odp has a limit for the number of odp-timers */
 		if (attr.num_tmo == 0) {
 			attr.num_tmo = MIN(odp_capa.max_timers,
-					   EM_ODP_DEFAULT_TIMEOUTS);
+					   default_num_tmo);
 		} else if (attr.num_tmo > odp_capa.max_timers) {
 			INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_TIMER_CREATE,
 				       "Timer capability err, odp-clksrc:%d\n"
@@ -195,8 +199,6 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	odp_tpool_param.priv = attr.flags & EM_TIMER_FLAG_PRIVATE ? 1 : 0;
 	odp_tpool_param.clk_src = odp_clksrc;
 
-	const char *name = attr.name[0] == '\0' ? "EM-timer" : attr.name;
-
 	/*
 	 * Set odp_pool_param_t for the EM-timer tmo_pool
 	 */
@@ -213,8 +215,8 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	 * This slow search should not be a problem with only a few timers
 	 * especially when these are normally created at startup.
 	 */
-	int i;
 	event_timer_t *timer;
+	int i;
 
 	odp_ticketlock_lock(&timer_shm->tlock);
 
@@ -224,20 +226,35 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 		if (timer->odp_tmr_pool != ODP_TIMER_POOL_INVALID)
 			continue;
 
+		char timer_pool_name[ODP_TIMER_POOL_NAME_LEN];
+		char tmo_pool_name[ODP_POOL_NAME_LEN];
+		char *name;
+
+		if (attr.name[0] != '\0') {
+			name = attr.name;
+		} else {
+			snprintf(timer_pool_name, ODP_TIMER_POOL_NAME_LEN,
+				 "EM-timer-%d", timer->idx);
+			name = timer_pool_name;
+		}
 		timer->odp_tmr_pool = odp_timer_pool_create(name,
 							    &odp_tpool_param);
 		if (timer->odp_tmr_pool == ODP_TIMER_POOL_INVALID)
 			goto error_locked;
-		TMR_DBG_PRINT("%s(): Allocated timer-idx:%d\n", __func__, i);
+		TMR_DBG_PRINT("%s(): Created timer: %s with idx: %d\n",
+			      __func__, name, timer->idx);
 
-		timer->tmo_pool = odp_pool_create("EM-timer-tmo-pool",
+		snprintf(tmo_pool_name, ODP_POOL_NAME_LEN, "Tmo-pool-%d",
+			 timer->idx);
+		timer->tmo_pool = odp_pool_create(tmo_pool_name,
 						  &odp_pool_param);
 		if (timer->tmo_pool == ODP_POOL_INVALID)
 			goto error_locked;
-		TMR_DBG_PRINT("%s(): Created ODP-pool for %d timeouts\n",
-			      __func__, odp_pool_param.buf.num);
+		TMR_DBG_PRINT("%s(): Created ODP-pool: %s for %d timeouts\n",
+			      __func__, tmo_pool_name, odp_pool_param.buf.num);
 
 		timer->flags = attr.flags;
+
 		odp_timer_pool_start();
 		break;
 	}

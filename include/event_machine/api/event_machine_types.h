@@ -211,7 +211,7 @@ typedef struct {
 	em_queue_flag_t flags;
 	/**
 	 * Request for a minimum amount of events the queue can hold or use
-	 * 0 for system default. Queue creation will fail, if the system
+	 * 0 for EM default value. Queue creation will fail, if the system
 	 * cannot support the requested amount.
 	 **/
 	unsigned int min_events;

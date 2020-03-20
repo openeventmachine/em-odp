@@ -332,7 +332,7 @@ local_queue_dequeue(void)
 
 		if (odp_event != ODP_EVENT_INVALID) {
 			event = event_odp2em(odp_event);
-			ev_hdr = event_to_event_hdr(event);
+			ev_hdr = event_to_hdr(event);
 			return ev_hdr;
 		}
 

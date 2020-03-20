@@ -97,21 +97,42 @@ pkt_enqueue(odp_packet_t pkt_tbl[], const int num, const em_queue_t queue)
 {
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	odp_event_t odp_event_tbl[num];
-	int sent;
+	int sent = 0;
 
 	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
 
-	if (q_elem->type == EM_QUEUE_TYPE_LOCAL) {
-		em_event_t *const event_tbl = events_odp2em(odp_event_tbl);
-		event_hdr_t *ev_hdr_tbl[num];
-
-		pkts_to_event_hdrs(pkt_tbl, event_tbl, ev_hdr_tbl/*out*/, num);
-		/* Send into an EM local queue */
-		sent = send_local_multi(event_tbl, ev_hdr_tbl, num, q_elem);
+	if (q_elem != NULL && q_elem->scheduled) {
+		/*
+		 * Enqueue the events into a scheduled em-odp queue.
+		 * No need to init the ev-hdrs - init is done in dispatch.
+		 */
+		sent = odp_queue_enq_multi(q_elem->odp_queue,
+					   odp_event_tbl, num);
 	} else {
-		const odp_queue_t odp_queue = q_elem->odp_queue;
-		/* Enqueue the events into em-odp */
-		sent = odp_queue_enq_multi(odp_queue, odp_event_tbl, num);
+		em_event_t *const event_tbl = events_odp2em(odp_event_tbl);
+		event_hdr_t *evhdr_tbl[num];
+
+		/* Init the event-hdrs for incoming pkts */
+		pkt_evhdr_init_multi(pkt_tbl, event_tbl,
+				     evhdr_tbl/*out*/, num);
+
+		if (q_elem == NULL) {
+			/* Send directly out via event chaining */
+			if (likely(queue_external(queue)))
+				sent = send_chaining_multi(event_tbl, evhdr_tbl,
+							   num, queue);
+		} else if (q_elem->type == EM_QUEUE_TYPE_UNSCHEDULED) {
+			/* Enqueue into an unscheduled em-odp queue */
+			sent = odp_queue_enq_multi(q_elem->odp_queue,
+						   odp_event_tbl, num);
+		} else if (q_elem->type ==  EM_QUEUE_TYPE_LOCAL) {
+			/* Send into an local em-odp queue */
+			sent = send_local_multi(event_tbl, evhdr_tbl,
+						num, q_elem);
+		} else if (q_elem->type ==  EM_QUEUE_TYPE_OUTPUT) {
+			/* Send directly out via an output em-odp queue */
+			sent = send_output_multi(event_tbl, num, q_elem);
+		}
 	}
 
 	if (unlikely(sent < num)) {

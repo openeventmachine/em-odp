@@ -89,7 +89,7 @@ extern "C" {
  * Additionally it is guaranteed, that two separate buffers never share a cache
  * line (to avoid false sharing).
  *
- * @param size          Event size in octets
+ * @param size          Event size in octets (size > 0)
  * @param type          Event type to allocate
  * @param pool          Event pool handle
  *

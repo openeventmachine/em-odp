@@ -59,6 +59,8 @@ typedef struct {
 	em_conf_t conf ENV_CACHE_LINE_ALIGNED;
 	/** Initialization state data */
 	init_t init ENV_CACHE_LINE_ALIGNED;
+	/** EM config file options */
+	opt_t opt ENV_CACHE_LINE_ALIGNED;
 	/** Mapping between physical core id <-> EM core id */
 	core_map_t core_map ENV_CACHE_LINE_ALIGNED;
 	/** Table of buffer/packet/event pools used by EM */
@@ -69,6 +71,8 @@ typedef struct {
 	eo_tbl_t eo_tbl ENV_CACHE_LINE_ALIGNED;
 	/** EO pool of free/unused EOs */
 	eo_pool_t eo_pool ENV_CACHE_LINE_ALIGNED;
+	/** Event Chaining resources */
+	event_chaining_t event_chaining ENV_CACHE_LINE_ALIGNED;
 	/** Queue table */
 	queue_tbl_t queue_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Queue pool of free/unused dynamic queues */

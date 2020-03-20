@@ -73,8 +73,12 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 				/* Sending to a disabled queue */
 				return error;
 			case EM_ESCOPE_DISPATCH:
-				/* Dispatch event from a disabled queue */
-				if (error == EM_ERR_BAD_STATE)
+				/*
+				 * Dispatch event from disabled or nonexisting
+				 * queue
+				 */
+				if (error == EM_ERR_BAD_STATE ||
+				    error == EM_ERR_BAD_POINTER)
 					return  error;
 				break;
 			default:

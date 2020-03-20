@@ -36,11 +36,69 @@ COMPILE_TIME_ASSERT(EM_POOL_DEFAULT > (em_pool_t)0 &&
 COMPILE_TIME_ASSERT(EM_POOL_UNDEF != EM_POOL_DEFAULT,
 		    EM_ODP_EM_POOL_UNDEF_ERROR);
 
+/*
+ * Max supported value for the config file option 'pool.alloc_align'.
+ *
+ * The limitation is set by events based on odp-bufs that include the ev-hdr at
+ * the beginning of the odp-buf payload - the alignment is adjusted into the end
+ * of the ev-hdr.
+ * Events based on odp-pkts do not have this restriction but the same limit is
+ * used for all.
+ */
+#define ALLOC_ALIGN_MAX  ((int)(sizeof(event_hdr_t) - \
+				offsetof(event_hdr_t, end_hdr_data)))
+
 static inline mpool_elem_t *
 mpool_poolelem2pool(objpool_elem_t *const objpool_elem)
 {
 	return (mpool_elem_t *)((uintptr_t)objpool_elem -
 				offsetof(mpool_elem_t, objpool_elem));
+}
+
+static int
+read_config_file(void)
+{
+	const char *conf_str;
+	bool val_bool = false;
+	int val = 0;
+	int ret;
+
+	EM_PRINT("EM-pool config:\n");
+
+	/*
+	 * Option: pool.statistics_enable
+	 */
+	conf_str = "pool.statistics_enable";
+	ret = libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.pool.statistics_enable = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
+
+	/*
+	 * Option: pool.alloc_align
+	 */
+	conf_str = "pool.alloc_align";
+	ret = libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+	if (val < 0 || val > ALLOC_ALIGN_MAX || !POWEROF2(val)) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n",
+		       conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.pool.alloc_align = val;
+	EM_PRINT("  %s: %d (max: %d)\n",
+		 conf_str, val, ALLOC_ALIGN_MAX);
+
+	return 0;
 }
 
 em_status_t
@@ -73,6 +131,9 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 		objpool_add(&mpool_pool->objpool, i % cores,
 			    &mpool_elem->objpool_elem);
 	}
+
+	if (read_config_file())
+		return EM_ERR_LIB_FAILED;
 
 	/* Store common ODP pool capabilities in the mpool_tbl for easy access*/
 	if (odp_pool_capability(&mpool_tbl->odp_pool_capability) != 0)
@@ -164,10 +225,17 @@ static int
 invalid_pool_cfg(em_pool_cfg_t *const pool_cfg)
 {
 	if (unlikely(pool_cfg == NULL ||
+		     pool_cfg->num_subpools <= 0 ||
 		     pool_cfg->num_subpools > EM_MAX_SUBPOOLS ||
 		     (pool_cfg->event_type != EM_EVENT_TYPE_SW &&
 		      pool_cfg->event_type != EM_EVENT_TYPE_PACKET)))
 		return -1;
+
+	for (int i = 0; i < pool_cfg->num_subpools; i++) {
+		if (unlikely(pool_cfg->subpool[i].size <= 0 ||
+			     pool_cfg->subpool[i].num <= 0))
+			return -2;
+	}
 
 	return 0;
 }
@@ -181,8 +249,11 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 	odp_pool_t odp_pool;
 	char pool_name[ODP_POOL_NAME_LEN];
 	int i, j, n;
-	uint32_t size, num;
+	uint32_t size, num, push_len;
 	mpool_elem_t *mpool_elem;
+	odp_pool_capability_t *const pool_capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+	unsigned int align = ODP_CACHE_LINE_SIZE;
 
 	/* Verify config */
 	if (unlikely(invalid_pool_cfg(pool_cfg)))
@@ -192,12 +263,11 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 	allocated_pool = pool_alloc(pool /* requested pool or 'undef'*/);
 	if (unlikely(allocated_pool == EM_POOL_UNDEF))
 		return EM_POOL_UNDEF;
-
 	pool = allocated_pool;
-	mpool_elem = pool_elem_get(pool);
 
+	mpool_elem = pool_elem_get(pool);
 	/* Sanity check */
-	if (mpool_elem->em_pool != allocated_pool)
+	if (mpool_elem->em_pool != pool)
 		return EM_POOL_UNDEF;
 
 	mpool_elem->event_type = pool_cfg->event_type;
@@ -240,34 +310,72 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 		}
 	}
 
+	/*
+	 * Align the event payload by pushing the start-location into the buffer
+	 * 'headroom' - if done, then the subpool size can also be decremented
+	 * by the same amount.
+	 */
+	push_len = em_shm->opt.pool.alloc_align;
+
 	for (i = 0; i < sorted_cfg.num_subpools; i++) {
 		odp_pool_param_init(&pool_params);
+		size = sorted_cfg.subpool[i].size;
 
 		if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
 			pool_params.type = ODP_POOL_PACKET;
 			/* num == max_num */
 			pool_params.pkt.num = sorted_cfg.subpool[i].num;
 			pool_params.pkt.max_num = sorted_cfg.subpool[i].num;
+
+			if (size > push_len)
+				size = size - push_len;
+			else
+				size = 1; /* 0:default, can be big => use 1 */
 			/* len == max_len */
-			pool_params.pkt.len = sorted_cfg.subpool[i].size;
-			pool_params.pkt.max_len = sorted_cfg.subpool[i].size;
-			pool_params.pkt.seg_len = sorted_cfg.subpool[i].size;
+			pool_params.pkt.len = size;
+			pool_params.pkt.max_len = size;
+			pool_params.pkt.seg_len = size;
+#if ODP_VERSION_API_NUM(1, 23, 3) <= ODP_VERSION_API
+			if (align > pool_capa->pkt.max_align)
+				align = pool_capa->pkt.max_align;
+			pool_params.pkt.align = align;
+#endif
 			/*
 			 * Reserve space for the event header in each packet's
 			 * user area:
 			 */
 			pool_params.pkt.uarea_size = sizeof(event_hdr_t);
+			/*
+			 * Reserve space for alloc-alignment in the headroom,
+			 * use default headroom value unless it's smaller than
+			 * needed:
+			 */
+			if (pool_params.pkt.headroom < push_len)
+				pool_params.pkt.headroom = push_len;
 		} else { /* pool_cfg->event_type == EM_EVENT_TYPE_SW */
 			pool_params.type = ODP_POOL_BUFFER;
 			pool_params.buf.num = sorted_cfg.subpool[i].num;
-			pool_params.buf.size = sorted_cfg.subpool[i].size +
-					       sizeof(event_hdr_t);
-			pool_params.buf.align = ODP_CACHE_LINE_SIZE;
+			pool_params.buf.size = size +
+					       sizeof(event_hdr_t) - push_len;
+			if (align > pool_capa->buf.max_align)
+				align = pool_capa->buf.max_align;
+			pool_params.buf.align = align;
 		}
 
 		snprintf(pool_name, sizeof(pool_name),
 			 "%" PRI_POOL ":%d-%s", pool, i, mpool_elem->name);
 		pool_name[sizeof(pool_name) - 1] = '\0';
+
+		/* verify alignment requirements */
+		if (!POWEROF2(align) || align <= em_shm->opt.pool.alloc_align) {
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_TOO_LARGE),
+				       EM_ESCOPE_POOL_CREATE,
+				       "EM-subpool:\"%s\" align mismatch:\n"
+				       "align:%u cfg:pool.alloc_align:%u",
+				       pool_name, align,
+				       em_shm->opt.pool.alloc_align);
+			return EM_POOL_UNDEF;
+		}
 
 		odp_pool = odp_pool_create(pool_name, &pool_params);
 		if (unlikely(odp_pool == ODP_POOL_INVALID)) {
@@ -342,6 +450,8 @@ pool_count(void)
 
 #define SUBSTR_FMT \
 "%d:[sz=%" PRIu32 " n=%" PRIu32 "(%" PRIu32 "/%" PRIu32 ")]"
+#define SUBSTR_NO_STATS_FMT \
+"%d:[sz=%" PRIu32 " n=%" PRIu32 "(-/-)]"
 
 void
 pool_info_print(em_pool_t pool)
@@ -364,12 +474,19 @@ pool_info_print(em_pool_t pool)
 	for (i = 0; i < pool_info.num_subpools; i++) {
 		char subpool_str[40];
 
-		snprintf(subpool_str, sizeof(subpool_str),
-			 SUBSTR_FMT, i,
-			 pool_info.subpool[i].size,
-			 pool_info.subpool[i].num,
-			 pool_info.subpool[i].used,
-			 pool_info.subpool[i].free);
+		if (em_shm->opt.pool.statistics_enable) {
+			snprintf(subpool_str, sizeof(subpool_str),
+				 SUBSTR_FMT, i,
+				 pool_info.subpool[i].size,
+				 pool_info.subpool[i].num,
+				 pool_info.subpool[i].used,
+				 pool_info.subpool[i].free);
+		} else {
+			snprintf(subpool_str, sizeof(subpool_str),
+				 SUBSTR_NO_STATS_FMT, i,
+				 pool_info.subpool[i].size,
+				 pool_info.subpool[i].num);
+		}
 		subpool_str[sizeof(subpool_str) - 1] = '\0';
 		EM_PRINT(" %-40s", subpool_str);
 	}

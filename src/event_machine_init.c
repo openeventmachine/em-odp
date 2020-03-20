@@ -96,18 +96,6 @@ em_init(em_conf_t *conf)
 	RETURN_ERROR_IF(ret != 0, EM_ERR_OPERATION_FAILED, EM_ESCOPE_INIT,
 			"libconfig initialization failed:%d", ret);
 
-	/* This is for libconfig testing, will be removed eventually!
-	 * Read foo.bar config value.
-	 */
-	const char *conf_str;
-	int foo_bar_value;
-
-	conf_str = "foo.bar";
-	ret = libconfig_lookup_int(&em_shm->libconfig,
-				   conf_str, &foo_bar_value);
-	RETURN_ERROR_IF(!ret, EM_ERR_NOT_FOUND, EM_ESCOPE_INIT,
-			"Config option '%s' not found.", conf_str);
-
 	/* Initialize the synchronous API locks */
 	env_spinlock_init(&em_shm->sync_api.lock_global);
 	env_spinlock_init(&em_shm->sync_api.lock_caller);
@@ -192,6 +180,11 @@ em_init(em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"hooks_init() failed:%" PRI_STAT "", stat);
 
+	/* Initialize basic Event Chaining support */
+	stat = chaining_init(&em_shm->event_chaining);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"chaining_init() failed:%" PRI_STAT "", stat);
+
 	return EM_OK;
 }
 
@@ -265,8 +258,9 @@ em_status_t
 em_term(em_conf_t *conf)
 {
 	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	odp_queue_t odp_queue;
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
 	em_event_t *em_ev_tbl;
+	odp_queue_t odp_queue;
 	em_status_t stat;
 	int num_events;
 	int ret, i;
@@ -289,6 +283,12 @@ em_term(em_conf_t *conf)
 						   EM_SCHED_MULTI_MAX_BURST);
 			if (num_events > 0) {
 				em_ev_tbl = events_odp2em(odp_ev_tbl);
+				/*
+				 * Events might originate from outside of EM
+				 * and need hdr-init.
+				 */
+				event_to_hdr_init_multi(em_ev_tbl, ev_hdr_tbl,
+							num_events);
 				event_free_multi(em_ev_tbl, num_events);
 			}
 		} while (num_events > 0);
@@ -297,6 +297,10 @@ em_term(em_conf_t *conf)
 	}
 
 	daemon_eo_shm_free();
+
+	stat = chaining_term(&em_shm->event_chaining);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"chaining_term() failed:%" PRI_STAT "", stat);
 
 	ret = libconfig_term_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,

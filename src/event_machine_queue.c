@@ -228,27 +228,24 @@ em_queue_get_group(em_queue_t queue)
 em_event_t
 em_queue_dequeue(em_queue_t queue)
 {
-	queue_elem_t *const queue_elem = queue_elem_get(queue);
+	queue_elem_t *const q_elem = queue_elem_get(queue);
 	odp_queue_t odp_queue;
-	odp_queue_type_t odp_qtype;
 	odp_event_t odp_event;
 	em_event_t em_event;
 
-	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_DEQUEUE,
+	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE,
 			       "Invalid EM queue:%" PRI_QUEUE "", queue);
 		return EM_EVENT_UNDEF;
 	}
 
-	odp_queue = queue_elem->odp_queue;
-	odp_qtype = odp_queue_type(odp_queue);
-
-	if (odp_qtype != ODP_QUEUE_TYPE_PLAIN) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE,
+	if (unlikely(q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)) {
+		INTERNAL_ERROR(EM_ERR_BAD_CONTEXT, EM_ESCOPE_QUEUE_DEQUEUE,
 			       "Queue is not unscheduled, cannot dequeue!");
 		return EM_EVENT_UNDEF;
 	}
 
+	odp_queue = q_elem->odp_queue;
 	odp_event = odp_queue_deq(odp_queue);
 	if (odp_event == ODP_EVENT_INVALID)
 		return EM_EVENT_UNDEF;
@@ -261,27 +258,31 @@ em_queue_dequeue(em_queue_t queue)
 int
 em_queue_dequeue_multi(em_queue_t queue, em_event_t *const events, int num)
 {
-	queue_elem_t *const queue_elem = queue_elem_get(queue);
+	queue_elem_t *const q_elem = queue_elem_get(queue);
+	odp_event_t *const odp_events = events_em2odp(events); /* cast */
 	odp_queue_t odp_queue;
-	odp_queue_type_t odp_qtype;
-	odp_event_t odp_events[num];
-	int ret, i;
+	int ret;
 
-	if (unlikely(queue_elem == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_GET_TYPE,
-			       "Invalid EM queue:%" PRI_QUEUE "", queue);
+	if (unlikely(q_elem == NULL || !queue_allocated(q_elem) ||
+		     events == NULL || num < 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
+			       "Inv.args: Q:%" PRI_QUEUE " events[]:%p num:%d",
+			       queue, events, num);
 		return 0;
 	}
 
-	odp_queue = queue_elem->odp_queue;
-	odp_qtype = odp_queue_type(odp_queue);
+	if (unlikely(num == 0))
+		return 0;
 
-	if (odp_qtype != ODP_QUEUE_TYPE_PLAIN) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
+	if (unlikely(q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)) {
+		INTERNAL_ERROR(EM_ERR_BAD_CONTEXT,
+			       EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
 			       "Queue is not unscheduled, cannot dequeue!");
 		return 0;
 	}
 
+	/* dequeue into odp_events[] == events[] */
+	odp_queue = q_elem->odp_queue;
 	ret = odp_queue_deq_multi(odp_queue, odp_events, num);
 	if (ret == 0)
 		return 0;
@@ -289,12 +290,9 @@ em_queue_dequeue_multi(em_queue_t queue, em_event_t *const events, int num)
 	if (unlikely(ret < 0)) {
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 			       EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
-			       "odp dequeue multi failed:%d", ret);
+			       "odp_queue_deq_multi(%d):%d", num, ret);
 		return 0;
 	}
-
-	for (i = 0; i < ret; i++)
-		events[i] = event_odp2em(odp_events[i]);
 
 	return ret;
 }

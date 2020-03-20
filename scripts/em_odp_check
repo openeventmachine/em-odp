@@ -18,7 +18,8 @@ IGNORE+='PREFER_PRINTF,'
 IGNORE+='CONST_STRUCT,'
 IGNORE+='FUNCTION_ARGUMENTS,'
 IGNORE+='MACRO_ARG_REUSE,'
-IGNORE+='SPDX_LICENSE_TAG'
+IGNORE+='SPDX_LICENSE_TAG,'
+IGNORE+='C99_COMMENT_TOLERANCE' # C99-style comments '//' reported as error
 
 $DIR/cleanfile $1 2> /dev/null
 $DIR/checkpatch.pl -f --no-tree --ignore $IGNORE --mailback --strict --terse --no-summary --show-types $1 2> /dev/null

@@ -387,12 +387,23 @@ test_stop(appl_conf_t *const appl_conf)
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
 
+	/* Stop all EOs to disable dipatch from all the EOs' queues */
 	for (i = 0; i < NUM_EO; i++) {
 		eo = perf_shm->perf_eo_context[i].eo_ctx.id;
 
 		ret = em_eo_stop_sync(eo);
 		test_fatal_if(ret != EM_OK,
 			      "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
+	}
+
+	for (i = 0; i < NUM_EO; i++) {
+		eo = perf_shm->perf_eo_context[i].eo_ctx.id;
+
+		/* remove and delete all of the EO's queues */
+		ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
+		test_fatal_if(ret != EM_OK,
+			      "EO rem-Q-all-sync:%" PRI_STAT " EO:%" PRI_EO "",
+			      ret, eo);
 
 		ret = em_eo_delete(eo);
 		test_fatal_if(ret != EM_OK,
@@ -445,18 +456,11 @@ static em_status_t
 perf_stop(void *eo_context, em_eo_t eo)
 {
 	char eo_name[EM_EO_NAME_LEN];
-	em_status_t ret;
 
 	(void)eo_context;
 
 	em_eo_get_name(eo, eo_name, sizeof(eo_name));
 	APPL_PRINT("%s (id:%" PRI_EO ") stopping.\n", eo_name, eo);
-
-	/* remove and delete all of the EO's queues */
-	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
-	test_fatal_if(ret != EM_OK,
-		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
-		      ret, eo);
 
 	return EM_OK;
 }
@@ -466,7 +470,7 @@ initialize_events(em_queue_t queue_a, em_queue_t queue_b)
 {
 	/* tmp storage for allocated events to send */
 	em_event_t events[NUM_EVENT];
-	int i, x, y;
+	int i;
 
 	for (i = 0; i < NUM_EVENT; i++) {
 		perf_event_t *perf;
@@ -488,18 +492,22 @@ initialize_events(em_queue_t queue_a, em_queue_t queue_b)
 	const int left_over = NUM_EVENT % SEND_MULTI_MAX;
 	int num_sent = 0;
 
-	for (x = 0, y = 0; x < send_rounds; x++, y += SEND_MULTI_MAX) {
-		num_sent += em_send_multi(&events[y], SEND_MULTI_MAX,
+	for (i = 0; i < send_rounds; i++) {
+		num_sent += em_send_multi(&events[num_sent], SEND_MULTI_MAX,
 					  queue_a);
 	}
 	if (left_over) {
-		num_sent += em_send_multi(&events[y], left_over,
+		num_sent += em_send_multi(&events[num_sent], left_over,
 					  queue_a);
 	}
-	test_fatal_if(num_sent != NUM_EVENT,
-		      "Event send multi failed:%d (%d)\n"
-		      "Q:%" PRI_QUEUE "",
-		      num_sent, NUM_EVENT, queue_a);
+	if (unlikely(num_sent != NUM_EVENT)) {
+		test_fatal_if(!appl_shm->exit_flag,
+			      "Event send multi failed:%d (%d)\n"
+			      "Q:%" PRI_QUEUE "",
+			      num_sent, NUM_EVENT, queue_a);
+		for (i = num_sent; i < NUM_EVENT; i++)
+			em_free(events[i]);
+	}
 }
 
 /**

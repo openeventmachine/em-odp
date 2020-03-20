@@ -232,6 +232,7 @@ cm_setup(int argc, char *argv[])
 	 * performance. Note that a real application might need to change this!
 	 */
 	init_params.not_used.feat.cls = 1; /* don't use the odp classifier */
+	init_params.not_used.feat.compress = 1; /* don't use the odp compress */
 	init_params.not_used.feat.crypto = 1; /* don't use odp crypto */
 	init_params.not_used.feat.ipsec = 1; /* don't use odp ipsec */
 	init_params.not_used.feat.tm = 1; /* don't use the odp traffic manager*/

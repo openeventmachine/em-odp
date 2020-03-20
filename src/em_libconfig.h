@@ -68,6 +68,17 @@ int libconfig_term_global(libconfig_t *libconfig);
 int libconfig_lookup_int(libconfig_t *libconfig, const char *path, int *value);
 
 /**
+ * Reads a boolean from runtime config if given, otherwise default config.
+ *
+ * @param libconfig	Pointer to shared libconfig data
+ * @param path		Path to value
+ * @param value		Pointer where read value will be stored
+ * @return int		1 on success, 0 otherwise
+ */
+int libconfig_lookup_bool(libconfig_t *libconfig,
+			  const char *path, bool *value);
+
+/**
  * Reads an arrays of integers from runtime config if given, otherwise from
  * default config.
  *

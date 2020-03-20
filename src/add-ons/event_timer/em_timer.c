@@ -38,6 +38,7 @@ ENV_LOCAL timer_shm_t *timer_shm;
 em_status_t timer_init_global(void)
 {
 	odp_shm_info_t info;
+	int i;
 
 	/*
 	 * The EM-timer uses its own shared memory region.
@@ -60,6 +61,10 @@ em_status_t timer_init_global(void)
 	/* init shared memory data */
 	memset(tconf, 0, sizeof(timer_shm_t));
 	tconf->odp_shm = shm;
+
+	for (i = 0; i < EM_ODP_MAX_TIMERS; i++)
+		tconf->timer[i].idx = i;
+
 	odp_ticketlock_init(&tconf->tlock);
 
 	if (odp_shm_info(shm, &info) == 0) {

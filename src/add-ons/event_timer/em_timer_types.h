@@ -39,6 +39,7 @@ typedef struct event_timer_t {
 	odp_timer_pool_t odp_tmr_pool;
 	odp_pool_t tmo_pool;
 	em_timer_flag_t	flags;
+	int idx;
 } event_timer_t;
 
 /* global shared memory data */

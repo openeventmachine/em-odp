@@ -46,7 +46,5 @@
 #define EM_ODP_TIMER_RESOL_DEF_NS  1000000
 /* Max number of supported EM timers (= ODP timer pools) */
 #define EM_ODP_MAX_TIMERS  2
-/* Default number of EM timeouts (tmo) (= ODP timers) */
-#define EM_ODP_DEFAULT_TIMEOUTS  1000
 
 #endif /* EM_TIMER_CONF_H_ */

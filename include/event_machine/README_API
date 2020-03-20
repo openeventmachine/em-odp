@@ -39,11 +39,9 @@ API 2.1 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=1)
     em_pool_info() - retieve information about an EM event pool
     em_pool_info_print() - print EM Pool information for a given event pool
     em_pool_info_print_all() - print EM Pool information for all event pools.
-    Note: EM_POOL_STATISTICS_ENABLE must be defined as '1' to enable event pool
-    statistics to ge gathered (default=0)
-    EM_POOL_STATISTICS_ENABLE must be set to '1' for usage statistics,
-    otherwise only basic info is output omitting pool usage information
-    (= all zeros).
+    Note: Set EM config file: pool.statistics_enable=true to enable event pool
+    statistics to ge gathered (default: false), otherwise only basic info is
+    output omitting pool usage information.
     See include/event_machine/platform/event_machine_pool.h
 
 -------------------------------------------------------------------------------

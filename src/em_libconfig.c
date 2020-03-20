@@ -123,10 +123,28 @@ int libconfig_lookup_int(libconfig_t *libconfig, const char *path, int *value)
 
 	/* Runtime option overrides default value */
 	ret_rt = config_lookup_int(&libconfig->cfg_runtime, path, value);
-	if (ret_rt == CONFIG_TRUE)
-		EM_PRINT("%s: %d\n", path, *value);
 
 	return  (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) ? 1 : 0;
+}
+
+int libconfig_lookup_bool(libconfig_t *libconfig, const char *path, bool *value)
+{
+	int ret_def = CONFIG_FALSE;
+	int ret_rt = CONFIG_FALSE;
+	int cfg_value = 0;
+	int ret_val = 0;
+
+	ret_def = config_lookup_bool(&libconfig->cfg_default, path, &cfg_value);
+
+	/* Runtime option overrides default value */
+	ret_rt = config_lookup_bool(&libconfig->cfg_runtime, path, &cfg_value);
+
+	if (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) {
+		*value = cfg_value ? true : false;
+		ret_val = 1;
+	}
+
+	return  ret_val;
 }
 
 int libconfig_lookup_array(libconfig_t *libconfig, const char *path,
@@ -164,13 +182,6 @@ int libconfig_lookup_array(libconfig_t *libconfig, const char *path,
 			value[i] = config_setting_get_int_elem(setting, i);
 
 		num_out = num;
-	}
-
-	if (setting != NULL) {
-		EM_PRINT("%s: ", path);
-		for (i = 0; i < num_out; i++)
-			EM_PRINT("%d ", value[i]);
-		EM_PRINT("\n");
 	}
 
 	/* Number of elements copied */

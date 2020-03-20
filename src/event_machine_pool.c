@@ -188,9 +188,9 @@ em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/)
 		pool_info->subpool[i].num = num;
 		/*
 		 * EM pool usage statistics only collected if
-		 * EM_POOL_STATISTICS_ENABLE is '1'.
+		 * EM config file: pool.statistics_enable=true.
 		 */
-		if (EM_POOL_STATISTICS_ENABLE) {
+		if (em_shm->opt.pool.statistics_enable) {
 			int cores = em_core_count();
 			int pool_idx = pool_hdl2idx(pool);
 			mpool_statistics_t *pstat_core =

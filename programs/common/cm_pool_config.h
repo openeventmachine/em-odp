@@ -44,7 +44,7 @@ extern "C" {
 #define DEFAULT_POOL_CFG { \
 	.event_type = EM_EVENT_TYPE_SW, \
 	.num_subpools = 4, \
-	.subpool[0] = {.size =  256, .num = 4096}, \
+	.subpool[0] = {.size =  256, .num = 16384}, \
 	.subpool[1] = {.size =  512, .num = 1024}, \
 	.subpool[2] = {.size = 1024, .num = 1024}, \
 	.subpool[3] = {.size = 2048, .num = 1024}  \

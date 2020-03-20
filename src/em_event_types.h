@@ -81,18 +81,13 @@ typedef struct {
 	 */
 	list_node_t start_node;
 	/**
-	 * EO-start send event buffering, destination queue when sent
-	 */
-	em_queue_t start_queue;
-
-	/**
 	 * Handle of the EM pool the event was allocated from.
-	 * @note only used if EM_POOL_STATISTICS_ENABLE is set ('1')
+	 * @note only used if EM config file: pool.statistics_enable=true
 	 */
 	em_pool_t pool;
 	/**
 	 * Subpool index of the EM pool the event was allocated from.
-	 * @note only used if EM_POOL_STATISTICS_ENABLE is set ('1')
+	 * @note only used if EM config file: pool.statistics_enable=true
 	 */
 	int32_t subpool;
 	/**
@@ -107,6 +102,10 @@ typedef struct {
 	 * Queue element for associated queue (for AG or local queue)
 	 */
 	queue_elem_t *q_elem;
+	/**
+	 * EO-start send event buffering, destination queue when sent
+	 */
+	em_queue_t queue;
 
 	/**
 	 * This event handle
@@ -128,9 +127,21 @@ typedef struct {
 	 */
 	em_event_group_t egrp;
 	/**
-	 * Event group element
+	 * End of event header data,
+	 * for offsetof(event_hdr_t, end_hdr_data)
 	 */
-	event_group_elem_t *egrp_elem;
+	char end_hdr_data[0];
+
+	/*
+	 * ! EMPTY SPACE !
+	 * Events based on odp_buffer_t only:
+	 *   - space for alignment adjustments as set by config file option:
+	 *     'pool.alloc_align = 2^x bytes'
+	 *   - space available:
+	 *         sizeof(event_hdr_t) - offsetof(event_hdr_t, end_hdr_data)
+	 *   - events based on odp_packet_t have their event header in the
+	 *     odp pkt user area and alignment is adjusted in the pkt headroom.
+	 */
 
 	void *end[0] ODP_ALIGNED(16); /* pad to next 16B boundary */
 } event_hdr_t;

@@ -59,13 +59,14 @@ print_em_info(void)
 		 "===========================================================\n"
 		 "EM API version: v%i.%i, "
 #ifdef EM_64_BIT
-		 "64 bit\n"
+		 "64 bit "
 #else
-		 "32 bit\n"
+		 "32 bit "
 #endif
+		"(EM_CHECK_LEVEL: %d)\n"
 		"ODP version: %s\n",
 		 EM_TARGET_STR, EM_API_VERSION_MAJOR, EM_API_VERSION_MINOR,
-		 odp_version_impl_str());
+		 EM_CHECK_LEVEL, odp_version_impl_str());
 
 	print_core_map_info();
 	print_queue_info();

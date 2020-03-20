@@ -61,10 +61,10 @@ event_free_multi(em_event_t *const events, const int num)
 		}
 	}
 
-	if (EM_CHECK_LEVEL > 1 || EM_POOL_STATISTICS_ENABLE) {
+	if (EM_CHECK_LEVEL > 1 || em_shm->opt.pool.statistics_enable) {
 		event_hdr_t *ev_hdrs[num];
 
-		events_to_event_hdrs(events, ev_hdrs, num);
+		event_to_hdr_multi(events, ev_hdrs, num);
 
 		if (EM_CHECK_LEVEL > 1) {
 			uint32_t allocated;
@@ -87,7 +87,7 @@ event_free_multi(em_event_t *const events, const int num)
 			}
 		}
 
-		if (EM_POOL_STATISTICS_ENABLE) {
+		if (em_shm->opt.pool.statistics_enable) {
 			/* Update pool statistcs */
 			em_pool_t pool;
 			mpool_elem_t *pelem;
@@ -111,42 +111,6 @@ event_free_multi(em_event_t *const events, const int num)
 	odp_events = events_em2odp(events);
 
 	odp_event_free_multi(odp_events, num);
-}
-
-/**
- * This function is declared as a weak symbol in em_event.h, meaning that the
- * user can override it during linking with another implementation.
- */
-em_status_t
-event_send_device(em_event_t event, em_queue_t queue)
-{
-	internal_queue_t iq = {.queue = queue};
-
-	(void)event;
-	return INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
-			      EM_ESCOPE_EVENT_SEND_DEVICE,
-			      "No %s() function given!\t"
-			      "device:0x%" PRIx16 " Q-id:0x%" PRIx16 "\n",
-			      __func__, iq.device_id, iq.queue_id);
-}
-
-/**
- * This function is declared as a weak symbol in em_event.h, meaning that the
- * user can override it during linking with another implementation.
- */
-int
-event_send_device_multi(em_event_t *const events, int num, em_queue_t queue)
-{
-	internal_queue_t iq = {.queue = queue};
-
-	(void)events;
-	(void)num;
-	INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
-		       EM_ESCOPE_EVENT_SEND_DEVICE_MULTI,
-		       "No %s() function given!\t"
-		       "device:0x%" PRIx16 " Q-id:0x%" PRIx16 "\n",
-		       __func__, iq.device_id, iq.queue_id);
-	return 0;
 }
 
 void

@@ -109,7 +109,8 @@ set_local_safe(const event_hdr_t *const ev_hdr)
 {
 	uint64_t current_count;
 	egrp_counter_t new_count;
-	event_group_elem_t *const egrp_elem = ev_hdr->egrp_elem;
+	event_group_elem_t *const egrp_elem =
+		event_group_elem_get(ev_hdr->egrp);
 
 	do {
 		current_count = EM_ATOMIC_GET(&egrp_elem->pre.atomic);
@@ -150,7 +151,7 @@ event_group_set_local(const event_hdr_t *const ev_hdr)
 		/* Group is validated before setting */
 		set_local_safe(ev_hdr);
 	} else {
-		em_locm.current.egrp_elem = ev_hdr->egrp_elem;
+		em_locm.current.egrp_elem = event_group_elem_get(ev_hdr->egrp);
 		em_locm.current.egrp = ev_hdr->egrp;
 	}
 }

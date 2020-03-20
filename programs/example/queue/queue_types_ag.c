@@ -1455,6 +1455,12 @@ print_test_info(void)
 		case EM_QUEUE_TYPE_UNSCHEDULED:
 			type_str = "UNSCHEDULED";
 			break;
+		case EM_QUEUE_TYPE_LOCAL:
+			type_str = "LOCAL";
+			break;
+		case EM_QUEUE_TYPE_OUTPUT:
+			type_str = "OUTPUT";
+			break;
 		default:
 			type_str = "UNKNOWN";
 			break;

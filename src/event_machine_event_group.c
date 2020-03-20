@@ -276,6 +276,13 @@ em_send_group(em_event_t event, em_queue_t queue,
 				event_group);
 	}
 
+	ev_hdr = event_to_hdr(event);
+
+	if (EM_CHECK_LEVEL > 2)
+		RETURN_ERROR_IF(env_atomic32_get(&ev_hdr->allocated) != 1,
+				EM_FATAL(EM_ERR_BAD_STATE),
+				EM_ESCOPE_SEND_GROUP, "Event already freed!");
+
 	if (!is_external) {
 		/* queue belongs to this EM instance */
 		q_elem = queue_elem_get(queue);
@@ -315,10 +322,8 @@ em_send_group(em_event_t event, em_queue_t queue,
 	}
 
 	/* Store the event group information in the event header */
-	ev_hdr = event_to_event_hdr(event);
 	if (egrp_elem != NULL) {
 		ev_hdr->egrp = egrp_elem->event_group;
-		ev_hdr->egrp_elem = egrp_elem;
 		if (EM_EVENT_GROUP_SAFE_MODE)
 			ev_hdr->egrp_gen = event_group_gen_get(egrp_elem);
 	} else {
@@ -330,14 +335,9 @@ em_send_group(em_event_t event, em_queue_t queue,
 
 	if (is_external) {
 		/*
-		 * Send to another device via event-chaining and a user-provided
-		 * function 'event_send_device()'
+		 * Send out of EM to another device via event-chaining and a
+		 * user-provided function 'event_send_device()'
 		 */
-		if (unlikely(event_send_device == NULL))
-			return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-					      EM_ESCOPE_SEND_GROUP,
-					      "event_send_device() == NULL!\n"
-					      "Check linking of weak funcs");
 		if (egrp_elem != NULL) {
 			/* Send to another DEVICE with an event group */
 			save_current_evgrp(&save_egrp, &save_egrp_elem,
@@ -348,20 +348,20 @@ em_send_group(em_event_t event, em_queue_t queue,
 			 */
 			event_group_set_local(ev_hdr);
 
-			stat = event_send_device(event, queue);
+			stat = send_chaining(event, ev_hdr, queue);
 
 			event_group_count_decrement(1);
 			restore_current_evgrp(save_egrp, save_egrp_elem,
 					      save_egrp_gen);
 		} else {
-			stat = event_send_device(event, queue);
+			stat = send_chaining(event, ev_hdr, queue);
 		}
 
 		if (EM_CHECK_LEVEL == 0)
 			return stat;
 		RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND_GROUP,
-				"send-evgrp-device failed");
-
+				"send_chaining failed: Q:%" PRI_QUEUE "",
+				queue);
 		return EM_OK;
 	}
 
@@ -445,6 +445,20 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 		}
 	}
 
+	event_to_hdr_multi(events, ev_hdrs, num);
+
+	if (EM_CHECK_LEVEL > 2) {
+		for (i = 0; i < num &&
+		     env_atomic32_get(&ev_hdrs[i]->allocated) == 1; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE),
+				       EM_ESCOPE_SEND_GROUP_MULTI,
+				       "Event(s) already freed!");
+			return 0;
+		}
+	}
+
 	if (!is_external) {
 		/* queue belongs to this EM instance */
 		q_elem = queue_elem_get(queue);
@@ -487,7 +501,6 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 		return num_sent;
 	}
 
-	events_to_event_hdrs(events, ev_hdrs, num);
 	/* Store the event group information in the event header */
 	if (egrp_elem != NULL) {
 		uint64_t egrp_gen;
@@ -497,7 +510,6 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 
 		for (i = 0; i < num; i++) {
 			ev_hdrs[i]->egrp = event_group;
-			ev_hdrs[i]->egrp_elem = egrp_elem;
 			if (EM_EVENT_GROUP_SAFE_MODE)
 				ev_hdrs[i]->egrp_gen = egrp_gen;
 		}
@@ -511,17 +523,9 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 
 	if (is_external) {
 		/*
-		 * Send to another device via event-chaining and a user-provided
-		 * function 'event_send_device_multi()'
+		 * Send out of EM to another device via event-chaining and a
+		 * user-provided function 'event_send_device_multi()'
 		 */
-		if (unlikely(event_send_device_multi == NULL)) {
-			INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-				       EM_ESCOPE_SEND_GROUP_MULTI,
-				       "event_send_device_multi() == NULL!\n"
-				       "Check linking of weak funcs");
-			return 0;
-		}
-
 		if (egrp_elem != NULL) {
 			/* Send to another DEVICE with an event group */
 			save_current_evgrp(&save_egrp, &save_egrp_elem,
@@ -535,19 +539,20 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 			 */
 			event_group_set_local(ev_hdrs[0]);
 
-			num_sent = event_send_device_multi(events, num, queue);
-
+			num_sent = send_chaining_multi(events, ev_hdrs,
+						       num, queue);
 			event_group_count_decrement(num);
 			restore_current_evgrp(save_egrp, save_egrp_elem,
 					      save_egrp_gen);
 		} else {
-			num_sent = event_send_device_multi(events, num, queue);
+			num_sent = send_chaining_multi(events, ev_hdrs,
+						       num, queue);
 		}
 
 		if (EM_CHECK_LEVEL > 0 && unlikely(num_sent != num)) {
 			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
 				       EM_ESCOPE_SEND_GROUP_MULTI,
-				       "send-egrp-multi fails: req:%d, sent:%d",
+				       "send_chaining_multi: req:%d, sent:%d",
 				       num, num_sent);
 		}
 		return num_sent;

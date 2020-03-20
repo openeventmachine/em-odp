@@ -179,7 +179,7 @@ em_pool_get_next(void);
  *
  * @return EM_OK if successful
  *
- * @note EM_POOL_STATISTICS_ENABLE must be set to '1' for usage statistics,
+ * @note EM config file: pool.statistics_enable=true for usage statistics,
  *       otherwise only basic info is output omitting pool usage information
  *       (= all zeros).
  */
@@ -193,7 +193,7 @@ em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/);
  *
  * @param pool             EM pool handle
  *
- * @note EM_POOL_STATISTICS_ENABLE must be set to '1' for usage statistics,
+ * @note EM config file: pool.statistics_enable=true for usage statistics,
  *       otherwise only basic info is output omitting pool usage information
  *       (= all zeros).
  */
@@ -205,7 +205,7 @@ em_pool_info_print(em_pool_t pool);
  *
  * Uses em_pool_info() when printing the pool information.
  *
- * @note EM_POOL_STATISTICS_ENABLE must be set to '1' for usage statistics,
+ * @note EM config file: pool.statistics_enable=true for usage statistics,
  *       otherwise only basic info is output omitting pool usage information
  *       (= all zeros).
  */

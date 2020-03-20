@@ -7,7 +7,7 @@ AC_PREREQ([2.69])
 ############################
 m4_define([em_api_major_version], [2])
 m4_define([em_api_minor_version], [1])
-m4_define([em_api_implementation_version], [1])
+m4_define([em_api_implementation_version], [2])
 m4_define([em_api_implementation_fix], [0])
 
 m4_define([em_api_version], [em_api_major_version.em_api_minor_version])
@@ -93,11 +93,24 @@ EM_LIBCONFIG([])
 ##########################################################################
 # Default warning setup
 ##########################################################################
-EM_CFLAGS="$EM_CFLAGS -W -Wall -Werror -Wstrict-prototypes -Wmissing-prototypes"
-EM_CFLAGS="$EM_CFLAGS -Wmissing-declarations -Wold-style-definition -Wpointer-arith"
-EM_CFLAGS="$EM_CFLAGS -Wcast-align -Wnested-externs -Wcast-qual -Wformat-nonliteral"
-EM_CFLAGS="$EM_CFLAGS -Wformat-security -Wundef -Wwrite-strings"
+EM_CFLAGS="$EM_CFLAGS -W -Wall -Werror"
+
+# Additional warnings:
+EM_CHECK_CFLAG([-Wstrict-prototypes])
+EM_CHECK_CFLAG([-Wmissing-prototypes])
+EM_CHECK_CFLAG([-Wmissing-declarations])
+EM_CHECK_CFLAG([-Wold-style-definition])
+EM_CHECK_CFLAG([-Wpointer-arith])
+EM_CHECK_CFLAG([-Wcast-align])
+EM_CHECK_CFLAG([-Wnested-externs])
+EM_CHECK_CFLAG([-Wcast-qual])
+EM_CHECK_CFLAG([-Wformat-nonliteral])
+EM_CHECK_CFLAG([-Wformat-security])
+EM_CHECK_CFLAG([-Wundef])
+EM_CHECK_CFLAG([-Wwrite-strings])
+
 EM_CFLAGS="$EM_CFLAGS -std=c99"
+
 # Extra flags for example to suppress certain warning types
 EM_CFLAGS="$EM_CFLAGS $EM_CFLAGS_EXTRA"
 
@@ -161,7 +174,12 @@ AC_ARG_ENABLE([abi-compat],
 	[if test "x$enableval" = "xno"; then
 		EM_ABI_COMPAT=0
 		abi_compat=no
-		AM_CFLAGS="$AM_CFLAGS -march=native"
+		# do not try -march=native for clang due to possible failures on
+		# clang optimizations
+		$CC --version | grep -q clang
+		if test $? -ne 0 -a $user_cflags -eq 0; then
+			EM_CHECK_CFLAG([-march=native])
+		fi
 	fi])
 AM_CONDITIONAL(EM_ABI_COMPAT, [test "x$EM_ABI_COMPAT" = "x1"])
 
@@ -237,12 +255,12 @@ fi
 AM_CONDITIONAL([HAVE_DOXYGEN], [test -n "$DOXYGEN"])
 
 if test "x$enable_doxygen" != "xno"; then
-	DX_INIT_DOXYGEN($PACKAGE, ${srcdir}/doc/Doxyfile, ${builddir}/doc/event_machine_api)
-	AM_COND_IF([HAVE_DOXYGEN], [AC_CONFIG_FILES([doc/Makefile])])
-
 	DX_HTML_FEATURE(ON)
 	DX_PDF_FEATURE(OFF)
 	DX_PS_FEATURE(OFF)
+
+	DX_INIT_DOXYGEN($PACKAGE, ${srcdir}/doc/Doxyfile, ${builddir}/doc/event_machine_api)
+	AM_COND_IF([HAVE_DOXYGEN], [AC_CONFIG_FILES([doc/Makefile])])
 fi
 
 ##########################################################################

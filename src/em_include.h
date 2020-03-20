@@ -66,6 +66,7 @@ extern "C" {
 #include "em_init.h"
 
 #include "em_atomic.h"
+#include "em_chaining_types.h"
 #include "em_core_types.h"
 #include "em_error_types.h"
 #include "em_pool_types.h"
@@ -98,6 +99,7 @@ extern "C" {
 #include "em_dispatcher.h"
 #include "em_libconfig.h"
 #include "em_hooks.h"
+#include "em_chaining.h"
 
 #ifdef __cplusplus
 }

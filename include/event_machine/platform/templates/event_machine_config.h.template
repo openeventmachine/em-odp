@@ -191,17 +191,6 @@ extern "C" {
  */
 #define EM_EVENT_GROUP_SAFE_MODE  1
 
-/**
- * @def EM_POOL_STATISTICS_ENABLE
- * Enable EM pool usage statistics collection during runtime.
- *
- * Pool usage statistics is updated e.g. during em_alloc() and em_free(),
- * thus, if used, inducing some overhead.
- * Pool information can be obtained by calling em_pool_info() and, if pool usage
- * statistics is enabled, will contain also pool usage statistics.
- */
-#define EM_POOL_STATISTICS_ENABLE  0
-
 #ifdef __cplusplus
 }
 #endif

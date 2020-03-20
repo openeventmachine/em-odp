@@ -9,11 +9,15 @@ arch:
 addons:
     apt:
         packages:
+            - asciidoctor
             - automake
             - autoconf
+            - doxygen
+            - graphviz
             - libconfig-dev
             - libssl-dev
             - libtool
+            - mscgen
             - pkg-config
 
 compiler:
@@ -22,3 +26,24 @@ compiler:
 
 script:
     - ./scripts/build.sh
+
+jobs:
+    include:
+        - stage: test
+          env: TEST=documentation
+          script:
+              - ./scripts/build.sh
+              - make doxygen-doc
+          before_deploy:
+              - pushd doc
+              - mkdir gh-pages
+              - cp -r event_machine_api/html/* gh-pages/
+              - popd
+          deploy:
+              provider: pages
+              skip_cleanup: true
+              local_dir: doc/gh-pages
+              github_token: $GH_REPO_TOKEN
+              on:
+                  branch: master
+                  condition: "x$GH_REPO_TOKEN != x"

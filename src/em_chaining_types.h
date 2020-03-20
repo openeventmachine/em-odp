@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2020, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,53 +28,27 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef EM_INIT_H_
-#define EM_INIT_H_
+ /**
+  * @file
+  * EM event chaining support
+  */
 
-/**
- * @file
- * EM internal initialization types & definitions
- *
- */
+#ifndef EM_CHAINING_TYPES_H_
+#define EM_CHAINING_TYPES_H_
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * Initialization status info
- */
+#define MAX_CHAINING_OUTPUT_QUEUES  128
+
 typedef struct {
-	/** init lock */
-	env_spinlock_t lock;
-	/** Is em_init() completed? */
-	int em_init_done;
-	/** The number of EM cores that have run em_init_core() */
-	int em_init_core_cnt;
-} init_t;
-
-/**
- * EM config options read from the config file.
- *
- * See the config/em-odp.conf file for description of the options.
- */
-typedef struct {
-	struct {
-		int statistics_enable; /* true/false */
-		unsigned int alloc_align; /* bytes */
-	} pool;
-
-	struct {
-		unsigned int min_events_default; /* default min nbr of events */
-	} queue;
-
-	struct {
-		unsigned int num_order_queues;
-	} event_chaining;
-} opt_t;
+	unsigned int num_output_queues;
+	em_queue_t output_queues[MAX_CHAINING_OUTPUT_QUEUES];
+} event_chaining_t;
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* EM_INIT_H_ */
+#endif /* EM_CHAINING_TYPES_H_ */

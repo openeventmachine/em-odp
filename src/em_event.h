@@ -58,19 +58,6 @@ event_init(void);
  */
 void event_free_multi(em_event_t *const events, const int num);
 
-/**
- * This function is declared as a weak symbol, meaning that the user can
- * override it during linking with another implementation.
- */
-em_status_t __attribute__((weak))
-event_send_device(em_event_t event, em_queue_t queue);
-/**
- * This function is declared as a weak symbol, meaning that the user can
- * override it during linking with another implementation.
- */
-int __attribute__((weak))
-event_send_device_multi(em_event_t *const events, int num, em_queue_t queue);
-
 COMPILE_TIME_ASSERT((uintptr_t)EM_EVENT_UNDEF == (uintptr_t)ODP_EVENT_INVALID,
 		    EM_EVENT_NOT_EQUAL_TO_ODP_EVENT);
 
@@ -103,7 +90,7 @@ events_em2odp(em_event_t events[])
 }
 
 static inline void
-pkt_event_hdr_init(event_hdr_t *ev_hdr, const em_event_t event)
+evhdr_init(event_hdr_t *ev_hdr, const em_event_t event)
 {
 	ev_hdr->event = event;
 	ev_hdr->event_type = EM_EVENT_TYPE_PACKET;
@@ -112,15 +99,15 @@ pkt_event_hdr_init(event_hdr_t *ev_hdr, const em_event_t event)
 		/* Simple double-free detection */
 		env_atomic32_set(&ev_hdr->allocated, 1);
 	}
-	if (EM_POOL_STATISTICS_ENABLE) {
+	if (em_shm->opt.pool.statistics_enable) {
 		/* ev_hdr->subpool = 0; */
 		ev_hdr->pool = EM_POOL_UNDEF;
 	}
 }
 
 static inline void
-pkt_event_hdrs_init(event_hdr_t *ev_hdrs[], const em_event_t events[],
-		    const int num)
+evhdr_init_multi(event_hdr_t *ev_hdrs[], const em_event_t events[],
+		 const int num)
 {
 	for (int i = 0; i < num; i++) {
 		ev_hdrs[i]->event = events[i];
@@ -130,7 +117,7 @@ pkt_event_hdrs_init(event_hdr_t *ev_hdrs[], const em_event_t events[],
 			/* Simple double-free detection */
 			env_atomic32_set(&ev_hdrs[i]->allocated, 1);
 		}
-		if (EM_POOL_STATISTICS_ENABLE) {
+		if (em_shm->opt.pool.statistics_enable) {
 			/* ev_hdrs[i]->subpool = 0; */
 			ev_hdrs[i]->pool = EM_POOL_UNDEF;
 		}
@@ -139,8 +126,8 @@ pkt_event_hdrs_init(event_hdr_t *ev_hdrs[], const em_event_t events[],
 
 /* packet-input: init ev-hdrs in the received odp-pkts */
 static inline void
-pkts_to_event_hdrs(const odp_packet_t odp_pkts[], const em_event_t events[],
-		   event_hdr_t *ev_hdrs[], const int num)
+pkt_evhdr_init_multi(const odp_packet_t odp_pkts[], const em_event_t events[],
+		     event_hdr_t *ev_hdrs[], const int num)
 {
 	for (int i = 0; i < num; i++) {
 		ev_hdrs[i] = odp_packet_user_area(odp_pkts[i]);
@@ -148,12 +135,19 @@ pkts_to_event_hdrs(const odp_packet_t odp_pkts[], const em_event_t events[],
 		odp_packet_user_ptr_set(odp_pkts[i], PKT_USERPTR_MAGIC_NBR);
 	}
 
-	pkt_event_hdrs_init(ev_hdrs, events, num);
+	evhdr_init_multi(ev_hdrs, events, num);
 }
 
-/** Convert from EM event to event header */
+/**
+ * Convert from EM event to event header and initialize the header as needed.
+ *
+ * Initialize the event header if needed, i.e. if event originated from outside
+ * of EM from pktio or other input and was not allocated by EM via em_alloc().
+ * The odp pkt-user-ptr is used to determine whether the header has been
+ * initialized or not.
+ */
 static inline event_hdr_t *
-event_to_event_hdr(em_event_t event)
+event_to_hdr_init(em_event_t event)
 {
 	odp_event_t odp_event = event_em2odp(event);
 	odp_packet_t odp_pkt;
@@ -167,7 +161,7 @@ event_to_event_hdr(em_event_t event)
 		if (odp_packet_user_ptr(odp_pkt) != PKT_USERPTR_MAGIC_NBR) {
 			/* Pkt from outside of EM, need to init ev_hdr */
 			odp_packet_user_ptr_set(odp_pkt, PKT_USERPTR_MAGIC_NBR);
-			pkt_event_hdr_init(ev_hdr, event);
+			evhdr_init(ev_hdr, event);
 		}
 	} else {
 		odp_buf = odp_buffer_from_event(odp_event);
@@ -177,8 +171,41 @@ event_to_event_hdr(em_event_t event)
 	return ev_hdr;
 }
 
+/**
+ * Convert from EM event to event header.
+ *
+ * Do NOT initialize the event header.
+ */
+static inline event_hdr_t *
+event_to_hdr(em_event_t event)
+{
+	odp_event_t odp_event = event_em2odp(event);
+	odp_packet_t odp_pkt;
+	odp_buffer_t odp_buf;
+	event_hdr_t *ev_hdr;
+
+	if (odp_event_type(odp_event) == ODP_EVENT_PACKET) {
+		odp_pkt = odp_packet_from_event(odp_event);
+		ev_hdr = odp_packet_user_area(odp_pkt);
+	} else {
+		odp_buf = odp_buffer_from_event(odp_event);
+		ev_hdr = odp_buffer_addr(odp_buf);
+	}
+
+	return ev_hdr;
+}
+
+/**
+ * Convert from EM events to event headers and initialize the headers as needed.
+ *
+ * Initialize the event header if needed, i.e. if event originated from outside
+ * of EM from pktio or other input and was not allocated by EM via em_alloc().
+ * The odp pkt-user-ptr is used to determine whether the header has been
+ * initialized or not.
+ */
 static inline void
-events_to_event_hdrs(em_event_t events[], event_hdr_t *ev_hdrs[], const int num)
+event_to_hdr_init_multi(em_event_t events[], event_hdr_t *ev_hdrs[],
+			const int num)
 {
 	odp_event_t *const odp_events = events_em2odp(events);
 	odp_packet_t odp_pkts[num];
@@ -217,8 +244,46 @@ events_to_event_hdrs(em_event_t events[], event_hdr_t *ev_hdrs[], const int num)
 
 			/* If pkt from outside of EM: need to init ev_hdrs */
 			if (init_num)
-				pkt_event_hdrs_init(init_hdrs, init_events,
-						    init_num);
+				evhdr_init_multi(init_hdrs, init_events,
+						 init_num);
+		} else {
+			for (i = 0; i < num_type; i++) {
+				odp_buf =
+				odp_buffer_from_event(odp_events[ev + i]);
+				ev_hdrs[ev + i] = odp_buffer_addr(odp_buf);
+			}
+		}
+		ev += num_type;
+	} while (ev < num);
+}
+
+/**
+ * Convert from EM events to event headers.
+ *
+ * Do NOT initialize the event headers.
+ */
+static inline void
+event_to_hdr_multi(em_event_t events[], event_hdr_t *ev_hdrs[], const int num)
+{
+	odp_event_t *const odp_events = events_em2odp(events);
+	odp_packet_t odp_pkts[num];
+	odp_buffer_t odp_buf;
+	odp_event_type_t type;
+	int num_type;
+	int ev = 0; /* event & ev_hdr tbl index*/
+	int i;
+
+	do {
+		num_type =
+		odp_event_type_multi(&odp_events[ev], num - ev, &type);
+
+		if (type == ODP_EVENT_PACKET) {
+			odp_packet_from_event_multi(odp_pkts, &odp_events[ev],
+						    num_type);
+			for (i = 0; i < num_type; i++) {
+				ev_hdrs[ev + i] =
+					odp_packet_user_area(odp_pkts[i]);
+			}
 		} else {
 			for (i = 0; i < num_type; i++) {
 				odp_buf =
@@ -286,7 +351,7 @@ event_alloc_buf(mpool_elem_t *const pool_elem, size_t size,
 		env_atomic32_set(&ev_hdr->allocated, 1);
 
 	/* Pool usage statistics */
-	if (EM_POOL_STATISTICS_ENABLE) {
+	if (em_shm->opt.pool.statistics_enable) {
 		em_pool_t pool = pool_elem->em_pool;
 
 		ev_hdr->subpool = subpool;
@@ -307,6 +372,17 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 	odp_event_t odp_event;
 	em_event_t em_event;
 	event_hdr_t *ev_hdr;
+	const uint32_t push_len = em_shm->opt.pool.alloc_align;
+	uint32_t pull_len;
+	size_t alloc_size;
+
+	if (size > push_len) {
+		alloc_size = size - push_len;
+		pull_len = 0;
+	} else {
+		alloc_size = 1; /* min allowed */
+		pull_len = push_len + 1 - size;
+	}
 
 	subpool = pool_find_subpool(pool_elem, size);
 	if (unlikely(subpool < 0))
@@ -323,7 +399,7 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 		    unlikely(odp_pool == ODP_POOL_INVALID))
 			return EM_EVENT_UNDEF;
 
-		odp_pkt = odp_packet_alloc(odp_pool, size);
+		odp_pkt = odp_packet_alloc(odp_pool, alloc_size);
 		if (likely(odp_pkt != ODP_PACKET_INVALID))
 			break;
 	} while (EM_MAX_SUBPOOLS > 1 /* Compile time option */ &&
@@ -331,6 +407,24 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 
 	if (unlikely(odp_pkt == ODP_PACKET_INVALID))
 		return EM_EVENT_UNDEF;
+
+	/* Adjust event payload start-address based on alignment config */
+	if (push_len) {
+		void *dptr_push = odp_packet_push_head(odp_pkt, push_len);
+
+		if (dptr_push == NULL) {
+			odp_packet_free(odp_pkt);
+			return EM_EVENT_UNDEF;
+		}
+	}
+	if (pull_len) {
+		void *dptr_pull = odp_packet_pull_tail(odp_pkt, pull_len);
+
+		if (dptr_pull == NULL) {
+			odp_packet_free(odp_pkt);
+			return EM_EVENT_UNDEF;
+		}
+	}
 
 	ev_hdr = odp_packet_user_area(odp_pkt);
 	if (unlikely(ev_hdr == NULL)) {
@@ -359,7 +453,7 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 		env_atomic32_set(&ev_hdr->allocated, 1);
 
 	/* Pool usage statistics */
-	if (EM_POOL_STATISTICS_ENABLE) {
+	if (em_shm->opt.pool.statistics_enable) {
 		em_pool_t pool = pool_elem->em_pool;
 
 		ev_hdr->subpool = subpool;

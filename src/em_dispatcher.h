@@ -100,6 +100,11 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	em_event_t event = event_hdr_to_event(ev_hdr);
 	em_event_type_t event_type = ev_hdr->event_type;
 
+	if (EM_CHECK_LEVEL > 2 &&
+	    unlikely(env_atomic32_get(&ev_hdr->allocated) != 1))
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_DISPATCH,
+			       "EO:%" PRI_EO ": received event already freed!");
+
 	em_locm.current.q_elem = q_elem;
 	/* Check and set core local event group (before dispatch callback(s)) */
 	event_group_set_local(ev_hdr);
@@ -247,7 +252,8 @@ dispatch_round(void)
 	}
 
 	ev_tbl = events_odp2em(odp_ev_tbl);
-	events_to_event_hdrs(ev_tbl, ev_hdr_tbl, num_events);
+	/* Events might originate from outside of EM and need hdr-init */
+	event_to_hdr_init_multi(ev_tbl, ev_hdr_tbl, num_events);
 
 	queue_elem = odp_queue_context(odp_queue);
 	if (unlikely(queue_elem == NULL ||

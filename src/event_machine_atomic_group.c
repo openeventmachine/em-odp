@@ -44,6 +44,7 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 	const char *err_str = "";
 	em_status_t error = EM_OK;
 	odp_queue_param_t queue_param;
+	unsigned int size;
 
 	if (unlikely(invalid_qgrp(queue_group))) {
 		error = EM_ERR_BAD_ID;
@@ -81,11 +82,18 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 	queue_param.enq_mode = ODP_QUEUE_OP_MT;
 	/* dequeueing protected by ag_elem->lock */
 	queue_param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
+	/* Queue size: use EM default value from config file: */
+	size = em_shm->opt.queue.min_events_default;
+	if (size != 0)
+		queue_param.size = size;
+	/* else: use odp default as set by odp_queue_param_init() */
 
-	ag_elem->internal_queue = odp_queue_create(ag_elem->name,
-						   &queue_param);
-
-	if (unlikely(ag_elem->internal_queue == ODP_QUEUE_INVALID))
+	ag_elem->internal_queue.hi_prio = odp_queue_create(ag_elem->name,
+							   &queue_param);
+	ag_elem->internal_queue.lo_prio = odp_queue_create(ag_elem->name,
+							   &queue_param);
+	if (unlikely(ag_elem->internal_queue.hi_prio == ODP_QUEUE_INVALID ||
+		     ag_elem->internal_queue.lo_prio == ODP_QUEUE_INVALID))
 		goto error;
 
 	return atomic_group;
@@ -104,7 +112,6 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 	atomic_group_elem_t *const ag_elem =
 		atomic_group_elem_get(atomic_group);
 	em_status_t error = EM_OK;
-	int ag_ev_cnt = 0;
 	int err = 0;
 
 	RETURN_ERROR_IF(ag_elem == NULL,
@@ -124,23 +131,43 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 				"Atomic group in bad state - cannot delete!");
 	}
 
-	/* Flush the atomic group internal queue */
-	do {
-		odp_event_t ag_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	/*
+	 * Flush the atomic group's internal queues and then destroy them
+	 */
+	odp_event_t deq_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	em_event_t *ev_tbl;
+	odp_queue_t plain_q;
+	int ev_cnt = 0;
 
-		ag_ev_cnt = odp_queue_deq_multi(ag_elem->internal_queue,
-						ag_ev_tbl,
-						EM_SCHED_AG_MULTI_MAX_BURST);
-		if (ag_ev_cnt > 0) {
-			em_event_t *ev_tbl = events_odp2em(ag_ev_tbl);
+	plain_q = ag_elem->internal_queue.hi_prio;
+	if (plain_q != ODP_QUEUE_INVALID) {
+		do {
+			ev_cnt =
+			odp_queue_deq_multi(plain_q, deq_tbl,
+					    EM_SCHED_AG_MULTI_MAX_BURST);
+			if (ev_cnt > 0) {
+				ev_tbl = events_odp2em(deq_tbl);
+				for (int i = 0; i < ev_cnt; i++)
+					em_free(ev_tbl[i]);
+			}
+		} while (ev_cnt > 0);
+		err = odp_queue_destroy(plain_q);
+	}
 
-			for (int i = 0; i < ag_ev_cnt; i++)
-				em_free(ev_tbl[i]);
-		}
-	} while (ag_ev_cnt > 0);
-
-	/* Destroy the atomic group  internal queue */
-	err = odp_queue_destroy(ag_elem->internal_queue);
+	plain_q = ag_elem->internal_queue.lo_prio;
+	if (plain_q != ODP_QUEUE_INVALID) {
+		do {
+			ev_cnt =
+			odp_queue_deq_multi(plain_q, deq_tbl,
+					    EM_SCHED_AG_MULTI_MAX_BURST);
+			if (ev_cnt > 0) {
+				ev_tbl = events_odp2em(deq_tbl);
+				for (int i = 0; i < ev_cnt; i++)
+					em_free(ev_tbl[i]);
+			}
+		} while (ev_cnt > 0);
+		err |= odp_queue_destroy(plain_q);
+	}
 
 	ag_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
 	ag_elem->name[0] = '\0';

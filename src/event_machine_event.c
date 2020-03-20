@@ -37,9 +37,11 @@ em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 	em_event_t event;
 
 	pool_elem = pool_elem_get(pool);
-	if (unlikely(pool_elem == NULL || !pool_allocated(pool_elem))) {
+	if (unlikely(size == 0 ||
+		     pool_elem == NULL || !pool_allocated(pool_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_ALLOC,
-			       "EM-pool:%" PRI_POOL " invalid", pool);
+			       "Invalid args: size:%zu type:%u pool:%" PRI_POOL "",
+			       size, type, pool);
 		return EM_EVENT_UNDEF;
 	}
 
@@ -67,9 +69,14 @@ em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 	}
 
 	if (unlikely(event == EM_EVENT_UNDEF)) {
+		em_status_t err =
 		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_ALLOC,
 			       "EM-pool:'%s': sz:%zu type:0x%x pool:%" PRI_POOL "",
 			       pool_elem->name, size, type, pool);
+		if (EM_CHECK_LEVEL > 1 && err != EM_OK &&
+		    em_shm->opt.pool.statistics_enable) {
+			em_pool_info_print(pool);
+		}
 		return EM_EVENT_UNDEF;
 	}
 
@@ -90,8 +97,8 @@ em_free(em_event_t event)
 		return;
 	}
 
-	if (EM_CHECK_LEVEL > 1 || EM_POOL_STATISTICS_ENABLE) {
-		event_hdr_t *const ev_hdr = event_to_event_hdr(event);
+	if (EM_CHECK_LEVEL > 1 || em_shm->opt.pool.statistics_enable) {
+		event_hdr_t *const ev_hdr = event_to_hdr(event);
 
 		if (EM_CHECK_LEVEL > 1) {
 			/* Simple double-free detection */
@@ -103,7 +110,7 @@ em_free(em_event_t event)
 					       EM_ESCOPE_FREE,
 					       "Double free(%u)", allocated);
 		}
-		if (EM_POOL_STATISTICS_ENABLE) {
+		if (em_shm->opt.pool.statistics_enable) {
 			/* Update pool statistcs */
 			em_pool_t pool = ev_hdr->pool;
 
@@ -141,6 +148,14 @@ em_send(em_event_t event, em_queue_t queue)
 				EM_ERR_BAD_ID, EM_ESCOPE_SEND,
 				"Invalid event");
 
+	ev_hdr = event_to_hdr(event);
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+
+	if (EM_CHECK_LEVEL > 2)
+		RETURN_ERROR_IF(env_atomic32_get(&ev_hdr->allocated) != 1,
+				EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_SEND,
+				"Event already freed!");
+
 	if (!is_external) {
 		/* queue belongs to this EM instance */
 		q_elem = queue_elem_get(queue);
@@ -172,35 +187,26 @@ em_send(em_event_t event, em_queue_t queue)
 		return EM_OK;
 	}
 
-	ev_hdr = event_to_event_hdr(event);
-	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
-
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_send(&event, 1, queue, EM_EVENT_GROUP_UNDEF);
 
 	if (is_external) {
 		/*
-		 * Send to another device via event-chaining and a user-provided
-		 * function 'event_send_device()'
+		 * Send out of EM to another device via event-chaining and a
+		 * user-provided function 'event_send_device()'
 		 */
-		if (unlikely(event_send_device == NULL))
-			return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-					      EM_ESCOPE_SEND,
-					      "event_send_device() == NULL!\n"
-					      "Check linking of weak funcs");
-
-		stat = event_send_device(event, queue);
+		stat = send_chaining(event, ev_hdr, queue);
 		if (EM_CHECK_LEVEL == 0)
 			return stat;
 		RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND,
-				"send-evgrp-device failed");
+				"send_chaining failed: Q:%" PRI_QUEUE "",
+				queue);
 		return EM_OK;
 	}
 
 	/*
 	 * Normal send to a queue on this device
 	 */
-
 	switch (q_elem->type) {
 	case EM_QUEUE_TYPE_ATOMIC:
 	case EM_QUEUE_TYPE_PARALLEL:
@@ -224,7 +230,8 @@ em_send(em_event_t event, em_queue_t queue)
 	if (EM_CHECK_LEVEL == 0)
 		return stat;
 	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND,
-			"send failed: Q-type:%" PRI_QTYPE "", q_elem->type);
+			"send failed: Q:%" PRI_QUEUE " type:%" PRI_QTYPE "",
+			queue, q_elem->type);
 
 	return EM_OK;
 }
@@ -253,9 +260,25 @@ em_send_multi(em_event_t *const events, int num, em_queue_t queue)
 			;
 		if (unlikely(i != num)) {
 			INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-				       EM_ESCOPE_SEND_GROUP_MULTI,
+				       EM_ESCOPE_SEND_MULTI,
 				       "Invalid events[%d]=%" PRI_EVENT "",
 				       i, events[i]);
+			return 0;
+		}
+	}
+
+	event_to_hdr_multi(events, ev_hdrs, num);
+	for (i = 0; i < num; i++)
+		ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
+
+	if (EM_CHECK_LEVEL > 2) {
+		for (i = 0; i < num &&
+		     env_atomic32_get(&ev_hdrs[i]->allocated) == 1; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE),
+				       EM_ESCOPE_SEND_MULTI,
+				       "Event(s) already freed!");
 			return 0;
 		}
 	}
@@ -300,27 +323,15 @@ em_send_multi(em_event_t *const events, int num, em_queue_t queue)
 		return num_sent;
 	}
 
-	events_to_event_hdrs(events, ev_hdrs, num);
-	for (i = 0; i < num; i++)
-		ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
-
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_send(events, num, queue, EM_EVENT_GROUP_UNDEF);
 
 	if (is_external) {
 		/*
-		 * Send to another device via event-chaining and a user-provided
-		 * function 'event_send_device_multi()'
+		 * Send out of EM to another device via event-chaining and a
+		 * user-provided function 'event_send_device_multi()'
 		 */
-		if (unlikely(event_send_device_multi == NULL)) {
-			INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_SEND_MULTI,
-				       "event_send_device_multi() == NULL!\n"
-				       "Check linking of weak funcs");
-			return 0;
-		}
-
-		num_sent = event_send_device_multi(events, num, queue);
-
+		num_sent = send_chaining_multi(events, ev_hdrs, num, queue);
 		if (EM_CHECK_LEVEL > 0 && unlikely(num_sent != num)) {
 			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
 				       EM_ESCOPE_SEND_MULTI,
@@ -385,9 +396,10 @@ em_event_pointer(em_event_t event)
 	}
 	case ODP_EVENT_BUFFER: {
 		odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
+		uint32_t push_len = em_shm->opt.pool.alloc_align;
 
 		return (void *)((uintptr_t)odp_buffer_addr(odp_buf) +
-				sizeof(event_hdr_t));
+				sizeof(event_hdr_t) - push_len);
 	}
 	case ODP_EVENT_TIMEOUT: /* @TBD */
 	case ODP_EVENT_CRYPTO_COMPL: /* @TBD */
@@ -418,7 +430,7 @@ em_event_get_size(em_event_t event)
 
 		return odp_packet_seg_len(odp_pkt);
 	} else if (odp_etype == ODP_EVENT_BUFFER) {
-		event_hdr_t *const ev_hdr = event_to_event_hdr(event);
+		event_hdr_t *const ev_hdr = event_to_hdr(event);
 
 		return ev_hdr->event_size;
 	}
@@ -437,7 +449,7 @@ em_event_set_type(em_event_t event, em_event_type_t newtype)
 		RETURN_ERROR_IF(event == EM_EVENT_UNDEF, EM_ERR_BAD_ID,
 				EM_ESCOPE_EVENT_SET_TYPE, "event undefined!")
 
-	ev_hdr = event_to_event_hdr(event);
+	ev_hdr = event_to_hdr(event);
 
 	if (EM_CHECK_LEVEL > 0)
 		RETURN_ERROR_IF(ev_hdr == NULL, EM_ERR_BAD_POINTER,
@@ -461,7 +473,7 @@ em_event_get_type(em_event_t event)
 		}
 	}
 
-	ev_hdr = event_to_event_hdr(event);
+	ev_hdr = event_to_hdr(event);
 
 	if (EM_CHECK_LEVEL > 0) {
 		if (unlikely(ev_hdr == NULL)) {

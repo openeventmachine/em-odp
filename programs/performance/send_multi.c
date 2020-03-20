@@ -746,11 +746,11 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	    !perf_shm->test_status.free_flag) {
 		em_status_t stat;
 
+		q_ctx->sch_q.stored_count++;
 		stat = em_send(event, q_ctx->sch_q.storage);
 		test_fatal_if(stat != EM_OK,
 			      "EM send:%" PRI_STAT " storage-Q:%" PRI_QUEUE "",
 			      stat, q_ctx->sch_q.storage);
-		q_ctx->sch_q.stored_count++;
 		/* Return if the event was stored */
 		return;
 	}
@@ -1040,13 +1040,7 @@ create_and_link_queues(int start_queue, int num_queues)
 			/*
 			 * Create a scheduled queue + associated storage queue
 			 */
-			queue = em_queue_create("queue", QUEUE_TYPE, prio,
-						EM_QUEUE_GROUP_DEFAULT, NULL);
-			if (queue == EM_QUEUE_UNDEF) {
-				APPL_PRINT("Max nbr of supported queues: %d\n",
-					   3 * i);
-				return;
-			}
+			/* storage first... */
 			storage_unscheduled =
 				em_queue_create("unscheduled_storage",
 						EM_QUEUE_TYPE_UNSCHEDULED,
@@ -1058,6 +1052,19 @@ create_and_link_queues(int start_queue, int num_queues)
 					   3 * i + 1);
 				return;
 			}
+			q_ctx->sch_q.storage = storage_unscheduled;
+
+			/* ...then sched queue */
+			queue = em_queue_create("sched_queue", QUEUE_TYPE, prio,
+						EM_QUEUE_GROUP_DEFAULT, NULL);
+			if (queue == EM_QUEUE_UNDEF) {
+				APPL_PRINT("Max nbr of supported queues: %d\n",
+					   3 * i);
+				return;
+			}
+			q_ctx->sch_q.this_queue = queue;
+			q_ctx->sch_q.prio = prio;
+
 			ret = em_queue_set_context(queue, q_ctx);
 			test_fatal_if(ret != EM_OK,
 				      "em_queue_set_context:%" PRI_STAT "\n"
@@ -1069,10 +1076,9 @@ create_and_link_queues(int start_queue, int num_queues)
 				      "EO add queue sync:%" PRI_STAT "\n"
 				      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 				      ret, perf_shm->eo[j], queue);
-			q_ctx->sch_q.this_queue = queue;
-			q_ctx->sch_q.storage = storage_unscheduled;
+
+			/* Link scheduled queues */
 			q_ctx->sch_q.next_queue = next_queue;
-			q_ctx->sch_q.prio = prio;
 
 			/*
 			 * Create a new unscheduled queue
@@ -1088,9 +1094,9 @@ create_and_link_queues(int start_queue, int num_queues)
 					   3 * i + 2);
 				return;
 			}
+			q_ctx->unsch_q.this_queue = queue_unscheduled;
 
 			/* Link unscheduled queues */
-			q_ctx->unsch_q.this_queue = queue_unscheduled;
 			q_ctx->unsch_q.next_queue = next_unscheduled;
 
 			/*

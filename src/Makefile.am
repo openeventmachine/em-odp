@@ -87,6 +87,7 @@ event_machine_scheduler.c \
 event_machine_odp_ext.c \
 	\
 em_atomic_group.c \
+em_chaining.c \
 em_core.c \
 em_daemon_eo.c \
 em_dispatcher.c \

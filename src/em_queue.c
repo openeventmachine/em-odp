@@ -34,8 +34,8 @@
 
 static const em_queue_conf_t default_queue_conf = {
 	.flags = EM_QUEUE_FLAG_DEFAULT,
-	.min_events = 0, /* system default */
-	.conf_len = 0, /* conf is ignored if this is 0 */
+	.min_events = 0, /* use EM default value */
+	.conf_len = 0, /* .conf is ignored if this is 0 */
 	.conf = NULL
 };
 
@@ -54,6 +54,36 @@ queue_poolelem2queue(objpool_elem_t *const queue_pool_elem)
 {
 	return (queue_elem_t *)((uintptr_t)queue_pool_elem -
 				offsetof(queue_elem_t, queue_pool_elem));
+}
+
+static int
+read_config_file(void)
+{
+	const char *conf_str;
+	int val = 0;
+	int ret;
+
+	EM_PRINT("EM-queue config:\n");
+
+	/*
+	 * Option: queue.min_events_default
+	 */
+	conf_str = "queue.min_events_default";
+	ret = libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+	if (val < 0) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n",
+		       conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.queue.min_events_default = val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	return 0;
 }
 
 /**
@@ -106,6 +136,9 @@ queue_init(queue_tbl_t *const queue_tbl,
 	memset(queue_pool, 0, sizeof(queue_pool_t));
 	memset(queue_pool_static, 0, sizeof(queue_pool_t));
 	env_atomic32_init(&em_shm->queue_count);
+
+	if (read_config_file())
+		return EM_ERR_LIB_FAILED;
 
 	/* Retieve and store the ODP queue capabilities into 'queue_tbl' */
 	ret = odp_queue_capability(odp_queue_capa);
@@ -539,8 +572,17 @@ queue_setup(queue_elem_t *const q_elem, const char *name, em_queue_type_t type,
 			odp_queue_param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
 	}
 	/* Set minimum queue size if other than 'default'(0) */
-	if (conf->min_events != 0)
+	if (conf->min_events == 0) {
+		/* use EM default value from config file: */
+		unsigned int size = em_shm->opt.queue.min_events_default;
+
+		if (size != 0)
+			odp_queue_param.size = size;
+		/* else: use odp default as set by odp_queue_param_init() */
+	} else {
+		/* use user provided value: */
 		odp_queue_param.size = conf->min_events;
+	}
 
 	if (type == EM_QUEUE_TYPE_ATOMIC ||
 	    type == EM_QUEUE_TYPE_PARALLEL ||

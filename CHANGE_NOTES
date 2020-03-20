@@ -44,6 +44,56 @@ The version numbering scheme reflects the used EM API version:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine on ODP v2.1.2
+--------------------------------------------------------------------------------
+- Config file options - config/em-odp.conf
+  EM runtime configuration options added. The user can optionally override
+  default config options by setting the environmental variable 'EM_CONFIG_FILE'
+  to point to an alternative config file with desired values, e.g.:
+        $ sudo EM_CONFIG_FILE=./my-overrides.conf ./em-application -c 0xfe
+  The configuration file values in config/em-odp.conf are the default values
+  set for em-odp during the configure/build phase and the values defined there
+  are used unless overrided via the optional EM_CONFIG_FILE. A user provided
+  config file does not have to include all available options, only the mandatory
+  options as well as the options that the user wants to change can be included
+  (while the missing options will be replaced with the default build-time
+   values).
+    - Option 'pool.statistics_enable':
+      Enable EM pool usage statistics collection during runtime (true/false).
+      Pool usage statistics is updated e.g. during em_alloc() and em_free(),
+      thus, if enabled, inducing some overhead. Pool information can be
+      obtained by calling em_pool_info() and, if pool usage statistics is
+      enabled, will return also pool usage statistics.
+    - Option 'pool.alloc_align':
+      Alloc alignment in bytes, default = 0 (no extra alignment requirement)
+      Set the exact alignment of the event payload start address (in bytes).
+      The event payload address returned by em_event_pointer(event) will
+      have the this alignment. Use power of two values only.
+    - Option 'queue.min_events_default':
+      Default minimum number of events that a queue can hold.
+      This value will be used in queue creation (em_queue_create*()) if no
+      other size information has been provided via the
+      em_queue_conf_t::min_events parameter.
+      Setting 'min_events_default = 0' will use the odp-implementation's
+      default values (might vary from one odp-implementation to another).
+    - Option 'event_chaining.num_order_queues'
+      Number of queues used for ordering event-chaining events.
+      Maintain the order of events sent to another device from within
+      an EM ordered context (i.e. send from within the EO receive function
+      when handling an event from a parallel-ordered queue).
+      An event-chaining queue has no 'real' queue associated with it, the
+      queue-id simply indicates that events sent to the queue should be
+      sent out of EM via a user specified function (and perhaps out towards
+      another device). Sending events out of EM requires some intervention,
+      especially sending during an ordered context needs to maintain the
+      event order as determined by the context. To maintain event order for
+      event-chaining queues, em-odp uses a set of 'real' queues for order
+      tracking - the number of these queues is set by this option.
+      Note, 0 = no ordering.
+- Event alloc size must be larger than zero, i.e. em_alloc(sz > 0, ...)
+- Optimizations and performance improvements
+
+--------------------------------------------------------------------------------
 Event Machine on ODP v2.1.1
 --------------------------------------------------------------------------------
 - Example programs support graceful Ctrl-C termination, see em-odp/programs.

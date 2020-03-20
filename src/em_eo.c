@@ -381,13 +381,13 @@ eo_start_buffer_events(em_event_t *const events, int num, em_queue_t queue,
 	if (unlikely(eo_elem == NULL))
 		return 0;
 
-	events_to_event_hdrs(events, ev_hdrs, num);
+	event_to_hdr_multi(events, ev_hdrs, num);
 
 	env_spinlock_lock(&eo_elem->lock);
 
 	for (i = 0; i < num; i++) {
 		ev_hdrs[i]->egrp = event_group;
-		ev_hdrs[i]->start_queue = queue;
+		ev_hdrs[i]->queue = queue;
 		list_add(&eo_elem->startfn_evlist, &ev_hdrs[i]->start_node);
 	}
 
@@ -435,7 +435,7 @@ eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 		start_node = list_rem_first(&eo_elem->startfn_evlist);
 		ev_hdr = start_node_to_event_hdr(start_node);
 		event_group = ev_hdr->egrp;
-		queue = ev_hdr->start_queue;
+		queue = ev_hdr->queue;
 		event = event_hdr_to_event(ev_hdr);
 		ev_cnt = 1;
 
@@ -443,7 +443,7 @@ eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 		list_for_each(&eo_elem->startfn_evlist, pos, start_node) {
 			tmp_hdr = start_node_to_event_hdr(start_node);
 			tmp_evgrp = tmp_hdr->egrp;
-			tmp_queue = tmp_hdr->start_queue;
+			tmp_queue = tmp_hdr->queue;
 			if (tmp_evgrp != event_group ||
 			    tmp_queue != queue)
 				break;

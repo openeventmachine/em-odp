@@ -253,9 +253,9 @@ typedef struct {
 	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
 	int num_subpools;
 	struct {
-		/** Event payload size of the subpool */
+		/** Event payload size of the subpool (size > 0)  */
 		uint32_t size;
-		/** Number of events in the subpool */
+		/** Number of events in the subpool (num > 0) */
 		uint32_t num;
 	} subpool[EM_MAX_SUBPOOLS];
 } em_pool_cfg_t;
@@ -279,12 +279,14 @@ typedef struct {
 		uint32_t num;
 		/**
 		 * Number of events allocated from the subpool.
-		 * Only if EM_POOL_STATISTICS_ENABLE is '1', otherwise .used=0
+		 * Only if EM config file: pool.statistics_enable=true,
+		 * otherwise .used=0
 		 */
 		uint32_t used;
 		/**
 		 * Number of events free in the subpool.
-		 * Only if EM_POOL_STATISTICS_ENABLE is '1', otherwise .free=0
+		 * Only if EM config file: pool.statistics_enable=true,
+		 * otherwise .free=0
 		 */
 		uint32_t free;
 	} subpool[EM_MAX_SUBPOOLS];

@@ -384,7 +384,8 @@ void test_start(appl_conf_t *const appl_conf)
 	 */
 	memset(&attr, 0, sizeof(em_timer_attr_t));
 	strncpy(attr.name, "TestTimer", EM_TIMER_NAME_LEN);
-	attr.num_tmo = APP_MAX_TMOS + APP_MAX_PERIODIC + 1;
+	attr.num_tmo = MAX(APP_MAX_TMOS + APP_MAX_PERIODIC + 1,
+			   em_core_count() * 512 + 1024); /* core stashing */
 	attr.resolution = APP_TIMER_RESOLUTION_US * 1000ULL;
 	m_shm->tmr = em_timer_create(&attr);
 	test_fatal_if(m_shm->tmr == EM_TIMER_UNDEF, "Failed to create timer!");
@@ -396,7 +397,8 @@ void test_start(appl_conf_t *const appl_conf)
 	/* create periodic timer for heartbeat */
 	eo_ctx->heartbeat_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_PERIODIC,
 					      eo_ctx->my_q);
-	test_fatal_if(eo_ctx->heartbeat_tmo == EM_TMO_UNDEF, "Can't allocate heartbeat_tmo!\n");
+	test_fatal_if(eo_ctx->heartbeat_tmo == EM_TMO_UNDEF,
+		      "Can't allocate heartbeat_tmo!\n");
 
 	event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW, m_shm->pool);
 	test_fatal_if(event == EM_EVENT_UNDEF, "Can't allocate event (%ldB)!\n",
@@ -409,7 +411,8 @@ void test_start(appl_conf_t *const appl_conf)
 		APPL_ERROR("WARNING - timer hz very low!\n");
 
 	/* linux time check */
-	test_fatal_if(clock_getres(APP_LINUX_CLOCK_SRC, &ts) != 0, "clock_getres() failed!\n");
+	test_fatal_if(clock_getres(APP_LINUX_CLOCK_SRC, &ts) != 0,
+		      "clock_getres() failed!\n");
 
 	period = ts.tv_nsec + (ts.tv_sec * 1000000000ULL);
 	eo_ctx->linux_hz = 1000000000ULL / period;

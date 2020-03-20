@@ -158,73 +158,47 @@ ag_local_processing_ended(atomic_group_elem_t *const ag_elem)
 	return 0;
 }
 
-static inline void
+static inline int
 ag_internal_enq(atomic_group_elem_t *const ag_elem, em_event_t ev_tbl[],
-		const int num_events)
+		const int num_events, const em_queue_prio_t priority)
 {
 	odp_event_t *const odp_ev_tbl = events_em2odp(ev_tbl);
+	odp_queue_t plain_q;
+	int ret;
+
+	if (priority == EM_QUEUE_PRIO_HIGHEST)
+		plain_q = ag_elem->internal_queue.hi_prio;
+	else
+		plain_q = ag_elem->internal_queue.lo_prio;
 
 	/* Enqueue events to internal queue */
-	const int ret = odp_queue_enq_multi(ag_elem->internal_queue,
-					    odp_ev_tbl, num_events);
+	ret = odp_queue_enq_multi(plain_q, odp_ev_tbl, num_events);
+	if (unlikely(ret != num_events))
+		return ret > 0 ? ret : 0;
 
-	if (ret != num_events)
-		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_ERROR,
-			       "Atomic group internal queue enqueue failed!");
+	return num_events;
 }
 
-/*
- * Atomic group event dispatch loop starts when an event is scheduled from
- * the atomic queue that belongs to the group. The atomic context of that queue
- * is locked until the core calls odp_schedule() again. The atomic group
- * dispatch loop can run a long time, or possibly indefinitely. To ensure
- * this queue is scheduled normally by other cores, the atomic context
- * must be freed from this core.
- */
-static inline void
-atomic_group_release_sched_queue(atomic_group_elem_t *const ag_elem,
-				 queue_elem_t *const q_elem)
+static inline int
+ag_internal_deq(atomic_group_elem_t *const ag_elem, em_event_t ev_tbl[],
+		const int num_events)
 {
-	odp_event_t odp_events[EVENT_CACHE_FLUSH];
-	event_hdr_t *ev_hdrs[EVENT_CACHE_FLUSH];
-	em_event_t *events;
-	int i, ev_cnt, enq_cnt;
+	odp_event_t *const ag_ev_tbl = (odp_event_t *const)ev_tbl;
+	int hi_cnt, lo_cnt;
 
-	/* Pause global scheduling for this core */
-	odp_schedule_pause();
+	/* hi-prio events */
+	hi_cnt = odp_queue_deq_multi(ag_elem->internal_queue.hi_prio,
+				     ag_ev_tbl, num_events);
+	if (hi_cnt == num_events || hi_cnt < 0)
+		return hi_cnt;
 
-	/*
-	 * All events received from scheduler are now prescheduled
-	 * events from core local cache.
-	 */
-	while ((ev_cnt = odp_schedule_multi_no_wait(NULL, odp_events,
-						    EVENT_CACHE_FLUSH)) > 0) {
-		events = events_odp2em(odp_events);
-		events_to_event_hdrs(events, ev_hdrs, ev_cnt);
-		/* Insert the original q_elem pointer into the event header */
-		for (i = 0; i < ev_cnt; i++)
-			ev_hdrs[i]->q_elem = q_elem;
+	/* ...then lo-prio events */
+	lo_cnt = odp_queue_deq_multi(ag_elem->internal_queue.lo_prio,
+				     &ag_ev_tbl[hi_cnt], num_events - hi_cnt);
+	if (unlikely(lo_cnt < 0))
+		return hi_cnt;
 
-		enq_cnt = odp_queue_enq_multi(ag_elem->internal_queue,
-					      odp_events, ev_cnt);
-
-		if (unlikely(ev_cnt != enq_cnt)) {
-			if (enq_cnt < 0)
-				enq_cnt = 0;
-			event_free_multi(&events[enq_cnt], ev_cnt - enq_cnt);
-			INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_ERROR,
-				       "Atomic group internal enqueue failed");
-		}
-	}
-
-	/* Resume global scheduling for this core */
-	odp_schedule_resume();
-	/*
-	 * Now that core local cache is empty, the following call will release
-	 * the atomic queue context in the scheduler. If there are prescheduled
-	 * events for this core, this call would do nothing.
-	 */
-	odp_schedule_release_atomic();
+	return hi_cnt + lo_cnt;
 }
 
 void
@@ -233,58 +207,80 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 {
 	atomic_group_elem_t *const ag_elem =
 		atomic_group_elem_get(q_elem->atomic_group);
+	const em_queue_prio_t priority = q_elem->priority;
+	int enq_cnt;
 
 	/* Insert the original q_elem pointer into the event header */
 	for (int i = 0; i < num_events; i++)
 		ev_hdr_tbl[i]->q_elem = q_elem;
 
-	/* Put scheduled event to atomic group internal queue */
-	ag_internal_enq(ag_elem, ev_tbl, num_events);
+	/* Enqueue the scheduled events into the atomic group internal queue */
+	enq_cnt = ag_internal_enq(ag_elem, ev_tbl, num_events, priority);
 
-	/* Try to acquire atomic group */
-	if (env_spinlock_trylock(&ag_elem->lock)) {
+	if (unlikely(enq_cnt < num_events)) {
+		event_free_multi(&ev_tbl[enq_cnt], num_events - enq_cnt);
 		/*
-		 * Release the scheduled atomic odp queue context before
-		 * dedicating this core for atomic group event dispatching.
+		 * Use dispatch escope since this func is called only from
+		 * dispatch_round() => atomic_group_dispatch()
 		 */
-		atomic_group_release_sched_queue(ag_elem, q_elem);
+		INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_DISPATCH,
+			       "Atomic group:%" PRI_AGRP " internal enqueue:\n"
+			       "  num_events:%d enq_cnt:%d",
+			       ag_elem->atomic_group, num_events, enq_cnt);
+	}
 
-		odp_event_t ag_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	/*
+	 * Try to acquire the atomic group lock - if not available then some
+	 * other core is already handling the same atomic group.
+	 */
+	if (!env_spinlock_trylock(&ag_elem->lock))
+		return;
+
+	/* hint */
+	odp_schedule_release_atomic();
+
+	em_locm.atomic_group_released = 0;
+	/*
+	 * Loop until no more events or until atomic processing end.
+	 * Events in the ag_elem->internal_queue:s have been scheduled
+	 * already once and should be dispatched asap.
+	 */
+	do {
+		em_event_t deq_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
 		event_hdr_t *deq_hdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-		em_event_t *deq_ev_tbl;
-		int ag_ev_cnt, i;
 
-		em_locm.atomic_group_released = 0;
+		const int deq_cnt =
+			ag_internal_deq(ag_elem, deq_ev_tbl,
+					EM_SCHED_AG_MULTI_MAX_BURST);
+
+		if (unlikely(deq_cnt <= 0)) {
+			env_spinlock_unlock(&ag_elem->lock);
+			/* return if no more events available */
+			return;
+		}
+
+		em_locm.event_burst_cnt = deq_cnt;
+		event_to_hdr_multi(deq_ev_tbl, deq_hdr_tbl, deq_cnt);
+		int tbl_idx = 0; /* index into 'deq_hdr_tbl[]' */
 
 		/*
-		 * Loop until no more events or until atomic processing end.
-		 * Events in the ag_elem->internal_queue have been scheduled
-		 * already once and should be dispatched asap.
+		 * Dispatch in batches of 'batch_cnt' events.
+		 * Each batch contains events from the same atomic queue.
 		 */
 		do {
-			ag_ev_cnt =
-			odp_queue_deq_multi(ag_elem->internal_queue,
-					    ag_ev_tbl,
-					    EM_SCHED_AG_MULTI_MAX_BURST);
-			if (unlikely(ag_ev_cnt <= 0)) {
-				env_spinlock_unlock(&ag_elem->lock);
-				return;
+			queue_elem_t *const batch_qelem =
+				deq_hdr_tbl[tbl_idx]->q_elem;
+			int batch_cnt = 1;
+
+			for (int i = tbl_idx + 1; i < deq_cnt &&
+			     deq_hdr_tbl[i]->q_elem == batch_qelem; i++) {
+				batch_cnt++;
 			}
 
-			deq_ev_tbl = events_odp2em(ag_ev_tbl);
-			events_to_event_hdrs(deq_ev_tbl, deq_hdr_tbl,
-					     ag_ev_cnt);
+			dispatch_events(&deq_hdr_tbl[tbl_idx], batch_cnt,
+					batch_qelem);
+			tbl_idx += batch_cnt;
+		} while (tbl_idx < deq_cnt);
 
-			em_locm.event_burst_cnt = ag_ev_cnt;
-			for (i = 0; i < ag_ev_cnt; i++) {
-				/*
-				 * Need to dispatch 1-by-1 because every event
-				 * might originate from a different queue in
-				 * the atomic group
-				 */
-				dispatch_events(&deq_hdr_tbl[i], 1,
-						deq_hdr_tbl[i]->q_elem);
-			}
-		} while (!ag_local_processing_ended(ag_elem));
-	}
+	} while (!ag_local_processing_ended(ag_elem));
 }
