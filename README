@@ -54,11 +54,11 @@ more inlining of code. Try also --disable-shared if a static lib is OK for you.
    --disable-shared)
 > make && make install
 
-Tested against odp v1.23.0.0 and up to odp commit (at the time of writing the
-latest on the odp git master branch):
-  Commit: b9002efa6e12fafc901794aa5f6a99ef306d944b [b9002ef]
-  Commit Date: Thursday, 28 November 2019 11:57.11
-  validation: buffer: allow allocted buffer size to be larger than requested
+Tested against odp commit (at the time of writing the latest commit on the
+odp git master branch):
+  Commit: 2f226e691e6b208f662f0573d100f3300fd94161 [2f226e6]
+  Commit Date: Tuesday, 17 March 2020 15:05.56
+  validation: pool: add test for packet pool seg_len parameter
 
 Trying to build static test applications without a static ODP library would
 fail.

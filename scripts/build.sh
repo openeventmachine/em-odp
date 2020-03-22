@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-export ODP_VERSION=v1.23.0.0
+#export ODP_VERSION=v1.23.0.0
+export ODP_VERSION=master
 
 export BUILD_DIR=$(readlink -e $(dirname $0))/build
 
