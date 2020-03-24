@@ -4,7 +4,6 @@ sudo: required
 
 arch:
     - amd64
-    - arm64
 
 addons:
     apt:
@@ -19,17 +18,28 @@ addons:
             - libtool
             - mscgen
             - pkg-config
+            - python3-pip
+            - hugepages
+
+install:
+  - sudo pip3 install robotframework
 
 compiler:
     - gcc
-    - clang
 
-script:
-    - ./scripts/build.sh
+script: skip
 
 jobs:
     include:
-        - stage: test
+        - stage: Build
+          script:
+              - ./scripts/build.sh
+        - stage: Robot Tests
+          script:
+              - ./scripts/build.sh
+              - git clone https://github.com/openeventmachine/ci.git
+              - ./ci/test.sh
+        - stage: Documentation
           env: TEST=documentation
           script:
               - ./scripts/build.sh
