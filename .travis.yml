@@ -20,9 +20,7 @@ addons:
             - pkg-config
             - python3-pip
             - hugepages
-
-install:
-  - sudo pip3 install robotframework
+            - docker
 
 compiler:
     - gcc
@@ -31,11 +29,40 @@ script: skip
 
 jobs:
     include:
-        - stage: Build
+        - stage: build
+          env: BUILD=amd64,gcc
           script:
               - ./scripts/build.sh
-        - stage: Robot Tests
+        - stage: build
+          env: BUILD=arm64,gcc
+          arch: arm64
           script:
+              - ./scripts/build.sh
+        - stage: build
+          env: BUILD=amd64,focal,gcc
+          dist: bionic
+          script:
+              - git clone https://github.com/openeventmachine/ci.git
+              - echo "git clone https://github.com/openeventmachine/em-odp.git && cd em-odp" >> ci/docker.sh
+              - echo "cp -r /root/ci /root/em-odp" >> ci/docker.sh
+              - echo "./scripts/build.sh" >> ci/docker.sh
+              - docker run --privileged --name focal -i -t -v /dev/hugepages:/dev/hugepages -v ${PWD}:/root -w /root --shm-size 4g ubuntu:20.04 sh ci/docker.sh
+        - stage: build
+          env: BUILD=amd64,focal,clang
+          dist: bionic
+          script:
+              - git clone https://github.com/openeventmachine/ci.git
+              - echo "apt remove gcc -y" >> ci/docker.sh
+              - echo "apt install clang -y" >> ci/docker.sh
+              - echo "git clone https://github.com/openeventmachine/em-odp.git && cd em-odp" >> ci/docker.sh
+              - echo "cp -r /root/ci /root/em-odp" >> ci/docker.sh
+              - echo "./scripts/build.sh" >> ci/docker.sh
+              - docker run --privileged --name focal -i -t -v /dev/hugepages:/dev/hugepages -v ${PWD}:/root -w /root --shm-size 4g ubuntu:20.04 sh ci/docker.sh
+        - stage: test
+          env: TEST=amd64,bionic,gcc
+          dist: bionic
+          script:
+              - sudo pip3 install robotframework
               - ./scripts/build.sh
               - git clone https://github.com/openeventmachine/ci.git
               - ./ci/test.sh
