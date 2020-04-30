@@ -65,6 +65,18 @@ jobs:
               - sudo pip3 install robotframework
               - ./scripts/build.sh
               - git clone https://github.com/openeventmachine/ci.git
+              - ./ci/env.sh
+              - ./ci/test.sh
+        - stage: test
+          env: TEST=arm64,bionic,gcc
+          arch: arm64
+          dist: bionic
+          sudo: required
+          script:
+              - sudo pip3 install robotframework
+              - ./scripts/build.sh
+              - git clone https://github.com/openeventmachine/ci.git
+              - ./ci/env.sh
               - ./ci/test.sh
         - stage: Documentation
           env: TEST=documentation
