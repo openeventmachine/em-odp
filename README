@@ -1,4 +1,4 @@
-Copyright (c) 2013-2019, Nokia Solutions and Networks
+Copyright (c) 2013-2020, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -52,13 +52,14 @@ If testing for performance, also give the --disable-abi-compat option to enable
 more inlining of code. Try also --disable-shared if a static lib is OK for you.
 (> ../configure --prefix=<odp install path> --disable-abi-compat \
    --disable-shared)
+See further configure options: ../configure --help
 > make && make install
 
-Tested against odp commit (at the time of writing the latest commit on the
-odp git master branch):
-  Commit: 2f226e691e6b208f662f0573d100f3300fd94161 [2f226e6]
-  Commit Date: Tuesday, 17 March 2020 15:05.56
-  validation: pool: add test for packet pool seg_len parameter
+Tested against odp linux-generic, commit:
+  Commit: fd9f805a0024677f31876e13d28aa8ab9470a282 [fd9f805]
+  Date: Thursday, 4 June 2020 0:48.15
+  Commit Date: Thursday, 4 June 2020 16:39.27
+  validation: classification: fix duplicate global variable definition
 
 Trying to build static test applications without a static ODP library would
 fail.
@@ -72,10 +73,16 @@ em-odp with different odp installations or configurations.
 > ./bootstrap
 > mkdir build && cd build
 > ../configure --prefix=<em-odp install path> --with-odp-path=<odp install path>
+See further configure options: ../configure --help
 > make && make install
 
 Run some example application to test the functionality (path from build/), e.g.
 > ./programs/example/fractal/fractal -c 0xe -t
+Optionally change ODP and/or EM run-time options by specifying your own
+runtime config files:
+> ODP_CONFIG_FILE=my-odp.conf EM_CONFIG_FILE=my-em.conf \
+  ./programs/example/hello/hello -c 0xe -t
+
 Stop by pressing Ctrl-C.
 
 ===============================================================================
@@ -154,11 +161,11 @@ to configure and compile dpdk and odp-dpdk on top of it.
 ODP compilations as above but different installation directories i.e.
 > ../configure --prefix=<odp-dpdk install path>
 
-Tested against odp-dpdk v1.23.0.0_DPDK_18.11 (at the time of writing the
-latest on the odp-dpdk git master branch):
-  Commit: 4f6d7f4a897808865b6a4da37fd17837b5b5453f [4f6d7f4]
-  Date: Tuesday, 3 December 2019 8:57.13
-  Merge pull request #83
+Tested against odp-dpdk commit:
+Commit: 102173c31bf1af979488af3d3d4175d162ac0454 [102173c]
+Date: Monday, 11 May 2020 14:59.08
+Commit Date: Wednesday, 13 May 2020 12:30.53
+linux-dpdk: pktio: add configuration option for ethernet multicast receipt
 
 EM-ODP compilation with odp-dpdk:
 > mkdir build-dpdk && cd build-dpdk

@@ -114,6 +114,7 @@ env_shared_free(void *buf)
 {
 	env_shm_buf_t *env_shm_buf;
 	odp_shm_t shm;
+	int ret;
 
 	if (buf == NULL)
 		return;
@@ -122,5 +123,7 @@ env_shared_free(void *buf)
 					offsetof(env_shm_buf_t, data));
 
 	shm = env_shm_buf->hdr.odp_shm;
-	odp_shm_free(shm);
+	ret = odp_shm_free(shm);
+	if (unlikely(ret != 0))
+		env_panic("");
 }

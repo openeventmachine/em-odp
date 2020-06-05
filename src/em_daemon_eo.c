@@ -33,24 +33,6 @@
 #define DAEMON_ERROR(error, ...) \
 	INTERNAL_ERROR((error), EM_ESCOPE_DAEMON, ## __VA_ARGS__)
 
-/**
- * Daemon EO context data
- */
-typedef struct {
-	uint8_t u8[ENV_CACHE_LINE_SIZE];
-} daemon_eo_ctx_t;
-
-/**
- * Daemon shared data
- */
-typedef struct {
-	odp_shm_t this_shm;
-	em_eo_t daemon_eo;
-	daemon_eo_ctx_t daemon_eo_ctx;
-} daemon_shm_t;
-
-static ENV_LOCAL daemon_shm_t *daemon_shm;
-
 static em_status_t
 daemon_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf);
 static em_status_t
@@ -60,58 +42,19 @@ daemon_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 		  em_queue_t queue, void *q_ctx);
 
 void
-daemon_eo_shm_init(int first)
-{
-	odp_shm_t shm;
-	char name[] = "daemonEOShMem";
-
-	if (first)
-		shm = odp_shm_reserve(name, sizeof(daemon_shm_t),
-				      ODP_CACHE_LINE_SIZE, ODP_SHM_SINGLE_VA);
-	else
-		shm = odp_shm_lookup(name);
-
-	if (unlikely(shm == ODP_SHM_INVALID))
-		DAEMON_ERROR(EM_FATAL(EM_ERR_ALLOC_FAILED),
-			     "daemon shm setup failed");
-
-	daemon_shm = odp_shm_addr(shm);
-
-	if (daemon_shm == NULL)
-		DAEMON_ERROR(EM_FATAL(EM_ERR_NOT_FREE), "daemon shm NULL");
-	else if (first)
-		memset(daemon_shm, 0, sizeof(daemon_shm_t));
-
-	/* store handle for free at termination */
-	daemon_shm->this_shm = shm;
-}
-
-void
-daemon_eo_shm_free(void)
-{
-	int ret;
-
-	ret = odp_shm_free(daemon_shm->this_shm);
-	if (ret != 0)
-		DAEMON_ERROR(EM_ERR_LIB_FAILED,
-			     "daemon_shm free failed:%d", ret);
-}
-
-void
 daemon_eo_create(void)
 {
 	em_eo_t eo;
 	em_status_t stat, stat_eo_start = EM_ERROR;
-	daemon_eo_ctx_t *const daemon_eo_ctx = &daemon_shm->daemon_eo_ctx;
 
 	eo = em_eo_create("daemon-eo", daemon_eo_start, NULL /*start_local*/,
 			  daemon_eo_stop, NULL /*stop_local*/,
-			  daemon_eo_receive, daemon_eo_ctx);
+			  daemon_eo_receive, NULL);
 	if (eo == EM_EO_UNDEF)
 		DAEMON_ERROR(EM_FATAL(EM_ERR_BAD_ID), "daemon-eo create fail");
 
 	/* Store the EO in shared memory */
-	daemon_shm->daemon_eo = eo;
+	em_shm->daemon.eo = eo;
 
 	stat = em_eo_start(eo, &stat_eo_start, NULL, 0, NULL);
 	if (stat != EM_OK || stat_eo_start != EM_OK)
@@ -123,11 +66,17 @@ void
 daemon_eo_shutdown(void)
 {
 	const int core = em_core_id();
-	const em_eo_t eo = daemon_shm->daemon_eo;
+	const em_eo_t eo = em_shm->daemon.eo;
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	em_status_t stat;
 
 	EM_PRINT("%s() on EM-core %d\n", __func__, core);
+
+	if (unlikely(eo_elem == NULL)) {
+		DAEMON_ERROR(EM_FATAL(EM_ERR_BAD_ID),
+			     "daemon-eo handle:%" PRI_EO " invalid!", eo);
+		return;
+	}
 
 	/*
 	 * Stop the daemon-EO, i.e. call the daemon-EO global stop func.
@@ -146,7 +95,6 @@ static em_status_t
 daemon_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 {
 	const int num_cores = em_core_count();
-	daemon_eo_ctx_t *const daemon_eo_ctx = eo_ctx;
 	char qgrp_name[] = EM_QUEUE_GROUP_CORE_LOCAL_BASE_NAME;
 	char q_name[EM_QUEUE_NAME_LEN] = "EM_Q_INTERNAL_000000";
 	em_queue_group_t queue_group;
@@ -157,7 +105,7 @@ daemon_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	const char *err_str = "";
 	int i;
 
-	(void)daemon_eo_ctx;
+	(void)eo_ctx;
 	(void)conf;
 
 	EM_PRINT("daemon-eo starting!\n");
@@ -229,6 +177,12 @@ daemon_eo_stop(void *eo_ctx, em_eo_t eo)
 	(void)eo_ctx;
 
 	EM_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
+
+	if (unlikely(eo_elem == NULL)) {
+		stat = EM_FATAL(EM_ERR_BAD_ID);
+		DAEMON_ERROR(stat, "daemon-eo handle:%" PRI_EO " invalid!", eo);
+		return stat;
+	}
 
 	/* Cannot use API funcs - internal ctrl events might not work */
 	stat = queue_disable_all(eo_elem);

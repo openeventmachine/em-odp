@@ -343,6 +343,7 @@ event_alloc_buf(mpool_elem_t *const pool_elem, size_t size,
 	/* For optimization, no initialization for feature variables */
 	ev_hdr->event = em_event;  /* store this event handle */
 	ev_hdr->event_size = size; /* store requested size */
+	ev_hdr->align_offset = pool_elem->align_offset;
 	ev_hdr->event_type = type; /* store the event type */
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 
@@ -372,7 +373,7 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 	odp_event_t odp_event;
 	em_event_t em_event;
 	event_hdr_t *ev_hdr;
-	const uint32_t push_len = em_shm->opt.pool.alloc_align;
+	const uint32_t push_len = pool_elem->align_offset;
 	uint32_t pull_len;
 	size_t alloc_size;
 
@@ -445,6 +446,7 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 	/* For optimization, no initialization for feature variables */
 	ev_hdr->event = em_event;  /* store this event handle */
 	ev_hdr->event_size = size; /* store requested size */
+	/* ev_hdr->align_offset = needed by odp bufs only */
 	ev_hdr->event_type = type; /* store the event type */
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 

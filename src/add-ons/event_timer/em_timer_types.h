@@ -42,12 +42,11 @@ typedef struct event_timer_t {
 	int idx;
 } event_timer_t;
 
-/* global shared memory data */
-typedef struct timer_shm_t {
-	odp_shm_t odp_shm ODP_ALIGNED_CACHE;
-	odp_ticketlock_t tlock;
+/* Timer */
+typedef struct {
+	odp_ticketlock_t timer_lock;
 	event_timer_t timer[EM_ODP_MAX_TIMERS];
-} timer_shm_t;
+} timer_storage_t;
 
 /* EM timer handle points to this. Holds the timer state. */
 typedef struct em_timer_timeout_t {

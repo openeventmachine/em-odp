@@ -110,8 +110,8 @@ typedef struct {
 	#define MSG_ALL_DONE_CHAINED 6
 	/* Event/msg number */
 	uint64_t msg;
-	/* Start cycles stored at the beginning of each round */
-	uint64_t start_cycles;
+	/* Start time stored at the beginning of each round */
+	env_time_t start_time;
 	/* The number of times to increment (per event) the event group count
 	 * by calling em_event_group_increment(1).
 	 */
@@ -126,10 +126,10 @@ typedef struct {
 	em_event_group_t event_group;
 	/* Store the start event to restart the test */
 	em_event_t event_start;
-	/* Total test case running time in cycles. Updated when receiving
+	/* Total test case running time. Updated when receiving
 	 * a notification event.
 	 */
-	uint64_t total_cycles;
+	env_time_t total_time;
 	/* The number of rounds, i.e. received notifications, during this
 	 * test case
 	 */
@@ -200,6 +200,8 @@ typedef struct {
 	core_stat_t core_stats[MAX_NBR_OF_CORES] ENV_CACHE_LINE_ALIGNED;
 	/* Core stats for the assigned event group */
 	core_stat_t core_stats_assign[MAX_NBR_OF_CORES] ENV_CACHE_LINE_ALIGNED;
+
+	uint64_t cpu_hz;
 } egrp_shm_t;
 
 static ENV_LOCAL egrp_shm_t *egrp_shm;
@@ -221,7 +223,7 @@ static uint64_t
 sum_received_events(core_stat_t core_stats[], int len);
 
 static void
-update_test_cycles(uint64_t diff, egrp_context_t *const egrp_context);
+update_test_time(env_time_t diff, egrp_context_t *const egrp_context);
 
 /**
  * Main function
@@ -311,6 +313,8 @@ test_start(appl_conf_t *const appl_conf)
 
 	test_fatal_if(egrp_shm->pool == EM_POOL_UNDEF,
 		      "Undefined application event pool!");
+
+	egrp_shm->cpu_hz = env_core_hz();
 
 	/*
 	 * Create the event group test EO and a parallel queue, add the queue
@@ -552,7 +556,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	em_status_t ret;
 	eo_context_t *eo_ctx = eo_context;
 	event_group_test_t *egroup_test;
-	uint64_t diff, start_cycles, end_cycles;
+	env_time_t diff_time, start_time, end_time;
 	int i, j;
 
 	em_notif_t egroup_notif_tbl[1];
@@ -601,7 +605,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			apply_event_group = eo_ctx->egrp_assign.event_group;
 		}
 
-		egroup_test->start_cycles = env_get_cycle();
+		egroup_test->start_time = env_time_global();
 		egroup_test->increment = 0;
 
 		/* Notification 'event' should be sent to 'queue' when done */
@@ -643,7 +647,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 			egroup_test_2 = em_event_pointer(ev_tbl[i]);
 			egroup_test_2->msg = MSG_DATA;
-			egroup_test_2->start_cycles = 0;
+			egroup_test_2->start_time = ENV_TIME_NULL;
 			/* How many times to increment and resend */
 			egroup_test_2->increment = EVENT_GROUP_INCREMENT;
 		}
@@ -796,22 +800,21 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			egroup_test->msg = MSG_START_ASSIGN;
 		}
 
-		/* Calculate the cycles and received data events */
-		end_cycles = env_get_cycle();
-		start_cycles = egroup_test->start_cycles;
-		if (likely(end_cycles > start_cycles))
-			diff = end_cycles - start_cycles;
-		else
-			diff = UINT64_MAX - start_cycles + end_cycles + 1;
-		update_test_cycles(diff, egrp_context);
+		/* Calculate the time and received data events */
+		end_time = env_time_global();
+		start_time = egroup_test->start_time;
+		diff_time = env_time_diff(end_time, start_time);
+		update_test_time(diff_time, egrp_context);
 		rcv_ev_cnt = sum_received_events(core_stats, em_core_count());
 
 		/* OK, print results */
 		APPL_PRINT("%s event group notification event received after\t"
 			   "%" PRIu64 " data events.\n"
 			   "Cycles curr:%" PRIu64 ", ave:%" PRIu64 "\n",
-			   egrp_str, rcv_ev_cnt, diff,
-			   egrp_context->total_cycles /
+			   egrp_str, rcv_ev_cnt,
+			   env_time_to_cycles(diff_time, egrp_shm->cpu_hz),
+			   env_time_to_cycles(egrp_context->total_time,
+					      egrp_shm->cpu_hz) /
 			   egrp_context->total_rounds);
 
 		/*
@@ -891,13 +894,17 @@ sum_received_events(core_stat_t core_stats[], int len)
 }
 
 static void
-update_test_cycles(uint64_t diff, egrp_context_t *const egrp_context)
+update_test_time(env_time_t diff_time, egrp_context_t *const egrp_context)
 {
 	/* Ignore the first round because of cold caches. */
-	if (egrp_context->total_rounds == 1)
-		egrp_context->total_cycles += 2 * diff;
-	else if (egrp_context->total_rounds > 1)
-		egrp_context->total_cycles += diff;
-
+	if (egrp_context->total_rounds == 1) {
+		egrp_context->total_time =
+		env_time_sum(egrp_context->total_time, diff_time);
+		egrp_context->total_time =
+		env_time_sum(egrp_context->total_time, diff_time);
+	} else if (egrp_context->total_rounds > 1) {
+		egrp_context->total_time =
+		env_time_sum(egrp_context->total_time, diff_time);
+	}
 	egrp_context->total_rounds++;
 }

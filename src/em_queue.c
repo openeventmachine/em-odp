@@ -479,6 +479,13 @@ queue_delete(queue_elem_t *const queue_elem)
 	    type != EM_QUEUE_TYPE_OUTPUT) {
 		queue_group_elem_t *const queue_group_elem =
 			queue_group_elem_get(queue_elem->queue_group);
+
+		RETURN_ERROR_IF(queue_group_elem == NULL ||
+				!queue_group_allocated(queue_group_elem),
+				EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DELETE,
+				"Invalid queue group: %" PRI_QGRP "",
+				queue_elem->queue_group);
+
 		/* Remove the queue from the queue group list */
 		queue_group_rem_queue_list(queue_group_elem, queue_elem);
 	}
@@ -593,16 +600,21 @@ queue_setup(queue_elem_t *const q_elem, const char *name, em_queue_type_t type,
 		odp_schedule_prio_t odp_prio;
 		int err;
 
+		if (unlikely(qgrp_elem == NULL)) {
+			*err_str = "Invalid queue group!";
+			return -1;
+		}
+
 		err = scheduled_queue_type_em2odp(type, &odp_schedule_sync);
 		if (unlikely(err != 0)) {
 			*err_str = "Invalid queue type!";
-			return -1;
+			return -2;
 		}
 
 		err = prio_em2odp(prio, &odp_prio);
 		if (unlikely(err != 0)) {
 			*err_str = "Invalid queue priority!";
-			return -2;
+			return -3;
 		}
 
 		odp_queue_param.type = ODP_QUEUE_TYPE_SCHED;
@@ -616,19 +628,19 @@ queue_setup(queue_elem_t *const q_elem, const char *name, em_queue_type_t type,
 		    odp_sched_capa->lockfree_queues == ODP_SUPPORT_NO) {
 			*err_str =
 			"Non-blocking, lock-free sched queues unavailable";
-			return -3;
+			return -4;
 		}
 		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
 		    odp_sched_capa->waitfree_queues == ODP_SUPPORT_NO) {
 			*err_str =
 			"Non-blocking, wait-free sched queues unavailable";
-			return -4;
+			return -5;
 		}
 		if (odp_queue_param.enq_mode != ODP_QUEUE_OP_MT ||
 		    odp_queue_param.deq_mode != ODP_QUEUE_OP_MT) {
 			*err_str =
 			"Invalid flag: scheduled queues must be MT-safe";
-			return -5;
+			return -6;
 		}
 	} else if (type == EM_QUEUE_TYPE_UNSCHEDULED) {
 		odp_queue_param.type = ODP_QUEUE_TYPE_PLAIN;
@@ -640,13 +652,13 @@ queue_setup(queue_elem_t *const q_elem, const char *name, em_queue_type_t type,
 		    odp_queue_capa->plain.lockfree.max_num == 0) {
 			*err_str =
 			"Non-blocking, lock-free unsched queues unavailable";
-			return -6;
+			return -7;
 		}
 		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
 		    odp_queue_capa->plain.waitfree.max_num == 0) {
 			*err_str =
 			"Non-blocking, wait-free unsched queues unavailable";
-			return -7;
+			return -8;
 		}
 		/* Override: an unscheduled queue is not scheduled */
 		q_elem->scheduled = EM_FALSE;
@@ -671,13 +683,13 @@ queue_setup(queue_elem_t *const q_elem, const char *name, em_queue_type_t type,
 		    odp_queue_capa->plain.lockfree.max_num == 0) {
 			*err_str =
 			"Non-blocking, lock-free unsched queues unavailable";
-			return -8;
+			return -9;
 		}
 		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
 		    odp_queue_capa->plain.waitfree.max_num == 0) {
 			*err_str =
 			"Non-blocking, wait-free unsched queues unavailable";
-			return -9;
+			return -10;
 		}
 
 		/* output-queue dequeue protected by q_elem->output.lock */

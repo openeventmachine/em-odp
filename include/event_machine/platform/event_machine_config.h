@@ -172,14 +172,20 @@ extern "C" {
  * Error check level
  *
  * Conditionally compiled error checking level, range 0...3
- * Level 0 gives best performance, but does not do any
- * runtime argument checking (like NULL pointer etc)
+ * Level 0 does not do any runtime argument checking (be careful!)
  * Level 1 adds minimum checks
  * Level 2 adds most checks except the slowest ones
- * Level 3 adds all checks and gives lowest performance (for initial testing
- *         only)
+ * Level 3 adds all checks and gives lowest performance
+ *
+ * @note em-odp: the 'EM_CHECK_LEVEL' value can be overridden by a command-line
+ *               option to the 'configure' script, e.g.:
+ *               $build> ../configure ... --enable-check-level=3
+ *               The overridden value will be made available to the application
+ *               via a pkgconfig set define.
  */
+#ifndef EM_CHECK_LEVEL
 #define EM_CHECK_LEVEL  1
+#endif
 
 /**
  * @def EM_EVENT_GROUP_SAFE_MODE

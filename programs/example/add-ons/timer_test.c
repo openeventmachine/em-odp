@@ -189,17 +189,17 @@ static ENV_LOCAL timer_app_shm_t *m_shm;
 static ENV_LOCAL unsigned int m_randseed;
 
 /* Local function prototypes */
-static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
+static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 				const em_eo_conf_t *conf);
-static em_status_t app_eo_start_local(app_eo_ctx_t *eo_ctx, em_eo_t eo);
-static em_status_t app_eo_stop(app_eo_ctx_t *eo_ctx, em_eo_t eo);
-static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
+static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo);
+static em_status_t app_eo_stop(void *eo_context, em_eo_t eo);
+static void app_eo_receive(void *eo_context, em_event_t event,
 			   em_event_type_t type, em_queue_t queue,
-			   void *q_ctx);
+			   void *q_context);
 
 static em_timer_tick_t rand_timeout(unsigned int *seed, app_eo_ctx_t *eo_ctx,
 				    unsigned int fixed);
-static int set_timeouts(app_eo_ctx_t *eo_ctx);
+static void set_timeouts(app_eo_ctx_t *eo_ctx);
 static void start_test(app_eo_ctx_t *eo_ctx);
 static void check_test(app_eo_ctx_t *eo_ctx);
 static void stop_test(app_eo_ctx_t *eo_ctx);
@@ -299,12 +299,12 @@ void test_init(void)
 }
 
 /**
- * Startup of the timer hello EM application.
+ * Startup of the timer test EM application.
  *
  * At this point EM is up, but no EOs exist. EM API can be used to create
  * queues, EOs etc.
  *
- * @attention Run only on EM core 0.
+ * @attention Run only on one EM core.
  *
  * @param appl_conf Application configuration
  *
@@ -348,14 +348,10 @@ void test_start(appl_conf_t *const appl_conf)
 		      "Undefined application event pool!");
 
 	/* Create EO */
-	eo = em_eo_create(APP_EO_NAME,
-			  (em_start_func_t)app_eo_start,
-			  (em_start_local_func_t)app_eo_start_local,
-			  (em_stop_func_t)app_eo_stop, NULL,
-			  (em_receive_func_t)app_eo_receive,
-			  &m_shm->eo_context);
-	test_fatal_if(eo == EM_EO_UNDEF, "Failed to create EO!");
 	eo_ctx = &m_shm->eo_context;
+	eo = em_eo_create(APP_EO_NAME, app_eo_start, app_eo_start_local,
+			  app_eo_stop, NULL, app_eo_receive, eo_ctx);
+	test_fatal_if(eo == EM_EO_UNDEF, "Failed to create EO!");
 
 	/* atomic queue for control */
 	queue = em_queue_create("Control Q",
@@ -365,7 +361,7 @@ void test_start(appl_conf_t *const appl_conf)
 	stat = em_eo_add_queue_sync(eo, queue);
 	test_fatal_if(stat != EM_OK, "Failed to create queue!");
 
-	m_shm->eo_context.my_q = queue;
+	eo_ctx->my_q = queue;
 	/* another parallel high priority for timeout handling*/
 	queue = em_queue_create("Tmo Q",
 				EM_QUEUE_TYPE_PARALLEL,
@@ -374,7 +370,7 @@ void test_start(appl_conf_t *const appl_conf)
 	stat = em_eo_add_queue_sync(eo, queue);
 	test_fatal_if(stat != EM_OK, "Failed to create queue!");
 
-	m_shm->eo_context.my_prio_q = queue;
+	eo_ctx->my_prio_q = queue;
 
 	stat = em_eo_register_error_handler(eo, eo_error_handler);
 	test_fatal_if(stat != EM_OK, "Failed to register EO error handler");
@@ -387,6 +383,7 @@ void test_start(appl_conf_t *const appl_conf)
 	attr.num_tmo = MAX(APP_MAX_TMOS + APP_MAX_PERIODIC + 1,
 			   em_core_count() * 512 + 1024); /* core stashing */
 	attr.resolution = APP_TIMER_RESOLUTION_US * 1000ULL;
+	attr.clk_src = EM_TIMER_CLKSRC_CPU;
 	m_shm->tmr = em_timer_create(&attr);
 	test_fatal_if(m_shm->tmr == EM_TIMER_UNDEF, "Failed to create timer!");
 
@@ -394,7 +391,7 @@ void test_start(appl_conf_t *const appl_conf)
 	stat = em_eo_start_sync(eo, NULL, NULL);
 	test_fatal_if(stat != EM_OK, "Failed to start EO!");
 
-	/* create periodic timer for heartbeat */
+	/* create periodic timeout for heartbeat */
 	eo_ctx->heartbeat_tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_PERIODIC,
 					      eo_ctx->my_q);
 	test_fatal_if(eo_ctx->heartbeat_tmo == EM_TMO_UNDEF,
@@ -476,11 +473,11 @@ test_term(void)
  * @private
  *
  * EO start function.
- *
  */
-static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
+static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 				const em_eo_conf_t *conf)
 {
+	app_eo_ctx_t *const eo_ctx = eo_context;
 	em_timer_attr_t attr;
 	em_timer_t tmr;
 	int num_timers;
@@ -501,6 +498,7 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resolution);
 	APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.max_tmo / 1000);
 	APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
+	APPL_PRINT("  -clk_src: %d\n", attr.clk_src);
 	APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
 		   em_timer_get_freq(m_shm->tmr));
 
@@ -522,10 +520,11 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
  * @private
  *
  * EO per thread start function.
- *
  */
-static em_status_t app_eo_start_local(app_eo_ctx_t *eo_ctx, em_eo_t eo)
+static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo)
 {
+	app_eo_ctx_t *const eo_ctx = eo_context;
+
 	(void)eo_ctx;
 	(void)eo;
 
@@ -541,37 +540,23 @@ static em_status_t app_eo_start_local(app_eo_ctx_t *eo_ctx, em_eo_t eo)
  * @private
  *
  * EO stop function.
- *
  */
-static em_status_t app_eo_stop(app_eo_ctx_t *eo_ctx, em_eo_t eo)
+static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 {
+	app_eo_ctx_t *const eo_ctx = eo_context;
 	em_event_t event = EM_EVENT_UNDEF;
 	em_status_t ret;
-	int i;
 
 	APPL_PRINT("EO stop\n");
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
 		em_tmo_delete(eo_ctx->heartbeat_tmo, &event);
+		eo_ctx->heartbeat_tmo = EM_TMO_UNDEF;
 		if (event != EM_EVENT_UNDEF)
 			em_free(event);
 	}
 
-	for (i = 0; i < APP_MAX_TMOS; i++) {
-		if (eo_ctx->oneshot.tmo[i].tmo != EM_TMO_UNDEF) {
-			em_tmo_delete(eo_ctx->oneshot.tmo[i].tmo, &event);
-			if (event != EM_EVENT_UNDEF)
-				em_free(event);
-		}
-	}
-
-	for (i = 0; i < APP_MAX_PERIODIC; i++) {
-		if (eo_ctx->periodic.tmo[i].tmo != EM_TMO_UNDEF) {
-			em_tmo_delete(eo_ctx->periodic.tmo[i].tmo, &event);
-			if (event != EM_EVENT_UNDEF)
-				em_free(event);
-		}
-	}
+	cleanup_test(eo_ctx);
 
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(ret != EM_OK,
@@ -584,15 +569,15 @@ static em_status_t app_eo_stop(app_eo_ctx_t *eo_ctx, em_eo_t eo)
  * @private
  *
  * EO receive function. Runs the example test app after initialization.
- *
  */
-static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
+static void app_eo_receive(void *eo_context, em_event_t event,
 			   em_event_type_t type, em_queue_t queue,
-			   void *q_ctx)
+			   void *q_context)
 {
+	app_eo_ctx_t *const eo_ctx = eo_context;
 	int reuse = 0;
 
-	(void)q_ctx;
+	(void)q_context;
 
 	if (unlikely(appl_shm->exit_flag)) {
 		em_free(event);
@@ -778,7 +763,7 @@ em_timer_tick_t rand_timeout(unsigned int *seed, app_eo_ctx_t *eo_ctx,
 }
 
 /* start new batch of random timeouts */
-int set_timeouts(app_eo_ctx_t *eo_ctx)
+void set_timeouts(app_eo_ctx_t *eo_ctx)
 {
 	app_msg_t *msg;
 	int i;
@@ -803,6 +788,7 @@ int set_timeouts(app_eo_ctx_t *eo_ctx)
 		memset(&eo_ctx->oneshot.tmo[i], 0, sizeof(app_tmo_data_t));
 		eo_ctx->oneshot.tmo[i].event = event;
 	}
+
 	/* barriers to make sure we're timing the right code. Some may be
 	 * unnecessary if the time functions not get inlined
 	 */
@@ -900,8 +886,6 @@ int set_timeouts(app_eo_ctx_t *eo_ctx)
 
 	if (APP_MAX_PERIODIC)
 		APPL_PRINT("Started periodic\n");
-
-	return 0;
 }
 
 void start_test(app_eo_ctx_t *eo_ctx)
@@ -933,7 +917,7 @@ void start_test(app_eo_ctx_t *eo_ctx)
 
 void stop_test(app_eo_ctx_t *eo_ctx)
 {
-	em_event_t event;
+	em_event_t event = EM_EVENT_UNDEF;
 
 	/* cancel periodic */
 	for (int i = 0; i < APP_MAX_PERIODIC; i++) {
@@ -960,11 +944,14 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 	for (i = 0; i < APP_MAX_TMOS; i++) {
 		em_event_t evt = EM_EVENT_UNDEF;
 
+		if (eo_ctx->oneshot.tmo[i].tmo == EM_TMO_UNDEF)
+			continue;
+
 		if (em_tmo_delete(eo_ctx->oneshot.tmo[i].tmo, &evt) != EM_OK)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 				   "Can't delete tmo!\n");
-
-		if (evt != EM_EVENT_UNDEF) {
+		eo_ctx->oneshot.tmo[i].tmo = EM_TMO_UNDEF;
+		if (evt != EM_EVENT_UNDEF && !appl_shm->exit_flag) {
 			APPL_PRINT("WARN - tmo_delete returned event,\n"
 				   "       should be received or canceled!\n");
 			em_free(evt);
@@ -984,10 +971,13 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 	for (i = 0; i < APP_MAX_PERIODIC; i++) {
 		em_event_t evt = EM_EVENT_UNDEF;
 
+		if (eo_ctx->periodic.tmo[i].tmo == EM_TMO_UNDEF)
+			continue;
+
 		if (em_tmo_delete(eo_ctx->periodic.tmo[i].tmo, &evt) != EM_OK)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 				   "Can't delete periodic tmo!\n");
-
+		eo_ctx->periodic.tmo[i].tmo = EM_TMO_UNDEF;
 		if (evt != EM_EVENT_UNDEF)
 			em_free(evt);
 	}

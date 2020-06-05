@@ -101,9 +101,14 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	em_event_type_t event_type = ev_hdr->event_type;
 
 	if (EM_CHECK_LEVEL > 2 &&
-	    unlikely(env_atomic32_get(&ev_hdr->allocated) != 1))
+	    unlikely(env_atomic32_get(&ev_hdr->allocated) != 1)) {
+		const char *eo_name = q_elem->eo_elem == NULL ?
+				      "" : q_elem->eo_elem->name;
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_DISPATCH,
-			       "EO:%" PRI_EO ": received event already freed!");
+			       "EO:%" PRI_EO ":%s Q:%" PRI_QUEUE "\n"
+			       "Event:%" PRI_EVENT " already freed",
+			       eo, eo_name, queue, event);
+	}
 
 	em_locm.current.q_elem = q_elem;
 	/* Check and set core local event group (before dispatch callback(s)) */

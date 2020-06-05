@@ -190,7 +190,7 @@ void
 test_start(appl_conf_t *const appl_conf)
 {
 	em_eo_t eo_a, eo_b;
-	em_status_t ret;
+	em_status_t ret, eo_start_ret = EM_ERROR;
 
 	/*
 	 * Store the event pool to use, use the EM default pool if no other
@@ -281,10 +281,18 @@ test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(ret != EM_OK, "exit_cb2() unregistering failed!");
 
 	/* Start EO A */
-	em_eo_start_sync(eo_a, NULL, NULL);
+	ret = em_eo_start_sync(eo_a, &eo_start_ret, NULL);
+	test_fatal_if(ret != EM_OK || eo_start_ret != EM_OK,
+		      "em_eo_start(EO A) failed! EO:%" PRI_EO "\n"
+		      "ret:%" PRI_STAT ", EO-start-ret:%" PRI_STAT "",
+		      eo_a, ret, eo_start_ret);
 
 	/* Start EO B */
-	em_eo_start_sync(eo_b, NULL, NULL);
+	ret = em_eo_start_sync(eo_b, &eo_start_ret, NULL);
+	test_fatal_if(ret != EM_OK || eo_start_ret != EM_OK,
+		      "em_eo_start(EO B) failed! EO:%" PRI_EO "\n"
+		      "ret:%" PRI_STAT ", EO-start-ret:%" PRI_STAT "",
+		      eo_b, ret, eo_start_ret);
 }
 
 void

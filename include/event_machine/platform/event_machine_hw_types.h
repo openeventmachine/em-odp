@@ -250,7 +250,43 @@ typedef struct {
 	 * @note Only major types are considered here, setting minor is error
 	 */
 	em_event_type_t event_type;
-	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
+	/**
+	 * Alignment offset in bytes for the event payload start address
+	 * (for all events allocated from this EM pool).
+	 *
+	 * The default EM event payload start address alignment is a
+	 * power-of-two that is at minimum 32 bytes (i.e. 32 B, 64 B, 128 B etc.
+	 * depending on e.g. target cache-line size).
+	 * The 'align_offset.value' option can be used to fine-tune the
+	 * start-address by a small offset to e.g. make room for a small
+	 * SW header before the rest of the payload that might need a specific
+	 * alignment for direct HW-access.
+	 * Example: setting 'align_offset.value = 8' makes sure that the payload
+	 * _after_ 8 bytes will be aligned at minimum (2^x) 32 bytes.
+	 *
+	 * This option conserns all events allocated from the pool and overrides
+	 * the global config file option 'pool.align_offset' for this pool.
+	 */
+	struct {
+		/**
+		 * Select: Use pool-specific align-offset 'value' from below or
+		 *         use the global default value from the config file.
+		 * false (0): Use default value from the config file.
+		 * true (not 0): Use pool specific value set below.
+		 */
+		int in_use;
+		/**
+		 * Pool-specific event payload alignment offset value in bytes
+		 * (only evaluated if 'in_use=true').
+		 * Overrides the config file value for this pool.
+		 * The given 'value' must be a small power-of-two: 2, 4, or 8
+		 * 0: Explicitly set 'No align offset' for the pool.
+		 */
+		uint32_t value;
+	} align_offset;
+	/**
+	 * Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS
+	 */
 	int num_subpools;
 	struct {
 		/** Event payload size of the subpool (size > 0)  */
@@ -270,6 +306,8 @@ typedef struct {
 	em_pool_t em_pool;
 	/** Event type of events allocated from the pool */
 	em_event_type_t event_type;
+	/** Event payload alignment offset for events from the pool */
+	uint32_t align_offset;
 	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
 	int num_subpools;
 	struct {

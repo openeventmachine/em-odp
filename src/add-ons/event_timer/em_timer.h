@@ -42,20 +42,22 @@
 #define TMR_DBG_PRINT(format, ...) do {} while (0)
 #endif
 
-extern ENV_LOCAL timer_shm_t *timer_shm;
-
-em_status_t timer_init_global(void);
+em_status_t timer_init(timer_storage_t *const tmrs);
 em_status_t timer_init_local(void);
 em_status_t timer_term_local(void);
-em_status_t timer_term_global(void);
+em_status_t timer_term(void);
 
 static inline int
 timer_clksrc_em2odp(em_timer_clksrc_t clksrc_em,
 		    odp_timer_clk_src_t *clksrc_odp /* out */)
 {
 	switch (clksrc_em) {
-	case EM_TIMER_CLKSRC_DEFAULT:
+	case EM_TIMER_CLKSRC_DEFAULT: /* fallthrough */
+	case EM_TIMER_CLKSRC_CPU:
 		*clksrc_odp = ODP_CLOCK_CPU;
+		return 0;
+	case EM_TIMER_CLKSRC_EXT:
+		*clksrc_odp = ODP_CLOCK_EXT;
 		return 0;
 	default:
 		return -1;
@@ -68,7 +70,10 @@ timer_clksrc_odp2em(odp_timer_clk_src_t clksrc_odp,
 {
 	switch (clksrc_odp) {
 	case ODP_CLOCK_CPU:
-		*clksrc_em = EM_TIMER_CLKSRC_DEFAULT;
+		*clksrc_em = EM_TIMER_CLKSRC_CPU;
+		return 0;
+	case ODP_CLOCK_EXT:
+		*clksrc_em = EM_TIMER_CLKSRC_EXT;
 		return 0;
 	default:
 		return -1;

@@ -38,6 +38,14 @@ typedef event_hdr_t _ev_hdr__size_check__arr_t[3];
 COMPILE_TIME_ASSERT(sizeof(_ev_hdr__size_check__arr_t) ==
 		    3 * sizeof(event_hdr_t), EVENT_HDR_SIZE_ERROR2);
 
+/*
+ * Verify the value set for EM_CHECK_LEVEL - this define is set either from
+ * the include/event_machine/platform/event_machine_config.h file or by the
+ * configure.ac option --enable-check-level=N.
+ */
+COMPILE_TIME_ASSERT(EM_CHECK_LEVEL >= 0 && EM_CHECK_LEVEL <= 3,
+		    EM_CHECK_LEVEL__BAD_VALUE);
+
 em_status_t
 event_init(void)
 {
@@ -78,11 +86,12 @@ event_free_multi(em_event_t *const events, const int num)
 							1);
 
 				if (unlikely(allocated != 0)) {
+					const char *const fmt =
+					"Double free:events[%d]:%" PRI_EVENT "";
 					err = EM_FATAL(EM_ERR_BAD_POINTER);
 					escope = EM_ESCOPE_EVENT_FREE_MULTI;
-					INTERNAL_ERROR(err, escope,
-						       "Double free:events[%d]",
-						       i);
+					INTERNAL_ERROR(err, escope, fmt,
+						       i, events[i]);
 				}
 			}
 		}

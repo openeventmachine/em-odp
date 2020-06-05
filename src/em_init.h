@@ -61,7 +61,7 @@ typedef struct {
 typedef struct {
 	struct {
 		int statistics_enable; /* true/false */
-		unsigned int alloc_align; /* bytes */
+		unsigned int align_offset; /* bytes */
 	} pool;
 
 	struct {

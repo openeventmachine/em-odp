@@ -80,15 +80,20 @@ typedef enum em_tmo_flag_t {
 } em_tmo_flag_t;
 
 /*
- * em_timer_clksrc_t is used to select the clock source.
+ * em_timer_clksrc_t is used to select the timer clock source.
+ *
  * EM_TIMER_CLKSRC_DEFAULT is a standard definition, but more can be declared.
  * The default clock source could e.g. use the CPU internal timer and another
  * value for a separate timer running out of an external clock/trigger with
  * different resolution.
  */
 typedef enum em_timer_clksrc_t {
-	/**< portable default clock source */
-	EM_TIMER_CLKSRC_DEFAULT = 0
+	/** Portable default clock source */
+	EM_TIMER_CLKSRC_DEFAULT = 0,
+	/** CPU clock as clock source */
+	EM_TIMER_CLKSRC_CPU  = 1,
+	/** External clock source */
+	EM_TIMER_CLKSRC_EXT = 2
 } em_timer_clksrc_t;
 
 /**

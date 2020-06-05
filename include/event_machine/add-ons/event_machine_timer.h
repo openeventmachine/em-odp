@@ -308,7 +308,7 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue);
  *
  * Free (destroy) a timeout.
  * The user provided timeout event for an active timeout will be returned via
- * cur_event and the timer is cancelled. The timeout event for an expired, but
+ * cur_event and the timeout is cancelled. The timeout event for an expired, but
  * not yet received timeout, will not be returned. It is the responsibility of
  * the application to handle that case.
  *
@@ -382,9 +382,9 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
  * Cancel a timeout
  *
  * Cancels a timeout, preventing future expiration. Returns the timeout event,
- * given to em_tmo_set_abs/rel(), in case the timer is still active.
+ * given to em_tmo_set_abs/rel(), in case the timeout is still active.
  *
- * A timer that has already expired cannot be cancelled and the timeout
+ * A timeout that has already expired cannot be cancelled and the timeout event
  * will be delivered to the destination queue. In this case, cancel will return
  * an error as it was too late to cancel. Cancel also fails if attempted before
  * timeout activation.

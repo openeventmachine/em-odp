@@ -90,8 +90,8 @@ typedef struct {
 	#define MSG_DONE  4
 	/* Event/msg number */
 	uint64_t msg;
-	/* Start cycles stored at the beginning of each round */
-	uint64_t start_cycles;
+	/* Start time stored at the beginning of each round */
+	env_time_t start_time;
 	/* Number of times to increment (per event) the event group count */
 	uint64_t increment;
 } event_group_test_t;
@@ -108,8 +108,8 @@ typedef struct {
 	em_event_group_t chained_event_group;
 	/* Number of events to send before triggering a notif event */
 	int event_count;
-	/* Total running cycles updated when receiving a notif event*/
-	uint64_t total_cycles;
+	/* Total running time updated when receiving a notif event*/
+	env_time_t total_time;
 	/* Number of rounds, i.e. received notifications */
 	uint64_t total_rounds;
 	/* Pad size to a multiple of cache line size */
@@ -146,6 +146,8 @@ typedef struct {
 	 * using parallel queues.
 	 */
 	core_stat_t core_stats[MAX_NBR_OF_CORES] ENV_CACHE_LINE_ALIGNED;
+
+	uint64_t cpu_hz;
 } egrp_shm_t;
 
 static ENV_LOCAL egrp_shm_t *egrp_shm;
@@ -250,6 +252,8 @@ test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(egrp_shm->pool == EM_POOL_UNDEF,
 		      "Undefined application event pool!");
 
+	egrp_shm->cpu_hz = env_core_hz();
+
 	/*
 	 * Create the event group chaining test EO and a parallel queue, add
 	 * the queue to the EO
@@ -352,6 +356,7 @@ egroup_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 
 	/* First event group */
 	eo_ctx->event_group = em_event_group_create();
+	eo_ctx->total_time = ENV_TIME_NULL;
 
 	if (eo_ctx->event_group == EM_EVENT_GROUP_UNDEF)
 		return EM_ERR_ALLOC_FAILED;
@@ -455,7 +460,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	eo_context_t *const eo_ctx = eo_context;
 	event_group_test_t *egroup_chained;
 	event_group_test_t *egroup_test;
-	uint64_t diff, start_cycles, end_cycles;
+	env_time_t diff_time, start_time, end_time;
 	uint64_t rcv_ev_cnt;
 	uint64_t cfg_ev_cnt;
 	int i;
@@ -498,7 +503,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 			egroup_chained = em_event_pointer(chained_event);
 			egroup_chained->msg = MSG_CHAIN;
-			egroup_chained->start_cycles = env_get_cycle();
+			egroup_chained->start_time = env_time_global();
 			egroup_chained->increment = 0;
 			/*
 			 * The notification 'chained_event' should be sent
@@ -562,7 +567,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 			egrp_test_data = em_event_pointer(ev_data);
 			egrp_test_data->msg = MSG_DATA;
-			egrp_test_data->start_cycles = 0;
+			egrp_test_data->start_time = ENV_TIME_NULL;
 			/* How many times to increment and resend */
 			egrp_test_data->increment = EVENT_GROUP_INCREMENT;
 			/* Send events using the event group. */
@@ -632,20 +637,21 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		test_fatal_if(ready == EM_TRUE,
 			      "chained ev-grp shouldn't be ready yet");
 
-		/* Calculate the number of processing cycles */
-		end_cycles = env_get_cycle();
-		start_cycles = egroup_test->start_cycles;
-		if (likely(end_cycles > start_cycles))
-			diff = end_cycles - start_cycles;
-		else
-			diff = UINT64_MAX - start_cycles + end_cycles + 1;
+		/* Calculate the number of processing time */
+		end_time = env_time_global();
+		start_time = egroup_test->start_time;
+		diff_time = env_time_diff(end_time, start_time);
 
 		/* Ignore the first round because of cold caches. */
-		if (eo_ctx->total_rounds == 1)
-			eo_ctx->total_cycles += 2 * diff;
-		else if (eo_ctx->total_rounds > 1)
-			eo_ctx->total_cycles += diff;
-
+		if (eo_ctx->total_rounds == 1) {
+			eo_ctx->total_time = env_time_sum(eo_ctx->total_time,
+							  diff_time);
+			eo_ctx->total_time = env_time_sum(eo_ctx->total_time,
+							  diff_time);
+		} else if (eo_ctx->total_rounds > 1) {
+			eo_ctx->total_time = env_time_sum(eo_ctx->total_time,
+							  diff_time);
+		}
 		eo_ctx->total_rounds++;
 
 		/* Sum up the amount of data events processed on each core */
@@ -671,8 +677,11 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		APPL_PRINT("Event group notification event received after\t"
 			   "%" PRIu64 " data events.\n"
 			   "Cycles curr:%" PRIu64 ", ave:%" PRIu64 "\n",
-			   rcv_ev_cnt, diff,
-			   eo_ctx->total_cycles / eo_ctx->total_rounds);
+			   rcv_ev_cnt,
+			   env_time_to_cycles(diff_time, egrp_shm->cpu_hz),
+			   env_time_to_cycles(eo_ctx->total_time,
+					      egrp_shm->cpu_hz) /
+			   eo_ctx->total_rounds);
 
 		em_free(event);
 		break;

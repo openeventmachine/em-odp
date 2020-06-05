@@ -951,9 +951,8 @@ em_eo_stop_sync(em_eo_t eo)
 eo_stop_sync_error:
 	env_spinlock_unlock(&em_shm->sync_api.lock_global);
 
-	RETURN_ERROR_IF(ret != EM_OK, ret, EM_ESCOPE_EO_STOP_SYNC,
-			"Failure: EO:%" PRI_EO "", eo);
-	return EM_OK;
+	return INTERNAL_ERROR(ret, EM_ESCOPE_EO_STOP_SYNC,
+			      "Failure: EO:%" PRI_EO "", eo);
 }
 
 em_eo_t

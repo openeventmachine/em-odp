@@ -236,6 +236,8 @@ default_queue_group_update(void)
 	odp_thrmask_t *odp_thrmask;
 
 	default_qgrp_elem = queue_group_elem_get(EM_QUEUE_GROUP_DEFAULT);
+	if (unlikely(default_qgrp_elem == NULL))
+		return EM_QUEUE_GROUP_UNDEF;
 
 	mask = &default_qgrp_elem->core_mask;
 	em_core_mask_set_count(em_core_count(), mask);
@@ -351,7 +353,7 @@ queue_group_create_sync(const char *name, const em_core_mask_t *mask,
 {
 	return queue_group_create_escope(name, mask, 0, NULL,
 					 requested_queue_group,
-					 EM_ESCOPE_QUEUE_GROUP_CREATE);
+					 EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC);
 }
 
 /**
