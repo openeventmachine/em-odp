@@ -117,6 +117,10 @@ typedef struct {
 	sync_api_t sync_api ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated EOs */
 	env_atomic32_t eo_count ENV_CACHE_LINE_ALIGNED;
+	/** Daemon eo */
+	daemon_eo_t daemon ENV_CACHE_LINE_ALIGNED;
+	/** Timer resources */
+	timer_storage_t timers ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated queues */
 	env_atomic32_t queue_count;
 	/** Current number of allocated queue groups */
@@ -127,10 +131,8 @@ typedef struct {
 	env_atomic32_t atomic_group_count;
 	/** Current number of allocated event pools */
 	env_atomic32_t pool_count;
-
-	/* libconfig setting, both default (compiled) and runtime (from file) */
+	/** libconfig setting, default (compiled) and runtime (from file) */
 	libconfig_t libconfig;
-
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } em_shm_t;

@@ -1,6 +1,10 @@
 ACLOCAL_AMFLAGS=-I m4
 AUTOMAKE_OPTIONS = foreign
-SUBDIRS = src programs
+SUBDIRS = src
+
+if WITH_PROGRAMS
+  SUBDIRS += programs
+endif
 
 if HAVE_PKGCONFIG
   SUBDIRS += pkgconfig

@@ -105,10 +105,12 @@ em_free(em_event_t event)
 			const uint32_t allocated =
 			env_atomic32_sub_return(&ev_hdr->allocated, 1);
 
-			if (unlikely(allocated != 0))
+			if (unlikely(allocated != 0)) {
+				const char *const fmt =
+					"Double free:event:%" PRI_EVENT "";
 				INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
-					       EM_ESCOPE_FREE,
-					       "Double free(%u)", allocated);
+					       EM_ESCOPE_FREE, fmt, event);
+			}
 		}
 		if (em_shm->opt.pool.statistics_enable) {
 			/* Update pool statistcs */
@@ -154,7 +156,7 @@ em_send(em_event_t event, em_queue_t queue)
 	if (EM_CHECK_LEVEL > 2)
 		RETURN_ERROR_IF(env_atomic32_get(&ev_hdr->allocated) != 1,
 				EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_SEND,
-				"Event already freed!");
+				"Event:%" PRI_EVENT " already freed!", event);
 
 	if (!is_external) {
 		/* queue belongs to this EM instance */
@@ -276,9 +278,10 @@ em_send_multi(em_event_t *const events, int num, em_queue_t queue)
 		     env_atomic32_get(&ev_hdrs[i]->allocated) == 1; i++)
 			;
 		if (unlikely(i != num)) {
+			const char *const fmt =
+				"events[%d]:%" PRI_EVENT " already freed!";
 			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE),
-				       EM_ESCOPE_SEND_MULTI,
-				       "Event(s) already freed!");
+				       EM_ESCOPE_SEND_MULTI, fmt, i, events[i]);
 			return 0;
 		}
 	}
@@ -396,10 +399,10 @@ em_event_pointer(em_event_t event)
 	}
 	case ODP_EVENT_BUFFER: {
 		odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
-		uint32_t push_len = em_shm->opt.pool.alloc_align;
+		event_hdr_t *const ev_hdr = odp_buffer_addr(odp_buf);
 
-		return (void *)((uintptr_t)odp_buffer_addr(odp_buf) +
-				sizeof(event_hdr_t) - push_len);
+		return (void *)((uintptr_t)ev_hdr + sizeof(event_hdr_t)
+				- ev_hdr->align_offset);
 	}
 	case ODP_EVENT_TIMEOUT: /* @TBD */
 	case ODP_EVENT_CRYPTO_COMPL: /* @TBD */

@@ -36,13 +36,25 @@ core_map_init(core_map_t *const core_map, int core_count,
 {
 	int phys_id = 0;
 	int logic_id = 0;
+	int mask_count;
+	int last_phys_id;
 
 	if (core_count > EM_MAX_CORES || core_count > odp_thread_count_max())
 		return EM_ERR_TOO_LARGE;
 
+	mask_count = em_core_mask_count(phys_mask);
+	if (mask_count != core_count)
+		return EM_ERR_BAD_STATE;
+
+	last_phys_id = em_core_mask_idx(core_count, phys_mask);
+	if (last_phys_id >= EM_MAX_CORES)
+		return EM_ERR_BAD_ID;
+
 	memset(core_map, 0, sizeof(core_map_t));
 
 	env_spinlock_init(&core_map->lock);
+
+	/* Store the EM core count, returned by em_core_count() */
 	core_map->count = core_count;
 
 	em_core_mask_copy(&core_map->phys_mask, phys_mask);
@@ -63,15 +75,26 @@ core_map_init(core_map_t *const core_map, int core_count,
 em_status_t
 core_map_init_local(core_map_t *const core_map)
 {
-	int em_core = em_core_id();
-	int odp_thr = odp_thread_id();
+	const int phys_core = odp_cpu_id();
+	const int odp_thr = odp_thread_id();
 
-	if (odp_thr >= EM_MAX_CORES)
+	if (unlikely(phys_core >= EM_MAX_CORES))
+		return EM_ERR_BAD_ID;
+	if (odp_thr >= ODP_THREAD_COUNT_MAX ||
+	    odp_thr >= odp_thread_count_max())
+		return EM_ERR_LIB_FAILED;
+
+	/* Store the EM core id of this core, returned by em_core_id() */
+	em_locm.core_id = core_map->phys_vs_logic.logic[phys_core];
+
+	if (unlikely(em_locm.core_id < 0))
+		return EM_ERR_TOO_SMALL;
+	if (unlikely(em_locm.core_id >= EM_MAX_CORES))
 		return EM_ERR_TOO_LARGE;
 
 	env_spinlock_lock(&core_map->lock);
-	core_map->thr_vs_logic.logic[odp_thr] = em_core;
-	core_map->thr_vs_logic.odp_thr[em_core] = odp_thr;
+	core_map->thr_vs_logic.logic[odp_thr] = em_locm.core_id;
+	core_map->thr_vs_logic.odp_thr[em_locm.core_id] = odp_thr;
 	env_spinlock_unlock(&core_map->lock);
 
 	return EM_OK;

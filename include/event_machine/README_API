@@ -3,11 +3,33 @@ OpenEM API Release Notes
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
+API 2.2 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=2)
+-------------------------------------------------------------------------------
+  Backwards compatible with EM 2.1 API with one EXCEPTION:
+  Introducing the new 'em_pool_cfg_t::align_offset{}' option into the existing
+  em_pool_conf_t structure is potentially dangerous if these new fields are not
+  initialized properly. Initializing the whole em_pool_cfg_t to '0' with memset
+  before use is safe and equals API 2.1 behaviour.
+
+1. Pool option to set the event payload alignment offset:
+   Add the new 'em_pool_cfg_t::align_offset{}' option to be able to set the
+   needed payload alignment offset per pool (during EM pool creation with
+   em_pool_create(..., pool_cfg)).
+   Setting 'align_offset.in_use = 0' disables the pool-specific alignment offset
+   and equals API 2.1 behaviour.
+   See the documentation for em_pool_cfg_t for a thorough explanation.
+2. Timer option to use an external timer clock source:
+   Add the em_timer_clksrc_t::EM_TIMER_CLKSRC_EXT option.
+   Also add the EM_TIMER_CLKSRC_CPU option to explicitly request using the
+   CPU clock as the timer clock source (behaviour is the same as using
+   EM_TIMER_CLKSRC_DEFAULT).
+
+-------------------------------------------------------------------------------
 API 2.1 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=1)
 -------------------------------------------------------------------------------
-  Backwards compatible with EM 2.0 API as long as all fields of em_conf_t given
-  to em_init() is intialized properly (inludes the new em_conf_t::api_hooks
-  field).
+  Backwards compatible with EM 2.0 API with one EXCEPTION:
+  All fields of em_conf_t given to em_init() should be intialized properly
+  (inludes the new em_conf_t::api_hooks field).
 
  1. EO-start buffering of sent events changed to apply only to scheduled queues:
     Events sent to scheduled queues from an EO-start function are buffered.

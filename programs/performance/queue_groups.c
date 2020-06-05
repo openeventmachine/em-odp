@@ -105,6 +105,7 @@ typedef union {
 		int free_flag;
 		int reset_flag;
 		double mhz;
+		uint64_t cpu_hz;
 		uint64_t print_count;
 		env_atomic64_t ready_count;
 		env_atomic64_t freed_count;
@@ -121,11 +122,11 @@ typedef union {
 	uint8_t u8[ENV_CACHE_LINE_SIZE] ENV_CACHE_LINE_ALIGNED;
 	struct {
 		uint64_t events;
-		uint64_t begin_cycles;
-		uint64_t end_cycles;
-		uint64_t diff_cycles;
-		uint64_t latency_hi;
-		uint64_t latency_lo;
+		env_time_t begin_time;
+		env_time_t end_time;
+		env_time_t diff_time;
+		env_time_t latency_hi;
+		env_time_t latency_lo;
 	};
 } core_stat_t;
 
@@ -165,7 +166,7 @@ COMPILE_TIME_ASSERT(sizeof(queue_context_t) == ENV_CACHE_LINE_SIZE,
  * Performance test event
  */
 typedef struct {
-	uint64_t send_time;
+	env_time_t send_time;
 	enum {
 		PERF_EVENT,
 		NOTIF_QUEUE_GROUP_CREATED,
@@ -328,7 +329,6 @@ test_start(appl_conf_t *const appl_conf)
 	eo_context_t *eo_ctx;
 	em_status_t ret, start_fn_ret = EM_ERROR;
 	em_queue_t notif_queue;
-	uint32_t hz;
 	int q_ctx_size = NUM_QUEUES * sizeof(queue_context_t);
 
 	/*
@@ -359,8 +359,9 @@ test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(perf_shm->pool == EM_POOL_UNDEF,
 		      "Undefined application event pool!");
 
-	hz = env_core_hz();
-	perf_shm->test_status.mhz = ((double)hz) / 1000000.0;
+	perf_shm->test_status.cpu_hz = env_core_hz();
+	perf_shm->test_status.mhz = ((double)perf_shm->test_status.cpu_hz) /
+				    1000000.0;
 	perf_shm->test_status.reset_flag = 0;
 	perf_shm->test_status.num_cores = em_core_count();
 	perf_shm->test_status.queue_groups = 0;
@@ -465,7 +466,7 @@ init_queue_groups(int count)
 	notif_event = em_event_pointer(event);
 	notif_event->type = NOTIF_ALL_QUEUE_GROUPS_CREATED;
 	notif_event->seq = 0;
-	notif_event->send_time = env_get_cycle();
+	notif_event->send_time = env_time_global();
 
 	notif_tbl[0].event = event;
 	notif_tbl[0].queue = perf_shm->notif_queue;
@@ -496,7 +497,7 @@ init_queue_groups(int count)
 		notif_event = em_event_pointer(event);
 		notif_event->type = NOTIF_QUEUE_GROUP_CREATED;
 		notif_event->seq = i;
-		notif_event->send_time = env_get_cycle();
+		notif_event->send_time = env_time_global();
 		/* write the name into the notif for lookup when create done */
 		nlen = sizeof(notif_event->qgrp_name);
 		ret = snprintf(notif_event->qgrp_name, nlen, "grp_%d", i);
@@ -545,7 +546,7 @@ test_step(void)
 
 		perf->type = PERF_EVENT;
 		perf->seq = i;
-		perf->send_time = env_get_cycle();
+		perf->send_time = env_time_global();
 
 		/* Send events evenly to the queues. */
 		q_ctx = &perf_shm->queue_context_tbl[i % NUM_QUEUES];
@@ -621,13 +622,13 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	uint64_t events;
 	uint64_t freed_count;
 	uint64_t ready_count;
-	uint64_t recv_time;
+	env_time_t recv_time;
 	const int core = em_core_id();
 	test_status_t *const tstat = &perf_shm->test_status;
 	core_stat_t *const cstat = &perf_shm->core_stat[core];
 
 	if (MEASURE_LATENCY)
-		recv_time = env_get_cycle();
+		recv_time = env_time_global();
 
 	(void)eo_context;
 	(void)type;
@@ -666,7 +667,10 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 	if (unlikely(perf->type == NOTIF_ALL_QUEUE_GROUPS_CREATED)) {
 		APPL_PRINT("New queue group(s) ready\n");
-		em_event_group_delete(perf_shm->eo_context.event_group);
+		ret = em_event_group_delete(perf_shm->eo_context.event_group);
+		test_fatal_if(ret != EM_OK,
+			      "egrp:%" PRI_EGRP " delete:%" PRI_STAT "",
+			      perf_shm->eo_context.event_group, ret);
 		em_free(event);
 		next_test_step();
 		return;
@@ -696,7 +700,7 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 
 		if (unlikely(core_state != CORE_STATE_IDLE)) {
 			core_state = CORE_STATE_IDLE;
-			cstat->begin_cycles = 0;
+			cstat->begin_time = ENV_TIME_NULL;
 
 			ready_count =
 			env_atomic64_add_return(&tstat->ready_count, 1);
@@ -712,27 +716,24 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 		}
 	/* First event resets counters. */
 	} else if (unlikely(events == 1)) {
-		cstat->begin_cycles = env_get_cycle();
-		cstat->latency_hi = 0;
-		cstat->latency_lo = 0;
+		cstat->begin_time = env_time_global();
+		cstat->latency_hi = ENV_TIME_NULL;
+		cstat->latency_lo = ENV_TIME_NULL;
 		core_state = CORE_STATE_MEASURE;
 	} else if (unlikely(events == EVENTS_PER_SAMPLE)) {
 		/*
 		 * Measurement done for this step. Store results and
 		 * continue receiving events until all cores are done.
 		 */
-		uint64_t diff, begin_cycles, end_cycles;
+		env_time_t diff_time, begin_time, end_time;
 
-		cstat->end_cycles = env_get_cycle();
+		cstat->end_time = env_time_global();
 
-		end_cycles = cstat->end_cycles;
-		begin_cycles = cstat->begin_cycles;
-		if (likely(end_cycles > begin_cycles))
-			diff = end_cycles - begin_cycles;
-		else
-			diff = UINT64_MAX - begin_cycles + end_cycles + 1;
+		end_time = cstat->end_time;
+		begin_time = cstat->begin_time;
+		diff_time = env_time_diff(end_time, begin_time);
 
-		cstat->diff_cycles = diff;
+		cstat->diff_time = diff_time;
 
 		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
 
@@ -741,42 +742,51 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 		 * proceed to the next step.
 		 */
 		if (unlikely((int)ready_count == tstat->num_cores)) {
-			uint64_t latency_hi;
-			uint64_t latency_lo;
+			env_time_t latency_hi;
+			env_time_t latency_lo;
 			double cycles_per_event, events_per_sec;
-			uint64_t total_cycles = 0;
-			const uint64_t total_events = tstat->num_cores *
-						      EVENTS_PER_SAMPLE;
+			env_time_t total_time = ENV_TIME_NULL;
+			const uint64_t total_events =
+				(uint64_t)tstat->num_cores * EVENTS_PER_SAMPLE;
 
 			/* No real need for atomicity, only ran on last core*/
 			env_atomic64_init(&tstat->ready_count);
 
 			if (MEASURE_LATENCY) {
-				latency_hi = 0;
-				latency_lo = 0;
+				latency_hi = ENV_TIME_NULL;
+				latency_lo = ENV_TIME_NULL;
 			}
 
 			for (int i = 0; i < tstat->num_cores; i++) {
-				total_cycles +=
-					perf_shm->core_stat[i].diff_cycles;
+				core_stat_t *cstat = &perf_shm->core_stat[i];
+
+				total_time =
+				env_time_sum(total_time, cstat->diff_time);
 				if (MEASURE_LATENCY) {
-					latency_hi +=
-					    perf_shm->core_stat[i].latency_hi;
-					latency_lo +=
-					    perf_shm->core_stat[i].latency_lo;
+					latency_hi =
+					env_time_sum(latency_hi,
+						     cstat->latency_hi);
+					latency_lo =
+					env_time_sum(latency_lo,
+						     cstat->latency_lo);
 				}
 			}
 
-			cycles_per_event = (double)total_cycles /
-					   (double)total_events;
+			cycles_per_event =
+			(double)env_time_to_cycles(total_time, tstat->cpu_hz) /
+			(double)total_events;
 			events_per_sec = tstat->mhz * tstat->num_cores /
 					 cycles_per_event; /* Million events/s*/
 
 			if (MEASURE_LATENCY) {
 				const double latency_per_hi =
-				    (double)latency_hi / (double)total_events;
+				    (double)env_time_to_cycles(latency_hi,
+							       tstat->cpu_hz) /
+				    (double)total_events;
 				const double latency_per_lo =
-				    (double)latency_lo / (double)total_events;
+				    (double)env_time_to_cycles(latency_lo,
+							       tstat->cpu_hz) /
+				    (double)total_events;
 				APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
 					   "Latency: Hi-prio=%.0f Lo-prio=%.0f \t"
 					   "@%.0f MHz(%" PRIu64 ")\n",
@@ -807,20 +817,18 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 
 	if (MEASURE_LATENCY) {
 		if (unlikely(!tstat->reset_flag)) {
-			uint64_t diff;
+			env_time_t diff_time;
 
-			if (likely(recv_time > perf->send_time))
-				diff = recv_time - perf->send_time;
-			else
-				diff = UINT64_MAX - perf->send_time +
-				       recv_time + 1;
+			diff_time = env_time_diff(recv_time, perf->send_time);
 
 			if (q_ctx->prio == EM_QUEUE_PRIO_HIGH)
-				cstat->latency_hi += diff;
+				cstat->latency_hi =
+				env_time_sum(cstat->latency_hi, diff_time);
 			else
-				cstat->latency_lo += diff;
+				cstat->latency_lo =
+				env_time_sum(cstat->latency_lo, diff_time);
 		}
-		perf->send_time = env_get_cycle();
+		perf->send_time = env_time_global();
 	}
 
 	ret = em_send(event, dest_queue);
@@ -932,7 +940,7 @@ unschedule_and_delete_queues(int num_queues)
 			      ret, perf_shm->eo, queue);
 
 		ret = em_queue_delete(queue);
-		test_fatal_if(ret != EM_OK, "em_queue_delete():%" PRI_STAT ")\t"
+		test_fatal_if(ret != EM_OK, "em_queue_delete():%" PRI_STAT "\t"
 			      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
 			      ret, perf_shm->eo, queue);
 	}

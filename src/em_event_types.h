@@ -99,6 +99,13 @@ typedef struct {
 	 */
 	size_t event_size;
 	/**
+	 * Payload alloc alignment offset/push into free area of ev_hdr.
+	 * Only used by events based on ODP buffers that have the ev_hdr in the
+	 * beginning of the buf payload (pkts use 'user-area' for ev_hdr).
+	 * Value is copied from pool_elem->align_offset for easy access.
+	 */
+	uint32_t align_offset;
+	/**
 	 * Queue element for associated queue (for AG or local queue)
 	 */
 	queue_elem_t *q_elem;
@@ -135,8 +142,9 @@ typedef struct {
 	/*
 	 * ! EMPTY SPACE !
 	 * Events based on odp_buffer_t only:
-	 *   - space for alignment adjustments as set by config file option:
-	 *     'pool.alloc_align = 2^x bytes'
+	 *   - space for alignment adjustments as set by
+	 *      a) config file option - 'pool.align_offset' or
+	 *      b) pool config param  - 'em_pool_cfg_t:align_offset{}'
 	 *   - space available:
 	 *         sizeof(event_hdr_t) - offsetof(event_hdr_t, end_hdr_data)
 	 *   - events based on odp_packet_t have their event header in the

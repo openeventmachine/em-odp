@@ -165,15 +165,12 @@ em_init(em_conf_t *conf)
 
 	/* timer add-on */
 	if (conf->event_timer) {
-		stat = timer_init_global();
+		stat = timer_init(&em_shm->timers);
 		RETURN_ERROR_IF(stat != EM_OK,
 				EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-				"timer_init_global() failed:%" PRI_STAT "",
+				"timer_init() failed:%" PRI_STAT "",
 				stat);
 	}
-
-	/* Initialize the daemon EO */
-	daemon_eo_shm_init(1/*first call*/);
 
 	/* Initialize EM callbacks/hooks */
 	stat = hooks_init(&conf->api_hooks);
@@ -205,17 +202,14 @@ em_init_core(void)
 	RETURN_ERROR_IF(em_shm == NULL, EM_ERR_BAD_POINTER,
 			EM_ESCOPE_INIT_CORE, "Shared memory ptr NULL!");
 
-	/* Store the EM core id of this core, returned by em_core_id() */
-	em_locm.core_id = phys_to_logic_core_id(odp_cpu_id());
-
 	/* Initialize core mappings not known yet in core_map_init() */
 	stat = core_map_init_local(&em_shm->core_map);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"core_map_init_local() failed! (%u)", stat);
+			"core_map_init_local() failed:%" PRI_STAT "", stat);
 
 	stat = queue_init_local();
 	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_INIT_CORE,
-			"queue_init_local() fails! (%u)", stat);
+			"queue_init_local() failed:%" PRI_STAT "", stat);
 
 	/*
 	 * Initialize timer add-on. If global init was not done (config),
@@ -223,15 +217,13 @@ em_init_core(void)
 	 */
 	stat = timer_init_local();
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"timer_init_local() failed! (%u)", stat);
+			"timer_init_local() failed:%" PRI_STAT "", stat);
 
 	env_spinlock_lock(&em_shm->init.lock);
 	init_count = ++em_shm->init.em_init_core_cnt;
 	env_spinlock_unlock(&em_shm->init.lock);
 
 	/* Now OK to call EM APIs */
-
-	daemon_eo_shm_init(0/*not first call*/);
 
 	/* Print info about the Env&HW when the last core has initialized */
 	if (init_count == em_core_count()) {
@@ -268,7 +260,7 @@ em_term(em_conf_t *conf)
 	(void)conf;
 
 	if (em_shm->conf.event_timer)
-		timer_term_global();
+		timer_term();
 
 	/*
 	 * Flush all events in the scheduler.
@@ -296,19 +288,17 @@ em_term(em_conf_t *conf)
 		odp_schedule_pause();
 	}
 
-	daemon_eo_shm_free();
-
 	stat = chaining_term(&em_shm->event_chaining);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"chaining_term() failed:%" PRI_STAT "", stat);
 
 	ret = libconfig_term_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"EM config term failed.\n");
+			"EM config term failed:%d");
 
 	stat = pool_term(&em_shm->mpool_tbl);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"pool_term() failed:%u", stat);
+			"pool_term() failed:%" PRI_STAT "", stat);
 
 	ret = odp_shm_free(em_shm->this_shm);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,

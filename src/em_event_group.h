@@ -224,20 +224,23 @@ event_group_count_decrement(const unsigned int decr)
 		if (EM_EVENT_GROUP_SAFE_MODE)
 			egrp_elem->pre.count = 0;
 
-		int i;
 		const int num_notif = egrp_elem->num_notif;
+		em_status_t ret;
 
 		/* Copy notifications to local memory */
 		em_notif_t notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
 
-		for (i = 0; i < num_notif; i++) {
+		for (int i = 0; i < num_notif; i++) {
 			notif_tbl[i].event = egrp_elem->notif_tbl[i].event;
 			notif_tbl[i].queue = egrp_elem->notif_tbl[i].queue;
 			notif_tbl[i].egroup = egrp_elem->notif_tbl[i].egroup;
 		}
 
 		egrp_elem->ready = 1;
-		send_notifs(num_notif, notif_tbl);
+		ret = send_notifs(num_notif, notif_tbl);
+		if (unlikely(ret != EM_OK))
+			INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_GROUP_UPDATE,
+				       "send notifs failed");
 	}
 }
 

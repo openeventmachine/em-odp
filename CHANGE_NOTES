@@ -1,4 +1,4 @@
-Copyright (c) 2013-2019, Nokia Solutions and Networks
+Copyright (c) 2013-2020, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -44,9 +44,65 @@ The version numbering scheme reflects the used EM API version:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine on ODP v2.2.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.2 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+- EM config file options - config/em-odp.conf
+    - Option 'pool.align_offset':
+      (Replaced 'pool.alloc_align' with 'pool.align_offset')
+
+      Alignment offset in bytes for the event payload start address.
+      Set the event payload alignment offset for events allocated from
+      any pool. This is a global setting concerning all pools.
+      A similar, but pool-secific option, is 'em_pool_cfg_t:align_offset{}'
+      that overrides this global setting for a specific pool when given to
+      em_pool_create(..., pool_cfg).
+
+      Use this option to globally adjust the payload layout so that a
+      specific part of it can be placed at a needed alignment for e.g.
+      HW access.
+
+      The default EM event payload start address alignment is a power-of-two
+      that is at minimum 32 bytes (i.e. 32 B, 64 B, 128 B etc. depending on
+      e.g. target cache-line size).
+      The 'align_offset' option can be used to fine-tune the start-address
+      by a small offset to e.g. make room for a small SW header before the
+      rest of the payload that might need a specific alignment for direct
+      HW-access.
+      Example: setting 'align_offset = 8' makes sure that the payload
+      _after_ 8 bytes will be aligned at minimum (2^x) 32 bytes for all
+      pools that do not override this value.
+
+      start: base - align_offset
+           |
+           v
+           +------------------------------------------+
+           | <----- |  Event Payload                  |
+           +------------------------------------------+
+                    ^
+                    |
+                   base (min 32B aligned, power-of-two)
+- New autoconf configure-script options (configure.ac):
+    --without-programs
+      Build the EM library without example programs
+    --with-config-file=FILE
+      Override the default EM configuration file (default:config/em-odp.conf)
+      that is used during the configure & build phases to generate the built-in
+      default values for the EM runtime-config (note that runtime config options
+      can further be changed during startup by setting the EM_CONFIG_FILE=file
+      variable).
+      The overriding file set with --with-config-file=FILE must include all
+      EM configuration options (unlike the runtime file that only need to
+      include the mandatory and changed options).
+    --enable-check-level=VAL(0…3)
+      Set the compile-time EM_CHECK_LEVEL,
+      see include/event_machine/platform/event_machine_config.h
+
+--------------------------------------------------------------------------------
 Event Machine on ODP v2.1.2
 --------------------------------------------------------------------------------
-- Config file options - config/em-odp.conf
+- EM config file options - config/em-odp.conf
   EM runtime configuration options added. The user can optionally override
   default config options by setting the environmental variable 'EM_CONFIG_FILE'
   to point to an alternative config file with desired values, e.g.:
@@ -64,7 +120,7 @@ Event Machine on ODP v2.1.2
       thus, if enabled, inducing some overhead. Pool information can be
       obtained by calling em_pool_info() and, if pool usage statistics is
       enabled, will return also pool usage statistics.
-    - Option 'pool.alloc_align':
+    - Option 'pool.alloc_align': (changed to 'pool.align_offset' in v2.2.0)
       Alloc alignment in bytes, default = 0 (no extra alignment requirement)
       Set the exact alignment of the event payload start address (in bytes).
       The event payload address returned by em_event_pointer(event) will

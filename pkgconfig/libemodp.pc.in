@@ -5,7 +5,7 @@ includedir=@includedir@
 
 Name: libemodp
 Description: EM-ODP LIB
-Version: @EMODP_LIBSO_VERSION@
+Version: @EMODP_PKGCONFIG_VERSION@
 Libs: -L${libdir} -lemodp
 Libs.private: @ODP_LIBS@
-Cflags: -I${includedir}
+Cflags: -I${includedir} @EM_CHECK_LEVEL@

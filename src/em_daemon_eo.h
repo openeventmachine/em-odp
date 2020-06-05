@@ -42,12 +42,6 @@ extern "C" {
 #endif
 
 void
-daemon_eo_shm_init(int first);
-
-void
-daemon_eo_shm_free(void);
-
-void
 daemon_eo_create(void);
 
 void

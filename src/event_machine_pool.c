@@ -180,6 +180,7 @@ em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/)
 	pool_info->name[sizeof(pool_info->name) - 1] = '\0';
 	pool_info->em_pool = pool_elem->em_pool;
 	pool_info->event_type = pool_elem->event_type;
+	pool_info->align_offset = pool_elem->align_offset;
 	pool_info->num_subpools = pool_elem->num_subpools;
 	for (int i = 0; i < pool_elem->num_subpools; i++) {
 		uint32_t num = pool_elem->pool_cfg.subpool[i].num;
@@ -215,7 +216,7 @@ em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/)
 }
 
 #define POOL_INFO_HDR_STR \
-"  id     name             type        sizes                 (used/free)\n"
+"  id     name             type       offset  sizes                (used/free)\n"
 
 void
 em_pool_info_print(em_pool_t pool)

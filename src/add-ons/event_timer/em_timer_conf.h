@@ -40,8 +40,6 @@
  * Global configuration for the EM timer
  */
 
-/* The name of the EM timer shared memory */
-#define EM_ODP_TIMER_SHM_NAME  "EMTimerShm"
 /* Default timer resolution in ns (if none given by the user) */
 #define EM_ODP_TIMER_RESOL_DEF_NS  1000000
 /* Max number of supported EM timers (= ODP timer pools) */

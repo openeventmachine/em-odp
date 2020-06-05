@@ -32,65 +32,21 @@
 
 #include "em_timer.h"
 
-/* thread-local pointer to shared state */
-ENV_LOCAL timer_shm_t *timer_shm;
-
-em_status_t timer_init_global(void)
+em_status_t timer_init(timer_storage_t *const tmrs)
 {
-	odp_shm_info_t info;
 	int i;
 
-	/*
-	 * The EM-timer uses its own shared memory region.
-	 * As timeouts live in a buffer pool now this starts to be unnecessary?
-	 * Move to common EM shm or just use one buffer?
-	 */
-	odp_shm_t shm = odp_shm_reserve(EM_ODP_TIMER_SHM_NAME,
-					sizeof(timer_shm_t), sizeof(uint64_t),
-					ODP_SHM_SW_ONLY | ODP_SHM_SINGLE_VA);
-	if (shm == ODP_SHM_INVALID) {
-		EM_LOG(EM_LOG_ERR, "odp_shm_reserve() failed\n");
-		return EM_ERR_LIB_FAILED;
-	}
-
-	timer_shm_t *const tconf = odp_shm_addr(shm);
-
-	if (tconf == NULL)
-		return EM_ERR_LIB_FAILED;
-
-	/* init shared memory data */
-	memset(tconf, 0, sizeof(timer_shm_t));
-	tconf->odp_shm = shm;
-
 	for (i = 0; i < EM_ODP_MAX_TIMERS; i++)
-		tconf->timer[i].idx = i;
+		tmrs->timer[i].idx = i;
 
-	odp_ticketlock_init(&tconf->tlock);
-
-	if (odp_shm_info(shm, &info) == 0) {
-		EM_LOG(EM_LOG_PRINT,
-		       "Event timer created %ldB ShMem on %ldk pages\n",
-		       info.size, info.page_size / 1024);
-	} else {
-		EM_LOG(EM_LOG_ERR, "%s: can't read SHM info\n", __func__);
-	}
+	odp_ticketlock_init(&tmrs->timer_lock);
 
 	return EM_OK;
 }
 
 em_status_t timer_init_local(void)
 {
-	/* init thread local data ptr */
-	odp_shm_t shm = odp_shm_lookup(EM_ODP_TIMER_SHM_NAME);
-
-	if (shm == ODP_SHM_INVALID) {
-		timer_shm = NULL;
-		return EM_OK;	/* assume timer was disabled */
-	}
-
-	timer_shm = (timer_shm_t *)odp_shm_addr(shm);
-
-	return timer_shm != NULL ? EM_OK : EM_ERR;
+	return EM_OK;
 }
 
 em_status_t timer_term_local(void)
@@ -98,11 +54,7 @@ em_status_t timer_term_local(void)
 	return EM_OK;
 }
 
-em_status_t timer_term_global(void)
+em_status_t timer_term(void)
 {
-	if (timer_shm == NULL)
-		return EM_OK;	/* assume timer was not enabled */
-
-	return odp_shm_free(timer_shm->odp_shm) == 0 ?
-				EM_OK : EM_ERR_LIB_FAILED;
+	return EM_OK;
 }

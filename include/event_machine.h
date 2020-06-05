@@ -53,7 +53,7 @@ extern "C" {
  * Minor API version number.
  * Updates and additions
  */
-#define EM_API_VERSION_MINOR 1
+#define EM_API_VERSION_MINOR 2
 
 /** @mainpage
  *

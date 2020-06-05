@@ -42,6 +42,8 @@
 extern "C" {
 #endif
 
+#include <stdlib.h>
+
 #include <odp_api.h>
 /* env generic macros */
 #include <event_machine/platform/env/env_macros.h>
@@ -87,6 +89,7 @@ extern "C" {
 #include <event_machine/platform/env/env_barrier.h>
 #include <event_machine/platform/env/env_sharedmem.h>
 #include <event_machine/platform/env/env_spinlock.h>
+#include <event_machine/platform/env/env_time.h>
 
 /**
  * Panic

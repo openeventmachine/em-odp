@@ -59,26 +59,22 @@
 static int is_timer_valid(em_timer_t tmr)
 {
 	unsigned int i;
+	timer_storage_t *const tmrs = &em_shm->timers;
 
-	if (tmr == EM_TIMER_UNDEF || timer_shm == NULL)
+	if (tmr == EM_TIMER_UNDEF)
 		return 0;
 	i = (unsigned int)TMR_H2I(tmr);
 	if (i >= EM_ODP_MAX_TIMERS)
 		return 0;
-	if (timer_shm->timer[i].odp_tmr_pool == ODP_TIMER_POOL_INVALID ||
-	    timer_shm->timer[i].tmo_pool == ODP_POOL_INVALID)
+
+	if (tmrs->timer[i].odp_tmr_pool == ODP_TIMER_POOL_INVALID ||
+	    tmrs->timer[i].tmo_pool == ODP_POOL_INVALID)
 		return 0;
 	return 1;
 }
 
 em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 {
-	if (unlikely(timer_shm == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_TIMER_CREATE,
-			       "Timer not initialized");
-		return EM_TIMER_UNDEF;
-	}
-
 	em_timer_attr_t attr = {.flags = EM_TIMER_FLAG_DEFAULT,
 				.clk_src = EM_TIMER_CLKSRC_DEFAULT};
 
@@ -174,15 +170,20 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	if (err) {
 		INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
 			       EM_ESCOPE_TIMER_CREATE,
-			       "Tmr-res-capa:%d odp-clksrc:%d res:%" PRIu64 "\n"
-			       "min-tmo:%" PRIu64 " max-tmo%" PRIu64 "",
+			       "Timer resolution-capability:%d odp-clksrc:%d\n"
+			       "  res-ns:%" PRIu64 "\n"
+			       "  min-tmo:%" PRIu64 " max-tmo%" PRIu64 "\n"
+			       "EM-attr: .res:%" PRIu64 " .max_tmo:%" PRIu64 "",
 			       err, odp_clksrc, odp_res_capa.res_ns,
-			       odp_res_capa.min_tmo, odp_res_capa.max_tmo);
+			       odp_res_capa.min_tmo, odp_res_capa.max_tmo,
+			       attr.resolution, attr.max_tmo);
 		return EM_TIMER_UNDEF;
 	}
 	/* Store the params */
-	attr.resolution = odp_res_capa.res_ns;
-	attr.max_tmo = odp_res_capa.max_tmo;
+	if (attr.resolution == 0)
+		attr.resolution = odp_res_capa.res_ns;
+	if (attr.max_tmo == 0)
+		attr.max_tmo = odp_res_capa.max_tmo;
 	min_tmo = odp_res_capa.min_tmo;
 
 	/*
@@ -218,10 +219,10 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	event_timer_t *timer;
 	int i;
 
-	odp_ticketlock_lock(&timer_shm->tlock);
+	odp_ticketlock_lock(&em_shm->timers.timer_lock);
 
 	for (i = 0; i < EM_ODP_MAX_TIMERS; i++) {
-		timer = &timer_shm->timer[i];
+		timer = &em_shm->timers.timer[i];
 
 		if (timer->odp_tmr_pool != ODP_TIMER_POOL_INVALID)
 			continue;
@@ -259,7 +260,7 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 		break;
 	}
 
-	odp_ticketlock_unlock(&timer_shm->tlock);
+	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
 	return i < EM_ODP_MAX_TIMERS ? (em_timer_t)TMR_I2H(i) : EM_TIMER_UNDEF;
 
@@ -274,7 +275,7 @@ error_locked:
 	timer->tmo_pool = ODP_POOL_INVALID;
 	timer->odp_tmr_pool = ODP_TIMER_POOL_INVALID;
 
-	odp_ticketlock_unlock(&timer_shm->tlock);
+	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
 	INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 		       EM_ESCOPE_TIMER_CREATE,
@@ -284,41 +285,39 @@ error_locked:
 
 em_status_t em_timer_delete(em_timer_t tmr)
 {
-	timer_shm_t *const tshm = timer_shm;
-
-	RETURN_ERROR_IF(tshm == NULL,
-			EM_ERR_BAD_POINTER, EM_ESCOPE_TIMER_DELETE,
-			"Timer shm not initialized, tmr:%" PRI_TMR "", tmr);
+	timer_storage_t *const tmrs = &em_shm->timers;
 
 	int i = TMR_H2I(tmr);
 
-	odp_ticketlock_lock(&tshm->tlock);
+	odp_ticketlock_lock(&tmrs->timer_lock);
 
 	if (unlikely(!is_timer_valid(tmr))) {
-		odp_ticketlock_unlock(&tshm->tlock);
+		odp_ticketlock_unlock(&tmrs->timer_lock);
 		return INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_DELETE,
 				      "Invalid timer:%" PRI_TMR "", tmr);
 	}
 
-	odp_pool_destroy(tshm->timer[i].tmo_pool);
-	tshm->timer[i].tmo_pool = ODP_POOL_INVALID;
-	odp_timer_pool_destroy(tshm->timer[i].odp_tmr_pool);
-	tshm->timer[i].odp_tmr_pool = ODP_TIMER_POOL_INVALID;
+	odp_pool_destroy(tmrs->timer[i].tmo_pool);
+	tmrs->timer[i].tmo_pool = ODP_POOL_INVALID;
+	odp_timer_pool_destroy(tmrs->timer[i].odp_tmr_pool);
+	tmrs->timer[i].odp_tmr_pool = ODP_TIMER_POOL_INVALID;
 
-	odp_ticketlock_unlock(&tshm->tlock);
+	odp_ticketlock_unlock(&tmrs->timer_lock);
 
 	return EM_OK;
 }
 
 em_timer_tick_t em_timer_current_tick(em_timer_t tmr)
 {
+	timer_storage_t *const tmrs = &em_shm->timers;
+
 	int i = TMR_H2I(tmr);
 
 	if (EM_CHECK_LEVEL > 0) {
 		if (!is_timer_valid(tmr))
 			return 0;
 	}
-	return odp_timer_current_tick(timer_shm->timer[i].odp_tmr_pool);
+	return odp_timer_current_tick(tmrs->timer[i].odp_tmr_pool);
 }
 
 em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
@@ -326,6 +325,7 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 	int i = TMR_H2I(tmr);
 	odp_timer_pool_t odptmr;
 	queue_elem_t *const q_elem = queue_elem_get(queue);
+	odp_buffer_t tmo_buf;
 
 	if (EM_CHECK_LEVEL > 0) {
 		if (!is_timer_valid(tmr)) {
@@ -341,7 +341,7 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 		}
 	}
 
-	odp_buffer_t tmo_buf = odp_buffer_alloc(timer_shm->timer[i].tmo_pool);
+	tmo_buf = odp_buffer_alloc(em_shm->timers.timer[i].tmo_pool);
 
 	if (unlikely(tmo_buf == ODP_BUFFER_INVALID)) {
 		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_TMO_CREATE,
@@ -351,7 +351,7 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 
 	em_timer_timeout_t *tmo = odp_buffer_addr(tmo_buf);
 
-	odptmr = timer_shm->timer[i].odp_tmr_pool;
+	odptmr = em_shm->timers.timer[i].odp_tmr_pool;
 	tmo->odp_timer = odp_timer_alloc(odptmr, q_elem->odp_queue, NULL);
 
 	if (unlikely(tmo->odp_timer == ODP_TIMER_INVALID)) {
@@ -603,15 +603,15 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 int em_timer_get_all(em_timer_t *tmr_list, int max)
 {
 	if (EM_CHECK_LEVEL > 0) {
-		if (timer_shm == NULL || tmr_list == NULL || max < 1)
+		if (tmr_list == NULL || max < 1)
 			return 0;
 	}
 
 	int num = 0;
 
-	odp_ticketlock_lock(&timer_shm->tlock);
+	odp_ticketlock_lock(&em_shm->timers.timer_lock);
 	for (int i = 0; i < EM_ODP_MAX_TIMERS; i++) {
-		if (timer_shm->timer[i].odp_tmr_pool !=
+		if (em_shm->timers.timer[i].odp_tmr_pool !=
 		    ODP_TIMER_POOL_INVALID) {
 			tmr_list[num] = TMR_I2H(i);
 			num++;
@@ -619,7 +619,7 @@ int em_timer_get_all(em_timer_t *tmr_list, int max)
 				break;
 		}
 	}
-	odp_ticketlock_unlock(&timer_shm->tlock);
+	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
 	return num;
 }
@@ -637,7 +637,7 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)
 				"Inv.args: timer:%" PRI_TMR " tmr_attr:%p",
 				tmr, tmr_attr);
 
-	ret = odp_timer_pool_info(timer_shm->timer[i].odp_tmr_pool,
+	ret = odp_timer_pool_info(em_shm->timers.timer[i].odp_tmr_pool,
 				  &poolinfo);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TIMER_GET_ATTR,
 			"ODP timer pool info failed");
@@ -645,7 +645,7 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)
 	tmr_attr->resolution = poolinfo.param.res_ns;
 	tmr_attr->max_tmo = poolinfo.param.max_tmo;
 	tmr_attr->num_tmo = poolinfo.param.num_timers;
-	tmr_attr->flags = timer_shm->timer[i].flags;
+	tmr_attr->flags = em_shm->timers.timer[i].flags;
 	timer_clksrc_odp2em(poolinfo.param.clk_src, &tmr_attr->clk_src);
 	sz = sizeof(tmr_attr->name);
 	strncpy(tmr_attr->name, poolinfo.name, sz - 1);
@@ -656,6 +656,8 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)
 
 uint64_t em_timer_get_freq(em_timer_t tmr)
 {
+	timer_storage_t *const tmrs = &em_shm->timers;
+
 	if (EM_CHECK_LEVEL > 0) {
 		if (!is_timer_valid(tmr)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_GET_FREQ,
@@ -664,7 +666,7 @@ uint64_t em_timer_get_freq(em_timer_t tmr)
 		}
 	}
 
-	return odp_timer_ns_to_tick(timer_shm->timer[TMR_H2I(tmr)].odp_tmr_pool,
+	return odp_timer_ns_to_tick(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool,
 				    1000ULL * 1000ULL * 1000ULL);
 }
 

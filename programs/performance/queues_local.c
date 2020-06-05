@@ -160,7 +160,8 @@ typedef struct {
 	int samples;
 	int num_cores;
 	int reset_flag;
-	double mhz;
+	double cpu_mhz;
+	uint64_t cpu_hz;
 	uint64_t print_count;
 	env_atomic64_t ready_count;
 	/*  if using CONST_NUM_EVENTS:*/
@@ -173,15 +174,15 @@ typedef struct {
  */
 typedef struct {
 	uint64_t events;
-	uint64_t begin_cycles;
-	uint64_t end_cycles;
-	uint64_t diff_cycles;
+	env_time_t begin_time;
+	env_time_t end_time;
+	env_time_t diff_time;
 	struct {
 		uint64_t events;
-		uint64_t sched_ave;
-		uint64_t sched_max;
-		uint64_t local_ave;
-		uint64_t local_max;
+		env_time_t sched_ave;
+		env_time_t sched_max;
+		env_time_t local_ave;
+		env_time_t local_max;
 	} latency;
 	/* Pad size to a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
@@ -226,7 +227,7 @@ COMPILE_TIME_ASSERT(sizeof(queue_context_t) % ENV_CACHE_LINE_SIZE == 0,
  */
 typedef struct {
 	/* Send time stamp */
-	uint64_t send_time;
+	env_time_t send_time;
 	/* Sequence number */
 	int seq;
 	/* Test data */
@@ -291,7 +292,7 @@ alloc_free_per_event(em_event_t event);
 
 static inline void
 measure_latency(perf_event_t *const perf_event, queue_context_t *const q_ctx,
-		uint64_t recv_time);
+		env_time_t recv_time);
 
 /**
  * Main function
@@ -374,7 +375,6 @@ test_start(appl_conf_t *const appl_conf)
 {
 	eo_context_t *eo_ctx;
 	em_status_t ret, start_ret = EM_ERROR;
-	uint32_t hz;
 	const int q_ctx_size = sizeof(perf_shm->queue_context_tbl);
 	int i;
 
@@ -405,9 +405,9 @@ test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(perf_shm->pool == EM_POOL_UNDEF,
 		      "Undefined application event pool!");
 
-	hz = env_core_hz();
-	perf_shm->test_status.mhz = ((double)hz) / 1000000.0;
-	perf_shm->test_status.reset_flag = 0;
+	perf_shm->test_status.cpu_hz = env_core_hz();
+	perf_shm->test_status.cpu_mhz = (double)perf_shm->test_status.cpu_hz /
+					1000000.0;
 	perf_shm->test_status.num_cores = em_core_count();
 	perf_shm->test_status.free_flag = 0;
 
@@ -510,7 +510,7 @@ queue_step(void)
 				      "EM alloc failed (%i)", i);
 			perf_event = em_event_pointer(event);
 			perf_event->seq = i;
-			perf_event->send_time = env_get_cycle();
+			perf_event->send_time = env_time_global();
 
 			/* Allocate events evenly to the queues */
 			qidx = i % queue_count;
@@ -548,7 +548,7 @@ queue_step(void)
 
 				perf_event = em_event_pointer(event);
 				perf_event->seq = i * NUM_EVENTS + j;
-				perf_event->send_time = env_get_cycle();
+				perf_event->send_time = env_time_global();
 
 				ret = em_send(event, q_ctx->this_queue);
 				test_fatal_if(ret != EM_OK,
@@ -627,7 +627,7 @@ static void
 receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	     em_queue_t queue, void *q_context)
 {
-	uint64_t recv_time;
+	env_time_t recv_time;
 	perf_event_t *perf_event;
 
 	if (unlikely(appl_shm->exit_flag)) {
@@ -636,7 +636,7 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 
 	if (MEASURE_LATENCY) {
-		recv_time = env_get_cycle();
+		recv_time = env_time_global();
 		perf_event = em_event_pointer(event);
 	}
 
@@ -666,7 +666,7 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 
 	if (MEASURE_LATENCY) {
 		measure_latency(perf_event, q_ctx, recv_time);
-		perf_event->send_time = env_get_cycle();
+		perf_event->send_time = env_time_global();
 	}
 	/* Send the event to the next queue */
 	ret = em_send(event, dst_queue);
@@ -723,7 +723,7 @@ update_test_state(em_event_t event)
 
 		if (unlikely(core_state != CORE_STATE_IDLE)) {
 			core_state = CORE_STATE_IDLE;
-			cstat->begin_cycles = 0;
+			cstat->begin_time = ENV_TIME_NULL;
 
 			ready_count =
 			env_atomic64_add_return(&tstat->ready_count, 1);
@@ -745,12 +745,12 @@ update_test_state(em_event_t event)
 			}
 		}
 	} else if (unlikely(events == 1)) {
-		cstat->begin_cycles = env_get_cycle();
+		cstat->begin_time = env_time_global();
 		cstat->latency.events = 0;
-		cstat->latency.sched_ave = 0;
-		cstat->latency.sched_max = 0;
-		cstat->latency.local_ave = 0;
-		cstat->latency.local_max = 0;
+		cstat->latency.sched_ave = ENV_TIME_NULL;
+		cstat->latency.sched_max = ENV_TIME_NULL;
+		cstat->latency.local_ave = ENV_TIME_NULL;
+		cstat->latency.local_max = ENV_TIME_NULL;
 
 		core_state = CORE_STATE_MEASURE;
 	} else if (unlikely(events == EVENTS_PER_SAMPLE)) {
@@ -758,18 +758,13 @@ update_test_state(em_event_t event)
 		 * Measurements done for this step. Store results and continue
 		 * receiving events until all cores are done.
 		 */
-		uint64_t diff, begin_cycles, end_cycles;
+		env_time_t begin_time, end_time;
 
-		cstat->end_cycles = env_get_cycle();
+		cstat->end_time = env_time_global();
 
-		end_cycles = cstat->end_cycles;
-		begin_cycles = cstat->begin_cycles;
-		if (likely(end_cycles > begin_cycles))
-			diff = end_cycles - begin_cycles;
-		else
-			diff = UINT64_MAX - begin_cycles + end_cycles + 1;
-
-		cstat->diff_cycles = diff;
+		end_time = cstat->end_time;
+		begin_time = cstat->begin_time;
+		cstat->diff_time = env_time_diff(end_time, begin_time);
 
 		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
 
@@ -910,50 +905,82 @@ static void
 print_test_statistics(test_status_t *test_status, int print_header,
 		      core_stat_t core_stat[])
 {
-	uint64_t total_cycles = 0;
-	uint64_t total_events = test_status->num_cores * EVENTS_PER_SAMPLE;
-	uint64_t latency_events = 0;
-	uint64_t latency_hi_ave = 0;
-	uint64_t latency_hi_max = 0;
-	uint64_t latency_lo_ave = 0;
-	uint64_t latency_lo_max = 0;
-	double latency_per_hi_ave;
-	double latency_per_lo_ave;
-	double cycles_per_event, events_per_sec;
-	int i;
+	const int num_cores = test_status->num_cores;
+	const uint64_t cpu_hz = test_status->cpu_hz;
+	const double cpu_mhz = test_status->cpu_mhz;
+	const uint64_t total_events = (uint64_t)num_cores * EVENTS_PER_SAMPLE;
+	const uint64_t print_count = test_status->print_count++;
+	env_time_t total_time = ENV_TIME_NULL;
 
-	for (i = 0; i < test_status->num_cores; i++) {
-		total_cycles += core_stat[i].diff_cycles;
-		latency_events += core_stat[i].latency.events;
-		latency_hi_ave += core_stat[i].latency.sched_ave;
-		latency_lo_ave += core_stat[i].latency.local_ave;
-		if (core_stat[i].latency.sched_max > latency_hi_max)
-			latency_hi_max = core_stat[i].latency.sched_max;
-		if (core_stat[i].latency.local_max > latency_lo_max)
-			latency_lo_max = core_stat[i].latency.local_max;
-	}
+	for (int i = 0; i < num_cores; i++)
+		total_time = env_time_sum(total_time, core_stat[i].diff_time);
 
-	cycles_per_event = (double)total_cycles / (double)total_events;
-	events_per_sec = test_status->mhz * test_status->num_cores /
-			 cycles_per_event; /* Million events/s */
-	latency_per_hi_ave = (double)latency_hi_ave / (double)latency_events;
-	latency_per_lo_ave = (double)latency_lo_ave / (double)latency_events;
+	double cycles_per_event = 0.0;
+	double events_per_sec = 0.0;
 
-	if (MEASURE_LATENCY) {
-		if (print_header)
-			APPL_PRINT(RESULT_PRINTF_LATENCY_HDR);
-		APPL_PRINT(RESULT_PRINTF_LATENCY_FMT,
-			   cycles_per_event, events_per_sec,
-			   latency_per_hi_ave, latency_hi_max,
-			   latency_per_lo_ave, latency_lo_max,
-			   test_status->mhz, test_status->print_count++);
-	} else {
+	if (likely(total_events > 0))
+		cycles_per_event = env_time_to_cycles(total_time, cpu_hz) /
+				   (double)total_events;
+	if (likely(cycles_per_event > 0)) /* Million events/s: */
+		events_per_sec = cpu_mhz * num_cores / cycles_per_event;
+
+	/*
+	 * Print without latency statistics
+	 */
+	if (!MEASURE_LATENCY) {
 		if (print_header)
 			APPL_PRINT(RESULT_PRINTF_HDR);
 		APPL_PRINT(RESULT_PRINTF_FMT,
 			   cycles_per_event, events_per_sec,
-			   test_status->mhz, test_status->print_count++);
+			   cpu_mhz, print_count);
+		return;
 	}
+
+	/*
+	 * Print with latency statistics
+	 */
+	uint64_t latency_events = 0;
+	env_time_t latency_hi_ave = ENV_TIME_NULL;
+	env_time_t latency_hi_max = ENV_TIME_NULL;
+	env_time_t latency_lo_ave = ENV_TIME_NULL;
+	env_time_t latency_lo_max = ENV_TIME_NULL;
+
+	for (int i = 0; i < num_cores; i++) {
+		latency_events += core_stat[i].latency.events;
+
+		latency_hi_ave = env_time_sum(latency_hi_ave,
+					      core_stat[i].latency.sched_ave);
+		latency_lo_ave = env_time_sum(latency_lo_ave,
+					      core_stat[i].latency.local_ave);
+
+		if (env_time_cmp(core_stat[i].latency.sched_max,
+				 latency_hi_max) > 0) {
+			latency_hi_max = core_stat[i].latency.sched_max;
+		}
+		if (env_time_cmp(core_stat[i].latency.local_max,
+				 latency_lo_max) > 0) {
+			latency_lo_max = core_stat[i].latency.local_max;
+		}
+	}
+
+	double lat_per_hi_ave = 0.0;
+	double lat_per_lo_ave = 0.0;
+
+	if (likely(latency_events > 0)) {
+		lat_per_hi_ave = env_time_to_cycles(latency_hi_ave, cpu_hz) /
+				 (double)latency_events;
+		lat_per_lo_ave = env_time_to_cycles(latency_lo_ave, cpu_hz) /
+				 (double)latency_events;
+	}
+
+	if (print_header)
+		APPL_PRINT(RESULT_PRINTF_LATENCY_HDR);
+	APPL_PRINT(RESULT_PRINTF_LATENCY_FMT,
+		   cycles_per_event, events_per_sec, lat_per_hi_ave,
+		   env_time_to_cycles(latency_hi_max, cpu_hz),
+		   lat_per_lo_ave,
+		   env_time_to_cycles(latency_lo_max, cpu_hz),
+		   cpu_mhz, print_count);
 }
 
 /**
@@ -963,7 +990,7 @@ static inline em_event_t
 alloc_free_per_event(em_event_t event)
 {
 	perf_event_t *perf_event = em_event_pointer(event);
-	uint64_t send_time = perf_event->send_time;
+	env_time_t send_time = perf_event->send_time;
 	int seq = perf_event->seq;
 	size_t event_size = em_event_get_size(event);
 
@@ -984,12 +1011,12 @@ alloc_free_per_event(em_event_t event)
  */
 static inline void
 measure_latency(perf_event_t *const perf_event, queue_context_t *const q_ctx,
-		uint64_t recv_time)
+		env_time_t recv_time)
 {
 	const int core = em_core_id();
 	core_stat_t *const cstat = &perf_shm->core_stat[core];
-	const uint64_t send_time = perf_event->send_time;
-	uint64_t latency;
+	const env_time_t send_time = perf_event->send_time;
+	env_time_t latency;
 
 	if (perf_shm->test_status.reset_flag ||
 	    cstat->events == 0 || cstat->events >= EVENTS_PER_SAMPLE)
@@ -997,18 +1024,18 @@ measure_latency(perf_event_t *const perf_event, queue_context_t *const q_ctx,
 
 	cstat->latency.events++;
 
-	if (likely(recv_time > send_time))
-		latency = recv_time - send_time;
-	else
-		latency = UINT64_MAX - send_time + recv_time + 1;
+	latency = env_time_diff(recv_time, send_time);
 
 	if (q_ctx->type != EM_QUEUE_TYPE_LOCAL) {
-		cstat->latency.sched_ave += latency;
-		if (latency > cstat->latency.sched_max)
+		cstat->latency.sched_ave =
+		env_time_sum(cstat->latency.sched_ave, latency);
+		if (env_time_cmp(latency, cstat->latency.sched_max) > 0)
 			cstat->latency.sched_max = latency;
 	} else {
-		cstat->latency.local_ave += latency;
-		if (latency > cstat->latency.local_max)
+		cstat->latency.local_ave =
+		env_time_sum(cstat->latency.local_ave, latency);
+
+		if (env_time_cmp(latency, cstat->latency.local_max) > 0)
 			cstat->latency.local_max = latency;
 	}
 }

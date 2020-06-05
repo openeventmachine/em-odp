@@ -281,7 +281,8 @@ em_send_group(em_event_t event, em_queue_t queue,
 	if (EM_CHECK_LEVEL > 2)
 		RETURN_ERROR_IF(env_atomic32_get(&ev_hdr->allocated) != 1,
 				EM_FATAL(EM_ERR_BAD_STATE),
-				EM_ESCOPE_SEND_GROUP, "Event already freed!");
+				EM_ESCOPE_SEND_GROUP,
+				"Event:%" PRI_EVENT " already freed!", event);
 
 	if (!is_external) {
 		/* queue belongs to this EM instance */
@@ -452,9 +453,11 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 		     env_atomic32_get(&ev_hdrs[i]->allocated) == 1; i++)
 			;
 		if (unlikely(i != num)) {
+			const char *const fmt =
+				"events[%d]:%" PRI_EVENT " already freed!";
 			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE),
 				       EM_ESCOPE_SEND_GROUP_MULTI,
-				       "Event(s) already freed!");
+				       fmt, i, events[i]);
 			return 0;
 		}
 	}

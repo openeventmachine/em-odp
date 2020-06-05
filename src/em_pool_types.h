@@ -47,20 +47,22 @@ extern "C" {
 typedef struct {
 	/** EM pool handle */
 	em_pool_t em_pool;
-	/* Pool name */
-	char name[EM_POOL_NAME_LEN];
 	/** Event type of events allocated from the pool */
 	em_event_type_t event_type;
+	/** Subpool alignment requested from ODP */
+	uint32_t align_offset;
 	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
 	int num_subpools;
-	/** ODP buffer handles for the subpools  */
-	odp_pool_t odp_pool[EM_MAX_SUBPOOLS];
 	/** ODP (sub)pool buffer (event) payload sizes */
 	uint32_t size[EM_MAX_SUBPOOLS];
+	/** ODP buffer handles for the subpools  */
+	odp_pool_t odp_pool[EM_MAX_SUBPOOLS];
 	/** for linking free pool-entries together */
 	objpool_elem_t objpool_elem;
 	/** Pool Configuration given during create */
 	em_pool_cfg_t pool_cfg;
+	/* Pool name */
+	char name[EM_POOL_NAME_LEN];
 } mpool_elem_t;
 
 typedef struct {
