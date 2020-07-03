@@ -41,6 +41,8 @@
 #ifndef EVENT_MACHINE_HW_CONFIG_H
 #define EVENT_MACHINE_HW_CONFIG_H
 
+#pragma GCC visibility push(default)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -181,6 +183,16 @@ extern "C" {
 #define EM_SCHED_AG_MULTI_MAX_BURST  32
 
 /**
+ * @def EM_EO_MULTIRCV_MAX_EVENTS
+ * The default maximum number of events passed to the EO's multi-event
+ * receive function (when the EO has been created with em_eo_create_multircv()).
+ * This value is used by EM as a default if the the user does not specify
+ * a value (i.e. gives '0') for 'em_eo_multircv_param_t::max_events' when
+ * calling em_eo_create_multircv()
+ */
+#define EM_EO_MULTIRCV_MAX_EVENTS  32
+
+/**
  * @def EM_OUTPUT_QUEUE_IMMEDIATE
  *   '0': allow EM to buffer events sent to output queues before calling the
  *        user provided output callback to improve throughput
@@ -196,4 +208,5 @@ extern "C" {
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_HW_CONFIG_H */

@@ -57,8 +57,14 @@ typedef struct {
 	em_stop_func_t stop_func;
 	/** EO core-local stop function */
 	em_stop_local_func_t stop_local_func;
+
+	int use_multi_rcv; /* true:receive_multi_func(), false:receive_func() */
+	int max_events;
 	/** EO event receive function */
 	em_receive_func_t receive_func;
+	/** EO multi-event receive function */
+	em_receive_multi_func_t receive_multi_func;
+
 	/** EO specific error handler function */
 	em_error_handler_t error_handler_func;
 	/** EO context data pointer */

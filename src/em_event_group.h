@@ -105,20 +105,20 @@ event_group_gen_get(event_group_elem_t *const egrp_elem)
  * event group. Sets group to undefined for excess and expired group events.
  */
 static inline void
-set_local_safe(const event_hdr_t *const ev_hdr)
+set_local_safe(const em_event_group_t egrp, const int32_t egrp_gen,
+	       const unsigned int decr)
 {
 	uint64_t current_count;
 	egrp_counter_t new_count;
-	event_group_elem_t *const egrp_elem =
-		event_group_elem_get(ev_hdr->egrp);
+	event_group_elem_t *const egrp_elem = event_group_elem_get(egrp);
 
 	do {
 		current_count = EM_ATOMIC_GET(&egrp_elem->pre.atomic);
 		new_count.all = current_count;
-		new_count.count--;
+		new_count.count -= decr;
 		/* Check for excess and expired group events */
 		if (unlikely(new_count.count < 0 ||
-			     new_count.gen != ev_hdr->egrp_gen)) {
+			     new_count.gen != egrp_gen)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ID,
 				       EM_ESCOPE_EVENT_GROUP_UPDATE,
 				       "Expired event group event received!");
@@ -128,8 +128,8 @@ set_local_safe(const event_hdr_t *const ev_hdr)
 	} while (!EM_ATOMIC_CMPSET(&egrp_elem->pre.atomic,
 				   current_count, new_count.all));
 
-	em_locm.current.egrp_gen = ev_hdr->egrp_gen;
-	em_locm.current.egrp = ev_hdr->egrp;
+	em_locm.current.egrp_gen = egrp_gen;
+	em_locm.current.egrp = egrp;
 	em_locm.current.egrp_elem = egrp_elem;
 }
 
@@ -141,18 +141,19 @@ set_local_safe(const event_hdr_t *const ev_hdr)
  * Only called by the EM-dispatcher before receive function.
  */
 static inline void
-event_group_set_local(const event_hdr_t *const ev_hdr)
+event_group_set_local(const em_event_group_t egrp, const int32_t egrp_gen,
+		      const unsigned int decr)
 {
-	if (ev_hdr->egrp == EM_EVENT_GROUP_UNDEF)
+	if (egrp == EM_EVENT_GROUP_UNDEF)
 		return;
 
 	/* event group is set: */
 	if (EM_EVENT_GROUP_SAFE_MODE) {
 		/* Group is validated before setting */
-		set_local_safe(ev_hdr);
+		set_local_safe(egrp, egrp_gen, decr);
 	} else {
-		em_locm.current.egrp_elem = event_group_elem_get(ev_hdr->egrp);
-		em_locm.current.egrp = ev_hdr->egrp;
+		em_locm.current.egrp_elem = event_group_elem_get(egrp);
+		em_locm.current.egrp = egrp;
 	}
 }
 

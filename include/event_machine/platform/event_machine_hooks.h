@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_HOOKS_H_
 #define EVENT_MACHINE_HOOKS_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_hooks API-hooks
@@ -147,4 +149,5 @@ em_hooks_unregister_send(em_api_hook_send_t func);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_HOOKS_H_ */

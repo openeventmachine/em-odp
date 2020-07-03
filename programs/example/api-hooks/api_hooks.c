@@ -114,18 +114,19 @@ ping_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 
 /* Callback & hook functions */
 static void
-enter_cb(em_eo_t eo, void **eo_ctx, em_event_t *event, em_event_type_t *type,
+enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 	 em_queue_t *queue, void **q_ctx);
 static void
 exit_cb(em_eo_t eo);
 
 static void
-alloc_hook(em_event_t event, size_t size, em_event_type_t type, em_pool_t pool);
+alloc_hook(const em_event_t events[/*num_act*/], int num_act, int num_req,
+	   size_t size, em_event_type_t type, em_pool_t pool);
 static void
-free_hook(em_event_t event);
+free_hook(const em_event_t events[], int num);
 static void
-send_hook(em_event_t *const events, int num, em_queue_t queue,
-	  em_event_group_t event_group);
+send_hook(const em_event_t events[], int num,
+	  em_queue_t queue, em_event_group_t event_group);
 
 /**
  * Main function
@@ -503,23 +504,25 @@ ping_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
  */
 
 static void
-enter_cb(em_eo_t eo, void **eo_ctx, em_event_t *event, em_event_type_t *type,
+enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 	 em_queue_t *queue, void **q_ctx)
 {
 	my_eo_context_t *my_eo_ctx = *eo_ctx;
 	my_queue_context_t *my_q_ctx = *q_ctx;
 	ping_event_t *ping;
-	(void)type;
+	em_event_t event = events[0];
+
+	(void)num; /* 1 event at a time here */
 	(void)queue;
 
-	ping = em_event_pointer(*event);
+	ping = em_event_pointer(event);
 
 	APPL_PRINT("\n"
 		   "+  Dispatch enter callback  EO:'%s'(%" PRI_EO ")\t"
 		   "Queue:%" PRI_QUEUE " on core%02i\t"
 		   "Event:%" PRI_EVENT " Event-seq:%u\n",
 		   my_eo_ctx->name, eo, my_q_ctx->queue, em_core_id(),
-		   *event, ping->seq);
+		   event, ping->seq);
 }
 
 static void
@@ -532,11 +535,14 @@ exit_cb(em_eo_t eo)
 }
 
 static void
-alloc_hook(em_event_t event, size_t size, em_event_type_t type, em_pool_t pool)
+alloc_hook(const em_event_t events[/*num_act*/], int num_act, int num_req,
+	   size_t size, em_event_type_t type, em_pool_t pool)
 {
 	em_eo_t eo, eo_a, eo_b;
 	void *eo_ctx;
 	my_eo_context_t *my_eo_ctx;
+
+	(void)num_req;
 
 	eo = em_eo_current();
 	if (unlikely(eo == EM_EO_UNDEF))
@@ -557,18 +563,20 @@ alloc_hook(em_event_t event, size_t size, em_event_type_t type, em_pool_t pool)
 
 	APPL_PRINT("     Alloc-hook  EO:'%s'(%" PRI_EO ")\t"
 		   "sz:%zu type:0x%x pool:%" PRI_POOL "\t\t"
-		   "Event:%" PRI_EVENT "\n",
-		   my_eo_ctx->name, eo, size, type, pool, event);
+		   "Events[%d]:",
+		   my_eo_ctx->name, eo, size, type, pool,
+		   num_act);
+	for (int i = 0; i < num_act; i++)
+		APPL_PRINT(" %" PRI_EVENT "", events[i]);
+	APPL_PRINT("\n");
 }
 
 static void
-free_hook(em_event_t event)
+free_hook(const em_event_t events[], int num)
 {
 	em_eo_t eo, eo_a, eo_b;
 	void *eo_ctx;
 	my_eo_context_t *my_eo_ctx;
-
-	(void)event;
 
 	eo = em_eo_current();
 	if (unlikely(eo == EM_EO_UNDEF))
@@ -588,13 +596,15 @@ free_hook(em_event_t event)
 	my_eo_ctx = eo_ctx;
 
 	APPL_PRINT("     Free-hook   EO:'%s'(%" PRI_EO ")\t\t\t\t\t\t"
-		   "Event:%" PRI_EVENT "\n",
-		   my_eo_ctx->name, eo, event);
+		   "Events[%d]:", my_eo_ctx->name, eo, num);
+	for (int i = 0; i < num; i++)
+		APPL_PRINT(" %" PRI_EVENT "", events[i]);
+	APPL_PRINT("\n");
 }
 
 static void
-send_hook(em_event_t *const events, int num, em_queue_t queue,
-	  em_event_group_t event_group)
+send_hook(const em_event_t events[], int num,
+	  em_queue_t queue, em_event_group_t event_group)
 {
 	em_eo_t eo, eo_a, eo_b;
 	void *eo_ctx;
@@ -622,9 +632,9 @@ send_hook(em_event_t *const events, int num, em_queue_t queue,
 
 	APPL_PRINT("     Send-hook   EO:'%s'(%" PRI_EO ")\t"
 		   "%d event(s)\tQueue:%" PRI_QUEUE " ==> %" PRI_QUEUE "\t"
-		   "Event:",
-		   my_eo_ctx->name, eo, num, em_queue_current(), queue);
+		   "Events[%d]:",
+		   my_eo_ctx->name, eo, num, em_queue_current(), queue, num);
 	for (int i = 0; i < num; i++)
-		APPL_PRINT("%" PRI_EVENT " ", events[i]);
+		APPL_PRINT(" %" PRI_EVENT "", events[i]);
 	APPL_PRINT("\n");
 }

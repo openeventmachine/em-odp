@@ -70,7 +70,7 @@ extern "C" {
  * @def MAX_PKT_BURST_TX
  * @brief Maximum number of packets bursted onto a pktout queue
  */
-#define MAX_PKT_BURST_TX  16
+#define MAX_PKT_BURST_TX  32
 
 /**
  * @def MAX_TX_BURST_BUFS

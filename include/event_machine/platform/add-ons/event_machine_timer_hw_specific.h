@@ -35,6 +35,8 @@
 #ifndef EVENT_MACHINE_TIMER_HW_SPECIFIC_H
 #define EVENT_MACHINE_TIMER_HW_SPECIFIC_H
 
+#pragma GCC visibility push(default)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -115,4 +117,5 @@ typedef enum em_timer_clksrc_t {
 }
 #endif
 
+#pragma GCC visibility pop
 #endif

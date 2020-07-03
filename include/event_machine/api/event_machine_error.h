@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_ERROR_H_
 #define EVENT_MACHINE_ERROR_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_error Error management
@@ -148,4 +150,5 @@ void em_error(em_status_t error, em_escope_t escope, ...);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_ERROR_H_ */

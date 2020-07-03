@@ -182,8 +182,10 @@ cm_setup(int argc, char *argv[])
 		APPL_EXIT_FAILURE("setvbuf() fails (errno(%i)=%s)",
 				  errno, strerror(errno));
 
+	/* Init the EM conf params */
+	em_conf_init(&em_conf_parse);
+
 	/* Parse the command line arguments */
-	memset(&em_conf_parse, 0, sizeof(em_conf_parse));
 	memset(&appl_conf_parse, 0, sizeof(appl_conf_parse));
 	parse_args(argc, argv, &em_conf_parse, &appl_conf_parse);
 

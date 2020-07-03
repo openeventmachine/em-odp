@@ -36,6 +36,8 @@
 #ifndef _ENV_BARRIER_H_
 #define _ENV_BARRIER_H_
 
+#pragma GCC visibility push(default)
+
 /*
  * Types
  */
@@ -57,4 +59,5 @@ static inline void env_barrier_sync(env_barrier_t *barrier)
 	odp_barrier_wait(barrier);
 }
 
+#pragma GCC visibility pop
 #endif /* _ENV_BARRIER_H_ */

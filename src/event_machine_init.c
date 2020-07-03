@@ -45,15 +45,28 @@ ENV_LOCAL em_shm_t *em_shm;
 ENV_LOCAL em_locm_t em_locm ENV_CACHE_LINE_ALIGNED = {
 		.current.egrp = EM_EVENT_GROUP_UNDEF,
 		.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE,
-		.local_queues.empty = 1
+		.local_queues.empty = 1,
+		.do_input_poll = EM_FALSE,
+		.do_output_drain = EM_FALSE
 		/* other members initialized to 0 or NULL as per C standard */
 };
+
+void em_conf_init(em_conf_t *conf)
+{
+	if (unlikely(!conf))
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+			       EM_ESCOPE_CONF_INIT, "Conf pointer NULL!");
+	memset(conf, 0, sizeof(em_conf_t));
+}
 
 em_status_t
 em_init(em_conf_t *conf)
 {
 	em_status_t stat;
 	int ret;
+
+	RETURN_ERROR_IF(!conf, EM_FATAL(EM_ERR_BAD_POINTER), EM_ESCOPE_INIT,
+			"Conf pointer NULL!");
 
 	if (!EM_API_HOOKS_ENABLE)
 		memset(&conf->api_hooks, 0, sizeof(conf->api_hooks));
@@ -112,6 +125,19 @@ em_init(em_conf_t *conf)
 
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"core_map_init() failed:%" PRI_STAT "", stat);
+
+	/*
+	 * Check validity of core masks for input_poll_fn and output_drain_fn.
+	 *
+	 * Masks must be a subset of logical EM core mask. Zero mask means
+	 * that input_poll_fn and output_drain_fn are run on all EM cores.
+	 */
+	stat = input_poll_init(&em_shm->core_map.logic_mask, conf);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"input_poll_init() failed:%" PRI_STAT "", stat);
+	stat = output_drain_init(&em_shm->core_map.logic_mask, conf);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"output_drain_init() failed:%" PRI_STAT "", stat);
 
 	/*
 	 * Initialize the EM buffer pools and create the EM_DEFAULT_POOL based
@@ -202,6 +228,23 @@ em_init_core(void)
 	RETURN_ERROR_IF(em_shm == NULL, EM_ERR_BAD_POINTER,
 			EM_ESCOPE_INIT_CORE, "Shared memory ptr NULL!");
 
+	/* Store the EM core id of this core, returned by em_core_id() */
+	em_locm.core_id = phys_to_logic_core_id(odp_cpu_id());
+
+	/* Check if input_poll_fn should be executed on this core */
+	stat = input_poll_init_local(&em_locm.do_input_poll,
+				     em_locm.core_id,
+				     &em_shm->conf);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"input_poll_init_local() failed:%" PRI_STAT "", stat);
+
+	/* Check if output_drain_fn should be executed on this core */
+	stat = output_drain_init_local(&em_locm.do_output_drain,
+				       em_locm.core_id,
+				       &em_shm->conf);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"output_drain_init_local() failed:%" PRI_STAT "", stat);
+
 	/* Initialize core mappings not known yet in core_map_init() */
 	stat = core_map_init_local(&em_shm->core_map);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
@@ -281,7 +324,7 @@ em_term(em_conf_t *conf)
 				 */
 				event_to_hdr_init_multi(em_ev_tbl, ev_hdr_tbl,
 							num_events);
-				event_free_multi(em_ev_tbl, num_events);
+				em_free_multi(em_ev_tbl, num_events);
 			}
 		} while (num_events > 0);
 

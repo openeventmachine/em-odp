@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_EVENT_GROUP_H_
 #define EVENT_MACHINE_EVENT_GROUP_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_event_group Event group
@@ -445,4 +447,5 @@ em_event_group_get_next(void);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_EVENT_GROUP_H_ */

@@ -32,11 +32,12 @@
  * @file
  *
  * Event Machine HW specific functions and other additions.
- *
  */
 
 #ifndef EVENT_MACHINE_HW_SPECIFIC_H
 #define EVENT_MACHINE_HW_SPECIFIC_H
+
+#pragma GCC visibility push(default)
 
 #ifdef __cplusplus
 extern "C" {
@@ -285,4 +286,5 @@ em_core_mask_xor(em_core_mask_t *dst, const em_core_mask_t *src1,
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_HW_SPECIFIC_H */

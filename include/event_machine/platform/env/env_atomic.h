@@ -29,11 +29,14 @@
  */
 
 /*
- * env helper include file - don't include this file directly
+ * env helper include file - don't include this file directly,
+ * instead #include "environment.h"
  */
 
 #ifndef _ENV_ATOMIC_H_
 #define _ENV_ATOMIC_H_
+
+#pragma GCC visibility push(default)
 
 /*
  * Atomic operations - types & functions
@@ -279,4 +282,5 @@ env_atomic64_cnt_bits(env_atomic64_t *atom)
 	return __builtin_popcountll(env_atomic64_get(atom));
 }
 
+#pragma GCC visibility pop
 #endif /* _ENV_ATOMIC_H_ */

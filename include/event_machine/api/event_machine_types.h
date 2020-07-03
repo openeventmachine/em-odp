@@ -32,6 +32,8 @@
 #ifndef EVENT_MACHINE_TYPES_H_
 #define EVENT_MACHINE_TYPES_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  *
@@ -61,15 +63,18 @@ EM_HANDLE_T(em_event_t);
 #define PRI_EVENT  PRI_HDL
 
 /**
- * Event type. This is given to application for each received
- * event and also needed for event allocation.
- * It's an integer, but split into major and minor part.
- * major-field categorizes the event and minor is
- * more detailed system specific description.
- * Major-part will not change by HW, but minor can be HW/SW platform
- * specific and thus could be split into more sub-fields as needed.
- * Application should use the access functions for reading major
- * and minor part.
+ * @typedef em_event_type_t
+ * Event type
+ *
+ * The event type is given to the EO-receive function for each received event
+ * and is also needed for event allocation. This type is an integer that is
+ * split into major and minor parts:
+ *   1) the major-field categorizes the event and
+ *   2) the minor is a more detailed system specific description.
+ * The major-part will not change by HW, but the minor-part can be
+ * HW/SW platform specific and thus could be split into more sub-fields as
+ * needed. The application should use the access functions for reading major
+ * and minor parts.
  *
  * The only event type with defined content is EM_EVENT_TYPE_SW with
  * minor type 0, which needs to be portable (direct pointer to data).
@@ -411,28 +416,30 @@ typedef uint32_t em_escope_t;
 
 /* EM API escopes: EO */
 #define EM_ESCOPE_EO_CREATE                       (EM_ESCOPE_API_MASK | 0x0301)
-#define EM_ESCOPE_EO_DELETE                       (EM_ESCOPE_API_MASK | 0x0302)
-#define EM_ESCOPE_EO_GET_NAME                     (EM_ESCOPE_API_MASK | 0x0303)
-#define EM_ESCOPE_EO_FIND                         (EM_ESCOPE_API_MASK | 0x0304)
-#define EM_ESCOPE_EO_ADD_QUEUE                    (EM_ESCOPE_API_MASK | 0x0305)
-#define EM_ESCOPE_EO_ADD_QUEUE_SYNC               (EM_ESCOPE_API_MASK | 0x0306)
-#define EM_ESCOPE_EO_REMOVE_QUEUE                 (EM_ESCOPE_API_MASK | 0x0307)
-#define EM_ESCOPE_EO_REMOVE_QUEUE_SYNC            (EM_ESCOPE_API_MASK | 0x0308)
-#define EM_ESCOPE_EO_REMOVE_QUEUE_ALL             (EM_ESCOPE_API_MASK | 0x0309)
-#define EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC        (EM_ESCOPE_API_MASK | 0x030A)
-#define EM_ESCOPE_EO_REGISTER_ERROR_HANDLER       (EM_ESCOPE_API_MASK | 0x030B)
-#define EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER     (EM_ESCOPE_API_MASK | 0x030C)
-#define EM_ESCOPE_EO_START                        (EM_ESCOPE_API_MASK | 0x030D)
-#define EM_ESCOPE_EO_START_SYNC                   (EM_ESCOPE_API_MASK | 0x030E)
-#define EM_ESCOPE_EO_STOP                         (EM_ESCOPE_API_MASK | 0x030F)
-#define EM_ESCOPE_EO_STOP_SYNC                    (EM_ESCOPE_API_MASK | 0x0310)
-#define EM_ESCOPE_EO_CURRENT                      (EM_ESCOPE_API_MASK | 0x0311)
-#define EM_ESCOPE_EO_GET_CONTEXT                  (EM_ESCOPE_API_MASK | 0x0312)
-#define EM_ESCOPE_EO_GET_FIRST                    (EM_ESCOPE_API_MASK | 0x0313)
-#define EM_ESCOPE_EO_GET_NEXT                     (EM_ESCOPE_API_MASK | 0x0314)
-#define EM_ESCOPE_EO_GET_STATE                    (EM_ESCOPE_API_MASK | 0x0315)
-#define EM_ESCOPE_EO_QUEUE_GET_FIRST              (EM_ESCOPE_API_MASK | 0x0316)
-#define EM_ESCOPE_EO_QUEUE_GET_NEXT               (EM_ESCOPE_API_MASK | 0x0317)
+#define EM_ESCOPE_EO_CREATE_MULTIRCV              (EM_ESCOPE_API_MASK | 0x0302)
+#define EM_ESCOPE_EO_MULTIRCV_PARAM_INIT          (EM_ESCOPE_API_MASK | 0x0303)
+#define EM_ESCOPE_EO_DELETE                       (EM_ESCOPE_API_MASK | 0x0304)
+#define EM_ESCOPE_EO_GET_NAME                     (EM_ESCOPE_API_MASK | 0x0305)
+#define EM_ESCOPE_EO_FIND                         (EM_ESCOPE_API_MASK | 0x0306)
+#define EM_ESCOPE_EO_ADD_QUEUE                    (EM_ESCOPE_API_MASK | 0x0307)
+#define EM_ESCOPE_EO_ADD_QUEUE_SYNC               (EM_ESCOPE_API_MASK | 0x0308)
+#define EM_ESCOPE_EO_REMOVE_QUEUE                 (EM_ESCOPE_API_MASK | 0x0309)
+#define EM_ESCOPE_EO_REMOVE_QUEUE_SYNC            (EM_ESCOPE_API_MASK | 0x030A)
+#define EM_ESCOPE_EO_REMOVE_QUEUE_ALL             (EM_ESCOPE_API_MASK | 0x030B)
+#define EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC        (EM_ESCOPE_API_MASK | 0x030C)
+#define EM_ESCOPE_EO_REGISTER_ERROR_HANDLER       (EM_ESCOPE_API_MASK | 0x030D)
+#define EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER     (EM_ESCOPE_API_MASK | 0x030E)
+#define EM_ESCOPE_EO_START                        (EM_ESCOPE_API_MASK | 0x030F)
+#define EM_ESCOPE_EO_START_SYNC                   (EM_ESCOPE_API_MASK | 0x0310)
+#define EM_ESCOPE_EO_STOP                         (EM_ESCOPE_API_MASK | 0x0311)
+#define EM_ESCOPE_EO_STOP_SYNC                    (EM_ESCOPE_API_MASK | 0x0312)
+#define EM_ESCOPE_EO_CURRENT                      (EM_ESCOPE_API_MASK | 0x0313)
+#define EM_ESCOPE_EO_GET_CONTEXT                  (EM_ESCOPE_API_MASK | 0x0314)
+#define EM_ESCOPE_EO_GET_FIRST                    (EM_ESCOPE_API_MASK | 0x0315)
+#define EM_ESCOPE_EO_GET_NEXT                     (EM_ESCOPE_API_MASK | 0x0316)
+#define EM_ESCOPE_EO_GET_STATE                    (EM_ESCOPE_API_MASK | 0x0317)
+#define EM_ESCOPE_EO_QUEUE_GET_FIRST              (EM_ESCOPE_API_MASK | 0x0318)
+#define EM_ESCOPE_EO_QUEUE_GET_NEXT               (EM_ESCOPE_API_MASK | 0x0319)
 
 /* EM API escopes: Error */
 #define EM_ESCOPE_REGISTER_ERROR_HANDLER          (EM_ESCOPE_API_MASK | 0x0401)
@@ -457,13 +464,17 @@ typedef uint32_t em_escope_t;
 
 /* EM API escopes: Event */
 #define EM_ESCOPE_ALLOC                           (EM_ESCOPE_API_MASK | 0x0601)
-#define EM_ESCOPE_FREE                            (EM_ESCOPE_API_MASK | 0x0602)
-#define EM_ESCOPE_SEND                            (EM_ESCOPE_API_MASK | 0x0603)
-#define EM_ESCOPE_SEND_MULTI                      (EM_ESCOPE_API_MASK | 0x0604)
-#define EM_ESCOPE_EVENT_POINTER                   (EM_ESCOPE_API_MASK | 0x0605)
-#define EM_ESCOPE_EVENT_GET_SIZE                  (EM_ESCOPE_API_MASK | 0x0606)
-#define EM_ESCOPE_EVENT_SET_TYPE                  (EM_ESCOPE_API_MASK | 0x0607)
-#define EM_ESCOPE_EVENT_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x0608)
+#define EM_ESCOPE_ALLOC_MULTI                     (EM_ESCOPE_API_MASK | 0x0602)
+#define EM_ESCOPE_FREE                            (EM_ESCOPE_API_MASK | 0x0603)
+#define EM_ESCOPE_FREE_MULTI                      (EM_ESCOPE_API_MASK | 0x0604)
+#define EM_ESCOPE_SEND                            (EM_ESCOPE_API_MASK | 0x0605)
+#define EM_ESCOPE_SEND_MULTI                      (EM_ESCOPE_API_MASK | 0x0606)
+#define EM_ESCOPE_EVENT_POINTER                   (EM_ESCOPE_API_MASK | 0x0607)
+#define EM_ESCOPE_EVENT_GET_SIZE                  (EM_ESCOPE_API_MASK | 0x0608)
+#define EM_ESCOPE_EVENT_SET_TYPE                  (EM_ESCOPE_API_MASK | 0x0609)
+#define EM_ESCOPE_EVENT_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x060A)
+#define EM_ESCOPE_EVENT_GET_TYPE_MULTI            (EM_ESCOPE_API_MASK | 0x060B)
+#define EM_ESCOPE_EVENT_SAME_TYPE_MULTI           (EM_ESCOPE_API_MASK | 0x060C)
 
 /* EM API escopes: Queue Group */
 #define EM_ESCOPE_QUEUE_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0701)
@@ -510,4 +521,5 @@ typedef uint32_t em_escope_t;
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_TYPES_H_ */

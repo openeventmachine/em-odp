@@ -50,7 +50,7 @@ em_eo_create(const char *name,
 
 	if (unlikely(start == NULL || stop == NULL || receive == NULL)) {
 		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EO_CREATE,
-			       "Mandatory function pointer(s) NULL!");
+			       "Mandatory EO function pointer(s) NULL!");
 		return EM_EO_UNDEF;
 	}
 
@@ -65,7 +65,7 @@ em_eo_create(const char *name,
 	if (unlikely(eo_elem == NULL)) {
 		/* Fatal since eo_alloc() returned 'ok', should never happen */
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_ID), EM_ESCOPE_EO_CREATE,
-			       "Invalid EO id %" PRI_EO "", eo);
+			       "Invalid EO:%" PRI_EO "", eo);
 		return EM_EO_UNDEF;
 	}
 
@@ -89,9 +89,100 @@ em_eo_create(const char *name,
 	eo_elem->start_local_func = local_start;
 	eo_elem->stop_func = stop;
 	eo_elem->stop_local_func = local_stop;
+
+	eo_elem->use_multi_rcv = EM_FALSE;
+	eo_elem->max_events = 1;
 	eo_elem->receive_func = receive;
+	eo_elem->receive_multi_func = NULL;
+
 	eo_elem->error_handler_func = NULL;
 	eo_elem->eo_ctx = (void *)(uintptr_t)eo_ctx;
+	eo_elem->eo = eo;
+	env_atomic32_init(&eo_elem->num_queues);
+
+	env_spinlock_unlock(&eo_elem->lock);
+
+	return eo;
+}
+
+void em_eo_multircv_param_init(em_eo_multircv_param_t *param)
+{
+	if (unlikely(!param))
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+			       EM_ESCOPE_EO_MULTIRCV_PARAM_INIT,
+			       "Param pointer NULL!");
+	memset(param, 0, sizeof(em_eo_multircv_param_t));
+	param->max_events = EM_EO_MULTIRCV_MAX_EVENTS;
+}
+
+em_eo_t
+em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param)
+{
+	em_eo_t eo;
+	eo_elem_t *eo_elem;
+	int max_events;
+
+	if (unlikely(!param ||
+		     !param->start || !param->stop || !param->receive_multi)) {
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EO_CREATE_MULTIRCV,
+			       "Mandatory EO function pointer(s) NULL!");
+		return EM_EO_UNDEF;
+	}
+
+	if (unlikely(param->max_events < 0)) {
+		INTERNAL_ERROR(EM_ERR_TOO_SMALL, EM_ESCOPE_EO_CREATE_MULTIRCV,
+			       "Max number of events too small:%d",
+			       param->max_events);
+		return EM_EO_UNDEF;
+	}
+	max_events = param->max_events;
+	if (max_events == 0) /* user requests default value */
+		max_events = EM_EO_MULTIRCV_MAX_EVENTS;
+
+	eo = eo_alloc();
+	if (unlikely(eo == EM_EO_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_CREATE_MULTIRCV,
+			       "EO alloc failed!");
+		return EM_EO_UNDEF;
+	}
+
+	eo_elem = eo_elem_get(eo);
+	if (unlikely(eo_elem == NULL)) {
+		/* Fatal since eo_alloc() returned 'ok', should never happen */
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_ID),
+			       EM_ESCOPE_EO_CREATE_MULTIRCV,
+			       "Invalid EO:%" PRI_EO "", eo);
+		return EM_EO_UNDEF;
+	}
+
+	env_spinlock_lock(&eo_elem->lock);
+
+	/* Store the name */
+	if (name) {
+		strncpy(eo_elem->name, name, sizeof(eo_elem->name));
+		eo_elem->name[sizeof(eo_elem->name) - 1] = '\0';
+	} else {
+		eo_elem->name[0] = '\0';
+	}
+
+	/* EO's queue list init */
+	list_init(&eo_elem->queue_list);
+	/* EO start: event buffering list init */
+	list_init(&eo_elem->startfn_evlist);
+
+	eo_elem->state = EM_EO_STATE_CREATED;
+	eo_elem->start_func = param->start;
+	eo_elem->start_local_func = param->local_start;
+	eo_elem->stop_func = param->stop;
+	eo_elem->stop_local_func = param->local_stop;
+
+	eo_elem->use_multi_rcv = EM_TRUE;
+	eo_elem->max_events = max_events;
+	eo_elem->receive_func = NULL;
+	eo_elem->receive_multi_func = param->receive_multi;
+
+	eo_elem->error_handler_func = NULL;
+	eo_elem->eo_ctx = (void *)(uintptr_t)param->eo_ctx;
 	eo_elem->eo = eo;
 	env_atomic32_init(&eo_elem->num_queues);
 

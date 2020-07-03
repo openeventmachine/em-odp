@@ -31,11 +31,12 @@
 #ifndef _ENVIRONMENT_H_
 #define _ENVIRONMENT_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  *
  * Environment header file
- *
  */
 
 #ifdef __cplusplus
@@ -115,4 +116,5 @@ static inline uint64_t env_core_hz(void)
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* _ENVIRONMENT_H_ */

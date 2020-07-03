@@ -187,8 +187,13 @@ typedef struct queue_elem_t {
 	eo_elem_t *eo_elem;
 	/** Copy of the user defined eo context (or NULL) for performance */
 	void *eo_ctx;
-	/** Copy of the receive function for better performance */
+
+	int use_multi_rcv; /* true:receive_multi_func(), false:receive_func() */
+	int max_events;
+	/** Copy of the event receive function for better performance */
 	em_receive_func_t receive_func;
+	/** Copy of the multi-event receive function for better performance */
+	em_receive_multi_func_t receive_multi_func;
 
 	union {
 		q_elem_atomic_group_t agrp;

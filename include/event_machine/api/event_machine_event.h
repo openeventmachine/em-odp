@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_EVENT_H_
 #define EVENT_MACHINE_EVENT_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_event Events
@@ -71,20 +73,21 @@ extern "C" {
  * Allocate an event.
  *
  * The memory address of the allocated event is system specific and can depend
- * on the given pool id, the event size and type. The returned event (handle)
- * may refer to a memory buffer or a HW specific descriptor, i.e. the event
- * structure is system specific.
+ * on the given pool, event size and type. The returned event (handle) may refer
+ * to a memory buffer or a HW specific descriptor, i.e. the event structure is
+ * system specific.
  *
  * Use em_event_pointer() to convert an event (handle) to a pointer to an event
  * structure.
  *
- * EM_EVENT_TYPE_SW with minor type '0' is reserved for direct portability.
- * It is always guaranteed to return a 64-bit aligned contiguous data buffer,
- * that can directly be used by the application up to the given size (no HW
- * specific descriptors etc. are visible).
+ * EM_EVENT_TYPE_SW with minor type '0' is reserved for direct portability -
+ * it is always guaranteed to produce an event with contiguous payload that can
+ * directly be used by the application up to the given size (no HW specific
+ * descriptors etc. are visible). This event payload will be 64-bit aligned
+ * by default (unless explicitly configured otherwise).
  *
- * EM_POOL_DEFAULT can be used as pool handle if there's no need to use a
- * specific memory pool.
+ * EM_POOL_DEFAULT can be used as a pool handle if there's no need to use a
+ * specific event pool (up to the size- or event limits of that pool).
  *
  * Additionally it is guaranteed, that two separate buffers never share a cache
  * line (to avoid false sharing).
@@ -100,14 +103,37 @@ extern "C" {
 em_event_t em_alloc(size_t size, em_event_type_t type, em_pool_t pool);
 
 /**
- * Free an event.
+ * Allocate multiple events.
  *
- * It is assumed that the implementation can detect the memory area/pool that
- * the event was originally allocated from.
+ * Similar to em_alloc(), but allows allocation of multiple events, with same
+ * properties, with one function call.
+ * The em_alloc_multi() API function will try to allocate the requested number
+ * ('num') of events but may fail to do so, e.g. if the pool has run out of
+ * events, and will return the actual number of events that were successfully
+ * allocated from the given pool.
+ *
+ * @param[out] events   Output event array, events are allocated and filled by
+ *                      em_alloc_multi(). The given array must fit 'num' events.
+ * @param num           Number of events to allocate and write into 'events[]'
+ * @param size          Event size in octets (size > 0)
+ * @param type          Event type to allocate
+ * @param pool          Event pool handle
+ *
+ * @return Number of events actually allocated from the pool (0 ... num) and
+ *         written into the output array 'events[]'.
+ */
+int em_alloc_multi(em_event_t events[/*out*/], int num,
+		   size_t size, em_event_type_t type, em_pool_t pool);
+
+/**
+ * Free an event.
  *
  * The em_free() function transfers ownership of the event back to the system
  * and the application must not touch the event (or related memory buffers)
  * after calling it.
+ *
+ * It is assumed that the implementation can detect the event pool that
+ * the event was originally allocated from.
  *
  * The application must only free events it owns. For example, the sender must
  * not free an event after sending it.
@@ -117,6 +143,17 @@ em_event_t em_alloc(size_t size, em_event_type_t type, em_pool_t pool);
  * @see em_alloc(), em_receive_func_t()
  */
 void em_free(em_event_t event);
+
+/**
+ * Free multiple events.
+ *
+ * Similar to em_free(), but allows freeing of multiple events with one
+ * function call.
+ *
+ * @param[in] events    Array of events to be freed
+ * @param num           The number of events in the array 'events[]'
+ */
+void em_free_multi(const em_event_t events[], int num);
 
 /**
  * Send an event to a queue.
@@ -191,7 +228,7 @@ em_event_pointer(em_event_t event);
 size_t em_event_get_size(em_event_t event);
 
 /**
- * Sets the event type of an existing event
+ * Set the event type of an event
  *
  * This will not create a new event but the existing event might be modified.
  * The operation may fail if the new type is not compatible with the old one.
@@ -208,7 +245,7 @@ size_t em_event_get_size(em_event_t event);
 em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype);
 
 /**
- * Get event type of an existing event
+ * Get the event type of an event
  *
  * Returns the type of the given event.
  *
@@ -219,10 +256,58 @@ em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype);
 em_event_type_t em_event_get_type(em_event_t event);
 
 /**
+ * Get the event types of multiple events
+ *
+ * Writes the event type of each given event into an output type-array and
+ * returns the number of entries written.
+ * Note, if 'events[num]' are all of the same type then 'types[num]' will
+ * contain 'num' same entries.
+ *
+ * @param       events  Event handles: events[num]
+ * @param[out]  types   Event types (output array): types[num]
+ *                      (types[i] is the type of events[i])
+ * @param       num     Number of events and output types.
+ *                      The array 'events[]' must contain 'num' entries and the
+ *                      output array 'types[]' must have room for 'num' entries.
+ *
+ * @return Number of event types (0...num) written into 'types[]'.
+ *         The return value (always >=0) is usually 'num' and thus '<num' is
+ *         only seen in error scenarios when the type of event[i] could not be
+ *         obtained. The return value will be '0' in error cases or if the given
+ *         'num=0'. The function stops and returns on the first error and will
+ *         not fill the rest of 'types[]'.
+ */
+int em_event_get_type_multi(em_event_t events[], int num,
+			    em_event_type_t types[/*out:num*/]);
+
+/**
+ * Get the number of events that have the same event type.
+ *
+ * Returns the number of consecutive events from the start of the array
+ * 'events[]' that have the same event type. Outputs that same event type.
+ * Useful for iterating through an event-array and grouping by event type.
+ *
+ * @param       events     Event handles: events[num]
+ * @param       num        Number of events.
+ *                         The array 'events[]' must contain 'num' entries.
+ * @param[out]  same_type  Event type pointer for output
+ *
+ * @return Number of consecutive events (0...num) with the same event type
+ *         (return value always >=0), includes and starts from events[0].
+ *         The return value is usually '>=1' and thus '0' is only seen in
+ *         error scenarios when the type of the first event could not be
+ *         obtained or if the given 'num=0'.
+ *         The function stops and returns on the first error.
+ */
+int em_event_same_type_multi(em_event_t events[], int num,
+			     em_event_type_t *same_type /*out*/);
+
+/**
  * @}
  */
 #ifdef __cplusplus
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_EVENT_H_ */

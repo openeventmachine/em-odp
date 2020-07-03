@@ -235,6 +235,9 @@ em_event_group_current(void)
 	if (!EM_EVENT_GROUP_SAFE_MODE)
 		return em_locm.current.egrp;
 
+	if (em_locm.current.egrp == EM_EVENT_GROUP_UNDEF)
+		return EM_EVENT_GROUP_UNDEF;
+
 	event_group_elem_t *const egrp_elem = em_locm.current.egrp_elem;
 	egrp_counter_t current;
 
@@ -347,7 +350,8 @@ em_send_group(em_event_t event, em_queue_t queue,
 			 * "Simulate" a dispatch round from evgrp perspective,
 			 * send-device() instead of EO-receive()
 			 */
-			event_group_set_local(ev_hdr);
+			event_group_set_local(ev_hdr->egrp,
+					      ev_hdr->egrp_gen, 1);
 
 			stat = send_chaining(event, ev_hdr, queue);
 
@@ -540,7 +544,8 @@ em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
 			 * Note: event_group_set_local() called only once for
 			 * all events.
 			 */
-			event_group_set_local(ev_hdrs[0]);
+			event_group_set_local(ev_hdrs[0]->egrp,
+					      ev_hdrs[0]->egrp_gen, num);
 
 			num_sent = send_chaining_multi(events, ev_hdrs,
 						       num, queue);
@@ -599,7 +604,7 @@ em_event_group_processing_end(void)
 	 * Atomically decrement the event group count.
 	 * If new count is zero, send notification events.
 	 */
-	event_group_count_decrement(1);
+	event_group_count_decrement(em_locm.current.rcv_multi_cnt);
 
 	em_locm.current.egrp = EM_EVENT_GROUP_UNDEF;
 	em_locm.current.egrp_elem = NULL;

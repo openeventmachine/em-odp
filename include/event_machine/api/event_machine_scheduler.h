@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_SCHEDULER_H_
 #define EVENT_MACHINE_SCHEDULER_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_scheduler Scheduler
@@ -147,4 +149,5 @@ em_sched_context_type_current(em_queue_t *queue);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_SCHEDULER_H_ */

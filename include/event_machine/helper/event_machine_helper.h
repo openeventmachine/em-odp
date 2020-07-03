@@ -32,6 +32,8 @@
 #ifndef EVENT_MACHINE_HELPER_H_
 #define EVENT_MACHINE_HELPER_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * Event Machine helper functions and macros
@@ -96,4 +98,5 @@ em_core_mask_get_physical(em_core_mask_t *phys, const em_core_mask_t *logic);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_HELPER_H_ */

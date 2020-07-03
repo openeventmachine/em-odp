@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_ATOMIC_GROUP_H_
 #define EVENT_MACHINE_ATOMIC_GROUP_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_atomic_group Atomic group
@@ -298,4 +300,5 @@ em_atomic_group_queue_get_next(void);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_ATOMIC_GROUP_H_ */

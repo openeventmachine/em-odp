@@ -47,10 +47,10 @@ em_dispatch(uint64_t rounds)
 	odp_schedule_resume();
 
 	if (likely(rounds > 0)) {
-		if (input_poll || output_drain) {
+		if (em_locm.do_input_poll || em_locm.do_output_drain) {
 			for (i = 0; i < rounds;) {
 				dispatched_events = 0;
-				if (input_poll)
+				if (em_locm.do_input_poll)
 					rx_events = input_poll();
 				do {
 					num = dispatch_round();
@@ -59,7 +59,7 @@ em_dispatch(uint64_t rounds)
 				} while (dispatched_events < rx_events &&
 					 num > 0 && i < rounds);
 				events += dispatched_events; /* inc ret value*/
-				if (output_drain)
+				if (em_locm.do_output_drain)
 					(void)output_drain();
 			}
 		} else {
@@ -76,17 +76,17 @@ em_dispatch(uint64_t rounds)
 		} while (num > 0);
 	} else {
 		/* rounds == 0 (== FOREVER) */
-		if (input_poll || output_drain) {
+		if (em_locm.do_input_poll || em_locm.do_output_drain) {
 			for (;/*ever*/;) {
 				dispatched_events = 0;
-				if (input_poll)
+				if (em_locm.do_input_poll)
 					rx_events = input_poll();
 				do {
 					num = dispatch_round();
 					dispatched_events += num;
 				} while (dispatched_events < rx_events &&
 					 num > 0);
-				if (output_drain)
+				if (em_locm.do_output_drain)
 					(void)output_drain();
 			}
 		} else {

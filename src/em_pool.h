@@ -41,6 +41,11 @@
 extern "C" {
 #endif
 
+#define valid_pool(pool)   ((unsigned int)pool_hdl2idx((pool)) < \
+			    EM_CONFIG_POOLS)
+#define invalid_pool(pool) ((unsigned int)pool_hdl2idx((pool)) > \
+			    EM_CONFIG_POOLS - 1)
+
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	  em_pool_cfg_t *const default_pool_cfg);
@@ -117,23 +122,23 @@ unsigned int
 pool_count(void);
 
 static inline void
-pool_stat_increment(em_pool_t pool, int subpool)
+pool_stat_increment(em_pool_t pool, int subpool, uint64_t cnt)
 {
 	const int pool_idx = pool_hdl2idx(pool);
 	mpool_statistics_t *const pstat =
 		&em_shm->mpool_tbl.pool_stat_core[em_core_id()];
 
-	pstat->stat[pool_idx][subpool].alloc++;
+	pstat->stat[pool_idx][subpool].alloc += cnt;
 }
 
 static inline void
-pool_stat_decrement(em_pool_t pool, int subpool)
+pool_stat_decrement(em_pool_t pool, int subpool, uint64_t cnt)
 {
 	const int pool_idx = pool_hdl2idx(pool);
 	mpool_statistics_t *const pstat =
 		&em_shm->mpool_tbl.pool_stat_core[em_core_id()];
 
-	pstat->stat[pool_idx][subpool].free++;
+	pstat->stat[pool_idx][subpool].free += cnt;
 }
 
 void

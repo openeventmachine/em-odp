@@ -218,7 +218,7 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 	enq_cnt = ag_internal_enq(ag_elem, ev_tbl, num_events, priority);
 
 	if (unlikely(enq_cnt < num_events)) {
-		event_free_multi(&ev_tbl[enq_cnt], num_events - enq_cnt);
+		em_free_multi(&ev_tbl[enq_cnt], num_events - enq_cnt);
 		/*
 		 * Use dispatch escope since this func is called only from
 		 * dispatch_round() => atomic_group_dispatch()
@@ -277,8 +277,9 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 				batch_cnt++;
 			}
 
-			dispatch_events(&deq_hdr_tbl[tbl_idx], batch_cnt,
-					batch_qelem);
+			dispatch_events(&deq_ev_tbl[tbl_idx],
+					&deq_hdr_tbl[tbl_idx],
+					batch_cnt, batch_qelem);
 			tbl_idx += batch_cnt;
 		} while (tbl_idx < deq_cnt);
 

@@ -3,6 +3,7 @@ include $(top_srcdir)/programs/Makefile.inc
 noinst_PROGRAMS = atomic_processing_end \
 		  pairs \
 		  loop \
+		  loop_multircv \
 		  queue_groups \
 		  queues \
 		  queues_unscheduled \
@@ -17,6 +18,9 @@ pairs_CFLAGS = $(AM_CFLAGS)
 
 loop_LDFLAGS = $(AM_LDFLAGS) -static
 loop_CFLAGS = $(AM_CFLAGS)
+
+loop_multircv_LDFLAGS = $(AM_LDFLAGS) -static
+loop_multircv_CFLAGS = $(AM_CFLAGS)
 
 queue_groups_LDFLAGS = $(AM_LDFLAGS) -static
 queue_groups_CFLAGS = $(AM_CFLAGS)
@@ -36,6 +40,7 @@ send_multi_CFLAGS = $(AM_CFLAGS)
 dist_atomic_processing_end_SOURCES = atomic_processing_end.c
 dist_pairs_SOURCES = pairs.c
 dist_loop_SOURCES = loop.c
+dist_loop_multircv_SOURCES = loop_multircv.c
 dist_queue_groups_SOURCES = queue_groups.c
 dist_queues_SOURCES = queues.c
 dist_queues_unscheduled_SOURCES = queues_unscheduled.c

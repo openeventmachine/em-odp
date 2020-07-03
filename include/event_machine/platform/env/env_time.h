@@ -30,12 +30,14 @@
 
 /**
  * @file
- * Env time functions.
- *
+ * Env time functions - don't include this file directly,
+ * instead #include "environment.h"
  */
 
 #ifndef _ENV_TIME_H_
 #define _ENV_TIME_H_
+
+#pragma GCC visibility push(default)
 
 #ifdef __cplusplus
 extern "C" {
@@ -187,4 +189,5 @@ static inline uint64_t env_time_to_cycles(env_time_t time, uint64_t hz)
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* _ENV_TIME_H_ */

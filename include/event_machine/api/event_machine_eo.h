@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_EO_H_
 #define EVENT_MACHINE_EO_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_eo Execution objects (EO)
@@ -44,7 +46,7 @@
  *
  * An EO consists of user provided callback functions and context data.
  * The most important function is the receive function, which gets called
- * when an event is received from one of the queues associated with this EO.
+ * when an event is received from one of the queues associated with the EO.
  * The EM scheduler selects the next event for processing on a core and the
  * EM dispatcher on that core maps the received event and queue information to
  * an EO receive function to call to process the event.
@@ -57,7 +59,7 @@
  *                      .-------------.
  *          .->.------->|   CREATED   | (new events discarded)
  *          |  |        '-------------'
- *          |  |               | em_eo_start()
+ *          |  |               | em_eo_start(+notifs) / em_eo_start_sync()
  *          |  |               v
  *          |  |        .-------------.
  *          |  |        |   STARTING  | (new events discarded)
@@ -66,12 +68,12 @@
  *          |    \            THEN
  *          |     \       local start on each core
  *          |      '--- FAIL   OK
- *          |                  | send notifications
+ *          |                  | send 'start-completed' notifications
  *          |                  v
  *          .           .-------------.
  *          |           |   RUNNING   |
  *          |           '-------------'
- *          |                  | em_eo_stop()
+ *          |                  | em_eo_stop(+notifs) / em_eo_stop_sync()
  *          |                  v
  *          '           .-------------.
  *           \          |   STOPPING  | (new events discarded)
@@ -83,7 +85,7 @@
  *                 \       global stops
  *                  \          .
  *                   \        /
- *                    -------' send notifications
+ *                    -------' send 'stop-completed' notifications
  *
  *  @{
  */
@@ -97,7 +99,7 @@ extern "C" {
 #include <event_machine/api/event_machine_error.h>
 
 /**
- * Execution object (EO) event-receive function
+ * Execution object (EO) event receive function (single-event)
  *
  * An application receives events through queues and these events are passed to
  * the application's EO receive function(s) for processing. The EO receive
@@ -132,7 +134,7 @@ extern "C" {
  *
  * The EO will not receive any events if it has not been successfully started.
  *
- * @param eo_ctx  EO context data. The pointer is passed in em_eo_create(),
+ * @param eo_ctx  EO context data given to em_eo_create(),
  *                EM does not dereference.
  * @param event   Event handle
  * @param type    Event type
@@ -140,12 +142,54 @@ extern "C" {
  * @param q_ctx   Queue context data. The context pointer is set by
  *                em_queue_set_context(), EM does not touch the data.
  *
- * @see em_event_pointer(), em_free(), em_alloc(), em_send(),
- *      em_queue_set_context(), em_eo_create()
+ * @see em_eo_create(),
+ *      em_alloc(), em_free(), em_send(),
+ *      em_event_pointer(), em_queue_set_context()
  */
 typedef void (*em_receive_func_t)(void *eo_ctx,
 				  em_event_t event, em_event_type_t type,
 				  em_queue_t queue, void *q_ctx);
+
+/**
+ * Execution object (EO) multi-event receive function
+ *
+ * Similar to the single-event receive function (em_receive_func_t), except that
+ * multiple events can be passed with one call to the EO receive function.
+ * A multi-event receive function is taken into use during EO creation with a
+ * call to em_eo_create_multircv(...). The maximum number of events that the
+ * multi-event EO receive function is prepared to handle can be passed with the
+ * argument 'max_events' of em_eo_create_multircv(). The EM dispatcher will
+ * split event batches larger than 'max_events' into chunks of 'max_events'.
+ *
+ * Event group handling:
+ * All events passed by the EM dispatcher to the EO multi-event receive function
+ * belong to the same event group (or none) - a batch of events containing
+ * multiple event groups is split by the dispatcher into smaller chunks, each
+ * chunk belonging to the same event group (or none).
+ * The event group count is decremented by the number of events passed to the
+ * receive function when execution returns to the dispatcher.
+ *
+ * Note: Contrary to the single-event EO receive function (em_receive_func_t),
+ * no event types are passed. Use appropriate event APIs if the event types
+ * are needed.
+ *
+ * @param eo_ctx  EO context data given to em_eo_create_multircv(),
+ *                EM does not dereference.
+ * @param events  Event handles: events[num]
+ * @param types   Event types: types[num] - types[i] is related to event[i]
+ * @param num     Number of events received
+ *                (0 to 'max_events' of em_eo_create_multircv())
+ * @param queue   Queue from which the event was dequeued
+ * @param q_ctx   Queue context data. The context pointer is set by
+ *                em_queue_set_context(), EM does not touch the data.
+ *
+ * @see em_eo_create_multircv(),
+ *      em_alloc(), em_free(), em_send(),
+ *      em_event_pointer(), em_queue_set_context()
+ */
+typedef void (*em_receive_multi_func_t)(void *eo_ctx,
+					em_event_t events[], int num,
+					em_queue_t queue, void *q_ctx);
 
 /**
  * Execution object (EO) start function, global.
@@ -258,7 +302,7 @@ typedef em_status_t (*em_stop_local_func_t)(void *eo_ctx, em_eo_t eo);
 typedef em_status_t (*em_stop_func_t)(void *eo_ctx, em_eo_t eo);
 
 /**
- * Create Execution Object (EO).
+ * Create an Execution Object (EO).
  *
  * Allocate an EO handle and initialize internal data for the new EO.
  * The EO is left in a non-active state, i.e. no events are dispatched before
@@ -281,15 +325,111 @@ typedef em_status_t (*em_stop_func_t)(void *eo_ctx, em_eo_t eo);
  * @return New EO handle if successful, otherwise EM_EO_UNDEF.
  *
  * @see em_eo_start(), em_eo_delete(), em_queue_create(), em_eo_add_queue()
- * @see em_start_func_t(), em_stop_func_t(), em_receive_func_t()
+ * @see em_start_func_t, em_stop_func_t, em_receive_func_t
  */
 em_eo_t
-em_eo_create(const char *name, em_start_func_t start,
-	     em_start_local_func_t local_start,
-	     em_stop_func_t stop,
-	     em_stop_local_func_t local_stop,
-	     em_receive_func_t receive,
-	     const void *eo_ctx);
+em_eo_create(const char *name,
+	     em_start_func_t start, em_start_local_func_t local_start,
+	     em_stop_func_t stop, em_stop_local_func_t local_stop,
+	     em_receive_func_t receive, const void *eo_ctx);
+
+/**
+ * EO parameters for em_eo_create_multircv(...)
+ */
+typedef struct {
+	/**
+	 * EO start function, mandatory.
+	 * Called once on one core, triggered by em_eo_start/_start_sync().
+	 * First EO-function to be called.
+	 */
+	em_start_func_t start;
+	/**
+	 * EO core-local start function, optional (set NULL if not used).
+	 * Called on all EM-cores after 'start' has completed.
+	 */
+	em_start_local_func_t local_start;
+	/**
+	 * EO stop function, mandatory.
+	 * Called once on one core, triggered by em_eo_stop/_stop_sync().
+	 * Last EO-function to be called.
+	 */
+	em_stop_func_t stop;
+	/**
+	 * EO core-local stop function, optional (set NULL if not used).
+	 * Called and completed on all EM-cores before 'stop'.
+	 */
+	em_stop_local_func_t local_stop;
+	/**
+	 * EO receive function for multiple events, mandatory.
+	 */
+	em_receive_multi_func_t receive_multi;
+	/**
+	 * Maximum number of events passed to the receive function.
+	 * EM will dispatch 1 to 'max-events' at a time to the EO's multi-event
+	 * receive function.
+	 * Use '0' for an EM default value (=EM_EO_MULTIRCV_MAX_EVENTS).
+	 * The user provided 'receive_multi' function must be able to handle
+	 * 'max_events' events at a time.
+	 */
+	int max_events;
+	/**
+	 * User defined EO context data, optional (NULL if no context).
+	 * EM only passes the value.
+	 */
+	const void *eo_ctx;
+} em_eo_multircv_param_t;
+
+/**
+ * Initialize parameters for the multi-event receive-function EO.
+ *
+ * Initialize em_eo_multircv_param_t to default values for all fields.
+ * After initialization, the user further needs to set the mandatory fields of
+ * 'em_eo_multircv_param_t' before calling em_eo_create_multircv().
+ * Always initialize 'param' first with em_eo_multircv_param_init(&param) to
+ * ensure backwards compatibility with potentially added new options.
+ *
+ * @param param   Address of the em_eo_multircv_param_t to be initialized
+ *
+ * @see em_eo_create_multircv()
+ */
+void em_eo_multircv_param_init(em_eo_multircv_param_t *param);
+
+/**
+ * Create an Execution Object (EO) with a multi-event receive function.
+ *
+ * Similar to em_eo_create(), except that an EO multi-event receive function is
+ * taken into use for the created EO, see em_receive_multi_func_t (passed via
+ * em_eo_multircv_param_t param).
+ *
+ * Always initialize 'param' first with em_eo_multircv_param_init(&param) to
+ * ensure backwards compatibility before setting your own params and calling
+ * em_eo_create_multircv():
+ * @code
+ *	em_eo_multircv_param_t param;
+ *	em_eo_t eo;
+ *
+ *	em_eo_multircv_param_init(&param);
+ *	param.start = my_start_fn;
+ *	param.stop = my_stop_fn;
+ *	param.receive_multi = my_receive_multi_fn;
+ *	param.max_events = MY_MAX_EVENTS; // or use default=0
+ *	...
+ *	eo = em_eo_create_multircv("my-eo", &param);
+ *	if (unlikely(eo == EM_EO_UNDEF))
+ *		report_error();
+ * @endcode
+ *
+ * @param name     Name of the EO (optional, NULL ok)
+ * @param param    EO parameters
+ *
+ * @return New EO handle if successful, otherwise EM_EO_UNDEF.
+ *
+ * @see em_eo_multircv_param_init()
+ * @see em_eo_start(), em_eo_start_sync(), em_eo_stop(), em_eo_stop_sync()
+ * @see em_start_func_t, em_stop_func_t, em_receive_multi_func_t
+ */
+em_eo_t
+em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param);
 
 /**
  * Delete Execution Object (EO).
@@ -756,4 +896,5 @@ em_eo_queue_get_next(void);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_EO_H_ */

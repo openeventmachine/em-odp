@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_QUEUE_H_
 #define EVENT_MACHINE_QUEUE_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_queue Queues
@@ -464,4 +466,5 @@ em_queue_get_next(void);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_QUEUE_H_ */
