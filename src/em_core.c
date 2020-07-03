@@ -112,7 +112,7 @@ logic_to_thr_core_id(const int logic_core)
 int
 thr_to_logic_core_id(const int thr_id)
 {
-	if (unlikely(thr_id >= EM_MAX_CORES))
+	if (unlikely(thr_id >= ODP_THREAD_COUNT_MAX))
 		return -1;
 
 	return em_shm->core_map.thr_vs_logic.logic[thr_id];

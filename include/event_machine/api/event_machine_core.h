@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_CORE_H_
 #define EVENT_MACHINE_CORE_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_core Core related
@@ -79,4 +81,5 @@ em_core_count(void);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_CORE_H_ */

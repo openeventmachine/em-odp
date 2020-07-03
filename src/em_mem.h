@@ -93,34 +93,40 @@ typedef struct {
 	event_group_pool_t event_group_pool ENV_CACHE_LINE_ALIGNED;
 	/** Error handler structure */
 	error_handler_t error_handler ENV_CACHE_LINE_ALIGNED;
-	/** Dispatcher enter callback functions currently in use */
+
+	/**
+	 * Dispatcher enter callback functions currently in use,
+	 * called for EO's using a single-event receive function.
+	 */
 	hook_tbl_t *dispatch_enter_cb_tbl ENV_CACHE_LINE_ALIGNED;
+	/** Dispatcher exit callback functions currently in use */
+	hook_tbl_t *dispatch_exit_cb_tbl;
+	/** Alloc-hook functions currently in use */
+	hook_tbl_t *alloc_hook_tbl;
+	/** Free-hook functions currently in use */
+	hook_tbl_t *free_hook_tbl;
+	/** Send-hook functions currently in use */
+	hook_tbl_t *send_hook_tbl;
+
 	/** Dispatch enter callback storage, many sets of callback-tables */
 	hook_storage_t dispatch_enter_cb_storage ENV_CACHE_LINE_ALIGNED;
-	/** Dispatcher exit callback functions currently in use */
-	hook_tbl_t *dispatch_exit_cb_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Dispatch exit callback storage, many sets of callback-tables */
 	hook_storage_t dispatch_exit_cb_storage ENV_CACHE_LINE_ALIGNED;
-	/** Alloc-hook functions currently in use */
-	hook_tbl_t *alloc_hook_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Alloc-hook function storage, many sets of hook-tables */
 	hook_storage_t alloc_hook_storage ENV_CACHE_LINE_ALIGNED;
-	/** Free-hook functions currently in use */
-	hook_tbl_t *free_hook_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Free-hook function storage, many sets of hook-tables */
 	hook_storage_t free_hook_storage ENV_CACHE_LINE_ALIGNED;
-	/** Send-hook functions currently in use */
-	hook_tbl_t *send_hook_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Send-hook function storage, many sets of hook-tables */
 	hook_storage_t send_hook_storage ENV_CACHE_LINE_ALIGNED;
+
 	/** Synchronous API locks */
 	sync_api_t sync_api ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated EOs */
 	env_atomic32_t eo_count ENV_CACHE_LINE_ALIGNED;
-	/** Daemon eo */
-	daemon_eo_t daemon ENV_CACHE_LINE_ALIGNED;
 	/** Timer resources */
 	timer_storage_t timers ENV_CACHE_LINE_ALIGNED;
+	/** Daemon eo */
+	daemon_eo_t daemon ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated queues */
 	env_atomic32_t queue_count;
 	/** Current number of allocated queue groups */
@@ -155,6 +161,8 @@ typedef struct {
 		em_event_group_t egrp;
 		/** Current event group generation count*/
 		int32_t egrp_gen;
+		/** EO-receive function burst count */
+		int rcv_multi_cnt;
 		/** Current scheduling context type */
 		em_sched_context_type_t sched_context_type;
 	} current;
@@ -176,6 +184,11 @@ typedef struct {
 	eo_elem_t *start_eo_elem;
 	/** The number of errors on a core */
 	uint64_t error_count;
+
+	/** Is input_poll_fn executed on this core */
+	int do_input_poll;
+	/** Is output_drain_fn executed on this core */
+	int do_output_drain;
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;

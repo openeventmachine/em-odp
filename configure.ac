@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_api_major_version], [2])
-m4_define([em_api_minor_version], [2])
+m4_define([em_api_minor_version], [3])
 m4_define([em_api_implementation_version], [0])
 m4_define([em_api_implementation_fix], [0])
 
@@ -89,6 +89,13 @@ AC_TYPE_UINT8_T
 AC_TYPE_UINT16_T
 AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
+
+
+##########################################################################
+# Enable -fvisibility=hidden if CC supports it
+##########################################################################
+EM_VISIBILITY
+# VISIBILITY_CFLAGS set
 
 ##########################################################################
 # Check for pthreads availability

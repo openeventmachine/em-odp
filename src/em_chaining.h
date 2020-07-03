@@ -40,20 +40,23 @@
 extern "C" {
 #endif
 
+#pragma GCC visibility push(default)
 /**
  * This function is declared as a weak symbol, indicating that the user should
  * override it during linking with another implementation if event chaining is
  * used.
  */
-em_status_t __attribute__((weak))
-event_send_device(em_event_t event, em_queue_t queue);
+__attribute__((weak))
+em_status_t event_send_device(em_event_t event, em_queue_t queue);
 /**
  * This function is declared as a weak symbol, indicating that the user should
  * override it during linking with another implementation if event chaining is
  * used.
  */
-int __attribute__((weak))
-event_send_device_multi(em_event_t *const events, int num, em_queue_t queue);
+__attribute__((weak))
+int event_send_device_multi(em_event_t *const events, int num,
+			    em_queue_t queue);
+#pragma GCC visibility pop
 
 /**
  * Initialize event chaining during start-up

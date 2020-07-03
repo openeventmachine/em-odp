@@ -343,31 +343,35 @@ local_queue_dequeue(void)
 	return NULL;
 }
 
-static inline event_hdr_t *
-next_local_queue_event(void)
+static inline int
+next_local_queue_events(em_event_t ev_tbl[/*out*/], int num_events)
 {
 	if (em_locm.local_queues.empty)
-		return NULL;
+		return 0;
 
-	event_hdr_t *ev_hdr;
-	queue_elem_t *q_elem;
+	odp_event_t *odp_evtbl = events_em2odp(ev_tbl); /* cast */
+	em_queue_prio_t prio = EM_QUEUE_PRIO_HIGHEST;
+	odp_queue_t local_queue;
+	int num = 0;
 
-	while ((ev_hdr = local_queue_dequeue()) != NULL) {
-		q_elem = ev_hdr->q_elem;
-		/* Return ev_hdr if the queue status is READY */
-		if (likely(q_elem->state == EM_QUEUE_STATE_READY))
-			return ev_hdr;
-		/* ...otherwise free and try the next one */
-		em_free(event_hdr_to_event(ev_hdr));
-		/* Consider removing the logging */
-		EM_LOG(EM_LOG_PRINT,
-		       "EM info: %s():localQ:%" PRI_QUEUE " not ready\n"
-		       "         state=%d drop:%d event(s)\n",
-		       __func__, q_elem->queue,
-		       q_elem->state, 1);
+	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++, prio--) {
+		/* from hi to lo prio: next prio if local queue is empty */
+		if (em_locm.local_queues.prio[prio].empty_prio)
+			continue;
+
+		local_queue = em_locm.local_queues.prio[prio].queue;
+		num = odp_queue_deq_multi(local_queue, odp_evtbl, num_events);
+
+		if (num > 0) {
+			/* cast: ev_tbl = events_odp2em(odp_evtbl); */
+			return num;
+		}
+
+		em_locm.local_queues.prio[prio].empty_prio = 1;
 	}
 
-	return NULL;
+	em_locm.local_queues.empty = 1;
+	return 0;
 }
 
 #ifdef __cplusplus

@@ -36,8 +36,11 @@
 #ifndef _ENV_CONF_H_
 #define _ENV_CONF_H_
 
+#pragma GCC visibility push(default)
+
 #if !(defined(ENV_64_BIT) || defined(ENV_32_BIT))
   #error Missing architecture definition. Define ENV_64_BIT or ENV_32_BIT!
 #endif
 
+#pragma GCC visibility pop
 #endif

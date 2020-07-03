@@ -73,6 +73,25 @@ typedef struct {
 	} event_chaining;
 } opt_t;
 
+em_status_t
+poll_drain_mask_check(em_core_mask_t *const logic_mask,
+		      em_core_mask_t *const poll_drain_mask);
+
+em_status_t
+input_poll_init(em_core_mask_t *const logic_mask, em_conf_t *const conf);
+
+em_status_t
+output_drain_init(em_core_mask_t *const logic_mask, em_conf_t *const conf);
+
+em_status_t
+poll_drain_mask_set_local(int *result, int core_id, em_core_mask_t *const mask);
+
+em_status_t
+input_poll_init_local(int *result, int core_id, em_conf_t *const conf);
+
+em_status_t
+output_drain_init_local(int *result, int core_id, em_conf_t *const conf);
+
 #ifdef __cplusplus
 }
 #endif

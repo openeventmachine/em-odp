@@ -33,11 +33,12 @@
  * @file
  *
  * Event Machine configuration options
- *
  */
 
 #ifndef EVENT_MACHINE_CONFIG_H
 #define EVENT_MACHINE_CONFIG_H
+
+#pragma GCC visibility push(default)
 
 #ifdef __cplusplus
 extern "C" {
@@ -201,4 +202,5 @@ extern "C" {
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_CONFIG_H */

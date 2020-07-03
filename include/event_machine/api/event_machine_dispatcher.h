@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_DISPATCHER_H_
 #define EVENT_MACHINE_DISPATCHER_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_dispatcher Dispatcher
@@ -85,13 +87,29 @@ em_dispatch(uint64_t rounds);
 /**
  * Dispatcher global EO-receive enter-callback.
  *
- * The enter-callbacks are run before entering EO-receive.
- * All arguments given to EO-receive are included. Arguments are references,
- * i.e. the callback can optionally modify them. If modified, the new values
- * will go to the next callback and eventually to EO-receive.
- * The event can be dropped by changing the event to EM_EVENT_UNDEF. In this
- * case EO-receive is not called, but the callback itself needs to free or
- * otherwise handle the received event.
+ * Common dispatch callback run before EO-receive functions of both the
+ * em_receive_func_t and em_receive_multi_func_t types (i.e. for EOs created
+ * with either em_eo_create() or em_eo_create_multircv()).
+ *
+ * Enter-callbacks are run just before entering EO-receive functions, they can
+ * be useful for debugging, collecting statistics, manipulating events before
+ * they reach the EO or implementing new services needing synchronization
+ * between cores.
+ * Arguments common for both types of EO receive functions are passed as
+ * references to the enter-callback (the event-type passed to the single-event
+ * receive function case is not passed, use em_event_get/set_type() instead).
+ * Arguments are references, i.e. the callback can optionally modify them.
+ * If modified, the new values will go to the next callback and eventually to
+ * the multi-event EO-receive function.
+ *
+ * Events can be dropped by changing the event-entries in the events[num]-array
+ * to EM_EVENT_UNDEF. Neither EO-receive nor any further enter-callbacks will
+ * be called if all events have been dropped by the callbacks already run, i.e.
+ * no callback will be called with 'num=0'.
+ * The callback itself needs to handle the events it drops, e.g. free them.
+ * Note: EM will remove entries of EM_EVENT_UNDEF from the events[]-array before
+ *       calling the next enter-callback (if several registered) or the
+ *       receive function and adjust 'num' accordingly for the call.
  *
  * The EO handle can be used to separate callback functionality per EO and the
  * core id can be obtained for core specific functionality.
@@ -101,8 +119,7 @@ em_dispatch(uint64_t rounds);
  * @see em_dispatch_register_enter_cb()
  */
 typedef void (*em_dispatch_enter_func_t)(em_eo_t eo, void **eo_ctx,
-					 em_event_t *event,
-					 em_event_type_t *type,
+					 em_event_t events[/*in/out*/], int num,
 					 em_queue_t *queue, void **q_ctx);
 
 /**
@@ -222,4 +239,5 @@ em_dispatch_unregister_exit_cb(em_dispatch_exit_func_t func);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_DISPATCHER_H_ */

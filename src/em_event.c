@@ -53,76 +53,6 @@ event_init(void)
 }
 
 void
-event_free_multi(em_event_t *const events, const int num)
-{
-	odp_event_t *odp_events;
-	int i;
-
-	if (EM_CHECK_LEVEL > 1) {
-		for (i = 0; i < num; i++) {
-			if (unlikely(events[i] == EM_EVENT_UNDEF)) {
-				INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-					       EM_ESCOPE_EVENT_FREE_MULTI,
-					       "events[%d] undefined!", i);
-				return;
-			}
-		}
-	}
-
-	if (EM_CHECK_LEVEL > 1 || em_shm->opt.pool.statistics_enable) {
-		event_hdr_t *ev_hdrs[num];
-
-		event_to_hdr_multi(events, ev_hdrs, num);
-
-		if (EM_CHECK_LEVEL > 1) {
-			uint32_t allocated;
-			em_status_t err;
-			em_escope_t escope;
-
-			/* Simple double-free detection */
-			for (i = 0; i < num; i++) {
-				allocated =
-				env_atomic32_sub_return(&ev_hdrs[i]->allocated,
-							1);
-
-				if (unlikely(allocated != 0)) {
-					const char *const fmt =
-					"Double free:events[%d]:%" PRI_EVENT "";
-					err = EM_FATAL(EM_ERR_BAD_POINTER);
-					escope = EM_ESCOPE_EVENT_FREE_MULTI;
-					INTERNAL_ERROR(err, escope, fmt,
-						       i, events[i]);
-				}
-			}
-		}
-
-		if (em_shm->opt.pool.statistics_enable) {
-			/* Update pool statistcs */
-			em_pool_t pool;
-			mpool_elem_t *pelem;
-			int subpool;
-
-			for (i = 0; i < num; i++) {
-				pool = ev_hdrs[i]->pool;
-				if (unlikely(pool == EM_POOL_UNDEF))
-					continue;
-				subpool = ev_hdrs[i]->subpool;
-				pelem = pool_elem_get(pool);
-				if (pelem)
-					pool_stat_decrement(pool, subpool);
-			}
-		}
-	}
-
-	if (EM_API_HOOKS_ENABLE)
-		call_api_hooks_free_multi(events, num);
-
-	odp_events = events_em2odp(events);
-
-	odp_event_free_multi(odp_events, num);
-}
-
-void
 output_queue_track(queue_elem_t *const output_q_elem)
 {
 	output_queue_track_t *const track =
@@ -162,8 +92,7 @@ output_queue_drain(queue_elem_t *const output_q_elem)
 		ret = output_fn(output_ev_tbl, output_num,
 				output_queue, output_fn_args);
 		if (unlikely((unsigned int)ret != output_num))
-			event_free_multi(&output_ev_tbl[ret],
-					 output_num - ret);
+			em_free_multi(&output_ev_tbl[ret], output_num - ret);
 	} while (deq > 0);
 }
 

@@ -36,6 +36,8 @@
 #ifndef _ENV_SHAREDMEM_H_
 #define _ENV_SHAREDMEM_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * Shared memory allocation routines
  */
@@ -81,4 +83,5 @@ void *env_shared_malloc(size_t size);
  */
 void env_shared_free(void *buf);
 
+#pragma GCC visibility pop
 #endif /* _ENV_SHAREDMEM_H_ */

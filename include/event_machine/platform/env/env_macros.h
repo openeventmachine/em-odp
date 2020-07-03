@@ -36,6 +36,8 @@
 #ifndef _ENV_MACROS_H_
 #define _ENV_MACROS_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * Branch Prediction macros
  */
@@ -62,4 +64,5 @@
 /** Clear the lowest bit of 'n' */
 #define ENV_CLEAR_LOWEST_BIT(n)  ((n) & ((n) - 1))
 
+#pragma GCC visibility pop
 #endif

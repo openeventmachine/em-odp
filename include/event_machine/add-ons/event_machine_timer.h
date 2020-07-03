@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_TIMER_H_
 #define EVENT_MACHINE_TIMER_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  *  Event Machine timer add-on
@@ -499,4 +501,5 @@ em_tmo_state_t em_tmo_get_state(em_tmo_t tmo);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_TIMER_H_ */

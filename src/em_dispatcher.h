@@ -31,7 +31,6 @@
 /**
  * @file
  * EM internal dispatcher functions
- *
  */
 
 #ifndef EM_DISPATCHER_H_
@@ -41,38 +40,80 @@
 extern "C" {
 #endif
 
-/**
- * Helper function for running all dispatcher enter callback functions.
- *
- * Note: All callbacks are run even if the event is freed (=EM_EVENT_UNDEF).
- *
- * @param eo            EO handle
- * @param eo_ctx        EO context data
- * @param event         Event handle
- * @param type          Event type
- * @param queue         Queue from which this event came from
- * @param q_ctx         Queue context data
- */
 static inline void
-dispatch_enter_cb(em_eo_t eo, void **eo_ctx, em_event_t *event,
-		  em_event_type_t *type, em_queue_t *queue, void **q_ctx)
-{
-	hook_tbl_t *const dispatch_enter_cb_tbl = em_shm->dispatch_enter_cb_tbl;
-	em_dispatch_enter_func_t dispatch_enter_fn;
-	int i;
+_dispatch_multi_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+			const int num_events, queue_elem_t *const q_elem,
+			const bool check_local_qs);
+static inline void
+_dispatch_single_receive(event_hdr_t *ev_hdr_tbl[], const int num_events,
+			 queue_elem_t *const q_elem,
+			 const bool check_local_qs);
 
-	for (i = 0; i < EM_CALLBACKS_MAX; i++) {
-		dispatch_enter_fn = dispatch_enter_cb_tbl->tbl[i].disp_enter;
-		if (dispatch_enter_fn == NULL)
-			return;
-		dispatch_enter_fn(eo, eo_ctx, event, type, queue, q_ctx);
+/**
+ * Helper: Remove undef-event entries from ev_tbl[]
+ */
+static inline int _pack_ev_tbl(em_event_t ev_tbl[], const int num)
+{
+	if (num == 1) {
+		if (ev_tbl[0] != EM_EVENT_UNDEF)
+			return 1;
+		else
+			return 0;
 	}
+
+	int pack = 0;
+
+	for (int i = 0; i < num; i++) {
+		if (ev_tbl[i] != EM_EVENT_UNDEF) {
+			if (pack < i)
+				ev_tbl[pack] = ev_tbl[i];
+			pack++;
+		}
+	}
+
+	return pack;
 }
 
 /**
- * Helper function for running all dispatcher exit callback functions.
+ * Run all dispatch enter-callback functions.
+ *
+ * @note Neither EO-receive nor any further enter-callbacks will be called if
+ *       all events have been dropped by the callbacks already run, i.e.
+ *       no callback or EO-receive will be called with 'num=0'.
  *
  * @param eo            EO handle
+ * @param eo_ctx        EO context data
+ * @param event_tbl     Event table
+ * @param num_events    Number of events in the event table
+ * @param queue         Queue from which this event came from
+ * @param q_ctx         Queue context data
+ *
+ * @return The number of events in ev_tbl[] after all dispatch enter callbacks
+ */
+static inline int
+dispatch_enter_cb(em_eo_t eo, void **eo_ctx,
+		  em_event_t ev_tbl[], const int num_events,
+		  em_queue_t *queue, void **q_ctx)
+{
+	hook_tbl_t *const cb_tbl = em_shm->dispatch_enter_cb_tbl;
+	em_dispatch_enter_func_t dispatch_enter_fn;
+	int num = num_events;
+
+	for (int i = 0; i < EM_CALLBACKS_MAX && num > 0; i++) {
+		dispatch_enter_fn = cb_tbl->tbl[i].disp_enter;
+		if (dispatch_enter_fn == NULL)
+			break;
+		dispatch_enter_fn(eo, eo_ctx, ev_tbl, num, queue, q_ctx);
+		num = _pack_ev_tbl(ev_tbl, num);
+	}
+
+	return num;
+}
+
+/**
+ * Run all dispatch exit-callback functions.
+ *
+ * @param eo    EO handle
  */
 static inline void
 dispatch_exit_cb(em_eo_t eo)
@@ -96,9 +137,8 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	em_queue_t queue = q_elem->queue;
 	void *queue_ctx = q_elem->context;
 	void *eo_ctx = q_elem->eo_ctx;
-
 	em_event_t event = event_hdr_to_event(ev_hdr);
-	em_event_type_t event_type = ev_hdr->event_type;
+	int num = 1;
 
 	if (EM_CHECK_LEVEL > 2 &&
 	    unlikely(env_atomic32_get(&ev_hdr->allocated) != 1)) {
@@ -111,14 +151,16 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	}
 
 	em_locm.current.q_elem = q_elem;
+	em_locm.current.rcv_multi_cnt = 1;
 	/* Check and set core local event group (before dispatch callback(s)) */
-	event_group_set_local(ev_hdr);
+	event_group_set_local(ev_hdr->egrp, ev_hdr->egrp_gen, 1);
 
 	if (EM_DISPATCH_CALLBACKS_ENABLE)
-		dispatch_enter_cb(eo, &eo_ctx, &event, &event_type,
-				  &queue, &queue_ctx);
+		num = dispatch_enter_cb(eo, &eo_ctx, &event, 1,
+					&queue, &queue_ctx);
 
-	if (likely(event != EM_EVENT_UNDEF)) {
+	if (likely(num == 1)) {
+		em_event_type_t event_type = ev_hdr->event_type;
 		/*
 		 * Call the EO receive function
 		 * (only if the dispatch callback(s) did not free the event)
@@ -144,28 +186,219 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	em_locm.current.egrp = EM_EVENT_GROUP_UNDEF;
 }
 
+/**
+ * @note All events belong to the same event group
+ * @note Event type dropped from multi-event receive - use em_event_get_type()
+ */
+static inline void
+call_eo_receive_multi_fn(const em_eo_t eo,
+			 const em_receive_multi_func_t eo_receive_multi_func,
+			 em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+			 const int num_events, queue_elem_t *const q_elem)
+{
+	em_queue_t queue = q_elem->queue;
+	void *queue_ctx = q_elem->context;
+	void *eo_ctx = q_elem->eo_ctx;
+	int num = num_events;
+	int i;
+
+	if (EM_CHECK_LEVEL > 2) {
+		for (i = 0; i < num_events &&
+		     env_atomic32_get(&ev_hdr_tbl[i]->allocated) == 1; i++)
+			;
+		if (unlikely(i != num_events)) {
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE),
+				       EM_ESCOPE_DISPATCH,
+				       "EO:%" PRI_EO ": rcvd event(s) freed!");
+		}
+	}
+
+	em_locm.current.q_elem = q_elem;
+	em_locm.current.rcv_multi_cnt = num_events;
+	/* Check and set core local event group (before dispatch callback(s)) */
+	event_group_set_local(ev_hdr_tbl[0]->egrp, ev_hdr_tbl[0]->egrp_gen,
+			      num_events);
+
+	if (EM_DISPATCH_CALLBACKS_ENABLE)
+		num = dispatch_enter_cb(eo, &eo_ctx,
+					ev_tbl /* in/out */, num_events,
+					&queue, &queue_ctx);
+	if (likely(num > 0)) {
+		/*
+		 * Call the EO multi-event receive function
+		 * (only if the dispatch callback(s) did not free all events)
+		 */
+		eo_receive_multi_func(eo_ctx, ev_tbl, num, queue, queue_ctx);
+	}
+
+	if (EM_DISPATCH_CALLBACKS_ENABLE)
+		dispatch_exit_cb(eo);
+
+	/*
+	 * Event belongs to an event_group, update the count and
+	 * if requested send notifications
+	 */
+	if (em_locm.current.egrp != EM_EVENT_GROUP_UNDEF) {
+		/*
+		 * Atomically decrease the event group count.
+		 * If the new count is zero, send notification events.
+		 */
+		event_group_count_decrement(num_events);
+	}
+	em_locm.current.egrp = EM_EVENT_GROUP_UNDEF;
+}
+
 static inline void
 check_local_queues(void)
 {
-	event_hdr_t *ev_hdr;
+	em_event_t ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	int num, i;
+	int idx;
+
+	if (em_locm.local_queues.empty)
+		return;
 
 	/*
 	 * Check if the previous EO receive function sent events to a
 	 * local queue ('EM_QUEUE_TYPE_LOCAL') - and if so, dispatch
 	 * those events immediately.
 	 */
-	while ((ev_hdr = next_local_queue_event()) != NULL) {
-		/* Dispatch event from a local queue */
-		queue_elem_t *const local_q_elem = ev_hdr->q_elem;
-		const em_eo_t eo = local_q_elem->eo;
-		const em_receive_func_t eo_receive_func =
-			local_q_elem->receive_func;
+	for (;;) {
+		num = next_local_queue_events(ev_tbl, EM_SCHED_MULTI_MAX_BURST);
+		if (num <= 0)
+			return;
 
-		/*
-		 * Call the Execution Object (EO) receive function.
-		 * Scheduling context may be released during this
-		 */
-		call_eo_receive_fn(eo, eo_receive_func, ev_hdr, local_q_elem);
+		event_to_hdr_multi(ev_tbl, ev_hdr_tbl, num);
+
+		idx = 0; /* index into ev_tbl[] & ev_hdr_tbl[] */
+		do {
+			queue_elem_t *const q_elem = ev_hdr_tbl[idx]->q_elem;
+
+			/* count events sent to the same local queue */
+			i = idx + 1;
+			for (; i < num && q_elem == ev_hdr_tbl[i]->q_elem; i++)
+				;
+
+			const int ev_cnt = i - idx; /* 1 to num */
+
+			if (unlikely(q_elem == NULL ||
+				     q_elem->state != EM_QUEUE_STATE_READY)) {
+				em_free_multi(&ev_tbl[idx], ev_cnt);
+				/* Consider removing the logging */
+				EM_LOG(EM_LOG_PRINT,
+				       "EM info: %s(): localQ:%" PRI_QUEUE ":\n"
+				       "Not ready - state:%d drop:%d events\n",
+				       __func__, q_elem->queue,
+				       q_elem->state, ev_cnt);
+				idx += ev_cnt;
+				continue;
+			}
+
+			if (q_elem->use_multi_rcv)
+				_dispatch_multi_receive(&ev_tbl[idx],
+							&ev_hdr_tbl[idx],
+							ev_cnt, q_elem,
+							false);
+			else
+				_dispatch_single_receive(&ev_hdr_tbl[idx],
+							 ev_cnt, q_elem, false);
+			idx += ev_cnt;
+		} while (idx < num);
+	}
+}
+
+static inline void
+_dispatch_multi_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+			const int num_events, queue_elem_t *const q_elem,
+			const bool check_local_qs)
+{
+	const em_eo_t eo = q_elem->eo;
+	const em_receive_multi_func_t eo_rcv_multi_fn =
+		q_elem->receive_multi_func;
+	int idx = 0; /* index into ev_hdr_tbl[] */
+
+	do {
+		const em_event_group_t egrp = ev_hdr_tbl[idx]->egrp;
+		int i, j;
+
+		/* count events with the same event group */
+		i = idx + 1;
+		if (EM_EVENT_GROUP_SAFE_MODE) {
+			const int32_t egrp_gen =
+				ev_hdr_tbl[idx]->egrp_gen;
+			for (; i < num_events &&
+			     egrp == ev_hdr_tbl[i]->egrp &&
+			     egrp_gen == ev_hdr_tbl[i]->egrp_gen; i++)
+				;
+		} else {
+			for (; i < num_events &&
+			     egrp == ev_hdr_tbl[i]->egrp; i++)
+				;
+		}
+
+		const int egrp_cnt = i - idx; /* 1 to num_events */
+		const int max = q_elem->max_events;
+		const int num = MIN(egrp_cnt, max);
+		const int rounds = egrp_cnt / num;
+		const int left_over = egrp_cnt % num;
+
+		if (check_local_qs) {
+			for (i = 0, j = idx; i < rounds; i++, j += num) {
+				em_locm.event_burst_cnt -= num;
+				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
+							 &ev_tbl[j],
+							 &ev_hdr_tbl[j],
+							 num, q_elem);
+				check_local_queues();
+			}
+			if (left_over) {
+				em_locm.event_burst_cnt = 0;
+				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
+							 &ev_tbl[j],
+							 &ev_hdr_tbl[j],
+							 left_over, q_elem);
+				check_local_queues();
+			}
+		} else {
+			for (i = 0, j = idx; i < rounds; i++, j += num) {
+				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
+							 &ev_tbl[j],
+							 &ev_hdr_tbl[j],
+							 num, q_elem);
+			}
+			if (left_over) {
+				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
+							 &ev_tbl[j],
+							 &ev_hdr_tbl[j],
+							 left_over, q_elem);
+			}
+		}
+
+		idx += egrp_cnt;
+	} while (idx < num_events);
+}
+
+static inline void
+_dispatch_single_receive(event_hdr_t *ev_hdr_tbl[], const int num_events,
+			 queue_elem_t *const q_elem,
+			 const bool check_local_qs)
+{
+	const em_eo_t eo = q_elem->eo;
+	const em_receive_func_t eo_rcv_fn = q_elem->receive_func;
+	int i;
+
+	if (check_local_qs) {
+		for (i = 0; i < num_events; i++) {
+			em_locm.event_burst_cnt--;
+			call_eo_receive_fn(eo, eo_rcv_fn,
+					   ev_hdr_tbl[i], q_elem);
+			check_local_queues();
+		}
+	} else {
+		for (i = 0; i < num_events; i++)
+			call_eo_receive_fn(eo, eo_rcv_fn,
+					   ev_hdr_tbl[i], q_elem);
 	}
 }
 
@@ -174,12 +407,10 @@ check_local_queues(void)
  * events for processing
  */
 static inline void
-dispatch_events(event_hdr_t *const ev_hdr_tbl[], const int num_events,
-		queue_elem_t *const q_elem)
+dispatch_events(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+		const int num_events, queue_elem_t *const q_elem)
 {
 	const em_queue_type_t q_type = q_elem->type;
-	const em_eo_t eo = q_elem->eo;
-	const em_receive_func_t eo_receive_func = q_elem->receive_func;
 	em_sched_context_type_t sched_ctx_type = EM_SCHED_CONTEXT_TYPE_NONE;
 
 	if (q_type == EM_QUEUE_TYPE_ATOMIC)
@@ -192,16 +423,15 @@ dispatch_events(event_hdr_t *const ev_hdr_tbl[], const int num_events,
 	/* here: em_locm.current.egrp == EM_EVENT_GROUP_UNDEF */
 
 	/*
-	 * Call the Execution Object (EO) receive function for each event.
+	 * Call the Execution Object (EO) receive function.
 	 * Scheduling context may be released during this.
 	 */
-	for (int i = 0; i < num_events; i++) {
-		event_hdr_t *const ev_hdr = ev_hdr_tbl[i];
-
-		em_locm.event_burst_cnt--;
-		call_eo_receive_fn(eo, eo_receive_func, ev_hdr, q_elem);
-		check_local_queues();
-	}
+	if (q_elem->use_multi_rcv)
+		_dispatch_multi_receive(ev_tbl, ev_hdr_tbl, num_events, q_elem,
+					true);
+	else
+		_dispatch_single_receive(ev_hdr_tbl, num_events, q_elem,
+					 true);
 
 	/*
 	 * Check for buffered events sent to output queues during the previous
@@ -214,18 +444,6 @@ dispatch_events(event_hdr_t *const ev_hdr_tbl[], const int num_events,
 	em_locm.current.q_elem = NULL;
 	em_locm.current.sched_q_elem = NULL;
 	em_locm.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
-}
-
-static inline void
-dispatch_local_queues(void)
-{
-	event_hdr_t *const ev_hdr = next_local_queue_event();
-	queue_elem_t *local_q_elem;
-
-	if (ev_hdr != NULL) {
-		local_q_elem = ev_hdr->q_elem;
-		dispatch_events(&ev_hdr, 1, local_q_elem);
-	}
 }
 
 /*
@@ -252,7 +470,7 @@ dispatch_round(void)
 		 * contain anything on this core - e.g. pktio or something
 		 * outside the dispatch-context might have sent to a local queue
 		 */
-		dispatch_local_queues();
+		check_local_queues();
 		return 0;
 	}
 
@@ -264,7 +482,7 @@ dispatch_round(void)
 	if (unlikely(queue_elem == NULL ||
 		     queue_elem->state != EM_QUEUE_STATE_READY)) {
 		/* Drop all events dequeued from this queue */
-		event_free_multi(ev_tbl, num_events);
+		em_free_multi(ev_tbl, num_events);
 
 		if (queue_elem == NULL)
 			INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_DISPATCH,
@@ -281,7 +499,7 @@ dispatch_round(void)
 
 	if (queue_elem->atomic_group == EM_ATOMIC_GROUP_UNDEF) {
 		em_locm.event_burst_cnt = num_events;
-		dispatch_events(ev_hdr_tbl, num_events, queue_elem);
+		dispatch_events(ev_tbl, ev_hdr_tbl, num_events, queue_elem);
 	} else {
 		atomic_group_dispatch(ev_tbl, ev_hdr_tbl,
 				      num_events, queue_elem);

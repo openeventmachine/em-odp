@@ -31,6 +31,8 @@
 #ifndef EVENT_MACHINE_POOL_H_
 #define EVENT_MACHINE_POOL_H_
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
  * @defgroup em_pool Event Pool
@@ -219,4 +221,5 @@ em_pool_info_print_all(void);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_POOL_H_ */

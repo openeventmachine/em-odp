@@ -62,64 +62,38 @@ hook_register(uint8_t type, hook_fn_t hook_fn);
 em_status_t
 hook_unregister(uint8_t type, hook_fn_t hook_fn);
 
-/**
- *
- * Note: All callbacks are run even if the event is freed (=EM_EVENT_UNDEF).
- */
 static inline void
-call_api_hooks_alloc(em_event_t event, size_t size,
-		     em_event_type_t type, em_pool_t pool)
+call_api_hooks_alloc(const em_event_t events[], const int num_act,
+		     const int num_req, size_t size, em_event_type_t type,
+		     em_pool_t pool)
 {
 	hook_tbl_t *const alloc_hook_tbl = em_shm->alloc_hook_tbl;
 	em_api_hook_alloc_t alloc_hook_fn;
-	int i;
 
-	for (i = 0; i < EM_CALLBACKS_MAX; i++) {
+	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
 		alloc_hook_fn = alloc_hook_tbl->tbl[i].alloc;
 		if (alloc_hook_fn == NULL)
 			return;
-		alloc_hook_fn(event, size, type, pool);
+		alloc_hook_fn(events, num_act, num_req, size, type, pool);
 	}
 }
 
 static inline void
-call_api_hooks_free(em_event_t event)
+call_api_hooks_free(const em_event_t events[], const int num)
 {
 	hook_tbl_t *const free_hook_tbl = em_shm->free_hook_tbl;
 	em_api_hook_free_t free_hook_fn;
-	int i;
 
-	for (i = 0; i < EM_CALLBACKS_MAX; i++) {
+	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
 		free_hook_fn = free_hook_tbl->tbl[i].free;
 		if (free_hook_fn == NULL)
 			return;
-		free_hook_fn(event);
+		free_hook_fn(events, num);
 	}
 }
 
 static inline void
-call_api_hooks_free_multi(em_event_t *const events, const int num)
-{
-	hook_tbl_t *const free_hook_tbl = em_shm->free_hook_tbl;
-
-	if (free_hook_tbl->tbl[0].free == NULL)
-		return;
-
-	em_api_hook_free_t free_hook_fn;
-	int i, j;
-
-	for (i = 0; i < num; i++) {
-		for (j = 0; j < EM_CALLBACKS_MAX; j++) {
-			free_hook_fn = free_hook_tbl->tbl[j].free;
-			if (free_hook_fn == NULL)
-				return;
-			free_hook_fn(events[i]);
-		}
-	}
-}
-
-static inline void
-call_api_hooks_send(em_event_t *const events, int num,
+call_api_hooks_send(const em_event_t events[], const int num,
 		    em_queue_t queue, em_event_group_t event_group)
 {
 	hook_tbl_t *const send_hook_tbl = em_shm->send_hook_tbl;

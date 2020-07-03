@@ -30,6 +30,8 @@
 #ifndef EVENT_MACHINE_ADD_ON_ERROR_H_
 #define EVENT_MACHINE_ADD_ON_ERROR_H_
 
+#pragma GCC visibility push(default)
+
 #include <event_machine/api/event_machine_types.h>
 
 /**
@@ -52,4 +54,5 @@
 #define EM_ESCOPE_TMO_ACK                   (EM_ESCOPE_ADD_ON_API_BASE | 0x00B)
 #define EM_ESCOPE_TMO_GET_STATE             (EM_ESCOPE_ADD_ON_API_BASE | 0x00C)
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_ADD_ON_ERROR_H_ */

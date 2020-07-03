@@ -44,20 +44,6 @@ extern "C" {
 em_status_t
 event_init(void);
 
-/**
- * Free multiple events.
- *
- * It is assumed that the implementation can detect the memory area/pool that
- * the event was originally allocated from.
- *
- * The event_free_multi() function transfers ownership of the events back to the
- * system and the events must not be touched after calling it.
- *
- * @param events         Array of events to be freed
- * @param num            The number of events in the array 'events[]'
- */
-void event_free_multi(em_event_t *const events, const int num);
-
 COMPILE_TIME_ASSERT((uintptr_t)EM_EVENT_UNDEF == (uintptr_t)ODP_EVENT_INVALID,
 		    EM_EVENT_NOT_EQUAL_TO_ODP_EVENT);
 
@@ -84,9 +70,9 @@ events_odp2em(odp_event_t odp_events[])
 }
 
 static inline odp_event_t *
-events_em2odp(em_event_t events[])
+events_em2odp(const em_event_t events[])
 {
-	return (odp_event_t *)events;
+	return (odp_event_t *)(uintptr_t)events;
 }
 
 static inline void
@@ -263,7 +249,8 @@ event_to_hdr_init_multi(em_event_t events[], event_hdr_t *ev_hdrs[],
  * Do NOT initialize the event headers.
  */
 static inline void
-event_to_hdr_multi(em_event_t events[], event_hdr_t *ev_hdrs[], const int num)
+event_to_hdr_multi(const em_event_t events[], event_hdr_t *ev_hdrs[],
+		   const int num)
 {
 	odp_event_t *const odp_events = events_em2odp(events);
 	odp_packet_t odp_pkts[num];
@@ -306,11 +293,11 @@ static inline em_event_t
 event_alloc_buf(mpool_elem_t *const pool_elem, size_t size,
 		em_event_type_t type)
 {
-	int subpool;
 	odp_buffer_t odp_buf;
 	odp_event_t odp_event;
 	em_event_t em_event;
 	event_hdr_t *ev_hdr;
+	int subpool;
 
 	subpool = pool_find_subpool(pool_elem, size);
 	if (unlikely(subpool < 0))
@@ -358,24 +345,94 @@ event_alloc_buf(mpool_elem_t *const pool_elem, size_t size,
 		ev_hdr->subpool = subpool;
 		ev_hdr->pool = pool;
 
-		pool_stat_increment(pool, subpool);
+		pool_stat_increment(pool, subpool, 1);
 	}
 
 	return em_event;
+}
+
+static inline int
+event_alloc_buf_multi(em_event_t events[/*out*/], const int num,
+		      mpool_elem_t *const pool_elem, size_t size,
+		      em_event_type_t type)
+{
+	odp_event_t *const odp_events = events_em2odp(events);
+	odp_buffer_t odp_bufs[num];
+	event_hdr_t *ev_hdrs[num];
+	int subpool;
+
+	subpool = pool_find_subpool(pool_elem, size);
+	if (unlikely(subpool < 0))
+		return 0;
+
+	/*
+	 * Allocate from the 'best fit' subpool, or if that is full, from the
+	 * next subpool that has buffers available of a bigger size.
+	 */
+	int num_req = num;
+	int num_bufs = 0;
+
+	do {
+		odp_pool_t odp_pool = pool_elem->odp_pool[subpool];
+
+		if (EM_CHECK_LEVEL > 1 &&
+		    unlikely(odp_pool == ODP_POOL_INVALID))
+			return 0;
+
+		int ret = odp_buffer_alloc_multi(odp_pool, &odp_bufs[num_bufs],
+						 num_req);
+		if (unlikely(ret <= 0))
+			continue; /* try next subpool */
+
+		/*
+		 * Init 'ret' ev-hdrs from this 'subpool'=='odp-pool'
+		 * Note: odp_events[i]=... writes into events[out]
+		 */
+		for (int i = num_bufs; i < ret; i++)
+			odp_events[i] = odp_buffer_to_event(odp_bufs[i]);
+		for (int i = num_bufs; i < ret; i++)
+			ev_hdrs[i] = odp_buffer_addr(odp_bufs[i]);
+		for (int i = num_bufs; i < ret; i++) {
+			/* For optimization, no init for feature vars */
+			ev_hdrs[i]->event = event_odp2em(odp_events[i]);
+			ev_hdrs[i]->event_size = size;
+			ev_hdrs[i]->align_offset = pool_elem->align_offset;
+			ev_hdrs[i]->event_type = type;
+			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
+			/* Simple double-free detection */
+			if (EM_CHECK_LEVEL > 1)
+				env_atomic32_set(&ev_hdrs[i]->allocated, 1);
+			/* Pool usage statistics */
+			if (em_shm->opt.pool.statistics_enable) {
+				ev_hdrs[i]->subpool = subpool;
+				ev_hdrs[i]->pool = pool_elem->em_pool;
+			}
+		}
+		if (em_shm->opt.pool.statistics_enable)
+			pool_stat_increment(pool_elem->em_pool, subpool, ret);
+
+		num_bufs += ret;
+		if (likely(num_bufs == num))
+			break; /* all allocated */
+		num_req -= ret;
+	} while (EM_MAX_SUBPOOLS > 1 /* Compile time option */ &&
+		 ++subpool < pool_elem->num_subpools);
+
+	return num_bufs; /* number of allocated bufs (0 ... num) */
 }
 
 static inline em_event_t
 event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 		em_event_type_t type)
 {
-	int subpool;
+	const uint32_t push_len = pool_elem->align_offset;
+	uint32_t pull_len;
+	size_t alloc_size;
 	odp_packet_t odp_pkt;
 	odp_event_t odp_event;
 	em_event_t em_event;
 	event_hdr_t *ev_hdr;
-	const uint32_t push_len = pool_elem->align_offset;
-	uint32_t pull_len;
-	size_t alloc_size;
+	int subpool;
 
 	if (size > push_len) {
 		alloc_size = size - push_len;
@@ -461,10 +518,109 @@ event_alloc_pkt(mpool_elem_t *const pool_elem, size_t size,
 		ev_hdr->subpool = subpool;
 		ev_hdr->pool = pool;
 
-		pool_stat_increment(pool, subpool);
+		pool_stat_increment(pool, subpool, 1);
 	}
 
 	return em_event;
+}
+
+static inline int
+event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
+		      mpool_elem_t *const pool_elem, size_t size,
+		      em_event_type_t type)
+{
+	odp_event_t *const odp_events = events_em2odp(events);
+	const uint32_t push_len = pool_elem->align_offset;
+	uint32_t pull_len;
+	odp_packet_t odp_pkts[num];
+	event_hdr_t *ev_hdrs[num];
+	size_t alloc_size;
+	int subpool;
+
+	if (size > push_len) {
+		alloc_size = size - push_len;
+		pull_len = 0;
+	} else {
+		alloc_size = 1; /* min allowed */
+		pull_len = push_len + 1 - size;
+	}
+
+	subpool = pool_find_subpool(pool_elem, size);
+	if (unlikely(subpool < 0))
+		return 0;
+
+	/*
+	 * Allocate from the 'best fit' subpool, or if that is full, from the
+	 * next subpool that has pkts available of a bigger size.
+	 */
+	int num_req = num;
+	int num_pkts = 0;
+
+	do {
+		odp_pool_t odp_pool = pool_elem->odp_pool[subpool];
+
+		if (EM_CHECK_LEVEL > 1 &&
+		    unlikely(odp_pool == ODP_POOL_INVALID))
+			return 0;
+
+		int ret = odp_packet_alloc_multi(odp_pool, alloc_size,
+						 &odp_pkts[num_pkts], num_req);
+		if (unlikely(ret <= 0))
+			continue; /* try next subpool */
+
+		/* Adjust payload start-address based on alignment config */
+		if (push_len) {
+			for (int i = num_pkts; i < ret; i++)
+				odp_packet_push_head(odp_pkts[i], push_len);
+		}
+		if (pull_len) {
+			for (int i = num_pkts; i < ret; i++)
+				odp_packet_pull_tail(odp_pkts[i], pull_len);
+		}
+		/*
+		 * Set the pkt user ptr to be able to recognize pkt-events that
+		 * EM has created vs pkts from pkt-input that needs their
+		 * ev-hdrs to be initialized.
+		 */
+		for (int i = num_pkts; i < ret; i++) {
+			odp_packet_user_ptr_set(odp_pkts[i],
+						PKT_USERPTR_MAGIC_NBR);
+		}
+		/*
+		 * Init 'ret' ev-hdrs from this 'subpool'=='odp-pool'
+		 * Note: odp_events[] points&writes into events[out]
+		 */
+		odp_packet_to_event_multi(odp_pkts, odp_events, ret);
+
+		for (int i = num_pkts; i < ret; i++)
+			ev_hdrs[i] = odp_packet_user_area(odp_pkts[i]);
+		for (int i = num_pkts; i < ret; i++) {
+			/* For optimization, no init for feature vars */
+			ev_hdrs[i]->event = event_odp2em(odp_events[i]);
+			ev_hdrs[i]->event_size = size;
+			/* ev_hdr->align_offset = needed by odp bufs only */
+			ev_hdrs[i]->event_type = type;
+			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
+			/* Simple double-free detection */
+			if (EM_CHECK_LEVEL > 1)
+				env_atomic32_set(&ev_hdrs[i]->allocated, 1);
+			/* Pool usage statistics */
+			if (em_shm->opt.pool.statistics_enable) {
+				ev_hdrs[i]->subpool = subpool;
+				ev_hdrs[i]->pool = pool_elem->em_pool;
+			}
+		}
+		if (em_shm->opt.pool.statistics_enable)
+			pool_stat_increment(pool_elem->em_pool, subpool, ret);
+
+		num_pkts += ret;
+		if (likely(num_pkts == num))
+			break; /* all allocated */
+		num_req -= ret;
+	} while (EM_MAX_SUBPOOLS > 1 /* Compile time option */ &&
+		 ++subpool < pool_elem->num_subpools);
+
+	return num_pkts; /* number of allocated bufs (0 ... num) */
 }
 
 static inline event_hdr_t *

@@ -3,6 +3,87 @@ OpenEM API Release Notes
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
+API 2.3 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=3)
+-------------------------------------------------------------------------------
+Not backwards compatible with previous API version, API 2.3 contains modified
+types requiring small changes to older code (see 2, 4 and 5).
+
+1. Event: multi-event alloc and free functions
+   APIs for allocating or freeing multiple events.
+   - em_alloc_multi(): Allocate multiple events.
+     Similar to em_alloc(), but allows allocation of multiple events, with same
+     properties, with one function call.
+     The em_alloc_multi() API function will try to allocate the requested number
+     ('num') of events but may fail to do so, e.g. if the pool has run out of
+     events, and will return the actual number of events that were successfully
+     allocated from the given pool.
+   - em_free_multi(): Free multiple events.
+     Similar to em_free(), but allows freeing of multiple events with one
+     function call.
+   See include/event_machine/api/event_machine_event.h:
+   em_alloc_multi() and em_free_multi()
+
+2. Hooks: use the same hook-type for all alloc():s and the same for all free():s
+   em_api_hook_alloc_t: API-callback hook for em_alloc() and em_alloc_multi().
+   em_api_hook_free_t:  API-callback hook for em_free() and em_free_multi().
+   Note! em_api_hook_alloc_t and em_api_hook_free_t _changed_ in API 2.3
+         to suit both single and multi alloc and frees.
+   See include/event_machine/platform/event_machine_hw_types.h:
+   em_api_hook_alloc_t and em_api_hook_free_t
+
+3. EO: multi-event EO-receive function
+   'em_receive_multi_func_t':
+   Similar to the single-event receive function (em_receive_func_t), except that
+   multiple events can be passed with one call to the EO receive function.
+   A multi-event receive function is taken into use during EO creation with a
+   call to em_eo_create_multircv(...). The maximum number of events that the
+   multi-event EO receive function is prepared to handle can be set with the
+   option 'em_eo_multircv_param_t::max_events' given to em_eo_create_multircv().
+   The EM dispatcher will split event batches larger than 'max_events' into
+   chunks of 'max_events'.
+   Event group handling: All events passed by the EM dispatcher to the
+   EO multi-event receive function belong to the same event group (or none)
+   - a batch of events containing multiple event groups is split by the
+   dispatcher into smaller chunks, each chunk belonging to the same event group
+   (or none). The event group count is decremented by the number of events
+   passed to the receive function when execution returns to the dispatcher.
+   See include/event_machine/api/event_machine_eo.h:
+   em_receive_multi_func_t and em_eo_create_multircv().
+
+4. Dispatch: one common enter-callback for multi- and single-receive funcs.
+   em_dispatch_enter_func_t: the dispatch enter callback, called before entering
+   an EO-receive function, is changed so that one common callback type can be
+   used for both single-event and multi-event EO-receive functions.
+   Note! 'em_dispatch_enter_func_t' _changed_ in EM API v2.3.
+   See include/event_machine/api/event_machine_dispatcher.h:
+   em_dispatch_enter_func_t and em_dispatch_register_enter_cb()
+
+5. Init: core masks for 'input_poll_fn' and 'output_drain_fn' added to em_conf_t
+   Add the 'input_poll_mask' and 'output_drain_mask' fields to em_conf_t.
+   These masks define the logical EM cores on which these functions
+   are executed.
+   Note! New fields added to em_conf_t in API 2.3, user must initialize these
+         added fields - use em_conf_init(), see 6.
+   See include/event_machine/platform/event_machine_init.h:
+   em_conf_t and em_conf_init()
+
+6. Init: use em_conf_init(em_conf_t *conf) to init the EM config params.
+   Using em_conf_init() provides better backwards compatibility since
+   all options will be set to default values before use.
+   All users should call em_conf_init() before calling em_init()!
+   See include/event_machine/platform/event_machine_init.h:
+   em_conf_t and em_conf_init()
+
+7. Event: APIs to get the event type(s) of multiple events
+   Two EM APIs added:
+   - Get the event types of multiple events:
+     em_event_get_type_multi()
+   - Get the number of events that have the same event type:
+     em_event_same_type_multi()
+   See include/event_machine/api/event_machine_event.h:
+   em_event_get_type_multi() and em_event_same_type_multi()
+
+-------------------------------------------------------------------------------
 API 2.2 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=2)
 -------------------------------------------------------------------------------
   Backwards compatible with EM 2.1 API with one EXCEPTION:

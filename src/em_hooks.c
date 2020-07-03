@@ -73,7 +73,7 @@ hooks_init(em_api_hooks_t *const api_hooks)
 	em_shm->send_hook_storage.idx = 0;
 
 	env_spinlock_init(&em_shm->dispatch_enter_cb_storage.lock);
-	env_spinlock_init(&em_shm->dispatch_enter_cb_storage.lock);
+	env_spinlock_init(&em_shm->dispatch_exit_cb_storage.lock);
 	env_spinlock_init(&em_shm->alloc_hook_storage.lock);
 	env_spinlock_init(&em_shm->free_hook_storage.lock);
 	env_spinlock_init(&em_shm->send_hook_storage.lock);
@@ -108,7 +108,7 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 	hook_tbl_t **active_tbl_ptr;
 
 	/* Get the em_shm hook table and hook storage to update */
-	active_tbl_ptr = get_hook_tbl(hook_type, &hook_storage);
+	active_tbl_ptr = get_hook_tbl(hook_type, &hook_storage/*out*/);
 	if (unlikely(active_tbl_ptr == NULL))
 		return EM_ERR_BAD_ID;
 
@@ -160,7 +160,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 	hook_tbl_t *hook_tbl, *next_tbl;
 	hook_tbl_t **active_tbl_ptr;
 
-	active_tbl_ptr = get_hook_tbl(hook_type, &hook_storage);
+	active_tbl_ptr = get_hook_tbl(hook_type, &hook_storage/*out*/);
 	if (unlikely(active_tbl_ptr == NULL))
 		return EM_ERR_BAD_ID;
 

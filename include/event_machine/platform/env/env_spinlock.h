@@ -36,6 +36,8 @@
 #ifndef _ENV_SPINLOCK_H_
 #define _ENV_SPINLOCK_H_
 
+#pragma GCC visibility push(default)
+
 typedef odp_spinlock_t env_spinlock_t;
 
 static inline void
@@ -68,4 +70,5 @@ env_spinlock_unlock(env_spinlock_t *const lock)
 	odp_spinlock_unlock((odp_spinlock_t *)lock);
 }
 
+#pragma GCC visibility pop
 #endif /* _ENV_SPINLOCK_H_ */

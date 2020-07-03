@@ -38,6 +38,8 @@
 #ifndef EVENT_MACHINE_ODP_EXT_H
 #define EVENT_MACHINE_ODP_EXT_H
 
+#pragma GCC visibility push(default)
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -119,4 +121,5 @@ pkt_enqueue(odp_packet_t pkt_tbl[], const int num, const em_queue_t queue);
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_ODP_EXT_H */

@@ -32,12 +32,13 @@
 #ifndef EVENT_MACHINE_H
 #define EVENT_MACHINE_H
 
+#pragma GCC visibility push(default)
+
 /**
  * @file
- * Event Machine API v2.1
+ * Event Machine API v2.3
  *
  * This file includes all other needed EM headers
- *
  */
 
 #ifdef __cplusplus
@@ -53,7 +54,7 @@ extern "C" {
  * Minor API version number.
  * Updates and additions
  */
-#define EM_API_VERSION_MINOR 2
+#define EM_API_VERSION_MINOR 3
 
 /** @mainpage
  *
@@ -262,4 +263,5 @@ extern "C" {
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_H */

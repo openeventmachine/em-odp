@@ -30,12 +30,14 @@
 
 /**
  * @file
- * Env bit mask functions.
- *
+ * Env bit mask functions - don't include this file directly,
+ * instead #include "environment.h"
  */
 
 #ifndef _ENV_BITMASK_H_
 #define _ENV_BITMASK_H_
+
+#pragma GCC visibility push(default)
 
 #ifdef __cplusplus
 extern "C" {
@@ -298,4 +300,5 @@ static inline void env_bitmask_xor(env_bitmask_t *dst,
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* _ENV_BITMASK_H_ */

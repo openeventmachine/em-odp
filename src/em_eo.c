@@ -158,7 +158,11 @@ eo_add_queue(eo_elem_t *const eo_elem, queue_elem_t *const q_elem)
 	if (unlikely(err != EM_OK))
 		return err;
 
+	q_elem->use_multi_rcv = eo_elem->use_multi_rcv;
+	q_elem->max_events = eo_elem->max_events;
 	q_elem->receive_func = eo_elem->receive_func;
+	q_elem->receive_multi_func = eo_elem->receive_multi_func;
+
 	q_elem->eo = eo_elem->eo;
 	q_elem->eo_ctx = eo_elem->eo_ctx;
 	q_elem->eo_elem = eo_elem;

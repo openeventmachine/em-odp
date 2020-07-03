@@ -81,9 +81,74 @@ em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 	}
 
 	if (EM_API_HOOKS_ENABLE)
-		call_api_hooks_alloc(event, size, type, pool);
+		call_api_hooks_alloc(&event, 1, 1, size, type, pool);
 
 	return event;
+}
+
+int
+em_alloc_multi(em_event_t events[/*out*/], int num,
+	       size_t size, em_event_type_t type, em_pool_t pool)
+{
+	if (unlikely(num <= 0)) {
+		if (num < 0)
+			INTERNAL_ERROR(EM_ERR_TOO_SMALL, EM_ESCOPE_ALLOC_MULTI,
+				       "Invalid arg: num:%d", num);
+		return 0;
+	}
+
+	mpool_elem_t *const pool_elem = pool_elem_get(pool);
+	int ret;
+
+	if (unlikely(size == 0 ||
+		     pool_elem == NULL || !pool_allocated(pool_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_ALLOC_MULTI,
+			       "Invalid args: size:%zu type:%u pool:%" PRI_POOL "",
+			       size, type, pool);
+		return 0;
+	}
+
+	if (pool_elem->event_type == EM_EVENT_TYPE_PACKET) {
+		/*
+		 * EM event pools created with type=PKT can support SW events
+		 * as well as pkt events.
+		 */
+		ret = event_alloc_pkt_multi(events, num, pool_elem, size, type);
+	} else { /* pool_elem->event_type == EM_EVENT_TYPE_SW */
+		/*
+		 * EM event pools created with type=SW can not support
+		 * pkt events.
+		 */
+		if (unlikely(em_get_type_major(type) ==
+			     EM_EVENT_TYPE_PACKET)) {
+			INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
+				       EM_ESCOPE_ALLOC_MULTI,
+				       "EM-pool:%s(%" PRI_POOL "):\n"
+				       "Invalid event type:%u for buf",
+				       pool_elem->name, pool, type);
+			return 0;
+		}
+
+		ret = event_alloc_buf_multi(events, num, pool_elem, size, type);
+	}
+
+	if (unlikely(ret != num)) {
+		em_status_t err =
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_ALLOC_MULTI,
+			       "Requested num:%d events, allocated:%d\n"
+			       "EM-pool:'%s': sz:%zu type:0x%x pool:%" PRI_POOL "",
+			       num, ret,
+			       pool_elem->name, size, type, pool);
+		if (EM_CHECK_LEVEL > 1 && err != EM_OK &&
+		    em_shm->opt.pool.statistics_enable) {
+			em_pool_info_print(pool);
+		}
+	}
+
+	if (EM_API_HOOKS_ENABLE)
+		call_api_hooks_alloc(events, ret, num, size, type, pool);
+
+	return ret;
 }
 
 void
@@ -115,22 +180,104 @@ em_free(em_event_t event)
 		if (em_shm->opt.pool.statistics_enable) {
 			/* Update pool statistcs */
 			em_pool_t pool = ev_hdr->pool;
+			int subpool;
 
 			if (pool != EM_POOL_UNDEF) {
-				mpool_elem_t *pelem = pool_elem_get(pool);
-				int subpool = ev_hdr->subpool;
-
-				if (pelem)
-					pool_stat_decrement(pool, subpool);
+				subpool = ev_hdr->subpool;
+				if (valid_pool(pool))
+					pool_stat_decrement(pool, subpool, 1);
 			}
 		}
 	}
 
 	if (EM_API_HOOKS_ENABLE)
-		call_api_hooks_free(event);
+		call_api_hooks_free(&event, 1);
 
 	odp_event = event_em2odp(event);
 	odp_event_free(odp_event);
+}
+
+void em_free_multi(const em_event_t events[], int num)
+{
+	odp_event_t *odp_events;
+	int i;
+
+	if (unlikely(num <= 0)) {
+		if (num < 0)
+			INTERNAL_ERROR(EM_ERR_TOO_SMALL, EM_ESCOPE_FREE_MULTI,
+				       "Invalid arg: num:%d", num);
+		return;
+	}
+
+	if (EM_CHECK_LEVEL > 1) {
+		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_FREE_MULTI,
+				       "events[%d] undefined!", i);
+			return;
+		}
+	}
+
+	if (EM_CHECK_LEVEL > 1 || em_shm->opt.pool.statistics_enable) {
+		event_hdr_t *ev_hdrs[num];
+
+		event_to_hdr_multi(events, ev_hdrs, num);
+
+		if (EM_CHECK_LEVEL > 1) {
+			uint32_t allocated;
+			em_status_t err;
+			em_escope_t escope;
+
+			/* Simple double-free detection */
+			for (i = 0; i < num; i++) {
+				allocated =
+				env_atomic32_sub_return(&ev_hdrs[i]->allocated,
+							1);
+				if (unlikely(allocated != 0)) {
+					const char *const fmt =
+					"Double free:events[%d]:%" PRI_EVENT "";
+					err = EM_FATAL(EM_ERR_BAD_POINTER);
+					escope = EM_ESCOPE_FREE_MULTI;
+					INTERNAL_ERROR(err, escope, fmt,
+						       i, events[i]);
+				}
+			}
+		}
+
+		if (em_shm->opt.pool.statistics_enable) {
+			/* Update pool statistcs */
+			int idx = 0; /* index into ev_hdrs[] */
+			int dec = 0;
+
+			do {
+				for (; idx < num &&
+				     ev_hdrs[idx]->pool == EM_POOL_UNDEF; idx++)
+					; /* skip events from external pools */
+				if (idx >= num)
+					break;
+
+				em_pool_t pool = ev_hdrs[idx]->pool;
+				int subpool = ev_hdrs[idx]->subpool;
+
+				for (i = idx + 1; i < num &&
+				     ev_hdrs[i]->pool == pool &&
+				     ev_hdrs[i]->subpool == subpool; i++)
+					; /* count events from same pool */
+				dec = i - idx;
+				idx = i;
+				if (likely(valid_pool(pool)))
+					pool_stat_decrement(pool, subpool, dec);
+			} while (idx < num);
+		}
+	}
+
+	if (EM_API_HOOKS_ENABLE)
+		call_api_hooks_free(events, num);
+
+	odp_events = events_em2odp(events);
+
+	odp_event_free_multi(odp_events, num);
 }
 
 em_status_t
@@ -488,4 +635,83 @@ em_event_get_type(em_event_t event)
 	}
 
 	return ev_hdr->event_type;
+}
+
+int em_event_get_type_multi(em_event_t events[], int num,
+			    em_event_type_t types[/*out:num*/])
+{
+	int i;
+
+	/* Check all args */
+	if (EM_CHECK_LEVEL > 0) {
+		if (unlikely(!events || num < 0 || !types)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG,
+				       EM_ESCOPE_EVENT_GET_TYPE_MULTI,
+				       "Inv.args: events:%p num:%d types:%p",
+				       events, num, types);
+			return 0;
+		}
+		if (unlikely(!num))
+			return 0;
+	}
+
+	if (EM_CHECK_LEVEL > 1) {
+		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_ERR_BAD_POINTER,
+				       EM_ESCOPE_EVENT_GET_TYPE_MULTI,
+				       "events[%d] undefined!", i);
+			return 0;
+		}
+	}
+
+	event_hdr_t *ev_hdrs[num];
+
+	event_to_hdr_multi(events, ev_hdrs, num);
+
+	for (i = 0; i < num; i++)
+		types[i] = ev_hdrs[i]->event_type;
+
+	return num;
+}
+
+int em_event_same_type_multi(em_event_t events[], int num,
+			     em_event_type_t *same_type /*out*/)
+{
+	/* Check all args */
+	if (EM_CHECK_LEVEL > 0) {
+		if (unlikely(!events || num < 0 || !same_type)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG,
+				       EM_ESCOPE_EVENT_SAME_TYPE_MULTI,
+				       "Inv.args: events:%p num:%d same_type:%p",
+				       events, num, same_type);
+			return 0;
+		}
+		if (unlikely(!num))
+			return 0;
+	}
+
+	if (EM_CHECK_LEVEL > 1) {
+		int i;
+
+		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_ERR_BAD_POINTER,
+				       EM_ESCOPE_EVENT_SAME_TYPE_MULTI,
+				       "events[%d] undefined!", i);
+			return 0;
+		}
+	}
+
+	const em_event_type_t type = event_to_hdr(events[0])->event_type;
+	int same = 1;
+
+	for (; same < num && type == event_to_hdr(events[same])->event_type;
+	     same++)
+		;
+
+	*same_type = type;
+	return same;
 }

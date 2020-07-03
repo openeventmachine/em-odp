@@ -108,25 +108,23 @@ static ENV_LOCAL test_shm_t *test_shm;
  * Local function prototypes
  */
 static em_status_t
-ping_start(my_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf);
+ping_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
 
 static em_status_t
-ping_stop(my_eo_context_t *eo_ctx, em_eo_t eo);
+ping_stop(void *eo_context, em_eo_t eo);
 
 static void
-ping_receive(my_eo_context_t *eo_ctx, em_event_t event, em_event_type_t type,
-	     em_queue_t queue, my_queue_context_t *q_ctx);
+ping_receive(void *eo_context, em_event_t event, em_event_type_t type,
+	     em_queue_t queue, void *queue_ctx);
 
 /* Callback functions */
 static void
-enter_cb1(em_eo_t eo, my_eo_context_t **eo_ctx, em_event_t *event,
-	  em_event_type_t *type, em_queue_t *queue,
-	  my_queue_context_t **q_ctx);
+enter_cb1(em_eo_t eo, void **eo_context, em_event_t events[], int num,
+	  em_queue_t *queue, void **queue_context);
 
 static void
-enter_cb2(em_eo_t eo, my_eo_context_t **eo_ctx, em_event_t *event,
-	  em_event_type_t *type, em_queue_t *queue,
-	  my_queue_context_t **q_ctx);
+enter_cb2(em_eo_t eo, void **eo_context, em_event_t events[], int num,
+	  em_queue_t *queue, void **queue_context);
 
 static void
 exit_cb1(em_eo_t eo);
@@ -218,20 +216,12 @@ test_start(appl_conf_t *const appl_conf)
 		      "Undefined application event pool!");
 
 	/* Create both EOs */
-	eo_a = em_eo_create("EO A",
-			    (em_start_func_t)ping_start, NULL,
-			    (em_stop_func_t)ping_stop, NULL,
-			    (em_receive_func_t)ping_receive,
-			    &test_shm->eo_context_a);
-
+	eo_a = em_eo_create("EO A", ping_start, NULL, ping_stop, NULL,
+			    ping_receive, &test_shm->eo_context_a);
 	test_fatal_if(eo_a == EM_EO_UNDEF, "EO A creation failed!");
 
-	eo_b = em_eo_create("EO B",
-			    (em_start_func_t)ping_start, NULL,
-			    (em_stop_func_t)ping_stop, NULL,
-			    (em_receive_func_t)ping_receive,
-			    &test_shm->eo_context_b);
-
+	eo_b = em_eo_create("EO B", ping_start, NULL, ping_stop, NULL,
+			    ping_receive, &test_shm->eo_context_b);
 	test_fatal_if(eo_b == EM_EO_UNDEF, "EO B creation failed!");
 
 	/* Init EO contexts */
@@ -248,36 +238,28 @@ test_start(appl_conf_t *const appl_conf)
 	 * Callback functions may be registered multiple times and unregister
 	 * function removes only the first matching callback.
 	 */
-	ret =
-	em_dispatch_register_enter_cb((em_dispatch_enter_func_t)enter_cb2);
+	ret = em_dispatch_register_enter_cb(enter_cb2);
 	test_fatal_if(ret != EM_OK, "enter_cb2() registering failed!");
 
-	ret =
-	em_dispatch_register_enter_cb((em_dispatch_enter_func_t)enter_cb1);
+	ret = em_dispatch_register_enter_cb(enter_cb1);
 	test_fatal_if(ret != EM_OK, "enter_cb1() registering failed!");
 
-	ret =
-	em_dispatch_register_enter_cb((em_dispatch_enter_func_t)enter_cb2);
+	ret = em_dispatch_register_enter_cb(enter_cb2);
 	test_fatal_if(ret != EM_OK, "enter_cb2() registering failed!");
 
-	ret =
-	em_dispatch_unregister_enter_cb((em_dispatch_enter_func_t)enter_cb2);
+	ret = em_dispatch_unregister_enter_cb(enter_cb2);
 	test_fatal_if(ret != EM_OK, "enter_cb2() unregistering failed!");
 
-	ret =
-	em_dispatch_register_exit_cb((em_dispatch_exit_func_t)exit_cb2);
+	ret = em_dispatch_register_exit_cb(exit_cb2);
 	test_fatal_if(ret != EM_OK, "exit_cb2() registering failed!");
 
-	ret =
-	em_dispatch_register_exit_cb((em_dispatch_exit_func_t)exit_cb1);
+	ret = em_dispatch_register_exit_cb(exit_cb1);
 	test_fatal_if(ret != EM_OK, "exit_cb1() registering failed!");
 
-	ret =
-	em_dispatch_register_exit_cb((em_dispatch_exit_func_t)exit_cb2);
+	ret = em_dispatch_register_exit_cb(exit_cb2);
 	test_fatal_if(ret != EM_OK, "exit_cb2() registering failed!");
 
-	ret =
-	em_dispatch_unregister_exit_cb((em_dispatch_exit_func_t)exit_cb2);
+	ret = em_dispatch_unregister_exit_cb(exit_cb2);
 	test_fatal_if(ret != EM_OK, "exit_cb2() unregistering failed!");
 
 	/* Start EO A */
@@ -354,11 +336,11 @@ test_term(void)
  * @private
  *
  * EO start function.
- *
  */
 static em_status_t
-ping_start(my_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
+ping_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 {
+	my_eo_context_t *eo_ctx = eo_context;
 	em_queue_t queue;
 	em_status_t status;
 	my_queue_context_t *q_ctx;
@@ -434,11 +416,11 @@ ping_start(my_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
  * @private
  *
  * EO stop function.
- *
  */
 static em_status_t
-ping_stop(my_eo_context_t *eo_ctx, em_eo_t eo)
+ping_stop(void *eo_context, em_eo_t eo)
 {
+	my_eo_context_t *eo_ctx = eo_context;
 	em_queue_t queue = eo_ctx->my_queue;
 	em_status_t status;
 
@@ -462,12 +444,13 @@ ping_stop(my_eo_context_t *eo_ctx, em_eo_t eo)
  * EO receive function.
  *
  * Print "Event received" and send back to the sender of the event.
- *
  */
 static void
-ping_receive(my_eo_context_t *eo_ctx, em_event_t event, em_event_type_t type,
-	     em_queue_t queue, my_queue_context_t *q_ctx)
+ping_receive(void *eo_context, em_event_t event, em_event_type_t type,
+	     em_queue_t queue, void *queue_context)
 {
+	my_eo_context_t *eo_ctx = eo_context;
+	my_queue_context_t *q_ctx = queue_context;
 	em_queue_t dest;
 	em_status_t status;
 	ping_event_t *ping;
@@ -504,34 +487,36 @@ ping_receive(my_eo_context_t *eo_ctx, em_event_t event, em_event_type_t type,
  */
 
 static void
-enter_cb1(em_eo_t eo, my_eo_context_t **eo_ctx, em_event_t *event,
-	  em_event_type_t *type, em_queue_t *queue, my_queue_context_t **q_ctx)
+enter_cb1(em_eo_t eo, void **eo_context, em_event_t events[], int num,
+	  em_queue_t *queue, void **queue_context)
 {
-	ping_event_t *ping;
-	(void)type;
-	(void)queue;
+	my_eo_context_t *eo_ctx = *eo_context;
+	my_queue_context_t *q_ctx = *queue_context;
+	ping_event_t *ping = em_event_pointer(events[0]);
 
-	ping = em_event_pointer(*event);
+	(void)num; /* 1 event at a time here */
+	(void)queue;
 
 	APPL_PRINT("++ Dispatcher enter callback 1 for EO: %" PRI_EO " (%s)\t"
 		   "Queue: %" PRI_QUEUE " on core %02i. Event seq: %u.\n",
-		   eo, (*eo_ctx)->name, (*q_ctx)->queue, em_core_id(),
+		   eo, eo_ctx->name, q_ctx->queue, em_core_id(),
 		   ping->seq);
 }
 
 static void
-enter_cb2(em_eo_t eo, my_eo_context_t **eo_ctx, em_event_t *event,
-	  em_event_type_t *type, em_queue_t *queue, my_queue_context_t **q_ctx)
+enter_cb2(em_eo_t eo, void **eo_context, em_event_t events[], int num,
+	  em_queue_t *queue, void **queue_context)
 {
-	ping_event_t *ping;
-	(void)type;
-	(void)queue;
+	my_eo_context_t *eo_ctx = *eo_context;
+	my_queue_context_t *q_ctx = *queue_context;
+	ping_event_t *ping = em_event_pointer(events[0]);
 
-	ping = em_event_pointer(*event);
+	(void)num; /* 1 event at a time here */
+	(void)queue;
 
 	APPL_PRINT("++ Dispatcher enter callback 2 for EO: %" PRI_EO " (%s)\t"
 		   "Queue: %" PRI_QUEUE " on core %02i. Event seq: %u.\n",
-		   eo, (*eo_ctx)->name, (*q_ctx)->queue, em_core_id(),
+		   eo, eo_ctx->name, q_ctx->queue, em_core_id(),
 		   ping->seq);
 }
 

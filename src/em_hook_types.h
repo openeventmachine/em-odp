@@ -42,22 +42,22 @@ extern "C" {
 #endif
 
 /* Max number of API-callback hook arrays */
-#define API_HOOKS_MAX_TBL_SIZE 1000
+#define API_HOOKS_MAX_TBL_SIZE 255
 
 /* EM API hook function types */
 #define ALLOC_HOOK 1
 #define FREE_HOOK  2
 #define SEND_HOOK  3
 /* Dispatcher callback function types */
-#define DISPATCH_CALLBACK_ENTER 4
-#define DISPATCH_CALLBACK_EXIT  5
+#define DISPATCH_CALLBACK_ENTER       4
+#define DISPATCH_CALLBACK_EXIT        5
 
 typedef void (*void_hook_t)(void);
 
 typedef union {
 	em_api_hook_alloc_t alloc;
-	em_api_hook_send_t send;
 	em_api_hook_free_t free;
+	em_api_hook_send_t send;
 	em_dispatch_enter_func_t disp_enter;
 	em_dispatch_exit_func_t disp_exit;
 	void_hook_t void_hook;
@@ -73,7 +73,7 @@ typedef struct {
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } hook_tbl_t;
 
-COMPILE_TIME_ASSERT(sizeof(hook_tbl_t) % ENV_CACHE_LINE_SIZE == 0,
+COMPILE_TIME_ASSERT(sizeof(hook_tbl_t) == ENV_CACHE_LINE_SIZE,
 		    HOOK_ALIGNMENT_ERROR);
 
 /**
@@ -86,7 +86,15 @@ typedef struct {
 	env_spinlock_t lock;
 	/** Index of the current active callback table */
 	int idx;
+	/* Pad size to a multiple of cache line size */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } hook_storage_t;
+
+COMPILE_TIME_ASSERT(sizeof(hook_storage_t) % ENV_CACHE_LINE_SIZE == 0,
+		    HOOK_STORAGE_ALIGNMENT_ERROR);
+
+COMPILE_TIME_ASSERT(sizeof(hook_storage_t) / ENV_CACHE_LINE_SIZE ==
+		    API_HOOKS_MAX_TBL_SIZE + 1, HOOK_STORAGE_SIZE_ERROR);
 
 #ifdef __cplusplus
 }

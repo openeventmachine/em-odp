@@ -425,6 +425,7 @@ static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
 			   void *q_ctx)
 {
 	int reuse = 0;
+	em_status_t ret;
 
 	(void)queue;
 	(void)q_ctx;
@@ -447,7 +448,10 @@ static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
 			APPL_PRINT((msgin->count & 1) ? "tick\n" : "tock\n");
 
 			/* ack periodic timeout, re-use the same event */
-			em_tmo_ack(msgin->tmo, event);
+			ret = em_tmo_ack(msgin->tmo, event);
+			test_fatal_if(ret != EM_OK,
+				      "em_tmo_ack():%" PRI_STAT, ret);
+
 			reuse = 1; /* do not free this event */
 
 			/* get random timeouts going after 10th message */

@@ -56,10 +56,11 @@ See further configure options: ../configure --help
 > make && make install
 
 Tested against odp linux-generic, commit:
-  Commit: fd9f805a0024677f31876e13d28aa8ab9470a282 [fd9f805]
-  Date: Thursday, 4 June 2020 0:48.15
-  Commit Date: Thursday, 4 June 2020 16:39.27
-  validation: classification: fix duplicate global variable definition
+  Commit: 518bb7cf5c8f35c198f40015d999cce7de0c4365 [518bb7c]
+  Date: Friday, 12 June 2020 15:49.56
+  Commit Date: Friday, 3 July 2020 15:20.24
+  changelog: updates for odp v1.24.0.0
+  Add latest API changes and fixed issues.
 
 Trying to build static test applications without a static ODP library would
 fail.
@@ -162,10 +163,9 @@ ODP compilations as above but different installation directories i.e.
 > ../configure --prefix=<odp-dpdk install path>
 
 Tested against odp-dpdk commit:
-Commit: 102173c31bf1af979488af3d3d4175d162ac0454 [102173c]
-Date: Monday, 11 May 2020 14:59.08
-Commit Date: Wednesday, 13 May 2020 12:30.53
-linux-dpdk: pktio: add configuration option for ethernet multicast receipt
+Commit: aa55e35150da8099ed9f565173993609650010af [aa55e35]
+Date: Friday, 3 July 2020 17:03.49
+Merge ODP v1.24.0.0
 
 EM-ODP compilation with odp-dpdk:
 > mkdir build-dpdk && cd build-dpdk

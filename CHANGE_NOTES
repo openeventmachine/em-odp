@@ -44,6 +44,23 @@ The version numbering scheme reflects the used EM API version:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine on ODP v2.3.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.3 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API:
+    - Event: multi-event alloc and free functions
+    - Hooks: use the same hook-type for all allocs and the same for all frees
+    - EO: multi-event EO-receive function
+    - Dispatch: one common enter-callback for multi- and single-receive funcs.
+    - Init: core masks for input_poll_fn and output_drain_fn added to em_conf_t
+    - Init: use em_conf_init(em_conf_t *conf) to init the EM config params.
+    - Event: APIs to get the event type(s) of multiple events
+- Fix libemodp symbol visibility, only expose API symbols
+- New example program:     timer_test_periodic
+  New packet-io programs:  loopback_local_multircv, loopback_multircv
+  New performance program: loop_multircv
+
+--------------------------------------------------------------------------------
 Event Machine on ODP v2.2.0
 --------------------------------------------------------------------------------
 - Support for EM API v2.2 (em-odp/include), see API changes in

@@ -33,11 +33,12 @@
  * @file
  *
  * Event Machine HW specific types
- *
  */
 
 #ifndef EVENT_MACHINE_HW_TYPES_H
 #define EVENT_MACHINE_HW_TYPES_H
+
+#pragma GCC visibility push(default)
 
 #include <odp/api/cpumask.h>
 
@@ -206,11 +207,10 @@ typedef enum em_queue_prio_e {
 #define EM_QUEUE_FLAG_DEQ_NOT_MTSAFE  8
 
 /**
- * Type for queue group core mask.
+ * EM core mask.
  * Each bit represents one core, core 0 is the lsb (1 << em_core_id())
  * Note, that EM will enumerate the core identifiers to always start from 0 and
  * be contiguous meaning the core numbers are not necessarily physical.
- * This type can handle up to 64 cores.
  *
  * Use the functions in event_machine_hw_specific.h to manipulate the
  * core masks.
@@ -340,26 +340,28 @@ typedef enum em_status_e {
 	EM_ERR_BAD_STATE        = 2,
 	/** ID not from a valid range */
 	EM_ERR_BAD_ID           = 3,
+	/** Invalid argument */
+	EM_ERR_BAD_ARG          = 4,
 	/** Resource allocation failed */
-	EM_ERR_ALLOC_FAILED     = 4,
+	EM_ERR_ALLOC_FAILED     = 5,
 	/** Resource already reserved by someone else */
-	EM_ERR_NOT_FREE         = 5,
+	EM_ERR_NOT_FREE         = 6,
 	/** Resource not found */
-	EM_ERR_NOT_FOUND        = 6,
+	EM_ERR_NOT_FOUND        = 7,
 	/** Value over the limit */
-	EM_ERR_TOO_LARGE        = 7,
-	/** Value over the limit */
-	EM_ERR_TOO_SMALL        = 8,
+	EM_ERR_TOO_LARGE        = 8,
+	/** Value under the limit */
+	EM_ERR_TOO_SMALL        = 9,
 	/** Operation failed */
-	EM_ERR_OPERATION_FAILED = 9,
+	EM_ERR_OPERATION_FAILED = 10,
 	/** Failure in a library function */
-	EM_ERR_LIB_FAILED       = 10,
+	EM_ERR_LIB_FAILED       = 11,
 	/** Implementation missing (placeholder) */
-	EM_ERR_NOT_IMPLEMENTED  = 11,
+	EM_ERR_NOT_IMPLEMENTED  = 12,
 	/** Pointer from bad memory area (e.g. NULL) */
-	EM_ERR_BAD_POINTER      = 12,
+	EM_ERR_BAD_POINTER      = 13,
 	/** Operation timeout (e.g. waiting on a lock) */
-	EM_ERR_TIMEOUT          = 13,
+	EM_ERR_TIMEOUT          = 14,
 
 	/** Other error. This is the last error code (for bounds checking) */
 	EM_ERR
@@ -465,36 +467,60 @@ typedef struct {
 } em_output_queue_conf_t;
 
 /**
- * API-callback hook for em_alloc().
+ * API-callback hook for em_alloc() and em_alloc_multi().
  *
- * The hook will only be called for successful allocs, passing also the
- * newly allocated 'event' to the hook.
- * The state and ownership of the event must not be changed by the hook, e.g.
- * the event must not be freed or sent etc. Calling em_alloc() within the
- * alloc hook leads to hook recursion and must be avoided.
+ * The hook will only be called for successful allocs, passing also the newly
+ * allocated 'events' to the hook.
+ * The state and ownership of the events must not be changed by the hook, e.g.
+ * the events must not be freed or sent etc. Calling em_alloc/_multi() within
+ * the alloc hook leads to hook recursion and must be avoided.
+ *
+ * @note em_alloc(): hook is called with events[1] and num_act = num_req = 1.
+ * @note em_alloc_multi(): hook is called with events[num_act] and
+ *                         num_req >= num_act >= 1
  *
  * API-callback hook functions can be called concurrently from different cores.
  *
- * @see
+ * @param[in] events[]  Array of newly allocated events: 'events[num_act]'.
+ *                      Don't change the state of the array or the events!
+ * @param num_act       The actual number of events allocated and written into
+ *                      'events[]' (num_act <= num_req). This is the return val
+ *                      of em_alloc_multi() if at least one event was allocated
+ *                      (the hook is not called if no events were allocated).
+ * @param num_req       The requested number of events to allocate,
+ *                      from em_alloc/_multi('num')
+ * @param size          Event size >0, from em_alloc/_multi('size')
+ * @param type          Event type to allocate, from em_alloc/_multi('type')
+ * @param pool          Event pool handle, from em_alloc/_multi('pool')
+ *
+ * @see em_alloc(), em_alloc_multi() and em_hooks_register_alloc()
  */
-typedef void (*em_api_hook_alloc_t)(em_event_t event, size_t size,
+typedef void (*em_api_hook_alloc_t)(const em_event_t events[/*num_act*/],
+				    int num_act, int num_req, size_t size,
 				    em_event_type_t type, em_pool_t pool);
 
 /**
- * API-callback hook for em_free().
+ * API-callback hook for em_free() and em_free_multi().
  *
- * The hook will be called before freeing the actual event, after verifying that
- * the event given to em_free() is valid, thus the hook does not 'see' if the
- * actual free-operation succeeds or fails.
- * The state and ownership of the event must not be changed by the hook, e.g.
- * the event must not be freed or sent etc. Calling em_free() within the
+ * The hook will be called before freeing the actual events, after verifying
+ * that the events given are valid, thus the hook does not 'see' if the actual
+ * free-operation succeeds or fails.
+ * The state and ownership of the events must not be changed by the hook, e.g.
+ * the events must not be freed or sent etc. Calling em_free/_multi() within the
  * free hook leads to hook recursion and must be avoided.
+ *
+ * @note em_free(): hook is called with events[1] and num = 1.
+ * @note em_free_multi(): hook is called with events[num] and num >= 1
  *
  * API-callback hook functions can be called concurrently from different cores.
  *
- * @see
+ * @param[in] events[]  Array of events to be freed: 'events[num]'
+ *                      Don't change the state of the array or the events!
+ * @param num           The number of events in the array 'events[]'.
+ *
+ * @see em_free(), em_free_multi() and em_hooks_register_free()
  */
-typedef void (*em_api_hook_free_t)(em_event_t event);
+typedef void (*em_api_hook_free_t)(const em_event_t events[], int num);
 
 /**
  * API-callback hook for em_send(), em_send_multi(), em_send_group() and
@@ -514,7 +540,7 @@ typedef void (*em_api_hook_free_t)(em_event_t event);
  *
  * @see
  */
-typedef void (*em_api_hook_send_t)(em_event_t *const events, int num,
+typedef void (*em_api_hook_send_t)(const em_event_t events[], int num,
 				   em_queue_t queue,
 				   em_event_group_t event_group);
 
@@ -536,13 +562,15 @@ typedef void (*em_api_hook_send_t)(em_event_t *const events, int num,
  */
 typedef struct {
 	/**
-	 * API callback hook for em_alloc().
+	 * API callback hook for _all_ alloc-variants:
+	 * em_alloc() and em_alloc_multi()
 	 * Initialize to NULL if unused.
 	 */
 	em_api_hook_alloc_t alloc_hook;
 
 	/**
-	 * API callback hook for em_free().
+	 * API callback hook for all free-variants:
+	 * em_free() and em_free_multi()
 	 * Initialize to NULL if unused.
 	 */
 	em_api_hook_free_t free_hook;
@@ -554,80 +582,6 @@ typedef struct {
 	 */
 	em_api_hook_send_t send_hook;
 } em_api_hooks_t;
-
-/**
- * Event Machine run-time configuration options given at startup to em_init()
- *
- * Content is copied into EM.
- *
- * @note Several EM options are configured through compile-time defines.
- *       Run-time options allow using the same EM-lib with different configs.
- *
- * @see em_init()
- */
-typedef struct {
-	/**
-	 * EM device id - use different device ids for each EM instance or
-	 * remote EM device that need to communicate with each other.
-	 */
-	uint16_t device_id;
-
-	/** Event Timer: enable=1, disable=0 */
-	int event_timer;
-
-	/** RunMode: EM run with one process per core */
-	int process_per_core;
-
-	/** RunMode: EM run with one thread per core */
-	int thread_per_core;
-
-	/** Number of EM-cores (== number of EM-threads or EM-processes) */
-	int core_count;
-
-	/** Physical core mask */
-	em_core_mask_t phys_mask;
-
-	/** Pool configuration for the EM default pool (EM_POOL_DEFAULT) */
-	em_pool_cfg_t default_pool_cfg;
-
-	/** EM log functions - both log_fn AND vlog_fn MUST be set if used! */
-	struct {
-		/** EM log function, user overridable, variable number of args*/
-		em_log_func_t log_fn;
-		/** EM log function, user overridable, va_list */
-		em_vlog_func_t vlog_fn;
-	} log;
-
-	/** EM event/pkt input related functions and config */
-	struct {
-		/**
-		 * User provided function for polling various input sources for
-		 * events/pkts and enqueue into EM.
-		 * Set to 'NULL' if not needed.
-		 */
-		em_input_poll_func_t input_poll_fn;
-	} input;
-
-	/** EM event/pkt output related functions and config */
-	struct {
-		/**
-		 * User provided function for 'periodical' draining of buffered
-		 * output - make sure buffered output events/pkts are eventually
-		 * sent out even if the rate is low.
-		 * Set to 'NULL' if not needed.
-		 */
-		em_output_drain_func_t output_drain_fn;
-	} output;
-
-	/**
-	 * User provided API callback hooks.
-	 * Set only the needed hooks to avoid performance degradation.
-	 * Only used if EM_API_HOOKS_ENABLE != 0
-	 */
-	em_api_hooks_t api_hooks;
-
-	/* Add further as needed. */
-} em_conf_t;
 
 /**
  * @def EM_ERROR_FATAL_MASK
@@ -670,25 +624,30 @@ typedef struct {
 				     == EM_ESCOPE_INTERNAL_MASK)
 
 /**
+ * @def EM_ESCOPE_CONF_INIT
+ * EM internal escope: initialize the Event Machine em_conf_t struct
+ */
+#define EM_ESCOPE_CONF_INIT                  (EM_ESCOPE_INTERNAL_MASK | 0x0001)
+/**
  * @def EM_ESCOPE_INIT
  * EM internal escope: initialize the Event Machine
  */
-#define EM_ESCOPE_INIT                       (EM_ESCOPE_INTERNAL_MASK | 0x0001)
+#define EM_ESCOPE_INIT                       (EM_ESCOPE_INTERNAL_MASK | 0x0002)
 /**
  * @def EM_ESCOPE_INIT_CORE
  * EM internal escope: initialize an Event Machine core
  */
-#define EM_ESCOPE_INIT_CORE                  (EM_ESCOPE_INTERNAL_MASK | 0x0002)
+#define EM_ESCOPE_INIT_CORE                  (EM_ESCOPE_INTERNAL_MASK | 0x0003)
 /**
  * @def EM_ESCOPE_TERM
  * EM internal escope: terminate the Event Machine
  */
-#define EM_ESCOPE_TERM                       (EM_ESCOPE_INTERNAL_MASK | 0x0003)
+#define EM_ESCOPE_TERM                       (EM_ESCOPE_INTERNAL_MASK | 0x0004)
 /**
  * @def EM_ESCOPE_TERM_CORE
  * EM internal escope: terminate an Event Machine core
  */
-#define EM_ESCOPE_TERM_CORE                  (EM_ESCOPE_INTERNAL_MASK | 0x0004)
+#define EM_ESCOPE_TERM_CORE                  (EM_ESCOPE_INTERNAL_MASK | 0x0005)
 
 /**
  * @def EM_ESCOPE_POOL_CREATE
@@ -809,9 +768,6 @@ typedef struct {
 #define EM_ESCOPE_EVENT_INTERNAL_LFUNC_CALL  (EM_ESCOPE_INTERNAL_MASK | 0x080D)
 #define EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ  (EM_ESCOPE_INTERNAL_MASK | 0x080E)
 
-/* EM internal escopes: Event */
-#define EM_ESCOPE_EVENT_FREE_MULTI           (EM_ESCOPE_INTERNAL_MASK | 0x0901)
-
 /**
  * @def EM_ESCOPE_ODP_EXT
  * EM ODP extensions error scope
@@ -822,4 +778,5 @@ typedef struct {
 }
 #endif
 
+#pragma GCC visibility pop
 #endif /* EVENT_MACHINE_HW_TYPES_H */

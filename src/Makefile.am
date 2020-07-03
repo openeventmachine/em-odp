@@ -11,8 +11,8 @@ AM_CFLAGS += -I$(top_srcdir)/include/event_machine/add-ons
 AM_CFLAGS += -I$(top_srcdir)/src/misc
 
 AM_CFLAGS += $(ODP_CFLAGS)
-
-AM_CFLAGS +=  $(LIBCONFIG_CFLAGS)
+AM_CFLAGS += $(LIBCONFIG_CFLAGS)
+AM_CFLAGS += $(VISIBILITY_CFLAGS) # -fvisibility=hidden set if supported
 
 AM_LDFLAGS += -version-number '$(EMODP_LIBSO_VERSION)'
 
@@ -103,6 +103,7 @@ em_pool.c \
 em_queue.c \
 em_queue_group.c \
 em_libconfig.c \
+em_init.c \
 	\
 env/env_sharedmem.c \
 misc/objpool.c \
