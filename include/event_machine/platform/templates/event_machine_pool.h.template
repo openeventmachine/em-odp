@@ -63,6 +63,159 @@ extern "C" {
 #endif
 
 /**
+ * EM pool configuration
+ *
+ * Configuration of an EM event pool consisting of up to 'EM_MAX_SUBPOOLS'
+ * subpools, each supporting a specific event payload size. Event allocation,
+ * i.e. em_alloc(), will use the subpool that provides the best fit for the
+ * requested size.
+ *
+ * Example usage:
+ * @code
+ *	em_pool_cfg_t pool_cfg;
+ *
+ *	em_pool_cfg_init(&pool_cfg); // init with default values
+ *	pool_cfg.event_type = EM_EVENT_TYPE_PACKET;
+ *	...
+ *	pool_cfg.num_subpools = 4;
+ *	pool_cfg.subpool[0].size = X;
+ *	pool_cfg.subpool[0].num = Y;
+ *	pool_cfg.subpool[0].cache_size = Z;
+ *	...
+ *	pool = em_pool_create(..., &pool_cfg);
+ * @endcode
+ */
+typedef struct {
+	/**
+	 * Event type determines the pool type used:
+	 *    - EM_EVENT_TYPE_SW creates subpools of type 'ODP_POOL_BUFFER'
+	 *      This kind of EM pool CANNOT be used to create events of major
+	 *      type EM_EVENT_TYPE_PACKET.
+	 *    - EM_EVENT_TYPE_PACKET creates subpools of type 'ODP_POOL_PACKET'
+	 *      This kind of EM pool can be used for events of all kinds.
+	 * @note Only major types are considered here, setting minor is error
+	 */
+	em_event_type_t event_type;
+	/**
+	 * Alignment offset in bytes for the event payload start address
+	 * (for all events allocated from this EM pool).
+	 *
+	 * The default EM event payload start address alignment is a
+	 * power-of-two that is at minimum 32 bytes (i.e. 32 B, 64 B, 128 B etc.
+	 * depending on e.g. target cache-line size).
+	 * The 'align_offset.value' option can be used to fine-tune the
+	 * start-address by a small offset to e.g. make room for a small
+	 * SW header before the rest of the payload that might need a specific
+	 * alignment for direct HW-access.
+	 * Example: setting 'align_offset.value = 8' makes sure that the payload
+	 * _after_ 8 bytes will be aligned at minimum (2^x) 32 bytes.
+	 *
+	 * This option conserns all events allocated from the pool and overrides
+	 * the global config file option 'pool.align_offset' for this pool.
+	 */
+	struct {
+		/**
+		 * Select: Use pool-specific align-offset 'value' from below or
+		 *         use the global default value from the config file.
+		 * false (0): Use default value from the config file.
+		 * true (not 0): Use pool specific value set below.
+		 */
+		int in_use;
+		/**
+		 * Pool-specific event payload alignment offset value in bytes
+		 * (only evaluated if 'in_use=true').
+		 * Overrides the config file value for this pool.
+		 * The given 'value' must be a small power-of-two: 2, 4, or 8
+		 * 0: Explicitly set 'No align offset' for the pool.
+		 */
+		uint32_t value;
+	} align_offset;
+	/**
+	 * Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS
+	 */
+	int num_subpools;
+	struct {
+		/** Event payload size of the subpool (size > 0)  */
+		uint32_t size;
+		/** Number of events in the subpool (num > 0) */
+		uint32_t num;
+		/**
+		 * Maximum number of locally cached subpool events per EM-core.
+		 *
+		 * Allocating or freeing events from a core-local event-cache
+		 * can be faster than using the global event subpool. Cached
+		 * events are only available on the local core and can reduce
+		 * the number of globally free events in the subpool, thus
+		 * consider setting 'num > EM-core-count * cache_size'.
+		 * The actual used cache_size will be smaller than or equal to
+		 * the requested value, depending on the implementation.
+		 */
+		uint32_t cache_size;
+	} subpool[EM_MAX_SUBPOOLS];
+
+	/**
+	 * Internal check - don't touch!
+	 *
+	 * EM will verify that em_pool_cfg_init(pool_cfg) has been called before
+	 * creating a pool with em_pool_create(..., pool_cfg)
+	 */
+	uint32_t __internal_check;
+} em_pool_cfg_t;
+
+/**
+ * EM pool information and usage statistics
+ */
+typedef struct {
+	/* Pool name */
+	char name[EM_POOL_NAME_LEN];
+	/** EM pool handle */
+	em_pool_t em_pool;
+	/** Event type of events allocated from the pool */
+	em_event_type_t event_type;
+	/** Event payload alignment offset for events from the pool */
+	uint32_t align_offset;
+	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
+	int num_subpools;
+	struct {
+		/** Event payload size of the subpool */
+		uint32_t size;
+		/** Number of events in the subpool */
+		uint32_t num;
+		/** Max number of locally cached subpool events per EM-core */
+		uint32_t cache_size;
+		/**
+		 * Number of events allocated from the subpool.
+		 * Only if EM config file: pool.statistics_enable=true,
+		 * otherwise .used=0
+		 */
+		uint32_t used;
+		/**
+		 * Number of events free in the subpool.
+		 * Only if EM config file: pool.statistics_enable=true,
+		 * otherwise .free=0
+		 */
+		uint32_t free;
+	} subpool[EM_MAX_SUBPOOLS];
+} em_pool_info_t;
+
+/**
+ * Initialize EM-pool configuration parameters for em_pool_create()
+ *
+ * Initialize em_pool_cfg_t to default values for all fields.
+ * After initialization, the user further needs to update the fields of
+ * 'em_pool_cfg_t' with appropriate sizing information before calling
+ * em_pool_create().
+ *
+ * Always initialize 'pool_cfg' first with em_pool_cfg_init(pool_cfg) to
+ * ensure backwards compatibility with potentially added new options.
+ *
+ * @param pool_cfg  Address of the em_pool_cfg_t to be initialized
+ *
+ * @see em_pool_cfg_t and em_pool_create()
+ */
+void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg);
+
+/**
  * Create a new EM event pool
  *
  * Create an EM event pool that can be used for event allocation. The event pool
@@ -76,10 +229,10 @@ extern "C" {
  *
  * @return EM pool handle or EM_POOL_UNDEF on error
  *
- * @see event_machine_hw_types.h for em_pool_cfg_t
+ * @see em_pool_cfg_t and em_pool_cfg_init()
  */
 em_pool_t
-em_pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg);
+em_pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg);
 
 /**
  * Delete an existing EM event pool
@@ -118,9 +271,9 @@ em_pool_find(const char *name);
  * If the event pool has no name, the function returns 0 and writes an
  * empty string.
  *
- * @param pool          EM event pool
- * @param name          Destination buffer
- * @param maxlen        Maximum length (including the terminating '0')
+ * @param      pool    EM event pool
+ * @param[out] name    Destination buffer
+ * @param      maxlen  Maximum length (including the terminating '0')
  *
  * @return Number of characters written (excludes the terminating '0').
  */
@@ -150,7 +303,7 @@ em_pool_get_name(em_pool_t pool, char *name, size_t maxlen);
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of
+ * @param[out] num   Pointer to an unsigned int to store the amount of
  *                   event pools into
  * @return The first event pool handle or EM_POOL_UNDEF if none exist
  *
@@ -176,8 +329,8 @@ em_pool_get_next(void);
 /**
  * Retieve information about an EM pool.
  *
- * @param pool             EM pool handle
- * @param pool_info [out]  Pointer to pool info that will be written
+ * @param      pool        EM pool handle
+ * @param[out] pool_info   Pointer to pool info that will be written
  *
  * @return EM_OK if successful
  *
@@ -186,7 +339,7 @@ em_pool_get_next(void);
  *       (= all zeros).
  */
 em_status_t
-em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/);
+em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/);
 
 /**
  * Helper function to print EM Pool information for a given pool.

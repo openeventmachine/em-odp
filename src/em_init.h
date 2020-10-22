@@ -74,14 +74,14 @@ typedef struct {
 } opt_t;
 
 em_status_t
-poll_drain_mask_check(em_core_mask_t *const logic_mask,
-		      em_core_mask_t *const poll_drain_mask);
+poll_drain_mask_check(const em_core_mask_t *logic_mask,
+		      const em_core_mask_t *poll_drain_mask);
 
 em_status_t
-input_poll_init(em_core_mask_t *const logic_mask, em_conf_t *const conf);
+input_poll_init(const em_core_mask_t *logic_mask, const em_conf_t *conf);
 
 em_status_t
-output_drain_init(em_core_mask_t *const logic_mask, em_conf_t *const conf);
+output_drain_init(const em_core_mask_t *logic_mask, const em_conf_t *conf);
 
 em_status_t
 poll_drain_mask_set_local(int *result, int core_id, em_core_mask_t *const mask);

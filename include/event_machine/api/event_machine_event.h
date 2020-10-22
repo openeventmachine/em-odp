@@ -112,12 +112,12 @@ em_event_t em_alloc(size_t size, em_event_type_t type, em_pool_t pool);
  * events, and will return the actual number of events that were successfully
  * allocated from the given pool.
  *
- * @param[out] events   Output event array, events are allocated and filled by
- *                      em_alloc_multi(). The given array must fit 'num' events.
- * @param num           Number of events to allocate and write into 'events[]'
- * @param size          Event size in octets (size > 0)
- * @param type          Event type to allocate
- * @param pool          Event pool handle
+ * @param[out] events  Output event array, events are allocated and filled by
+ *                     em_alloc_multi(). The given array must fit 'num' events.
+ * @param      num     Number of events to allocate and write into 'events[]'
+ * @param      size    Event size in octets (size > 0)
+ * @param      type    Event type to allocate
+ * @param      pool    Event pool handle
  *
  * @return Number of events actually allocated from the pool (0 ... num) and
  *         written into the output array 'events[]'.
@@ -150,8 +150,8 @@ void em_free(em_event_t event);
  * Similar to em_free(), but allows freeing of multiple events with one
  * function call.
  *
- * @param[in] events    Array of events to be freed
- * @param num           The number of events in the array 'events[]'
+ * @param[in] events  Array of events to be freed
+ * @param     num     The number of events in the array 'events[]'
  */
 void em_free_multi(const em_event_t events[], int num);
 
@@ -188,15 +188,16 @@ em_status_t em_send(em_event_t event, em_queue_t queue);
  * 'num' means that only the first 'num' events were sent and the rest must be
  * handled by the application.
  *
- * @param events        List of events to be sent (i.e. ptr to array of events)
- * @param num           Number of events (positive integer)
+ * @param events        Array of events to send
+ * @param num           Number of events.
+ *                      The array 'events[]' must contain 'num' entries.
  * @param queue         Destination queue
  *
  * @return number of events successfully sent (equal to num if all successful)
  *
  * @see em_send()
  */
-int em_send_multi(em_event_t *const events, int num, em_queue_t queue);
+int em_send_multi(const em_event_t events[], int num, em_queue_t queue);
 
 /**
  * Get a pointer to the event structure
@@ -263,12 +264,12 @@ em_event_type_t em_event_get_type(em_event_t event);
  * Note, if 'events[num]' are all of the same type then 'types[num]' will
  * contain 'num' same entries.
  *
- * @param       events  Event handles: events[num]
- * @param[out]  types   Event types (output array): types[num]
- *                      (types[i] is the type of events[i])
- * @param       num     Number of events and output types.
- *                      The array 'events[]' must contain 'num' entries and the
- *                      output array 'types[]' must have room for 'num' entries.
+ * @param      events  Event handles: events[num]
+ * @param[out] types   Event types (output array): types[num]
+ *                     (types[i] is the type of events[i])
+ * @param      num     Number of events and output types.
+ *                     The array 'events[]' must contain 'num' entries and the
+ *                     output array 'types[]' must have room for 'num' entries.
  *
  * @return Number of event types (0...num) written into 'types[]'.
  *         The return value (always >=0) is usually 'num' and thus '<num' is
@@ -277,7 +278,7 @@ em_event_type_t em_event_get_type(em_event_t event);
  *         'num=0'. The function stops and returns on the first error and will
  *         not fill the rest of 'types[]'.
  */
-int em_event_get_type_multi(em_event_t events[], int num,
+int em_event_get_type_multi(const em_event_t events[], int num,
 			    em_event_type_t types[/*out:num*/]);
 
 /**
@@ -299,7 +300,7 @@ int em_event_get_type_multi(em_event_t events[], int num,
  *         obtained or if the given 'num=0'.
  *         The function stops and returns on the first error.
  */
-int em_event_same_type_multi(em_event_t events[], int num,
+int em_event_same_type_multi(const em_event_t events[], int num,
 			     em_event_type_t *same_type /*out*/);
 
 /**

@@ -175,7 +175,7 @@ void
 test_start(appl_conf_t *const appl_conf)
 {
 	em_eo_t eo_a, eo_b;
-	em_status_t ret, start_ret;
+	em_status_t ret, start_ret = EM_ERROR;
 	char pool_name[EM_POOL_NAME_LEN];
 
 	/*

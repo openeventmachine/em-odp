@@ -49,6 +49,7 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 			em_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead,	\
 				 __FILE__, __func__, __LINE__,		\
 				 (format), ## __VA_ARGS__);		\
+			__builtin_unreachable();			\
 		}							\
 }
 

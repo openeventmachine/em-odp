@@ -36,7 +36,7 @@
 
 /**
  * @file
- * Event Machine API v2.3
+ * Event Machine API v2.4
  *
  * This file includes all other needed EM headers
  */
@@ -54,7 +54,7 @@ extern "C" {
  * Minor API version number.
  * Updates and additions
  */
-#define EM_API_VERSION_MINOR 3
+#define EM_API_VERSION_MINOR 4
 
 /** @mainpage
  *
@@ -250,12 +250,12 @@ extern "C" {
 /* EM Dispatcher functions */
 #include <event_machine/api/event_machine_dispatcher.h>
 
-/* EM initialization and termination */
-#include <event_machine/platform/event_machine_init.h>
 /* EM Event Pool functions */
 #include <event_machine/platform/event_machine_pool.h>
 /* EM API hooks */
 #include <event_machine/platform/event_machine_hooks.h>
+/* EM initialization and termination */
+#include <event_machine/platform/event_machine_init.h>
 /* Other HW/Platform specific functions */
 #include <event_machine/platform/event_machine_hw_specific.h>
 

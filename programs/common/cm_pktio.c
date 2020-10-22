@@ -176,7 +176,7 @@ pktio_pool_destroy(void)
 }
 
 void
-pktio_init(appl_conf_t *const appl_conf)
+pktio_init(const appl_conf_t *appl_conf)
 {
 	odp_queue_param_t queue_param;
 	odp_queue_t odp_queue;
@@ -234,7 +234,7 @@ pktio_init(appl_conf_t *const appl_conf)
 }
 
 void
-pktio_deinit(appl_conf_t *const appl_conf)
+pktio_deinit(const appl_conf_t *appl_conf)
 {
 	(void)appl_conf;
 
@@ -699,7 +699,7 @@ pktio_tx_burst(tx_burst_t *const tx_burst)
  * Transmit events(pkts) via Eth Tx queues.
  */
 int
-pktio_tx(em_event_t events[], const unsigned int num,
+pktio_tx(const em_event_t events[], const unsigned int num,
 	 const em_queue_t output_queue, void *output_fn_args)
 {
 	odp_event_t *const odp_events = em_odp_events2odp(events);

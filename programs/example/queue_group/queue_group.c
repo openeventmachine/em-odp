@@ -279,7 +279,7 @@ test_start(appl_conf_t *const appl_conf)
 	em_queue_group_t default_group;
 	em_queue_t notif_queue;
 	em_event_group_t event_group;
-	em_status_t err, start_err;
+	em_status_t err, start_err = EM_ERROR;
 	em_eo_t eo;
 	em_notif_t notif_tbl[1];
 	int core_count = em_core_count();

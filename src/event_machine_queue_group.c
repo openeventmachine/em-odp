@@ -38,7 +38,7 @@ static ENV_LOCAL em_queue_group_t _qgrp_q_iter_qgrp;
 
 em_queue_group_t
 em_queue_group_create(const char *name, const em_core_mask_t *mask,
-		      int num_notif, const em_notif_t *notif_tbl)
+		      int num_notif, const em_notif_t notif_tbl[])
 {
 	em_queue_group_t queue_group;
 	em_status_t err;
@@ -80,7 +80,7 @@ em_queue_group_create_sync(const char *name, const em_core_mask_t *mask)
 
 em_status_t
 em_queue_group_delete(em_queue_group_t queue_group,
-		      int num_notif, const em_notif_t *notif_tbl)
+		      int num_notif, const em_notif_t notif_tbl[])
 {
 	em_core_mask_t zero_mask;
 	em_status_t err;
@@ -138,7 +138,7 @@ em_queue_group_delete_sync(em_queue_group_t queue_group)
 em_status_t
 em_queue_group_modify(em_queue_group_t queue_group,
 		      const em_core_mask_t *new_mask,
-		      int num_notif, const em_notif_t *notif_tbl)
+		      int num_notif, const em_notif_t notif_tbl[])
 {
 	queue_group_elem_t *const qgrp_elem =
 		queue_group_elem_get(queue_group);

@@ -323,7 +323,7 @@ test_start(appl_conf_t *const appl_conf)
 	queue_context_2nd_t *q_ctx_2nd;
 	queue_context_3rd_t *q_ctx_3rd;
 	queue_type_tuple_t *q_type_tuple;
-	em_status_t ret, start_fn_ret;
+	em_status_t ret, start_fn_ret = EM_ERROR;
 	uint16_t port_offset = (uint16_t)-1;
 	int q_ctx_idx = 0;
 	int if_id, i, j;

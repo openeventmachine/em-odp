@@ -391,7 +391,7 @@ test_start(appl_conf_t *const appl_conf)
 	em_queue_t queue_ag_a1, queue_ag_a2, queue_ag_a3;
 	em_queue_t queue_ag_b1, queue_ag_b2, queue_ag_b3;
 	em_queue_type_t q_type_a, q_type_b;
-	em_status_t ret, start_ret;
+	em_status_t ret, start_ret = EM_ERROR;
 	eo_context_t *eo_ctx;
 	queue_context_t *q_ctx;
 	pair_type_t pair_type;

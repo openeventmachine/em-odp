@@ -28,7 +28,7 @@ AS_IF([test -z "$OD"], [AC_MSG_ERROR([Could not find 'od'])])
 # Check default configuration file
 ##########################################################################
 AS_IF([test -z "$1"] || [test ! -f $1],
-      [AC_MSG_ERROR([Default configuration file not found])], [])
+      [AC_MSG_ERROR([Default configuration file not found: $1])], [])
 
 conf_ver=_em_config_version
 file_ver=`$SED 's/ //g' $1 | $GREP -oP '(?<=config_file_version=").*?(?=")'`
@@ -43,11 +43,11 @@ AS_IF([test "x$conf_ver" = "x$file_ver"], [],
 # terminated hex dump of em-odp.conf
 ##########################################################################
 AC_CONFIG_COMMANDS([include/em_libconfig_config.h],
-[mkdir -p include
-   (echo "static const char config_builtin[[]] = {"; \
-     $OD -An -v -tx1 < $CONFIG_FILE | \
-     $SED -e 's/[[0-9a-f]]\+/0x\0,/g' ; \
-     echo "0x00 };") > \
-   include/em_libconfig_config.h],
- [OD=$OD SED=$SED CONFIG_FILE=$1])
+		   [mkdir -p include
+		    (echo "static const char config_builtin[[]] = {"; \
+		     $OD -An -v -tx1 < $CONFIG_FILE | \
+		     $SED -e 's/[[0-9a-f]]\+/0x\0,/g' ; \
+		     echo "0x00 };") > \
+		    include/em_libconfig_config.h],
+		   [OD=$OD SED=$SED CONFIG_FILE=$1])
 ]) # EM_LIBCONFIG

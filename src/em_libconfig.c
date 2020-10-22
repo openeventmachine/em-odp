@@ -36,7 +36,7 @@
 #include "em_include.h"
 #include "include/em_libconfig_config.h"
 
-int libconfig_init_global(libconfig_t *libconfig)
+int _em_libconfig_init_global(libconfig_t *libconfig)
 {
 	const char *filename;
 	const char *vers;
@@ -106,7 +106,7 @@ fail:
 	return -1;
 }
 
-int libconfig_term_global(libconfig_t *libconfig)
+int _em_libconfig_term_global(libconfig_t *libconfig)
 {
 	config_destroy(&libconfig->cfg_default);
 	config_destroy(&libconfig->cfg_runtime);
@@ -114,7 +114,8 @@ int libconfig_term_global(libconfig_t *libconfig)
 	return 0;
 }
 
-int libconfig_lookup_int(libconfig_t *libconfig, const char *path, int *value)
+int _em_libconfig_lookup_int(libconfig_t *libconfig, const char *path,
+			     int *value)
 {
 	int ret_def = CONFIG_FALSE;
 	int ret_rt = CONFIG_FALSE;
@@ -127,7 +128,8 @@ int libconfig_lookup_int(libconfig_t *libconfig, const char *path, int *value)
 	return  (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) ? 1 : 0;
 }
 
-int libconfig_lookup_bool(libconfig_t *libconfig, const char *path, bool *value)
+int _em_libconfig_lookup_bool(libconfig_t *libconfig, const char *path,
+			      bool *value)
 {
 	int ret_def = CONFIG_FALSE;
 	int ret_rt = CONFIG_FALSE;
@@ -147,8 +149,8 @@ int libconfig_lookup_bool(libconfig_t *libconfig, const char *path, bool *value)
 	return  ret_val;
 }
 
-int libconfig_lookup_array(libconfig_t *libconfig, const char *path,
-			   int value[], int max_num)
+int _em_libconfig_lookup_array(libconfig_t *libconfig, const char *path,
+			       int value[], int max_num)
 {
 	const config_t *config;
 	config_setting_t *setting;
@@ -210,9 +212,9 @@ static int lookup_int(config_t *cfg,
 	return 0;
 }
 
-int libconfig_lookup_ext_int(libconfig_t *libconfig, const char *base_path,
-			     const char *local_path, const char *name,
-			     int *value)
+int _em_libconfig_lookup_ext_int(libconfig_t *libconfig, const char *base_path,
+				 const char *local_path, const char *name,
+				 int *value)
 {
 	if (lookup_int(&libconfig->cfg_runtime,
 		       base_path, local_path, name, value))

@@ -2,19 +2,23 @@
 
 #define APP_EO_NAME	"testEO"
 #define DEF_TMO_DATA	100 /* per core, MAX_TMO_DATA * sizeof(tmo_data) */
-#define MAX_TMO_BYTES	1000000000ULL /* sanity limit 1GB per core */
+#define MAX_TMO_BYTES	1000000000ULL /* sanity limit 1GB tracebuf per core */
 #define STOP_THRESHOLD	90 /* % of full buffer */
 #define MAX_CORES	64
 #define INIT_WAIT	5 /* startup wait, HBs */
 #define MEAS_PERIOD	5 /* freq meas HBs */
-#define DEF_MIN_PERIOD	10 /* min period default, N * res */
-#define USE_TIMER_STAT  0 /* 0 if EM does not support timer ack statistics */
+#define DEF_RES_NS	1000000ULL /* 1ms seems like a good generic default */
+#define DEF_PERIOD	20 /* default period, N * res */
+#define DEF_MIN_PERIOD	5 /* min period default, N * res */
+#define DEF_MAX_PERIOD	(2 * 1000 * 1000 * 1000ULL) /* 10sec */
 #define EXTRA_PRINTS	0 /* dev option, normally 0 */
 
 const struct option longopts[] = {
 	{"num-tmo",		required_argument, NULL, 'n'},
 	{"resolution",		required_argument, NULL, 'r'},
+	{"res_hz",		required_argument, NULL, 'z'},
 	{"period",		required_argument, NULL, 'p'},
+	{"first",		required_argument, NULL, 'f'},
 	{"max-period",		required_argument, NULL, 'm'},
 	{"min-period",		required_argument, NULL, 'l'},
 	{"clk",			required_argument, NULL, 'c'},
@@ -32,12 +36,14 @@ const struct option longopts[] = {
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "n:r:p:m:l:c:w::x:t:e:j:sadbg::h";
+const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbg::hz:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
 	"Number of concurrent timers to create",
-	"Resolution of test timer (ns)",
+	"Resolution of test timer (ns), Use 0 for highest supported",
+	"Resolution of periodic test timer as frequency (Hz). Use either -r or -z",
 	"Period of periodic test timer (ns). 0 for random",
+	"First period (ns, default 0 = same as period, use -1 for random)",
 	"Maximum period (ns)",
 	"Minimum period (ns, only used for random tmo)",
 	"Clock source (integer. See event_machine_timer_hw_specific.h)",
@@ -56,7 +62,7 @@ const char *descopts[] = {
 };
 
 const char *instructions =
-"Controlled by command line arguments. Main purpose is to manually test\n"
+"Controlled by command line arguments. Purpose of this tool is to manually test\n"
 "periodic timer accuracy and behaviour optionally under (over)load.\n"
 "API overheads can also be measured\n"
 "\nTwo EM timers are created. One for a heartbeat driving test states. Second\n"
@@ -86,7 +92,9 @@ const char *instructions =
 "	e.g. -j1,10,500,20 adds one event of 10us processing over 20kB data\n"
 "	randomly picked from 500kB\n\n"
 "Test can write a file of measured timings (-w). It is in CSV format and can\n"
-"be imported e.g. to excel for plotting. -w without name prints to stdout\n";
+"be imported e.g. to excel for plotting. -w without name prints to stdout\n"
+"\nSingle time values can be postfixed with n,u,m,s to indicate nano(default),\n"
+"micro, milli or seconds. e.g. -p1m for 1ms\n";
 
 typedef enum e_op {
 	OP_TMO,
@@ -178,6 +186,8 @@ typedef struct tmo_setup {
 	time_stamp start_ts;
 	uint64_t start;
 	uint64_t period_ns;
+	uint64_t first_ns;
+	uint64_t first;
 	uint64_t ticks;
 	uint64_t ack_late;
 } tmo_setup;

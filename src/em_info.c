@@ -30,6 +30,9 @@
 
 #include "em_include.h"
 
+#define XSTR(x) #x
+#define STR(x) XSTR(x)
+
 static void
 print_core_map_info(void)
 {
@@ -64,9 +67,10 @@ print_em_info(void)
 		 "32 bit "
 #endif
 		"(EM_CHECK_LEVEL: %d)\n"
+		"EM build info: %s\n"
 		"ODP version: %s\n",
 		 EM_TARGET_STR, EM_API_VERSION_MAJOR, EM_API_VERSION_MINOR,
-		 EM_CHECK_LEVEL, odp_version_impl_str());
+		 EM_CHECK_LEVEL, STR(EM_BUILD_INFO), odp_version_impl_str());
 
 	print_core_map_info();
 	print_queue_info();

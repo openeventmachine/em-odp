@@ -40,10 +40,10 @@ get_hook_tbl(const uint8_t hook_type, hook_storage_t **hook_storage /*out*/);
  * table so that there are no NULL pointers in the middle.
  */
 static inline int
-pack_hook_tbl(hook_tbl_t *const hook_tbl, unsigned int idx);
+pack_hook_tbl(hook_tbl_t hook_tbl[], unsigned int idx);
 
 em_status_t
-hooks_init(em_api_hooks_t *const api_hooks)
+hooks_init(const em_api_hooks_t *api_hooks)
 {
 	em_status_t stat = EM_OK;
 

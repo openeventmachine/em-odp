@@ -16,6 +16,10 @@ AM_CFLAGS += $(VISIBILITY_CFLAGS) # -fvisibility=hidden set if supported
 
 AM_LDFLAGS += -version-number '$(EMODP_LIBSO_VERSION)'
 
+DISTCLEANFILES = $(top_builddir)/include/em_libconfig_config.h
+include/em_libconfig_config.h: $(top_builddir)/$(rel_default_config_file) $(top_builddir)/config.status
+	cd $(top_builddir) && $(SHELL) ./config.status $@
+
 include_HEADERS = \
 $(top_srcdir)/include/event_machine.h
 
@@ -69,48 +73,111 @@ $(top_srcdir)/include/event_machine/platform/env/env_sharedmem.h \
 $(top_srcdir)/include/event_machine/platform/env/env_spinlock.h \
 $(top_srcdir)/include/event_machine/platform/env/env_time.h
 
+BUILT_SOURCES = include/em_libconfig_config.h
+
 __LIB__libemodp_la_SOURCES = \
 event_machine_atomic_group.c \
 event_machine_core.c \
 event_machine_dispatcher.c \
 event_machine_eo.c \
 event_machine_error.c \
-event_machine_event.c \
 event_machine_event_group.c \
+event_machine_event.c \
 event_machine_helper.c \
-event_machine_hw_specific.c \
 event_machine_hooks.c \
+event_machine_hw_specific.c \
 event_machine_init.c \
-event_machine_pool.c \
-event_machine_queue.c \
-event_machine_queue_group.c \
-event_machine_scheduler.c \
 event_machine_odp_ext.c \
+event_machine_pool.c \
+event_machine_queue_group.c \
+event_machine_queue.c \
+event_machine_scheduler.c \
 	\
 em_atomic_group.c \
+em_atomic_group.h \
+em_atomic_group_types.h \
+	\
+em_atomic.h \
+	\
 em_chaining.c \
+em_chaining.h \
+em_chaining_types.h \
+	\
 em_core.c \
+em_core.h \
+em_core_types.h \
+	\
 em_daemon_eo.c \
+em_daemon_eo.h \
+em_daemon_eo_types.h \
+	\
 em_dispatcher.c \
+em_dispatcher.h \
+em_dispatcher_types.h \
+	\
 em_eo.c \
+em_eo.h \
+em_eo_types.h \
+	\
 em_error.c \
+em_error.h \
+em_error_types.h \
+	\
 em_event.c \
+em_event.h \
+em_event_types.h \
+	\
 em_event_group.c \
+em_event_group.h \
+em_event_group_types.h \
+	\
 em_hooks.c \
+em_hooks.h \
+em_hook_types.h \
+	\
+em_include.h \
+	\
 em_info.c \
-em_internal_event.c \
-em_pool.c \
-em_queue.c \
-em_queue_group.c \
-em_libconfig.c \
+em_info.h \
+	\
 em_init.c \
+em_init.h \
+	\
+em_internal_event.c \
+em_internal_event.h \
+em_internal_event_types.h \
+	\
+em_libconfig.c \
+em_libconfig.h \
+em_libconfig_types.h \
+	\
+em_mem.h \
+	\
+em_pool.c \
+em_pool.h \
+em_pool_types.h \
+	\
+em_queue.c \
+em_queue.h \
+em_queue_types.h \
+	\
+em_queue_group.c \
+em_queue_group.h \
+em_queue_group_types.h \
+	\
+em_sync_api_types.h \
 	\
 env/env_sharedmem.c \
-misc/objpool.c \
 	\
+misc/objpool.c \
+misc/objpool.h \
+misc/list.h \
 	\
 add-ons/event_timer/event_machine_timer.c \
-add-ons/event_timer/em_timer.c
+add-ons/event_timer/em_timer.c \
+add-ons/event_timer/em_timer_conf.h \
+add-ons/event_timer/em_timer.h \
+add-ons/event_timer/em_timer_types.h
 
 __LIB__libemodp_la_LIBADD = $(ODP_LIBS)
 __LIB__libemodp_la_LIBADD += $(LIBCONFIG_LIBS)

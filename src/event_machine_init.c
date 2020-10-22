@@ -57,19 +57,17 @@ void em_conf_init(em_conf_t *conf)
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
 			       EM_ESCOPE_CONF_INIT, "Conf pointer NULL!");
 	memset(conf, 0, sizeof(em_conf_t));
+	em_pool_cfg_init(&conf->default_pool_cfg);
 }
 
 em_status_t
-em_init(em_conf_t *conf)
+em_init(const em_conf_t *conf)
 {
 	em_status_t stat;
 	int ret;
 
 	RETURN_ERROR_IF(!conf, EM_FATAL(EM_ERR_BAD_POINTER), EM_ESCOPE_INIT,
 			"Conf pointer NULL!");
-
-	if (!EM_API_HOOKS_ENABLE)
-		memset(&conf->api_hooks, 0, sizeof(conf->api_hooks));
 
 	stat = early_log_init(conf->log.log_fn, conf->log.vlog_fn);
 	RETURN_ERROR_IF(stat != EM_OK, EM_FATAL(stat),
@@ -98,6 +96,11 @@ em_init(em_conf_t *conf)
 	/* Store the given EM configuration */
 	em_shm->conf = *conf;
 
+	if (!EM_API_HOOKS_ENABLE) {
+		memset(&em_shm->conf.api_hooks, 0,
+		       sizeof(em_shm->conf.api_hooks));
+	}
+
 	env_spinlock_init(&em_shm->init.lock);
 
 	/* Initialize the log & error handling */
@@ -105,7 +108,7 @@ em_init(em_conf_t *conf)
 	error_init();
 
 	/* Initialize libconfig */
-	ret = libconfig_init_global(&em_shm->libconfig);
+	ret = _em_libconfig_init_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_OPERATION_FAILED, EM_ESCOPE_INIT,
 			"libconfig initialization failed:%d", ret);
 
@@ -290,7 +293,7 @@ em_init_core(void)
 }
 
 em_status_t
-em_term(em_conf_t *conf)
+em_term(const em_conf_t *conf)
 {
 	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
@@ -335,7 +338,7 @@ em_term(em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"chaining_term() failed:%" PRI_STAT "", stat);
 
-	ret = libconfig_term_global(&em_shm->libconfig);
+	ret = _em_libconfig_term_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"EM config term failed:%d");
 

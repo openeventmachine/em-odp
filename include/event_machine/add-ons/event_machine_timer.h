@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2016, Nokia Solutions and Networks
+ *   Copyright (c) 2016-2020, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -27,7 +27,6 @@
  *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
 #ifndef EVENT_MACHINE_TIMER_H_
 #define EVENT_MACHINE_TIMER_H_
 
@@ -71,26 +70,27 @@
  * A pending timeout can be cancelled. Note that there is no way to cancel an
  * expired timeout for which the event has already been sent but not yet
  * received by the application - canceling, in this case, will return an error
- * to enable the the application to detect the situation. For a periodic timer,
+ * to enable the application to detect the situation. For a periodic timer,
  * a cancel will stop further timeouts, but may not be able to prevent the
  * latest event from being received.
  *
  * An active timeout cannot be altered without canceling it first.
  *
- * Timeouts needs to be deleted after use. Deletion frees the resources reserved
- * during creation.
+ * A timeout can be re-used after it has been received or successfylly
+ * cancelled. Timeouts need to be deleted after use. Deletion frees the
+ * resources reserved during creation.
  *
- * The unit of time (seconds, nanoseconds, cycles of 1.66GHz clock, frame
- * numbers etc.) is defined per timer/clock source and is system dependent.
- * The timeout value is an abstract "tick" defined per timer.
+ * The timeout value is an abstract system and timer dependent tick count.
+ * It is assumed that the tick count increases with a static frequency.
+ * The frequency can be inquired at runtime for time calculations, e.g. tick
+ * frequency divided by 1000 gives ticks for 1ms. Tick frequency is at least
+ * equal to the resolution, but can also be higher (implementation can quantize
+ * ticks to any underlying implementation). Supported resolution can also be
+ * inquired.
  * A clock source can be specified when creating a timer. It defines the time
- * base of the timer for systems with multiple sources implemented.
+ * base of the timer for systems with multiple sources implemented (optional).
  * EM_TIMER_CLKSRC_DEFAULT is a portable value that implements a basic
- * monotonic non-wrapping time, typically based on the CPU clock.
- * It is assumed that the tick count is monotonic and will not wrap around,
- * unless a specific timer uses something exotic like a cyclic short frame
- * number counter.
- * The tick frequency of a timer can be inquired at runtime.
+ * monotonic time, that will not wrap back to zero in any reasonable uptime.
  *
  * A periodic timer requires the application to acknowledge each received
  * timeout event after it has been processed. The acknowledgment activates the
@@ -98,9 +98,8 @@
  * interval. This creates a flow control mechanism and also protects the event
  * handling from races if the same event is reused every time - the next
  * timeout will not be sent before the previous has been acknowledged.
- * The event to be received for each periodic timeout can also be different,
- * because the next event is always given by the application through the
- * acknowledge operation.
+ * The event to be received for each periodic timeout can also be different as
+ * the next event is given by the application with the acknowledge.
  * The target queue cannot be modified after the timeout has been created.
  *
  * If the acknowledgment of a periodic timeout is done too late (after the next
@@ -114,24 +113,21 @@
  *
  * The timeout handle is needed when acknowledging a periodic timeout event.
  * Because any event can be used for the timeout, the application must itself
- * provide a way to derive the timeout handle from the received timeout event
- * (a typical way is to include the tmo handle within the timeout event).
- * The application also needs to have a mechanism to detect which event is a
- * periodic timeout to be able to acknowledge.
+ * provide a way to derive the timeout handle from the received timeout event.
+ * A typical way is to include the tmo handle within the timeout event.
+ * Application also needs to have a mechanism to detect which event is a
+ * periodic timeout to be able to call acknowledge.
  *
  * Example usage
  * @code
  *
  *	// This would typically be done at application init.
- *	// Accept all defaults but require at least 100us resolution
- *	// and give a name.
+ *	// Accept all defaults
  *	em_timer_attr_t attr;
- *	memset(&attr, 0, sizeof(em_timer_attr_t));
- *	attr.resolution = 100000;
- *	strncpy(attr.name, "100usTimer", EM_TIMER_NAME_LEN);
+ *	em_timer_attr_init(&attr);
+ *	strncpy(attr.name, "myTimer", EM_TIMER_NAME_LEN);
  *	em_timer_t tmr = em_timer_create(&attr);
  *	if(tmr == EM_TIMER_UNDEF) {
- *		// out of resources or too tight requirements
  *		// handle error here or via error handler
  *	}
  *
@@ -165,7 +161,9 @@
 extern "C" {
 #endif
 
-#define EM_TIMER_API_VERSION_MAJOR   1
+/** Major API version, marks possibly not backwards compatible changes */
+#define EM_TIMER_API_VERSION_MAJOR   2
+/** Minor version, backwards compatible changes or additions */
 #define EM_TIMER_API_VERSION_MINOR   0
 
 /**
@@ -219,45 +217,196 @@ typedef enum em_tmo_state_t {
  */
 typedef uint64_t em_timer_tick_t;
 
-/**
+/*
  * Include system specific configuration and types
  */
 #include <event_machine/platform/add-ons/event_machine_timer_hw_specific.h>
 
-/**
- * Structure used to create a timer (or inquire its capabilities).
+/** Type for timer resolution parameters
  *
- * Setting a field to 0 means that the application accepts the default value.
- * Setting a non-zero value indicates a requirement. E.g. setting 'resolution'
- * to 1000(ns) requires at least 1us resolution. The timer creation will fail if
- * the implementation cannot support such high a resolution .
+ * This structure is used to group timer resolution parameters that may
+ * affect each other.
+ * All time values are ns.
+ *
+ * @note This is used both as capability and configuration. When used as configuration
+ *	 either res_ns or res_hz must be 0 (for em_timer_create).
+ * @see em_timer_capability, em_timer_create
+ */
+typedef struct em_timer_res_param_t {
+	/** Clock source (system specific) */
+	em_timer_clksrc_t clk_src;
+	/** resolution, ns */
+	uint64_t res_ns;
+	/** resolution, hz */
+	uint64_t res_hz;
+	/** minimum timeout, ns */
+	uint64_t min_tmo;
+	/** maximum timeout, ns */
+	uint64_t max_tmo;
+} em_timer_res_param_t;
+
+/**
+ * Structure used to create a timer or inquire its configuration later.
+ *
+ * This needs to be initialized with em_timer_attr_init(), which fills default
+ * values to each field. After that the values can be modified as needed.
+ * Values are considered as a requirement, e.g. setting 'resparam.res_ns' to 1000(ns)
+ * requires at least 1us resolution. The timer creation will fail if the implementation
+ * cannot support such resolution (like only goes down to 1500ns).
  * The implementation is free to provide better than requested, but not worse.
+ *
+ * To know the implementation specific limits use em_timer_capability and em_timer_res_capability.
+ *
+ * @note Value 0 as default is no longer supported and use of em_timer_attr_init is mandatory
+ * @see em_timer_attr_init, em_timer_capability
  */
 typedef struct em_timer_attr_t {
-	/** Timeout min resolution, ns. 0 for default */
-	uint64_t resolution;
-	/** Maximum timeout period, ns. 0 for default */
-	uint64_t max_tmo;
-	/** Min simultaneous timeouts. 0 for default */
+	/** Resolution parameters */
+	em_timer_res_param_t resparam;
+	/** Maximum simultaneous timeouts */
 	uint32_t num_tmo;
 	/** Extra flags. A set flag is a requirement */
 	em_timer_flag_t flags;
-	/** Clock source (system specific). 0 for default */
-	em_timer_clksrc_t clk_src;
 	/** Optional name for this timer */
 	char name[EM_TIMER_NAME_LEN];
+
+	/**
+	 * Internal check - don't touch!
+	 *
+	 * EM will verify that em_timer_attr_init() has been called before
+	 * creating a timer
+	 */
+	uint32_t __internal_check;
 } em_timer_attr_t;
+
+/**
+ * Timeout statistics counters
+ *
+ * Some fields relate to periodic timeout only (0 on one-shots) and vice versa.
+ * New fields may be added later at the end.
+ */
+typedef struct em_tmo_stats_t {
+	/** number of periodic ack() calls */
+	uint64_t num_acks;
+	/** number of delayed periodic ack() calls */
+	uint64_t num_late_ack;
+	/** number of skipped periodic timeslots due to late ack */
+	uint64_t num_period_skips;
+} em_tmo_stats_t;
+
+/**
+ * Timer capability info
+ */
+typedef struct em_timer_capability_t {
+	/** Number of supported timers */
+	uint32_t max_timers;
+	/** Maximum number of simultanous timeouts. 0 means only limited by memory */
+	uint32_t max_num_tmo;
+	/** Highest supported resolution and related limits for a timeout */
+	em_timer_res_param_t max_res;
+	/** Longest supported timeout and related resolution */
+	em_timer_res_param_t max_tmo;
+} em_timer_capability_t;
+
+/**
+ * Initialize em_timer_attr_t
+ *
+ * Initializes em_timer_attr_t to system specific default values.
+ * After initialization user can adjust the values as needed before
+ * calling em_timer_create. em_timer_capability() and/or em_timer_res_capability()
+ * can optionally be used to find valid values.
+ *
+ * Always initialize em_timer_attr_t with em_timer_attr_init before any use.
+ *
+ * This function will not trigger errorhandler calls internally.
+ *
+ * Example for all defaults
+ * @code
+ *	em_timer_attr_t tmr_attr;
+ *	em_timer_attr_init(&tmr_attr);
+ *	em_timer_t tmr = em_timer_create(&tmr_attr);
+ * @endcode
+ *
+ * @param tmr_attr  Pointer to em_timer_attr_t to be initialized
+ *
+ * @see em_timer_capability, em_timer_create
+ */
+void em_timer_attr_init(em_timer_attr_t *tmr_attr);
+
+/**
+ * Inquire timer capabilities
+ *
+ * Returns timer capabilities for the given clock source, which is also written
+ * to both 'capa->max_res.clk_src' and 'capa->max_tmo.clk_src'.
+ * For resolution both 'res_ns' and 'res_hz' are filled.
+ *
+ * This function will not trigger errorhandler calls internally.
+ *
+ * @param capa		pointer to em_timer_capability_t to be updated
+ *			(does not need to be initialized)
+ * @param clk_src	Clock source to use for timer
+ *			(EM_TIMER_CLKSRC_DEFAULT for system specific default)
+ * @return EM_OK if the given clk_src is supported (capa updated)
+ *
+ * @see em_timer_capability_t, em_timer_res_capability
+ */
+em_status_t em_timer_capability(em_timer_capability_t *capa, em_timer_clksrc_t clk_src);
+
+/**
+ * Inquire timer capabilities for a specific resolution or maximum timeout
+ *
+ * Returns timer capabilities by given resolution or maximum timeout.
+ * Set one of resolution (res.res_ns) or maximum timeout (res.max_tmo) to required value
+ * and the other to zero and this will fill the other fields with valid limits.
+ * Error is returned if the given value is not supported.
+ * The given clk_src is used to set the values and also written to 'res->clk_src'.
+ * Both 'res_ns' and 'res_hz' are filled, so if this is passed to em_timer_create,
+ * one of those must be set to 0.
+ *
+ * Example for external clock maximum resolution
+ * @code
+ *	em_timer_attr_t *tmr_attr;
+ *	em_timer_capability_t capa;
+ *
+ *	em_timer_attr_init(&tmr_attr);
+ *	if (em_timer_capability(&capa, EM_TIMER_CLKSRC_EXT) != EM_OK) {
+ *		// external clock not supported
+ *	}
+ *	tmr_attr.resparam = capa.max_res;
+ *	tmr_attr.resparam.res_hz = 0;
+ *	tmr = em_timer_create(&tmr_attr);
+ * @endcode
+ *
+ * This function will not trigger errorhandler calls internally.
+ *
+ * @param res		Pointer to em_timer_res_param_t with one field set
+ * @param clk_src	Clock source to use for timer
+ *			(EM_TIMER_CLKSRC_DEFAULT for system specific default)
+ * @return EM_OK if the input value is supported (res updated)
+ *
+ * @see em_timer_capability
+ */
+em_status_t em_timer_res_capability(em_timer_res_param_t *res, em_timer_clksrc_t clk_src);
 
 /**
  * Create and start a timer resource
  *
- * Required attributes can be given via tmr_attr. The given attr structure
- * should be cleared (written with 0) before setting any value fields for
- * backwards compatibility.
+ * Required attributes are given via tmr_attr. The given structure must be
+ * initialiazed with em_timer_attr_init before setting any field.
  *
- * @param tmr_attr  Timer requirement parameters. NULL ok (accept all defaults)
+ * Timer resolution can be given as time 'res_ns' or frequency 'res_hz'. User
+ * must choose which one to use by setting the other one to 0.
+ *
+ * To use all defaults initialize tmr_attr with em_timer_attr_init() and pass it
+ * as is to em_timer_create().
+ *
+ * @note NULL is no longer supported, must give pointer to initialized em_timer_attr_t
+ *
+ * @param tmr_attr  Timer parameters to use, pointer to initialized em_timer_attr_t
  *
  * @return Timer handle on success or EM_TIMER_UNDEF on error
+ *
+ * @see em_timer_attr_init, em_timer_capability
  */
 em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr);
 
@@ -278,7 +427,7 @@ em_status_t em_timer_delete(em_timer_t tmr);
  *
  * This can be used for calculating absolute timeouts.
  *
- * @param tmr	Timer handle
+ * @param tmr  Timer handle
  *
  * @return Current time in timer specific ticks or 0 on non-existing timer
  */
@@ -288,7 +437,7 @@ em_timer_tick_t em_timer_current_tick(em_timer_t tmr);
  * Allocate a new timeout
  *
  * Create a new timeout. Allocates the necessary internal resources from the
- * given timer and prepares for em_tmo_set_abs/rel().
+ * given timer and prepares for em_tmo_set_abs/rel/periodic().
  *
  * Flags are used to select functionality:
  *   - EM_TMO_FLAG_ONESHOT creates a one-shot timeout and
@@ -298,8 +447,8 @@ em_timer_tick_t em_timer_current_tick(em_timer_t tmr);
  *     default is to skip missed time slots).
  *
  * @param tmr        Timer handle
- * @param flags	     Functionality flags
- * @param queue	     Target queue where the timeout event should be delivered
+ * @param flags      Functionality flags
+ * @param queue      Target queue where the timeout event should be delivered
  *
  * @return Timeout handle on success or EM_TMO_UNDEF on failure
  */
@@ -314,18 +463,19 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue);
  * not yet received timeout, will not be returned. It is the responsibility of
  * the application to handle that case.
  *
- * @param tmo              Timeout handle
- * @param [out] cur_event  Current event for an active timeout
+ * @param      tmo        Timeout handle
+ * @param[out] cur_event  Current event for an active timeout
  *
  * @return EM_OK on success
  */
 em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event);
 
 /**
- * Activate a timeout (absolute time) with a user-provided timeout event
+ * Activate a oneshot timeout (absolute time)
  *
- * Sets the timeout to expire at a specific absolute time. The timeout event
- * will be sent to the queue given to em_tmo_create() when the timeout expires.
+ * Sets a oneshot timeout to expire at a specific absolute time. The timeout
+ * event will be sent to the queue given to em_tmo_create() when the timeout
+ * expires.
  *
  * It is not possible to send timeouts with an event group (but the application
  * can assign the event group when receiving the timeout event,
@@ -346,8 +496,8 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event);
  * An inactive timeout can be re-used by calling em_tmo_set_abs/rel() again
  * after the previous timeout has expired.
  *
- * This function cannot be used to activate a periodic timer, instead use
- * em_tmo_set_rel().
+ * This function is meant for activating oneshot timeouts only. To activate
+ * a periodic timer, use em_tmo_set_periodic() instead.
  *
  * @param tmo        Timeout handle
  * @param ticks_abs  Expiration time in absolute timer specific ticks
@@ -359,26 +509,61 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 			   em_event_t tmo_ev);
 
 /**
- * Activate a timeout (relative time) with a user-provided timeout event
+ * Activate a timeout (relative time)
  *
- * Similar to em_tmo_set_abs() but, instead of an absolute time, uses a timeout
+ * Similar to em_tmo_set_abs(), but instead of an absolute time uses a timeout
  * 'ticks' value relative to the moment of the call.
  *
  * The timeout event will be sent to the queue given to em_tmo_create() when the
  * timeout expires.
  *
- * This function is also used for activating a periodic timeout, in which case
- * the given 'ticks' is the timeout period (a periodic timeout is selected with
- * em_tmo_create(flags:EM_TMO_FLAG_PERIODIC).
+ * This function is primarily meant for activating oneshot timeouts but can
+ * still, for backwards compatibility reasons, be used for activating periodic
+ * timeouts, in which case the given 'ticks' is the timeout period (a periodic
+ * timeout is selected with em_tmo_create() flag EM_TMO_FLAG_PERIODIC).
+ * Prefer em_tmo_set_periodic() for activating periodic timeouts.
  *
  * @param tmo        Timeout handle
  * @param ticks_rel  Expiration time in relative timer specific ticks
  * @param tmo_ev     Timeout event handle
  *
  * @return EM_OK on success
+ *
+ * @deprecated Do not use for periodic timeouts
+ * @see em_tmo_set_periodic
  */
 em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 			   em_event_t tmo_ev);
+
+/**
+ * Activate a periodic timeout
+ *
+ * Used to activate periodic timeouts. The first period can be different than
+ * the repetitive period by providing an absolute start time 'start_abs' (the
+ * first period starts from that moment on). Use 0 as start time if the period
+ * can start from the moment of the call, i.e. the first period is relative and
+ * same as the rest.
+ * If a different relative time is needed for the first timeout then use
+ * 'em_timer_current_tick() + period' as the start time.
+ *
+ * The timeout event will be sent to the queue given to em_tmo_create() when the
+ * timeout expires (em_tmo_ack() can recycle the same event or provide a new
+ * one for the next period).
+ *
+ * This function can only be used with periodic timeouts (created with flag
+ * EM_TMO_FLAG_PERIODIC).
+ *
+ * @param tmo        Timeout handle
+ * @param start_abs  Absolute start time (or 0 for period starting at call)
+ * @param period     Period in timer specific ticks
+ * @param tmo_ev     Timeout event handle
+ *
+ * @return EM_OK on success
+ */
+em_status_t em_tmo_set_periodic(em_tmo_t tmo,
+				em_timer_tick_t start_abs,
+				em_timer_tick_t period,
+				em_event_t tmo_ev);
 
 /**
  * Cancel a timeout
@@ -391,21 +576,22 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
  * an error as it was too late to cancel. Cancel also fails if attempted before
  * timeout activation.
  *
- * @param tmo              Timeout handle
- * @param [out] cur_event  Event handle pointer to return the pending
- *                         timeout event or EM_EVENT_UNDEF if cancel fails
- *                         (e.g. called too late)
+ * @param      tmo        Timeout handle
+ * @param[out] cur_event  Event handle pointer to return the pending
+ *                        timeout event or EM_EVENT_UNDEF if cancel fails
+ *                        (e.g. called too late)
  *
  * @return EM_OK on success
+ * @see em_tmo_set_abs, em_tmo_set_rel, em_tmo_set_periodic
  */
 em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
 
 /**
- * Acknowledge a periodic timeout.
+ * Acknowledge a periodic timeout
  *
  * All received periodic timeout events must be acknowledged with em_tmo_ack().
  * No further timeout event(s) will be sent before the user has acknowledged
- * the previous ones.
+ * the previous one.
  *
  * Timeout acknowledgment is usually done at the end of the EO-receive function
  * to prevent race conditions (e.g. if the same event is re-used for the next
@@ -425,11 +611,13 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
  * provide a new one for the next timeout.
  * An error will be returned if the corresponding timeout has been cancelled.
  *
- * The given event should not be touched after calling this until it has been
- * received again.
+ * The given event should not be touched after calling this function until it
+ * has been received again (or after the timeout is successfully cancelled).
  *
  * The given event must be handled by the application if an error is returned.
  * The periodic timeout will stop if em_tmo_ack() returns an error.
+ * The implementation will always call errorhandler in this case, so the
+ * exception can be handled also there.
  *
  * em_tmo_ack() can only be used with periodic timeouts and will fail for
  * one-shot timeouts.
@@ -442,15 +630,15 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
 em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev);
 
 /**
- * Get a list of currently active timers
+ * Get a list of currently active timers.
  *
- * Returned timer handles can be used to query for more information or to
+ * Returned timer handles can be used to query more information or to
  * destroy all existing timers.
  *
- * The actual number of timers is returned but 'tmr_list' will only be written
- * up to the given 'max' length (if there are more timers than the given 'max').
+ * The actual number of timers is always returned but 'tmr_list' will only be
+ * written up to the given 'max' length.
  *
- * @param [out] tmr_list  Pointer to a space for timer handles
+ * @param [out] tmr_list  Pointer to array of timer handles
  * @param max             Max number of handles that can written into tmr_list
  *
  * @return number of active timers
@@ -472,7 +660,7 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr);
 /**
  * Returns the timer frequency, i.e. ticks per second for the given timer.
  *
- * Can be used to convert real time to timer specific tick unit.
+ * Can be used to convert real time to timer specific tick.
  *
  * @param tmr  Timer handle
  *
@@ -493,6 +681,25 @@ uint64_t em_timer_get_freq(em_timer_t tmr);
  * @see em_tmo_state_t
  */
 em_tmo_state_t em_tmo_get_state(em_tmo_t tmo);
+
+/**
+ * Returns the statistic counters for a timeout.
+ *
+ * Returns a snapshot of the current counters of the given timeout.
+ * Statistics can be accessed while the timeout is valid, i.e. tmo created but
+ * not deleted.
+ *
+ * Counter support is optional. If counters are not supported the function
+ * returns EM_ERR_NOT_IMPLEMENTED.
+ * A quick way to detect whether counters are supported is to call the function
+ * with stat=NULL and check the return value.
+ *
+ * @param tmo         Timeout handle
+ * @param [out] stat  Pointer to em_tmo_stats_t to receive the values (NULL ok)
+ *
+ * @return EM_OK on success
+ */
+em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat);
 
 /**
  * @}

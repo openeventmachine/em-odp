@@ -57,7 +57,7 @@ default_queue_group_update(void);
 
 em_queue_group_t
 queue_group_create(const char *name, const em_core_mask_t *mask,
-		   int num_notif, const em_notif_t *notif_tbl,
+		   int num_notif, const em_notif_t notif_tbl[],
 		   em_queue_group_t queue_group);
 em_queue_group_t
 queue_group_create_sync(const char *name, const em_core_mask_t *mask,
@@ -66,7 +66,7 @@ queue_group_create_sync(const char *name, const em_core_mask_t *mask,
 em_status_t
 queue_group_modify(queue_group_elem_t *const qgrp_elem,
 		   const em_core_mask_t *new_mask,
-		   int num_notif, const em_notif_t *notif_tbl,
+		   int num_notif, const em_notif_t notif_tbl[],
 		   int is_delete);
 em_status_t
 queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,

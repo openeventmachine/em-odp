@@ -31,7 +31,7 @@
 #include "em_include.h"
 
 /* em_output_func_t for event-chaining output*/
-int chaining_output(em_event_t events[], const unsigned int num,
+int chaining_output(const em_event_t events[], const unsigned int num,
 		    const em_queue_t output_queue, void *output_fn_args);
 
 /**
@@ -56,7 +56,7 @@ event_send_device(em_event_t event, em_queue_t queue)
  * user can override it during linking with another implementation.
  */
 int
-event_send_device_multi(em_event_t *const events, int num, em_queue_t queue)
+event_send_device_multi(const em_event_t events[], int num, em_queue_t queue)
 {
 	internal_queue_t iq = {.queue = queue};
 
@@ -83,7 +83,7 @@ read_config_file(void)
 	 * Option: event_chaining.num_order_queues
 	 */
 	conf_str = "event_chaining.num_order_queues";
-	ret = libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	ret = _em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
 		return -1;
@@ -174,7 +174,7 @@ chaining_term(event_chaining_t *const event_chaining)
  * Output-queue callback function of type 'em_output_func_t' for Event-Chaining.
  */
 int
-chaining_output(em_event_t events[], const unsigned int num,
+chaining_output(const em_event_t events[], const unsigned int num,
 		const em_queue_t output_queue, void *output_fn_args)
 {
 	em_queue_t chaining_queue;

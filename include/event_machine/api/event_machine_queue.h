@@ -288,9 +288,9 @@ em_queue_get_context(em_queue_t queue);
  *
  * The function returns '0' and writes an empty string if the queue has no name.
  *
- * @param queue         Queue handle
- * @param name          Destination buffer
- * @param maxlen        Maximum length (including the terminating '0')
+ * @param      queue   Queue handle
+ * @param[out] name    Destination buffer
+ * @param      maxlen  Maximum length (including the terminating '0')
  *
  * @return Number of characters written (excludes the terminating '0').
  *
@@ -386,14 +386,14 @@ em_queue_dequeue(em_queue_t queue);
  * An unscheduled queue can also have a context, but needs to be
  * asked separately using em_queue_get_context().
  *
- * @param queue         Unscheduled queue handle
+ * @param      queue    Unscheduled queue handle
  * @param[out] events   Array of event handles for output
- * @param num           Maximum number of events to dequeue
+ * @param      num      Maximum number of events to dequeue
  *
  * @return Number of successfully dequeued events (0 to num)
  */
 int
-em_queue_dequeue_multi(em_queue_t queue, em_event_t *const events, int num);
+em_queue_dequeue_multi(em_queue_t queue, em_event_t events[/*out*/], int num);
 
 /**
  * Returns the current active queue
@@ -435,7 +435,7 @@ em_queue_current(void);
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of queues
+ * @param[out] num   Pointer to an unsigned int to store the amount of queues
  *                   into
  *
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist
@@ -458,6 +458,18 @@ em_queue_get_first(unsigned int *num);
  */
 em_queue_t
 em_queue_get_next(void);
+
+/**
+ * Get a unique index corresponding to the given EM queue handle.
+ *
+ * Returns a unique index in the range 0...EM_MAX_QUEUES-1.
+ * The same EM queue handle will always map to the same index.
+ *
+ * Only meaningful for queues created within the current EM instance.
+ *
+ * @return Index in the range 0...EM_MAX_QUEUES-1
+ */
+int em_queue_get_index(em_queue_t queue);
 
 /**
  * @}

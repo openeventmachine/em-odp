@@ -192,7 +192,7 @@ em_status_t em_event_group_delete(em_event_group_t event_group);
  *      em_notif_t
  */
 em_status_t em_event_group_apply(em_event_group_t event_group, int count,
-				 int num_notif, const em_notif_t *notif_tbl);
+				 int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Increment the current event group count.
@@ -294,7 +294,7 @@ em_status_t em_send_group(em_event_t event, em_queue_t queue,
  *
  * @see em_send_group()
  */
-int em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
+int em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 			em_event_group_t event_group);
 
 /**
@@ -383,16 +383,16 @@ em_status_t em_event_group_abort(em_event_group_t event_group);
  *		em_event_group_get_notif() could return notifications which
  *		are just going to be sent and thus should not be touched.
  *
- * @param event_group   Event group
- * @param max_notif     Maximum number of notifications to return
- * @param notif_tbl     Table for notifications to fill
+ * @param      event_group   Event group
+ * @param      max_notif     Maximum number of notifications to return
+ * @param[out] notif_tbl     Table for notifications to fill
  *
  * @return Number of returned notifications
  *
  * @see em_event_group_apply(), em_event_group_abort()
  */
 int em_event_group_get_notif(em_event_group_t event_group,
-			     int max_notif, em_notif_t *notif_tbl);
+			     int max_notif, em_notif_t notif_tbl[]);
 
 /**
  * Initialize event group iteration and return the first event group handle.
@@ -417,7 +417,7 @@ int em_event_group_get_notif(em_event_group_t event_group,
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of
+ * @param[out] num   Pointer to an unsigned int to store the amount of
  *                   event groups into
  * @return The first event group handle or EM_EVENT_GROUP_UNDEF if none exist
  *

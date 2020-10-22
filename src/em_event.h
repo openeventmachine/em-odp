@@ -64,9 +64,9 @@ event_odp2em(odp_event_t odp_event)
 }
 
 static inline em_event_t *
-events_odp2em(odp_event_t odp_events[])
+events_odp2em(const odp_event_t odp_events[])
 {
-	return (em_event_t *)odp_events;
+	return (em_event_t *)(uintptr_t)odp_events;
 }
 
 static inline odp_event_t *
@@ -657,7 +657,7 @@ send_event(em_event_t event, queue_elem_t *const q_elem)
 }
 
 static inline int
-send_event_multi(em_event_t events[], const int num, queue_elem_t *const q_elem)
+send_event_multi(const em_event_t events[], const int num, queue_elem_t *const q_elem)
 {
 	odp_event_t *const odp_events = events_em2odp(events);
 	odp_queue_t odp_queue = q_elem->odp_queue;
@@ -703,7 +703,7 @@ send_local(em_event_t event, event_hdr_t *const ev_hdr,
 }
 
 static inline int
-send_local_multi(em_event_t events[], event_hdr_t *const ev_hdrs[],
+send_local_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
 		 const int num, queue_elem_t *const q_elem)
 {
 	odp_event_t *const odp_events = events_em2odp(events);
@@ -800,7 +800,7 @@ send_output(em_event_t event, queue_elem_t *const output_q_elem)
  * Send events to a queue of type EM_QUEUE_TYPE_OUTPUT
  */
 static inline int
-send_output_multi(em_event_t events[], const unsigned int num,
+send_output_multi(const em_event_t events[], const unsigned int num,
 		  queue_elem_t *const output_q_elem)
 {
 	const em_sched_context_type_t sched_ctx_type =

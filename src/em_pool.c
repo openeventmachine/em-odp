@@ -69,7 +69,7 @@ read_config_file(void)
 	 * Option: pool.statistics_enable
 	 */
 	conf_str = "pool.statistics_enable";
-	ret = libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	ret = _em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
 		return -1;
@@ -83,7 +83,7 @@ read_config_file(void)
 	 * Option: pool.align_offset
 	 */
 	conf_str = "pool.align_offset";
-	ret = libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	ret = _em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
 		return -1;
@@ -103,7 +103,7 @@ read_config_file(void)
 
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
-	  em_pool_cfg_t *const default_pool_cfg)
+	  const em_pool_cfg_t *default_pool_cfg)
 {
 	em_pool_t pool;
 	int i, j, ret;
@@ -221,10 +221,14 @@ pool_free(em_pool_t pool)
 	return EM_OK;
 }
 
-static int
-invalid_pool_cfg(em_pool_cfg_t *const pool_cfg)
+int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg)
 {
+	odp_pool_capability_t *const odp_pool_capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+	uint32_t min_cache_size, cache_size;
+
 	if (unlikely(pool_cfg == NULL ||
+		     pool_cfg->__internal_check != EM_CHECK_INIT_CALLED ||
 		     pool_cfg->num_subpools <= 0 ||
 		     pool_cfg->num_subpools > EM_MAX_SUBPOOLS ||
 		     (pool_cfg->event_type != EM_EVENT_TYPE_SW &&
@@ -237,17 +241,33 @@ invalid_pool_cfg(em_pool_cfg_t *const pool_cfg)
 			return -2;
 	}
 
+	if (pool_cfg->event_type == EM_EVENT_TYPE_SW)
+		min_cache_size = odp_pool_capa->buf.min_cache_size;
+	else
+		min_cache_size = odp_pool_capa->pkt.min_cache_size;
+
 	for (int i = 0; i < pool_cfg->num_subpools; i++) {
 		if (unlikely(pool_cfg->subpool[i].size <= 0 ||
 			     pool_cfg->subpool[i].num <= 0))
-			return -3;
+			return -(3 * 10 + i); /* -30, -31, ... */
+
+		cache_size = pool_cfg->subpool[i].cache_size;
+		if (unlikely(cache_size < min_cache_size))
+			return -(4 * 10 + i); /* -40, -41, ... */
+		/*
+		 * If the given cache size is larger than odp-max,
+		 * then use odp-max:
+		 * if (cache_size > max_cache_size)
+		 *         cache_size = max_cache_size;
+		 * This is done later in pool_create();
+		 */
 	}
 
 	return 0;
 }
 
 em_pool_t
-pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
+pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
 {
 	em_pool_t allocated_pool;
 	em_pool_cfg_t sorted_cfg;
@@ -256,13 +276,10 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 	char pool_name[ODP_POOL_NAME_LEN];
 	int i, j, n;
 	uint32_t size, num;
+	uint32_t cache_size, max_cache_size;
 	mpool_elem_t *mpool_elem;
-	odp_pool_capability_t *const pool_capa =
+	odp_pool_capability_t *const odp_pool_capa =
 		&em_shm->mpool_tbl.odp_pool_capability;
-
-	/* Verify config */
-	if (unlikely(invalid_pool_cfg(pool_cfg)))
-		return EM_POOL_UNDEF;
 
 	/* Allocate a free EM pool */
 	allocated_pool = pool_alloc(pool /* requested pool or 'undef'*/);
@@ -295,12 +312,34 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 			    sorted_cfg.subpool[j].size) {
 				size = sorted_cfg.subpool[i].size;
 				num = sorted_cfg.subpool[i].num;
+				cache_size = sorted_cfg.subpool[i].cache_size;
 				sorted_cfg.subpool[i] = sorted_cfg.subpool[j];
 				sorted_cfg.subpool[j].size = size;
 				sorted_cfg.subpool[j].num = num;
+				sorted_cfg.subpool[j].cache_size = cache_size;
 			}
 		}
 	}
+
+	/* Cache size:
+	 * Set the requested subpool cache-size based on user provided value and
+	 * limit set by odp-pool-capability.
+	 * Requested value can be larger than odp-max, use odp--max in this
+	 * case.
+	 * Verification against odp-min value done in invalid_pool_cfg().
+	 */
+	if (pool_cfg->event_type == EM_EVENT_TYPE_SW)
+		max_cache_size = odp_pool_capa->buf.max_cache_size;
+	else
+		max_cache_size = odp_pool_capa->pkt.max_cache_size;
+
+	n = sorted_cfg.num_subpools;
+	for (i = 0; i < n; i++) {
+		cache_size = sorted_cfg.subpool[i].cache_size;
+		if (max_cache_size < sorted_cfg.subpool[i].cache_size)
+			sorted_cfg.subpool[i].cache_size = max_cache_size;
+	}
+
 	/* store the sorted config */
 	mpool_elem->pool_cfg = sorted_cfg;
 
@@ -329,11 +368,11 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 	uint32_t odp_align = ODP_CACHE_LINE_SIZE;
 
 	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
-		if (odp_align > pool_capa->pkt.max_align)
-			odp_align = pool_capa->pkt.max_align;
+		if (odp_align > odp_pool_capa->pkt.max_align)
+			odp_align = odp_pool_capa->pkt.max_align;
 	} else {
-		if (odp_align > pool_capa->buf.max_align)
-			odp_align = pool_capa->buf.max_align;
+		if (odp_align > odp_pool_capa->buf.max_align)
+			odp_align = odp_pool_capa->buf.max_align;
 	}
 	/* verify alignment requirements */
 	if (!POWEROF2(odp_align) || odp_align <= align_offset) {
@@ -349,6 +388,7 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 	for (i = 0; i < sorted_cfg.num_subpools; i++) {
 		odp_pool_param_init(&pool_params);
 		size = sorted_cfg.subpool[i].size;
+		cache_size = sorted_cfg.subpool[i].cache_size;
 
 		if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
 			pool_params.type = ODP_POOL_PACKET;
@@ -377,12 +417,14 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 			 */
 			if (pool_params.pkt.headroom < align_offset)
 				pool_params.pkt.headroom = align_offset;
+			pool_params.pkt.cache_size = cache_size;
 		} else { /* pool_cfg->event_type == EM_EVENT_TYPE_SW */
 			pool_params.type = ODP_POOL_BUFFER;
 			pool_params.buf.num = sorted_cfg.subpool[i].num;
 			pool_params.buf.size = size + sizeof(event_hdr_t)
 					       - align_offset;
 			pool_params.buf.align = odp_align;
+			pool_params.buf.cache_size = cache_size;
 		}
 
 		snprintf(pool_name, sizeof(pool_name),
@@ -410,7 +452,7 @@ pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
 
 error:
 	(void)pool_delete(pool);
-	return EM_POOL_DEFAULT;
+	return EM_POOL_UNDEF;
 }
 
 em_status_t
@@ -466,47 +508,66 @@ pool_count(void)
 	return env_atomic32_get(&em_shm->pool_count);
 }
 
-#define SUBSTR_FMT \
-"%d:[sz=%" PRIu32 " n=%" PRIu32 "(%" PRIu32 "/%" PRIu32 ")]"
-#define SUBSTR_NO_STATS_FMT \
-"%d:[sz=%" PRIu32 " n=%" PRIu32 "(-/-)]"
+#define POOL_INFO_HDR_STR \
+"  id     name             type offset sizes    [size count(used/free) cache]\n"
 
-void
-pool_info_print(em_pool_t pool)
+#define POOL_INFO_SUBSTR_FMT \
+"%d:[sz=%" PRIu32 " n=%" PRIu32 "(%" PRIu32 "/%" PRIu32 ") $=%" PRIu32 "]"
+
+#define POOL_INFO_SUBSTR_NO_STATS_FMT \
+"%d:[sz=%" PRIu32 " n=%" PRIu32 "(-/-) cache=%" PRIu32 "]"
+
+void pool_info_print_hdr(unsigned int num_pools)
+{
+	if (num_pools == 1) {
+		EM_PRINT("EM Event Pool\n"
+			 "-------------\n"
+			 POOL_INFO_HDR_STR);
+	} else {
+		EM_PRINT("EM Event Pools:%2u\n"
+			 "-----------------\n"
+			 POOL_INFO_HDR_STR, num_pools);
+	}
+}
+
+void pool_info_print(em_pool_t pool)
 {
 	em_pool_info_t pool_info;
 	em_status_t stat;
-	int i;
+	const char *pool_type;
 
 	stat = em_pool_info(pool, &pool_info/*out*/);
 	if (unlikely(stat != EM_OK)) {
-		EM_PRINT("  %-6" PRI_POOL " %-16s %-10s  %3s\n",
-			 pool, "err:n/a", "n/a", "n/a");
+		EM_PRINT("  %-6" PRI_POOL " %-16s  n/a   n/a   n/a\n",
+			 pool, "err:n/a");
 		return;
 	}
 
-	EM_PRINT("  %-6" PRI_POOL " %-16s 0x%08x    %02d    %02d   ",
-		 pool, pool_info.name, pool_info.event_type,
+	pool_type = pool_info.event_type == EM_EVENT_TYPE_SW ? "buf" : "pkt";
+	EM_PRINT("  %-6" PRI_POOL " %-16s %4s   %02d    %02d   ",
+		 pool, pool_info.name, pool_type,
 		 pool_info.align_offset, pool_info.num_subpools);
 
-	for (i = 0; i < pool_info.num_subpools; i++) {
-		char subpool_str[40];
+	for (int i = 0; i < pool_info.num_subpools; i++) {
+		char subpool_str[42];
 
 		if (em_shm->opt.pool.statistics_enable) {
 			snprintf(subpool_str, sizeof(subpool_str),
-				 SUBSTR_FMT, i,
+				 POOL_INFO_SUBSTR_FMT, i,
 				 pool_info.subpool[i].size,
 				 pool_info.subpool[i].num,
 				 pool_info.subpool[i].used,
-				 pool_info.subpool[i].free);
+				 pool_info.subpool[i].free,
+				 pool_info.subpool[i].cache_size);
 		} else {
 			snprintf(subpool_str, sizeof(subpool_str),
-				 SUBSTR_NO_STATS_FMT, i,
+				 POOL_INFO_SUBSTR_NO_STATS_FMT, i,
 				 pool_info.subpool[i].size,
-				 pool_info.subpool[i].num);
+				 pool_info.subpool[i].num,
+				 pool_info.subpool[i].cache_size);
 		}
 		subpool_str[sizeof(subpool_str) - 1] = '\0';
-		EM_PRINT(" %-40s", subpool_str);
+		EM_PRINT(" %-42s", subpool_str);
 	}
 
 	EM_PRINT("\n");

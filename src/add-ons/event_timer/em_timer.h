@@ -32,12 +32,12 @@
 
 #include "em_timer_types.h"
 
-/* #define TIMER_DEBUG */
+/*#define TIMER_DEBUG*/
 
 #ifdef TIMER_DEBUG
 #include <stdio.h>
 #define TMR_DBG_PRINT(format, ...) \
-	EM_LOG(EM_LOG_DBG, "TMR: " format, __VA_ARGS__)
+	EM_LOG(EM_LOG_DBG, "TMRDBG: " format, __VA_ARGS__)
 #else
 #define TMR_DBG_PRINT(format, ...) do {} while (0)
 #endif

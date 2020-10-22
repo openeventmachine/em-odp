@@ -169,9 +169,9 @@ em_atomic_group_get(em_queue_t queue);
  * If the atomic group has no name, the function returns 0 and writes an
  * empty string.
  *
- * @param atomic_group  Atomic group
- * @param name          Destination buffer
- * @param maxlen        Maximum length (including the terminating '0')
+ * @param      atomic_group  Atomic group
+ * @param[out] name          Destination buffer
+ * @param      maxlen        Maximum length (including the terminating '0')
  *
  * @return Number of characters written (excludes the terminating '0').
  */
@@ -216,7 +216,7 @@ em_atomic_group_find(const char *name);
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of
+ * @param[out] num   Pointer to an unsigned int to store the amount of
  *                   atomic groups into
  * @return The first atomic group handle or EM_ATOMIC_GROUP_UNDEF if none exist
  *
@@ -266,7 +266,7 @@ em_atomic_group_get_next(void);
  *	}
  * @endcode
  *
- * @param num [out]    Pointer to an unsigned int to store the amount of queues
+ * @param[out] num     Pointer to an unsigned int to store the amount of queues
  *                     into.
  * @param queue_group  Atomic group handle
  *

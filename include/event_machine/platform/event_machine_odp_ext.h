@@ -82,6 +82,8 @@ em_odp_event_hdr_size(void);
 /**
  * Convert EM event handle to ODP event handle.
  *
+ * @param event  EM-event handle
+ *
  * @return ODP event handle.
  */
 odp_event_t
@@ -90,13 +92,17 @@ em_odp_event2odp(em_event_t event);
 /**
  * Convert EM event handles to ODP event handles
  *
+ * @param events  Array of EM-events to convert to ODP-events
+ *
  * @return ODP event handle array
  */
 odp_event_t *
-em_odp_events2odp(em_event_t events[]);
+em_odp_events2odp(const em_event_t events[]);
 
 /**
  * Convert ODP event handle to EM event handle.
+ *
+ * @param event  ODP-event handle
  *
  * @return EM event handle.
  */
@@ -106,16 +112,24 @@ em_odp_event2em(odp_event_t event);
 /**
  * Convert ODP event handles to EM event handles.
  *
+ * @param odp_events  Array of ODP-events to convert to EM-events
+ *
  * @return EM event handle array.
  */
 em_event_t *
-em_odp_events2em(odp_event_t odp_events[]);
+em_odp_events2em(const odp_event_t odp_events[]);
 
 /**
  * Enqueue packets into EM (from outside of EM, not allocated by em_alloc())
+ *
+ * @param pkt_tbl  Array of external ODP-packets to enqueue into EM as events.
+ * @param num      The number of packets in the 'pkt_tbl[]' array, must be >0.
+ * @param queue    EM queue into which to sen/enqueue the packets as EM-events.
+ *
+ * @return The number of ODP packets successfully send/enqueued as EM-events
  */
-int
-pkt_enqueue(odp_packet_t pkt_tbl[], const int num, const em_queue_t queue);
+int pkt_enqueue(const odp_packet_t pkt_tbl[], const int num,
+		const em_queue_t queue);
 
 #ifdef __cplusplus
 }

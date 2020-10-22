@@ -76,7 +76,7 @@ em_odp_event2odp(em_event_t event)
 }
 
 odp_event_t *
-em_odp_events2odp(em_event_t events[])
+em_odp_events2odp(const em_event_t events[])
 {
 	return events_em2odp(events);
 }
@@ -87,13 +87,13 @@ em_event_t em_odp_event2em(odp_event_t event)
 }
 
 em_event_t *
-em_odp_events2em(odp_event_t odp_events[])
+em_odp_events2em(const odp_event_t odp_events[])
 {
 	return events_odp2em(odp_events);
 }
 
-int
-pkt_enqueue(odp_packet_t pkt_tbl[], const int num, const em_queue_t queue)
+int pkt_enqueue(const odp_packet_t pkt_tbl[], const int num,
+		const em_queue_t queue)
 {
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	odp_event_t odp_event_tbl[num];

@@ -256,7 +256,7 @@ em_queue_dequeue(em_queue_t queue)
 }
 
 int
-em_queue_dequeue_multi(em_queue_t queue, em_event_t *const events, int num)
+em_queue_dequeue_multi(em_queue_t queue, em_event_t events[], int num)
 {
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	odp_event_t *const odp_events = events_em2odp(events); /* cast */
@@ -352,4 +352,15 @@ em_queue_get_next(void)
 	}
 
 	return queue_idx2hdl(_queue_tbl_iter_idx);
+}
+
+int em_queue_get_index(em_queue_t queue)
+{
+	queue_elem_t *const q_elem = queue_elem_get(queue);
+
+	RETURN_ERROR_IF(q_elem == NULL || !queue_allocated(q_elem),
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_INDEX,
+			"Bad arg, invalid queue:%" PRI_QUEUE "", queue);
+
+	return queue_hdl2idx(queue);
 }

@@ -34,7 +34,7 @@ static em_status_t
 eo_local_func_call_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
 		       int delete_queues, uint64_t ev_id,
 		       void (*f_done_callback)(void *arg_ptr),
-		       int num_notif, const em_notif_t *notif_tbl,
+		       int num_notif, const em_notif_t notif_tbl[],
 		       int exclude_current_core);
 static em_status_t
 check_eo_local_status(loc_func_retval_t *const loc_func_retvals);
@@ -78,7 +78,7 @@ eo_poolelem2eo(objpool_elem_t *const eo_pool_elem)
 }
 
 em_status_t
-eo_init(eo_tbl_t *const eo_tbl, eo_pool_t *const eo_pool)
+eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool)
 {
 	int i, ret;
 	const int cores = em_core_count();
@@ -282,7 +282,7 @@ eo_delete_queue_all(eo_elem_t *const eo_elem)
 
 em_status_t
 eo_start_local_req(eo_elem_t *const eo_elem,
-		   int num_notif, const em_notif_t *notif_tbl)
+		   int num_notif, const em_notif_t notif_tbl[])
 {
 	return eo_local_func_call_req(eo_elem, NULL/* no q_elem */, EM_FALSE,
 				      EO_START_LOCAL_REQ,
@@ -375,7 +375,7 @@ eo_start_sync_done_callback(void *args)
  * EO's own queues.
  */
 int
-eo_start_buffer_events(em_event_t *const events, int num, em_queue_t queue,
+eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue,
 		       em_event_group_t event_group)
 {
 	event_hdr_t *ev_hdrs[num];
@@ -489,7 +489,7 @@ eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 
 em_status_t
 eo_stop_local_req(eo_elem_t *const eo_elem,
-		  int num_notif, const em_notif_t *notif_tbl)
+		  int num_notif, const em_notif_t notif_tbl[])
 {
 	return eo_local_func_call_req(eo_elem, NULL /* no q_elem */, EM_FALSE,
 				      EO_STOP_LOCAL_REQ,
@@ -596,7 +596,7 @@ eo_stop_sync_done_callback(void *args)
 
 em_status_t
 eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
-			  int num_notif, const em_notif_t *notif_tbl)
+			  int num_notif, const em_notif_t notif_tbl[])
 {
 	return eo_local_func_call_req(eo_elem, q_elem, EM_FALSE,
 				      EO_REM_QUEUE_LOCAL_REQ,
@@ -698,7 +698,7 @@ eo_remove_queue_sync_done_callback(void *args)
 
 em_status_t
 eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
-			      int num_notif, const em_notif_t *notif_tbl)
+			      int num_notif, const em_notif_t notif_tbl[])
 {
 	return eo_local_func_call_req(eo_elem, NULL /* no q_elem */,
 				      delete_queues, EO_REM_QUEUE_ALL_LOCAL_REQ,
@@ -851,7 +851,7 @@ static em_status_t
 eo_local_func_call_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
 		       int delete_queues, uint64_t ev_id,
 		       void (*f_done_callback)(void *arg_ptr),
-		       int num_notif, const em_notif_t *notif_tbl,
+		       int num_notif, const em_notif_t notif_tbl[],
 		       int exclude_current_core)
 {
 	int err;

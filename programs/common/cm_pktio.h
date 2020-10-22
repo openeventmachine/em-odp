@@ -251,8 +251,8 @@ void pktio_mem_free(void);
 void pktio_pool_create(int if_count);
 void pktio_pool_destroy(void);
 
-void pktio_init(appl_conf_t *const appl_conf);
-void pktio_deinit(appl_conf_t *const appl_conf);
+void pktio_init(const appl_conf_t *appl_conf);
+void pktio_deinit(const appl_conf_t *appl_conf);
 
 int pktio_create(const char *dev, int num_workers);
 void pktio_start(void);
@@ -303,7 +303,7 @@ int output_drain(void);
  *
  * @return number of events successfully sent (equal to num if all successful)
  */
-int pktio_tx(em_event_t events[], const unsigned int num,
+int pktio_tx(const em_event_t events[], const unsigned int num,
 	     const em_queue_t output_queue, void *output_fn_args);
 /**
  * @typedef pktio_tx_fn_args_t

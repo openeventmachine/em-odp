@@ -4,8 +4,9 @@ libdir=@libdir@
 includedir=@includedir@
 
 Name: libemodp
-Description: EM-ODP LIB
+Description: The Event Machine library
 Version: @EMODP_PKGCONFIG_VERSION@
+Requires: @libodp_name@
+Requires.private: libconfig
 Libs: -L${libdir} -lemodp
-Libs.private: @ODP_LIBS@
 Cflags: -I${includedir} @EM_CHECK_LEVEL@

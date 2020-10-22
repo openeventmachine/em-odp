@@ -110,7 +110,7 @@ extern "C" {
  * @def EM_MAX_ATOMIC_GROUPS
  * Maximum number of EM atomic groups
  */
-#define EM_MAX_ATOMIC_GROUPS  1024
+#define EM_MAX_ATOMIC_GROUPS  128
 
 /**
  * @def EM_ATOMIC_GROUP_NAME_LEN
@@ -122,7 +122,7 @@ extern "C" {
  * @def EM_MAX_EOS
  * Maximum total number of EOs
  */
-#define EM_MAX_EOS  32768
+#define EM_MAX_EOS  512
 
 /**
  * @def EM_EO_NAME_LEN

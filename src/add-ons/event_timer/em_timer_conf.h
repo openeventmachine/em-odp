@@ -31,6 +31,7 @@
 /**
  * @file
  * Compile time configuration for the event timer
+ * Can be overridden via makefile
  *
  */
 #ifndef EM_TIMER_CONF_H_
@@ -40,9 +41,37 @@
  * Global configuration for the EM timer
  */
 
+#ifndef EM_ODP_TIMER_RESOL_DEF_NS
 /* Default timer resolution in ns (if none given by the user) */
-#define EM_ODP_TIMER_RESOL_DEF_NS  1000000
-/* Max number of supported EM timers (= ODP timer pools) */
-#define EM_ODP_MAX_TIMERS  2
+#define EM_ODP_TIMER_RESOL_DEF_NS  (1000ULL * 1000ULL * 1ULL) /* 1ms */
+#endif
+
+#ifndef EM_ODP_MAX_TIMERS
+/* Max number of supported EM timers (ODP timer pools) */
+#define EM_ODP_MAX_TIMERS	8
+#endif
+
+#ifndef EM_ODP_DEFAULT_TMOS
+/* Default number of simultaneous timeouts (pool size) */
+#define EM_ODP_DEFAULT_TMOS	1000
+#endif
+
+#ifndef EM_ODP_TIMER_CACHE
+/* Default local cache size for tmo buffer pool */
+#define EM_ODP_TIMER_CACHE	16
+#endif
+
+#ifndef EM_TIMER_TMO_STATS
+/* use 0 to exclude timeout statistics support */
+#define EM_TIMER_TMO_STATS	1
+#endif
+
+#ifndef EM_TIMER_ACK_TRIES
+/* periodic ack() watchdog - how many times to try setting new timeout on late situation.
+ * Setting this to 1 effectively disables catch up, i.e. ack will fail if late. Setting this to 0
+ * will enable ~forever retry. 3 or bigger is recommended
+ */
+#define EM_TIMER_ACK_TRIES	5
+#endif
 
 #endif /* EM_TIMER_CONF_H_ */

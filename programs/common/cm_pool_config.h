@@ -41,40 +41,13 @@ extern "C" {
  * configuration given in em_conf_t to em_init().
  * The name of the default EM event pool is EM_POOL_DEFAULT_NAME (="default")
  */
-#define DEFAULT_POOL_CFG { \
-	.event_type = EM_EVENT_TYPE_SW, \
-	.align_offset = {.in_use = 1, .value = 0},/*override default with 0 */ \
-	.num_subpools = 4, \
-	.subpool[0] = {.size =  256, .num = 16384}, \
-	.subpool[1] = {.size =  512, .num = 1024}, \
-	.subpool[2] = {.size = 1024, .num = 1024}, \
-	.subpool[3] = {.size = 2048, .num = 1024} \
-}
 
 #define APPL_POOL_1  ((em_pool_t)2)
 #define APPL_POOL_1_NAME "appl_pool_1"
-#define APPL_POOL_1_CFG { \
-	.event_type = EM_EVENT_TYPE_PACKET, \
-	.align_offset = {.in_use = 0}, /* use default from config file */ \
-	.num_subpools = 4, \
-	.subpool[0] = {.size =  256, .num = 16384}, \
-	.subpool[1] = {.size =  512, .num = 1024}, \
-	.subpool[2] = {.size = 1024, .num = 1024}, \
-	.subpool[3] = {.size = 2048, .num = 1024} \
-}
 
 /*
  * #define APPL_POOL_2  ((em_pool_t)3)
  * #define APPL_POOL_2_NAME "appl_pool_2"
- * #define APPL_POOL_2_CFG { \
- *	.event_type = EM_EVENT_TYPE_PACKET, \
- *	.align_offset = {.in_use = 0, .value = 0}, \
- *	.num_subpools = 4, \
- *	.subpool[0] = {.size =  256, .num = 1024}, \
- *	.subpool[1] = {.size =  512, .num = 1024}, \
- *	.subpool[2] = {.size = 1024, .num = 1024}, \
- *	.subpool[3] = {.size = 2048, .num = 1024}  \
- * }
  */
 
 #ifdef __cplusplus

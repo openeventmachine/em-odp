@@ -54,7 +54,7 @@ em_status_t event_send_device(em_event_t event, em_queue_t queue);
  * used.
  */
 __attribute__((weak))
-int event_send_device_multi(em_event_t *const events, int num,
+int event_send_device_multi(const em_event_t events[], int num,
 			    em_queue_t queue);
 #pragma GCC visibility pop
 
@@ -108,7 +108,7 @@ send_chaining(em_event_t event, event_hdr_t *const ev_hdr,
  * @see event_send_device_multi()
  */
 static inline int
-send_chaining_multi(em_event_t events[], event_hdr_t *const ev_hdrs[],
+send_chaining_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
 		    const int num, em_queue_t chaining_queue)
 {
 	const unsigned int num_out = em_shm->event_chaining.num_output_queues;

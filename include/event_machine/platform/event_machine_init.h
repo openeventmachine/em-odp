@@ -150,7 +150,8 @@ typedef struct {
 
 	/**
 	 * Pool configuration for the EM default pool (EM_POOL_DEFAULT).
-	 * Default value is all-0 and needs to be changed by the user.
+	 * Default value is set by em_pool_cfg_init() and needs to be changed
+	 * by the user.
 	 */
 	em_pool_cfg_t default_pool_cfg;
 
@@ -243,7 +244,7 @@ void em_conf_init(em_conf_t *conf);
  * @see em_init_core() for EM-core specific init after em_init().
  */
 em_status_t
-em_init(em_conf_t *conf);
+em_init(const em_conf_t *conf);
 
 /**
  * Initialize an EM-core.
@@ -273,7 +274,7 @@ em_init_core(void);
  * @see em_term_core() for EM-core specific termination before em_term().
  */
 em_status_t
-em_term(em_conf_t *conf);
+em_term(const em_conf_t *conf);
 
 /**
  * Terminate an EM-core.

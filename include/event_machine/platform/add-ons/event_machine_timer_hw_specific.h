@@ -51,7 +51,7 @@ EM_HANDLE_T(em_timer_t);
 /*
  * em_timer_flag_t is used to request timer specific features by
  * setting individual flag bits, i.e. values should be powers of two or
- * otherwise possible to combine by OR.
+ * otherwise possible to combine by bitwise OR.
  * Values below 0x100 are reserved for future API.
  */
 typedef enum em_timer_flag_t {

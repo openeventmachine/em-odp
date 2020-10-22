@@ -42,8 +42,9 @@ extern "C" {
 #include <string.h>
 #include <stdio.h>
 #include <signal.h>
+#include <odp/helper/odph_api.h>
 
-#define APPL_NAME_LEN  (32)
+#define APPL_NAME_LEN  (64)
 
 #define APPL_POOLS_MAX (16)
 
@@ -129,8 +130,10 @@ typedef struct {
 	em_conf_t em_conf;
 	/** Application configuration */
 	appl_conf_t appl_conf;
-	/* Exit the EM-core dispatch loop if set to 1, set by SIGINT handler */
+	/** Exit the EM-core dispatch loop if set to 1, set by SIGINT handler */
 	sig_atomic_t exit_flag;
+	/** ODP-thread table (from shared memory for process-per-core mode) */
+	odph_thread_t thread_tbl[MAX_THREADS];
 	/** Application synchronization vars */
 	sync_t sync ENV_CACHE_LINE_ALIGNED;
 	/* Pad size to a multiple of cache line size */
