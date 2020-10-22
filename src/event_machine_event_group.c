@@ -90,7 +90,7 @@ em_event_group_delete(em_event_group_t event_group)
 
 em_status_t
 em_event_group_apply(em_event_group_t event_group, int count,
-		     int num_notif, const em_notif_t *notif_tbl)
+		     int num_notif, const em_notif_t notif_tbl[])
 {
 	int i;
 	uint64_t egrp_count;
@@ -396,7 +396,7 @@ em_send_group(em_event_t event, em_queue_t queue,
 }
 
 int
-em_send_group_multi(em_event_t *const events, int num, em_queue_t queue,
+em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		    em_event_group_t event_group)
 {
 	event_hdr_t *ev_hdrs[num];
@@ -690,7 +690,7 @@ em_event_group_abort(em_event_group_t event_group)
 
 int
 em_event_group_get_notif(em_event_group_t event_group,
-			 int max_notif, em_notif_t *notif_tbl)
+			 int max_notif, em_notif_t notif_tbl[])
 {
 	event_group_elem_t *const egrp_elem =
 		event_group_elem_get(event_group);

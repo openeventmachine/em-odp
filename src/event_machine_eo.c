@@ -113,6 +113,7 @@ void em_eo_multircv_param_init(em_eo_multircv_param_t *param)
 			       "Param pointer NULL!");
 	memset(param, 0, sizeof(em_eo_multircv_param_t));
 	param->max_events = EM_EO_MULTIRCV_MAX_EVENTS;
+	param->__internal_check = EM_CHECK_INIT_CALLED;
 }
 
 em_eo_t
@@ -123,7 +124,14 @@ em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param)
 	int max_events;
 
 	if (unlikely(!param ||
-		     !param->start || !param->stop || !param->receive_multi)) {
+		     param->__internal_check != EM_CHECK_INIT_CALLED)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_CREATE_MULTIRCV,
+			       "Invalid param ptr:\n"
+			       "Use em_eo_multircv_param_init() before create");
+		return EM_EO_UNDEF;
+	}
+
+	if (unlikely(!param->start || !param->stop || !param->receive_multi)) {
 		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EO_CREATE_MULTIRCV,
 			       "Mandatory EO function pointer(s) NULL!");
 		return EM_EO_UNDEF;
@@ -276,7 +284,7 @@ em_eo_find(const char *name)
 
 em_status_t
 em_eo_add_queue(em_eo_t eo, em_queue_t queue,
-		int num_notif, const em_notif_t *notif_tbl)
+		int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	queue_elem_t *const q_elem = queue_elem_get(queue);
@@ -375,7 +383,7 @@ eo_add_queue_sync_err:
 
 em_status_t
 em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
-		   int num_notif, const em_notif_t *notif_tbl)
+		   int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	queue_elem_t *const q_elem = queue_elem_get(queue);
@@ -516,7 +524,7 @@ eo_remove_queue_sync_error:
 
 em_status_t
 em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
-		       int num_notif, const em_notif_t *notif_tbl)
+		       int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	em_status_t ret;
@@ -638,7 +646,7 @@ em_eo_unregister_error_handler(em_eo_t eo)
 
 em_status_t
 em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
-	    int num_notif, const em_notif_t *notif_tbl)
+	    int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	queue_elem_t *const save_q_elem = em_locm.current.q_elem;
@@ -889,7 +897,7 @@ eo_start_sync_error:
 }
 
 em_status_t
-em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t *notif_tbl)
+em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	em_status_t ret;

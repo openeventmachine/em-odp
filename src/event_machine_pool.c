@@ -40,10 +40,46 @@
 /* per core (thread) state for em_atomic_group_get_next() */
 static ENV_LOCAL unsigned int _pool_tbl_iter_idx;
 
+void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
+{
+	odp_pool_param_t odp_pool_defaults;
+	uint32_t buf_cache_sz, pkt_cache_sz, cache_sz;
+
+	if (unlikely(!pool_cfg))
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+			       EM_ESCOPE_POOL_CFG_INIT,
+			       "pool_cfg pointer NULL!");
+
+	odp_pool_param_init(&odp_pool_defaults);
+	memset(pool_cfg, 0, sizeof(*pool_cfg));
+
+	pool_cfg->event_type = EM_EVENT_TYPE_UNDEF;
+
+	buf_cache_sz = odp_pool_defaults.buf.cache_size;
+	pkt_cache_sz = odp_pool_defaults.pkt.cache_size;
+	cache_sz = MIN(buf_cache_sz, pkt_cache_sz);
+
+	for (int i = 0; i < EM_MAX_SUBPOOLS; i++)
+		pool_cfg->subpool[i].cache_size = cache_sz;
+
+	pool_cfg->__internal_check = EM_CHECK_INIT_CALLED;
+}
+
 em_pool_t
-em_pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg)
+em_pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
 {
 	em_pool_t pool_created;
+
+	/* Verify config */
+	int err = invalid_pool_cfg(pool_cfg);
+
+	if (unlikely(err)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_CREATE,
+			       "Pool create: invalid pool-config:%d\n"
+			       "Use em_pool_cfg_init() before pool-create",
+			       err);
+		return EM_POOL_UNDEF;
+	}
 
 	pool_created = pool_create(name, pool, pool_cfg);
 
@@ -161,7 +197,7 @@ em_pool_get_next(void)
 }
 
 em_status_t
-em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/)
+em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 {
 	mpool_elem_t *pool_elem;
 
@@ -183,47 +219,63 @@ em_pool_info(em_pool_t pool, em_pool_info_t *const pool_info /*out*/)
 	pool_info->align_offset = pool_elem->align_offset;
 	pool_info->num_subpools = pool_elem->num_subpools;
 	for (int i = 0; i < pool_elem->num_subpools; i++) {
-		uint32_t num = pool_elem->pool_cfg.subpool[i].num;
+		const uint64_t num = pool_elem->pool_cfg.subpool[i].num;
 
 		pool_info->subpool[i].size = pool_elem->size[i]; /*sorted sz*/
-		pool_info->subpool[i].num = num;
+		pool_info->subpool[i].num = pool_elem->pool_cfg.subpool[i].num;
+		pool_info->subpool[i].cache_size = pool_elem->pool_cfg.subpool[i].cache_size;
 		/*
 		 * EM pool usage statistics only collected if
 		 * EM config file: pool.statistics_enable=true.
 		 */
 		if (em_shm->opt.pool.statistics_enable) {
-			int cores = em_core_count();
+			const int cores = em_core_count();
 			int pool_idx = pool_hdl2idx(pool);
-			mpool_statistics_t *pstat_core =
-				em_shm->mpool_tbl.pool_stat_core;
-			uint64_t alloc = 0, free = 0, used;
+			mpool_statistics_t pool_stat[cores];
+
+			uint64_t used = 0, free = 0;
+			uint64_t alloc_sum = 0, free_sum = 0;
+
+			/* copy all pool-statistics and work on a local copy */
+			memcpy(pool_stat, em_shm->mpool_tbl.pool_stat_core,
+			       cores * sizeof(mpool_statistics_t));
 
 			for (int j = 0; j < cores; j++) {
-				alloc += pstat_core[j].stat[pool_idx][i].alloc;
-				free += pstat_core[j].stat[pool_idx][i].free;
+				free_sum += pool_stat[j].stat[pool_idx][i].free;
+				alloc_sum += pool_stat[j].stat[pool_idx][i].alloc;
 			}
-			if (likely(alloc >= free))
-				used = alloc - free;
-			else /* wrap, should not happen very soon... */
-				used = UINT64_MAX - free + alloc + 1;
+
+			used = alloc_sum - free_sum;
+			if (unlikely(free_sum > alloc_sum)) {
+				/*
+				 * free-increments seen by this core before
+				 * alloc increments or unlikely wrap-around.
+				 */
+				uint64_t diff = free_sum - alloc_sum;
+
+				if (diff <= num) /* counts close so set '0' */
+					used = 0;
+				else /* wrap, should not happen very soon... */
+					used = UINT64_MAX - diff + 1;
+			}
+			/* Sanity check */
+			if (used > num)
+				used = num;
+
+			free = num - used;
 
 			pool_info->subpool[i].used = used;
-			pool_info->subpool[i].free = num - used;
+			pool_info->subpool[i].free = free;
 		}
 	}
 
 	return EM_OK;
 }
 
-#define POOL_INFO_HDR_STR \
-"  id     name             type       offset  sizes                (used/free)\n"
-
 void
 em_pool_info_print(em_pool_t pool)
 {
-	EM_PRINT("EM Event Pool\n"
-		 "-------------\n"
-		 POOL_INFO_HDR_STR);
+	pool_info_print_hdr(1);
 	pool_info_print(pool);
 }
 
@@ -235,10 +287,7 @@ em_pool_info_print_all(void)
 
 	pool = em_pool_get_first(&num);
 
-	EM_PRINT("EM Event Pools:%2u\n"
-		 "-----------------\n"
-		 POOL_INFO_HDR_STR, num);
-
+	pool_info_print_hdr(num);
 	while (pool != EM_POOL_UNDEF) {
 		pool_info_print(pool);
 		pool = em_pool_get_next();

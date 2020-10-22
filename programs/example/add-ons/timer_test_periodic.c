@@ -47,6 +47,7 @@
 #include <limits.h>
 #include <math.h>
 #include <unistd.h>
+#include <ctype.h>
 
 #include <event_machine.h>
 #include <event_machine/add-ons/event_machine_timer.h>
@@ -58,11 +59,13 @@
 
 #include "timer_test_periodic.h"
 
-#define VERSION "WIP v0.2"
+#define VERSION "WIP v0.3"
 struct {
 	int num_periodic;
 	uint64_t res_ns;
+	uint64_t res_hz;
 	uint64_t period_ns;
+	int64_t first_ns;
 	uint64_t max_period_ns;
 	uint64_t min_period_ns;
 	uint64_t min_work_ns;
@@ -84,13 +87,15 @@ struct {
 	int bg_chunk;
 
 } g_options = { .num_periodic =  1,	/* defaults for basic check */
-		.res_ns =        10000000ULL,
-		.period_ns =     100000000ULL,
-		.max_period_ns = 0,
+		.res_ns =        DEF_RES_NS,
+		.res_hz =	 0,
+		.period_ns =     DEF_PERIOD * DEF_RES_NS,
+		.first_ns =	 0,
+		.max_period_ns = 0, /* max,min updated in init if not given cmdline */
 		.min_period_ns = 0,
-		.min_work_ns = 0,
-		.max_work_ns = 0,
-		.work_prop = 0,
+		.min_work_ns =   0,
+		.max_work_ns =   0,
+		.work_prop =     0,
 		.clock_src =     EM_TIMER_CLKSRC_DEFAULT,
 		.csv =		 NULL,
 		.num_runs =	 1,
@@ -183,6 +188,7 @@ static time_stamp get_time(void);
 static uint64_t time_to_ns(time_stamp t);
 static time_stamp time_diff(time_stamp t2, time_stamp t1);
 static time_stamp time_sum(time_stamp t1, time_stamp t2);
+static int arg_to_ns(const char *s, int64_t *val);
 static void profile_statistics(e_op op, int cores, app_eo_ctx_t *eo_ctx);
 static void profile_all_stats(int cores, app_eo_ctx_t *eo_ctx);
 static void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns,
@@ -328,6 +334,37 @@ uint64_t linux_time_ns(void)
 	return ns;
 }
 
+int arg_to_ns(const char *s, int64_t *val)
+{
+	char *endp;
+	int64_t num, mul = 1;
+
+	num = strtol(s, &endp, 0);
+	if (num == 0 && *s != '0')
+		return 0;
+
+	if (*endp != '\0')
+		switch (*endp) {
+		case 'n':
+			mul = 1; /* ns */
+			break;
+		case 'u':
+			mul = 1000; /* us */
+			break;
+		case 'm':
+			mul = 1000 * 1000; /* ms */
+			break;
+		case 's':
+			mul = 1000 * 1000 * 1000; /* s */
+			break;
+		default:
+			return 0;
+		}
+
+	*val = num * mul;
+	return 1;
+}
+
 void send_stop(app_eo_ctx_t *eo_ctx)
 {
 	em_status_t ret;
@@ -374,10 +411,11 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 	}
 
 	fprintf(fle, "\n\n#BEGIN TRACE FORMAT 1\n");
-	fprintf(fle, "resol,period,max_period,clksrc,num_tmo,loops,");
+	fprintf(fle, "resol,res_hz,period,max_period,clksrc,num_tmo,loops,");
 	fprintf(fle, "traces,noskip,SW-ver\n");
-	fprintf(fle, "%lu,%lu,%lu,%d,%d,%d,%d,%d,%s\n",
+	fprintf(fle, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s\n",
 		g_options.res_ns,
+		g_options.res_hz,
 		g_options.period_ns,
 		g_options.max_period_ns,
 		g_options.clock_src,
@@ -395,22 +433,16 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		eo_ctx->linux_hz);
 
 	fprintf(fle, "tmo_id,period_ns,period_ticks,ack_late");
-	fprintf(fle, ",start_tick,start_ns\n");
+	fprintf(fle, ",start_tick,start_ns,first_ns,first\n");
 	for (int i = 0; i < g_options.num_periodic; i++) {
-		if (USE_TIMER_STAT)
-			fprintf(fle, "%d,%lu,%lu,%lu,%lu,%lu\n",
-				i, eo_ctx->tmo_data[i].period_ns,
-				eo_ctx->tmo_data[i].ticks,
-				eo_ctx->tmo_data[i].ack_late,
-				eo_ctx->tmo_data[i].start,
-				time_to_ns(eo_ctx->tmo_data[i].start_ts));
-		else
-			fprintf(fle, "%d,%lu,%lu,%s,%lu,%lu\n",
-				i, eo_ctx->tmo_data[i].period_ns,
-				eo_ctx->tmo_data[i].ticks,
-				"",
-				eo_ctx->tmo_data[i].start,
-				time_to_ns(eo_ctx->tmo_data[i].start_ts));
+		fprintf(fle, "%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+			i, eo_ctx->tmo_data[i].period_ns,
+			eo_ctx->tmo_data[i].ticks,
+			eo_ctx->tmo_data[i].ack_late,
+			eo_ctx->tmo_data[i].start,
+			time_to_ns(eo_ctx->tmo_data[i].start_ts),
+			(uint64_t)eo_ctx->tmo_data[i].first_ns,
+			eo_ctx->tmo_data[i].first);
 	}
 
 	fprintf(fle, "id,op,tick,time_ns,linux_time_ns,counter,core\n");
@@ -707,9 +739,9 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 	app_msg_t *msg;
 	em_event_t event;
 	em_tmo_t tmo;
-	uint64_t max_period = 0;
 	em_tmo_flag_t flag = EM_TMO_FLAG_PERIODIC;
 	time_stamp t1 = {0};
+	uint64_t max_period = 0;
 
 	if (g_options.noskip)
 		flag |= EM_TMO_FLAG_NOSKIP;
@@ -738,19 +770,18 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 
 		double ns = 1000000000 / (double)eo_ctx->test_hz;
 		uint64_t period;
+		uint64_t first = 0;
+		em_status_t stat;
 
 		if (g_options.period_ns) {
-			period = round((double)g_options.period_ns / ns);
-			if (max_period < g_options.period_ns)
-				max_period = g_options.period_ns;
 			eo_ctx->tmo_data[i].period_ns = g_options.period_ns;
-		} else { /* use random */
+		} else { /* 0: use random */
 			eo_ctx->tmo_data[i].period_ns = random_tmo();
-			period = round((double)eo_ctx->tmo_data[i].period_ns /
-				       ns);
-			if (max_period < eo_ctx->tmo_data[i].period_ns)
-				max_period = eo_ctx->tmo_data[i].period_ns;
 		}
+		if (max_period < eo_ctx->tmo_data[i].period_ns)
+			max_period = eo_ctx->tmo_data[i].period_ns;
+		period = round((double)eo_ctx->tmo_data[i].period_ns / ns);
+
 		if (EXTRA_PRINTS && i == 0) {
 			APPL_PRINT("Timer Hz %lu ", eo_ctx->test_hz);
 			APPL_PRINT("= Period ns: %f => period %lu ticks\n",
@@ -759,18 +790,38 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 
 		test_fatal_if(period < 1, "timer resolution is too low!\n");
 
+		if (g_options.first_ns < 0) /* use random */
+			eo_ctx->tmo_data[i].first_ns = random_tmo();
+		else if (g_options.first_ns == 0) /* use period */
+			eo_ctx->tmo_data[i].first_ns = eo_ctx->tmo_data[i].period_ns;
+		else
+			eo_ctx->tmo_data[i].first_ns = g_options.first_ns;
+
+		first = round((double)eo_ctx->tmo_data[i].first_ns / ns);
+		if (!first)
+			first = 1;
+		eo_ctx->tmo_data[i].first = first;
+
 		eo_ctx->tmo_data[i].start_ts = get_time();
-		/* replace with abs tick when EM API has start time */
-		eo_ctx->tmo_data[i].start =
-			em_timer_current_tick(m_shm->test_tmr);
+		eo_ctx->tmo_data[i].start = em_timer_current_tick(m_shm->test_tmr);
+		first += eo_ctx->tmo_data[i].start;
 		if (g_options.profile)
 			t1 = get_time();
-		em_status_t stat = em_tmo_set_rel(tmo, period, event);
-
+		stat = em_tmo_set_periodic(tmo, first, period, event);
 		if (g_options.profile)
 			add_prof(eo_ctx, t1, OP_PROF_SET, msg);
 
-		test_fatal_if(stat != EM_OK, "Can't activate test tmo!\n");
+		if (unlikely(stat != EM_OK)) {
+			if (EXTRA_PRINTS) {
+				em_timer_tick_t now = em_timer_current_tick(eo_ctx->test_tmr);
+
+				APPL_PRINT("FAILED to set tmo, stat=%d: first=%lu, ", stat, first);
+				APPL_PRINT("now %lu (diff %ld), period=%lu\n",
+					   now, (int64_t)first - (int64_t)now, period);
+				APPL_PRINT("(first_ns %lu)\n", eo_ctx->tmo_data[i].first_ns);
+			}
+			test_fatal_if(1, "Can't activate test tmo!\n");
+		}
 
 		eo_ctx->tmo_data[i].ack_late = 0;
 		eo_ctx->tmo_data[i].ticks = period;
@@ -798,6 +849,7 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 	int reuse = 1;
 	e_state state = __atomic_load_n(&eo_ctx->state, __ATOMIC_ACQUIRE);
 	time_stamp t1 = {0};
+	em_tmo_stats_t ctrs = { 0 }; /* init to avoid gcc warning with LTO */
 
 	msg->count++;
 	if (likely(state == STATE_RUN)) {
@@ -825,14 +877,10 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 
 		add_trace(eo_ctx, msg->id, OP_TMO,
 			  0, msg->count);
-
-		#if (USE_TIMER_STAT)
-		const em_timer_tmo_stat_t *stat = em_tmo_get_pstat(msg->tmo);
-
-		APPL_PRINT("STAT-ACK [%d]:  %lu acks, %lu late, %lu err\n",
-			   msg->id, stat->acks, stat->late, stat->error);
-		eo_ctx->tmo_data[msg->id].ack_late = stat->late;
-		#endif
+		em_tmo_get_stats(msg->tmo, &ctrs);
+		APPL_PRINT("STAT-ACK [%d]:  %lu acks, %lu late, %lu skips\n",
+			   msg->id, ctrs.num_acks, ctrs.num_late_ack, ctrs.num_period_skips);
+		eo_ctx->tmo_data[msg->id].ack_late = ctrs.num_late_ack;
 		if (g_options.profile)
 			t1 = get_time();
 		em_tmo_delete(msg->tmo, &tmo_event);
@@ -1063,7 +1111,7 @@ int parse_my_args(int first, int argc, char *argv[])
 		int opt;
 		int long_index;
 		char *endptr;
-		long num;
+		int64_t num;
 
 		opt = getopt_long(argc, argv, shortopts,
 				  longopts, &long_index);
@@ -1105,15 +1153,17 @@ int parse_my_args(int first, int argc, char *argv[])
 		}
 		break;
 		case 'm': {
-			num = strtol(optarg, &endptr, 0);
-			if (*endptr != '\0' || num < 0)
+			if (!arg_to_ns(optarg, &num))
 				return 0;
-			g_options.max_period_ns = num;
+			if (num < 1)
+				return 0;
+			g_options.max_period_ns = (uint64_t)num;
 		}
 		break;
 		case 'l': {
-			num = strtol(optarg, &endptr, 0);
-			if (*endptr != '\0' || num < 1)
+			if (!arg_to_ns(optarg, &num))
+				return 0;
+			if (num < 1)
 				return 0;
 			g_options.min_period_ns = num;
 		}
@@ -1131,8 +1181,7 @@ int parse_my_args(int first, int argc, char *argv[])
 			if (num == 2)
 				g_options.stoplim = ((perc * size) / 100);
 			else
-				g_options.stoplim =
-					((STOP_THRESHOLD * size) / 100);
+				g_options.stoplim = ((STOP_THRESHOLD * size) / 100);
 		}
 		break;
 		case 'e': {
@@ -1174,10 +1223,19 @@ int parse_my_args(int first, int argc, char *argv[])
 		}
 		break;
 		case 'p': {
-			num = strtol(optarg, &endptr, 0);
-			if (*endptr != '\0' || num < 0)
+			if (!arg_to_ns(optarg, &num))
+				return 0;
+			if (num < 0)
 				return 0;
 			g_options.period_ns = num;
+		}
+		break;
+		case 'f': {
+			if (!arg_to_ns(optarg, &num))
+				return 0;
+			if (num < -1)
+				return 0;
+			g_options.first_ns = num;
 		}
 		break;
 		case 'c': {
@@ -1188,10 +1246,19 @@ int parse_my_args(int first, int argc, char *argv[])
 		}
 		break;
 		case 'r': {
-			num = strtol(optarg, &endptr, 0);
-			if (*endptr != '\0' || num < 0)
+			if (!arg_to_ns(optarg, &num))
+				return 0;
+			if (num < 0)
 				return 0;
 			g_options.res_ns = num;
+		}
+		break;
+		case 'z': {
+			num = strtol(optarg, &endptr, 0);
+			if (*endptr != '\0' || num < 1)
+				return 0;
+			g_options.res_hz = num;
+			g_options.res_ns = 0;
 		}
 		break;
 		case 'x': {
@@ -1272,26 +1339,13 @@ void test_start(appl_conf_t *const appl_conf)
 	em_queue_t queue;
 	em_status_t stat;
 	app_eo_ctx_t *eo_ctx;
+	em_timer_res_param_t res_capa;
+	em_timer_capability_t capa = { 0 }; /* init to avoid gcc warning with LTO */
 
 	if (appl_conf->num_pools >= 1)
 		m_shm->pool = appl_conf->pools[0];
 	else
 		m_shm->pool = EM_POOL_DEFAULT;
-
-	if (g_options.max_period_ns < g_options.period_ns &&
-	    g_options.max_period_ns)
-		g_options.max_period_ns = g_options.period_ns;
-
-	if (g_options.min_period_ns == 0)
-		g_options.min_period_ns = DEF_MIN_PERIOD * g_options.res_ns;
-
-	int64_t diff = (int64_t)g_options.max_period_ns -
-		       (int64_t)g_options.min_period_ns;
-
-	if (diff < 100000) {
-		APPL_PRINT("NOTE: max-min timeout too small, max adjusted\n");
-		g_options.max_period_ns = g_options.min_period_ns + 100000;
-	}
 
 	eo_ctx = &m_shm->eo_context;
 	eo_ctx->tmo_data = calloc(g_options.num_periodic, sizeof(tmo_setup));
@@ -1333,23 +1387,50 @@ void test_start(appl_conf_t *const appl_conf)
 	eo_ctx->bg_q = queue;
 
 	/* create two timers so HB and tests can be independent */
-	memset(&attr, 0, sizeof(em_timer_attr_t));
+	em_timer_attr_init(&attr);
 	strncpy(attr.name, "HBTimer", EM_TIMER_NAME_LEN);
-	attr.resolution = 100ULL * 1000ULL * 1000ULL; /* 100ms */
 	m_shm->hb_tmr = em_timer_create(&attr);
 	test_fatal_if(m_shm->hb_tmr == EM_TIMER_UNDEF,
 		      "Failed to create HB timer!");
 
-	memset(&attr, 0, sizeof(em_timer_attr_t));
+	/* test timer */
+	test_fatal_if(g_options.res_ns && g_options.res_hz, "Give resolution in ns OR hz!");
+
+	em_timer_attr_init(&attr);
+	stat = em_timer_capability(&capa, g_options.clock_src);
+	test_fatal_if(stat != EM_OK, "Given clk_src is not supported\n");
+	memset(&res_capa, 0, sizeof(em_timer_res_param_t));
+	if (!g_options.res_hz) {
+		res_capa.res_ns = g_options.res_ns == 0 ? capa.max_res.res_ns : g_options.res_ns;
+		APPL_PRINT("Trying %lu ns resolution capability on clk %d\n",
+			   res_capa.res_ns, g_options.clock_src);
+	} else {
+		res_capa.res_hz = g_options.res_hz;
+		APPL_PRINT("Trying %lu Hz resolution capability on clk %d\n",
+			   res_capa.res_hz, g_options.clock_src);
+	}
+	stat = em_timer_res_capability(&res_capa, g_options.clock_src);
+	test_fatal_if(stat != EM_OK, "Given resolution is not supported (ret %d)\n", stat);
+
+	if (!g_options.max_period_ns) {
+		g_options.max_period_ns = DEF_MAX_PERIOD;
+		if (g_options.max_period_ns > res_capa.max_tmo)
+			g_options.max_period_ns = res_capa.max_tmo;
+	}
+	if (!g_options.min_period_ns) {
+		g_options.min_period_ns = res_capa.res_ns * DEF_MIN_PERIOD;
+		if (g_options.min_period_ns < res_capa.min_tmo)
+			g_options.min_period_ns = res_capa.min_tmo;
+	}
 	strncpy(attr.name, "TestTimer", EM_TIMER_NAME_LEN);
-	attr.num_tmo = g_options.num_periodic + 1;
-	attr.resolution = g_options.res_ns;
-	attr.clk_src = (em_timer_clksrc_t)g_options.clock_src;
-	attr.max_tmo = g_options.max_period_ns;
+	attr.resparam = res_capa;
+	attr.num_tmo = g_options.num_periodic;
+	attr.resparam.max_tmo = g_options.max_period_ns; /* don't need more */
 	m_shm->test_tmr = em_timer_create(&attr);
 	test_fatal_if(m_shm->test_tmr == EM_TIMER_UNDEF,
 		      "Failed to create test timer!");
 	eo_ctx->test_tmr = m_shm->test_tmr;
+	g_options.res_ns = attr.resparam.res_ns;
 
 	/* Start EO */
 	stat = em_eo_start_sync(eo, NULL, NULL);
@@ -1432,26 +1513,35 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 			return EM_ERR_BAD_ID;
 		}
 		APPL_PRINT("Timer \"%s\" info:\n", attr.name);
-		APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resolution);
-		APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.max_tmo / 1000);
+		APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resparam.res_ns);
+		APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.resparam.max_tmo / 1000);
 		APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
-		APPL_PRINT("  -clk_src: %d\n", attr.clk_src);
+		APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 		APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
 			   em_timer_get_freq(tmr[i]));
 	}
 
-	if (g_options.max_period_ns == 0) {
-		em_timer_get_attr(eo_ctx->test_tmr, &attr);
-		g_options.max_period_ns = attr.max_tmo;
-	}
-
 	APPL_PRINT("\nActive run options:\n");
 	APPL_PRINT(" num timers:   %d\n", g_options.num_periodic);
-	APPL_PRINT(" resolution:   %luns (%fs)\n", g_options.res_ns,
-		   (double)g_options.res_ns / 1000000000);
-	APPL_PRINT(" period:       %luns (%fs%s)\n", g_options.period_ns,
-		   (double)g_options.period_ns / 1000000000,
-		   g_options.period_ns == 0 ? " (random)" : "");
+	if (g_options.res_hz) {
+		APPL_PRINT(" resolution:   %lu Hz (%f MHz)\n", g_options.res_hz,
+			   (double)g_options.res_hz / 1000000);
+	} else {
+		APPL_PRINT(" resolution:   %lu ns (%fs)\n", g_options.res_ns,
+			   (double)g_options.res_ns / 1000000000);
+	}
+	if (g_options.period_ns == 0)
+		APPL_PRINT(" period:       random\n");
+	else
+		APPL_PRINT(" period:       %lu ns (%fs%s)\n", g_options.period_ns,
+			   (double)g_options.period_ns / 1000000000,
+			   g_options.period_ns == 0 ? " (random)" : "");
+	if (g_options.first_ns == -1)
+		APPL_PRINT(" first period: random\n");
+	else
+		APPL_PRINT(" first period: %ld ns (%fs%s)\n", g_options.first_ns,
+			   (double)g_options.first_ns / 1000000000,
+			   g_options.first_ns == 0 ? " (=period)" : "");
 	APPL_PRINT(" max period:   %luns (%fs)\n", g_options.max_period_ns,
 		   (double)g_options.max_period_ns / 1000000000);
 	APPL_PRINT(" min period:   %luns (%fs)\n", g_options.min_period_ns,
@@ -1509,7 +1599,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 	msg->id = -1;
 	eo_ctx->hb_hz = em_timer_get_freq(m_shm->hb_tmr);
 	if (eo_ctx->hb_hz < 10)
-		APPL_ERROR("WARNING - HB timer hz very low!\n");
+		APPL_ERROR("WARNING: HB timer hz very low!\n");
 	else
 		APPL_PRINT("HB timer frequency is %lu\n", eo_ctx->hb_hz);
 
@@ -1533,11 +1623,17 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 	/* start heartbeat */
 	__atomic_store_n(&eo_ctx->state, STATE_INIT, __ATOMIC_SEQ_CST);
 
-	em_status_t stat = em_tmo_set_rel(eo_ctx->heartbeat_tmo, eo_ctx->hb_hz,
-					  event);
+	em_status_t stat = em_tmo_set_periodic(eo_ctx->heartbeat_tmo, 0,
+					       eo_ctx->hb_hz, event);
 
+	if (EXTRA_PRINTS && stat != EM_OK)
+		APPL_PRINT("FAILED to set HB tmo, stat=%d: period=%lu\n",
+			   stat, eo_ctx->hb_hz);
 	test_fatal_if(stat != EM_OK, "Can't activate heartbeat tmo!\n");
+
 	eo_ctx->test_hz = em_timer_get_freq(m_shm->test_tmr);
+	test_fatal_if(eo_ctx->test_hz == 0,
+		      "get_freq() failed, timer:%" PRI_TMR "", m_shm->test_tmr);
 
 	stat = em_dispatch_register_enter_cb(enter_cb);
 	test_fatal_if(stat != EM_OK, "enter_cb() register failed!");
@@ -1546,10 +1642,13 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 
 	srandom(time(NULL));
 	if (g_options.max_work_ns > RAND_MAX ||
-	    g_options.max_period_ns > RAND_MAX)
-		APPL_PRINT("WARN - rnd number range is less than max values\n");
+	    g_options.max_period_ns > RAND_MAX) {
+		double s = (double)RAND_MAX / (double)eo_ctx->test_hz;
+
+		APPL_PRINT("WARNING: rnd number range is less than max values (up to %.4fs)\n", s);
+	}
 	if (EXTRA_PRINTS)
-		APPL_PRINT("WARN - extra prints enabled, expect some jitter\n");
+		APPL_PRINT("WARNING: extra prints enabled, expect some jitter\n");
 
 	return EM_OK;
 }

@@ -507,6 +507,7 @@ typedef uint32_t em_escope_t;
 #define EM_ESCOPE_QUEUE_CURRENT                   (EM_ESCOPE_API_MASK | 0x080D)
 #define EM_ESCOPE_QUEUE_GET_FIRST                 (EM_ESCOPE_API_MASK | 0x080E)
 #define EM_ESCOPE_QUEUE_GET_NEXT                  (EM_ESCOPE_API_MASK | 0x080F)
+#define EM_ESCOPE_QUEUE_GET_INDEX                 (EM_ESCOPE_API_MASK | 0x0810)
 
 /* EM API escopes: Scheduler */
 #define EM_ESCOPE_ATOMIC_PROCESSING_END           (EM_ESCOPE_API_MASK | 0x0901)

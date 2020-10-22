@@ -46,15 +46,17 @@ extern "C" {
 #define invalid_pool(pool) ((unsigned int)pool_hdl2idx((pool)) > \
 			    EM_CONFIG_POOLS - 1)
 
+int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg);
+
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
-	  em_pool_cfg_t *const default_pool_cfg);
+	  const em_pool_cfg_t *default_pool_cfg);
 
 em_status_t
 pool_term(mpool_tbl_t *const pool_tbl);
 
 em_pool_t
-pool_create(const char *name, em_pool_t pool, em_pool_cfg_t *const pool_cfg);
+pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg);
 
 em_status_t
 pool_delete(em_pool_t pool);
@@ -92,7 +94,7 @@ pool_elem_get(em_pool_t pool)
 }
 
 static inline int
-pool_allocated(mpool_elem_t *const mpool_elem)
+pool_allocated(const mpool_elem_t *const mpool_elem)
 {
 	return !objpool_in_pool(&mpool_elem->objpool_elem);
 }
@@ -141,8 +143,8 @@ pool_stat_decrement(em_pool_t pool, int subpool, uint64_t cnt)
 	pstat->stat[pool_idx][subpool].free += cnt;
 }
 
-void
-pool_info_print(em_pool_t pool);
+void pool_info_print_hdr(unsigned int num_pools);
+void pool_info_print(em_pool_t pool);
 
 #ifdef __cplusplus
 }

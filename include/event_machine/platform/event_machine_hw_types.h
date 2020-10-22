@@ -232,105 +232,6 @@ typedef struct {
 #define EM_MAX_SUBPOOLS  4
 
 /**
- * EM pool configuration
- *
- * Configuration of an EM event pool consisting of up to 'EM_MAX_SUBPOOLS'
- * subpools, each supporting a specific event payload size. Event allocation,
- * i.e. em_alloc(), will use the subpool that provides the best fit for the
- * requested size.
- */
-typedef struct {
-	/**
-	 * Event type determines the pool type used:
-	 *    - EM_EVENT_TYPE_SW creates subpools of type 'ODP_POOL_BUFFER'
-	 *      This kind of EM pool CANNOT be used to create events of major
-	 *      type EM_EVENT_TYPE_PACKET.
-	 *    - EM_EVENT_TYPE_PACKET creates subpools of type 'ODP_POOL_PACKET'
-	 *      This kind of EM pool can be used for events of all kinds.
-	 * @note Only major types are considered here, setting minor is error
-	 */
-	em_event_type_t event_type;
-	/**
-	 * Alignment offset in bytes for the event payload start address
-	 * (for all events allocated from this EM pool).
-	 *
-	 * The default EM event payload start address alignment is a
-	 * power-of-two that is at minimum 32 bytes (i.e. 32 B, 64 B, 128 B etc.
-	 * depending on e.g. target cache-line size).
-	 * The 'align_offset.value' option can be used to fine-tune the
-	 * start-address by a small offset to e.g. make room for a small
-	 * SW header before the rest of the payload that might need a specific
-	 * alignment for direct HW-access.
-	 * Example: setting 'align_offset.value = 8' makes sure that the payload
-	 * _after_ 8 bytes will be aligned at minimum (2^x) 32 bytes.
-	 *
-	 * This option conserns all events allocated from the pool and overrides
-	 * the global config file option 'pool.align_offset' for this pool.
-	 */
-	struct {
-		/**
-		 * Select: Use pool-specific align-offset 'value' from below or
-		 *         use the global default value from the config file.
-		 * false (0): Use default value from the config file.
-		 * true (not 0): Use pool specific value set below.
-		 */
-		int in_use;
-		/**
-		 * Pool-specific event payload alignment offset value in bytes
-		 * (only evaluated if 'in_use=true').
-		 * Overrides the config file value for this pool.
-		 * The given 'value' must be a small power-of-two: 2, 4, or 8
-		 * 0: Explicitly set 'No align offset' for the pool.
-		 */
-		uint32_t value;
-	} align_offset;
-	/**
-	 * Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS
-	 */
-	int num_subpools;
-	struct {
-		/** Event payload size of the subpool (size > 0)  */
-		uint32_t size;
-		/** Number of events in the subpool (num > 0) */
-		uint32_t num;
-	} subpool[EM_MAX_SUBPOOLS];
-} em_pool_cfg_t;
-
-/**
- * EM pool information and usage statistics
- */
-typedef struct {
-	/* Pool name */
-	char name[EM_POOL_NAME_LEN];
-	/** EM pool handle */
-	em_pool_t em_pool;
-	/** Event type of events allocated from the pool */
-	em_event_type_t event_type;
-	/** Event payload alignment offset for events from the pool */
-	uint32_t align_offset;
-	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
-	int num_subpools;
-	struct {
-		/** Event payload size of the subpool */
-		uint32_t size;
-		/** Number of events in the subpool */
-		uint32_t num;
-		/**
-		 * Number of events allocated from the subpool.
-		 * Only if EM config file: pool.statistics_enable=true,
-		 * otherwise .used=0
-		 */
-		uint32_t used;
-		/**
-		 * Number of events free in the subpool.
-		 * Only if EM config file: pool.statistics_enable=true,
-		 * otherwise .free=0
-		 */
-		uint32_t free;
-	} subpool[EM_MAX_SUBPOOLS];
-} em_pool_info_t;
-
-/**
  * Error/Status codes
  */
 typedef enum em_status_e {
@@ -362,6 +263,8 @@ typedef enum em_status_e {
 	EM_ERR_BAD_POINTER      = 13,
 	/** Operation timeout (e.g. waiting on a lock) */
 	EM_ERR_TIMEOUT          = 14,
+	/** Not properly initialiazed (e.g. not using provided initializer) */
+	EM_ERR_NOT_INITIALIZED  = 15,
 
 	/** Other error. This is the last error code (for bounds checking) */
 	EM_ERR
@@ -439,7 +342,7 @@ typedef int (*em_output_drain_func_t)(void);
  *
  * @return number of events successfully sent (equal to num if all successful)
  */
-typedef int (*em_output_func_t)(em_event_t *const events,
+typedef int (*em_output_func_t)(const em_event_t events[],
 				const unsigned int num,
 				const em_queue_t output_queue,
 				void *output_fn_args);
@@ -465,123 +368,6 @@ typedef struct {
 	 */
 	void *output_fn_args;
 } em_output_queue_conf_t;
-
-/**
- * API-callback hook for em_alloc() and em_alloc_multi().
- *
- * The hook will only be called for successful allocs, passing also the newly
- * allocated 'events' to the hook.
- * The state and ownership of the events must not be changed by the hook, e.g.
- * the events must not be freed or sent etc. Calling em_alloc/_multi() within
- * the alloc hook leads to hook recursion and must be avoided.
- *
- * @note em_alloc(): hook is called with events[1] and num_act = num_req = 1.
- * @note em_alloc_multi(): hook is called with events[num_act] and
- *                         num_req >= num_act >= 1
- *
- * API-callback hook functions can be called concurrently from different cores.
- *
- * @param[in] events[]  Array of newly allocated events: 'events[num_act]'.
- *                      Don't change the state of the array or the events!
- * @param num_act       The actual number of events allocated and written into
- *                      'events[]' (num_act <= num_req). This is the return val
- *                      of em_alloc_multi() if at least one event was allocated
- *                      (the hook is not called if no events were allocated).
- * @param num_req       The requested number of events to allocate,
- *                      from em_alloc/_multi('num')
- * @param size          Event size >0, from em_alloc/_multi('size')
- * @param type          Event type to allocate, from em_alloc/_multi('type')
- * @param pool          Event pool handle, from em_alloc/_multi('pool')
- *
- * @see em_alloc(), em_alloc_multi() and em_hooks_register_alloc()
- */
-typedef void (*em_api_hook_alloc_t)(const em_event_t events[/*num_act*/],
-				    int num_act, int num_req, size_t size,
-				    em_event_type_t type, em_pool_t pool);
-
-/**
- * API-callback hook for em_free() and em_free_multi().
- *
- * The hook will be called before freeing the actual events, after verifying
- * that the events given are valid, thus the hook does not 'see' if the actual
- * free-operation succeeds or fails.
- * The state and ownership of the events must not be changed by the hook, e.g.
- * the events must not be freed or sent etc. Calling em_free/_multi() within the
- * free hook leads to hook recursion and must be avoided.
- *
- * @note em_free(): hook is called with events[1] and num = 1.
- * @note em_free_multi(): hook is called with events[num] and num >= 1
- *
- * API-callback hook functions can be called concurrently from different cores.
- *
- * @param[in] events[]  Array of events to be freed: 'events[num]'
- *                      Don't change the state of the array or the events!
- * @param num           The number of events in the array 'events[]'.
- *
- * @see em_free(), em_free_multi() and em_hooks_register_free()
- */
-typedef void (*em_api_hook_free_t)(const em_event_t events[], int num);
-
-/**
- * API-callback hook for em_send(), em_send_multi(), em_send_group() and
- * em_send_group_multi().
- *
- * Sending multiple events with an event group is the most generic
- * variant and thus one callback covers all.
- * The hook will be called just before sending the actual event(s), thus
- * the hook does not 'see' if the actual send operation succeeds or
- * fails.
- * The state and ownership of the events must not be changed by the
- * hook, e.g. the events can not be freed or sent etc.
- * Calling em_send...() within the send hook leads to hook recursion and
- * must be avoided.
- *
- * API-callback hook functions can be called concurrently from different cores.
- *
- * @see
- */
-typedef void (*em_api_hook_send_t)(const em_event_t events[], int num,
-				   em_queue_t queue,
-				   em_event_group_t event_group);
-
-/**
- * API-callback hooks provided by the user at start-up (init)
- *
- * EM API functions will call an API hook if given by the user through this
- * struct to em_init(). E.g. em_alloc() will call api_hooks->alloc(...) if
- * api_hooks->alloc != NULL. Not all hooks need to be provided, use NULL for
- * unsused hooks.
- *
- * @note Not all EM API funcs have associated hooks, only the most used
- *       functions (in the fast path) are included.
- *       Notice that extensive usage or heavy processing in the hooks might
- *       significantly impact performance since each API call (that has a hook)
- *       will execute the extra code in the user provided hook.
- *
- * @note Only used if EM_API_HOOKS_ENABLE != 0
- */
-typedef struct {
-	/**
-	 * API callback hook for _all_ alloc-variants:
-	 * em_alloc() and em_alloc_multi()
-	 * Initialize to NULL if unused.
-	 */
-	em_api_hook_alloc_t alloc_hook;
-
-	/**
-	 * API callback hook for all free-variants:
-	 * em_free() and em_free_multi()
-	 * Initialize to NULL if unused.
-	 */
-	em_api_hook_free_t free_hook;
-
-	/**
-	 * API callback hook used for _all_ send-variants:
-	 * em_send(), em_send_multi(), em_send_group() and em_send_group_multi()
-	 * Initialize to NULL if unused.
-	 */
-	em_api_hook_send_t send_hook;
-} em_api_hooks_t;
 
 /**
  * @def EM_ERROR_FATAL_MASK
@@ -625,103 +411,108 @@ typedef struct {
 
 /**
  * @def EM_ESCOPE_CONF_INIT
- * EM internal escope: initialize the Event Machine em_conf_t struct
+ * EM error scope: initialize the Event Machine em_conf_t struct
  */
 #define EM_ESCOPE_CONF_INIT                  (EM_ESCOPE_INTERNAL_MASK | 0x0001)
 /**
  * @def EM_ESCOPE_INIT
- * EM internal escope: initialize the Event Machine
+ * EM error scope: initialize the Event Machine
  */
 #define EM_ESCOPE_INIT                       (EM_ESCOPE_INTERNAL_MASK | 0x0002)
 /**
  * @def EM_ESCOPE_INIT_CORE
- * EM internal escope: initialize an Event Machine core
+ * EM error scope: initialize an Event Machine core
  */
 #define EM_ESCOPE_INIT_CORE                  (EM_ESCOPE_INTERNAL_MASK | 0x0003)
 /**
  * @def EM_ESCOPE_TERM
- * EM internal escope: terminate the Event Machine
+ * EM error scope: terminate the Event Machine
  */
 #define EM_ESCOPE_TERM                       (EM_ESCOPE_INTERNAL_MASK | 0x0004)
 /**
  * @def EM_ESCOPE_TERM_CORE
- * EM internal escope: terminate an Event Machine core
+ * EM error scope: terminate an Event Machine core
  */
 #define EM_ESCOPE_TERM_CORE                  (EM_ESCOPE_INTERNAL_MASK | 0x0005)
 
 /**
- * @def EM_ESCOPE_POOL_CREATE
- * EM internal escope: create an event pool
+ * @def EM_ESCOPE_POOL_CFG_INIT
+ * EM error scope: create an event pool
  */
-#define EM_ESCOPE_POOL_CREATE                (EM_ESCOPE_INTERNAL_MASK | 0x0101)
+#define EM_ESCOPE_POOL_CFG_INIT              (EM_ESCOPE_INTERNAL_MASK | 0x0101)
+/**
+ * @def EM_ESCOPE_POOL_CREATE
+ * EM error scope: create an event pool
+ */
+#define EM_ESCOPE_POOL_CREATE                (EM_ESCOPE_INTERNAL_MASK | 0x0102)
 /**
  * @def EM_ESCOPE_POOL_DELETE
- * EM internal escope: delete an event pool
+ * EM error scope: delete an event pool
  */
-#define EM_ESCOPE_POOL_DELETE                (EM_ESCOPE_INTERNAL_MASK | 0x0102)
+#define EM_ESCOPE_POOL_DELETE                (EM_ESCOPE_INTERNAL_MASK | 0x0103)
 /**
  * @def EM_ESCOPE_POOL_FIND
- * EM internal escope: find an event pool by name
+ * EM error scope: find an event pool by name
  */
-#define EM_ESCOPE_POOL_FIND                  (EM_ESCOPE_INTERNAL_MASK | 0x0103)
+#define EM_ESCOPE_POOL_FIND                  (EM_ESCOPE_INTERNAL_MASK | 0x0104)
 /**
  * @def EM_ESCOPE_POOL_GET_NAME
- * EM internal escope: get an event pool name
+ * EM error scope: get an event pool name
  */
-#define EM_ESCOPE_POOL_GET_NAME              (EM_ESCOPE_INTERNAL_MASK | 0x0104)
+#define EM_ESCOPE_POOL_GET_NAME              (EM_ESCOPE_INTERNAL_MASK | 0x0105)
 /**
  * @def EM_ESCOPE_POOL_GET_FIRST
- * EM internal escope: event pool iteration - get first of iteration
+ * EM error scope: event pool iteration - get first of iteration
  */
-#define EM_ESCOPE_POOL_GET_FIRST             (EM_ESCOPE_INTERNAL_MASK | 0x0105)
+#define EM_ESCOPE_POOL_GET_FIRST             (EM_ESCOPE_INTERNAL_MASK | 0x0106)
 /**
  * @def EM_ESCOPE_POOL_GET_NEXT
- * EM internal escope: event pool iteration - get next of iteration
+ * EM error scope: event pool iteration - get next of iteration
  */
-#define EM_ESCOPE_POOL_GET_NEXT              (EM_ESCOPE_INTERNAL_MASK | 0x0106)
+#define EM_ESCOPE_POOL_GET_NEXT              (EM_ESCOPE_INTERNAL_MASK | 0x0107)
 /**
  * @def EM_ESCOPE_POOL_INFO
- * EM internal escope: event pool info & statistics
+ * EM error scope: event pool info & statistics
  */
-#define EM_ESCOPE_POOL_INFO                  (EM_ESCOPE_INTERNAL_MASK | 0x0107)
+#define EM_ESCOPE_POOL_INFO                  (EM_ESCOPE_INTERNAL_MASK | 0x0108)
 /**
  * @def EM_ESCOPE_HOOKS_REGISTER_ALLOC
- * EM internal escope: register API callback hook for em_alloc()
+ * EM error scope: register API callback hook for em_alloc()
  */
 #define EM_ESCOPE_HOOKS_REGISTER_ALLOC       (EM_ESCOPE_INTERNAL_MASK | 0x0201)
 /**
  * @def EM_ESCOPE_HOOKS_UNREGISTER_ALLOC
- * EM internal escope: unregister API callback hook for em_alloc()
+ * EM error scope: unregister API callback hook for em_alloc()
  */
 #define EM_ESCOPE_HOOKS_UNREGISTER_ALLOC     (EM_ESCOPE_INTERNAL_MASK | 0x0202)
 /**
  * @def EM_ESCOPE_HOOKS_REGISTER_FREE
- * EM internal escope: register API callback hook for em_free()
+ * EM error scope: register API callback hook for em_free()
  */
 #define EM_ESCOPE_HOOKS_REGISTER_FREE        (EM_ESCOPE_INTERNAL_MASK | 0x0203)
 /**
  * @def EM_ESCOPE_HOOKS_UNREGISTER_FREE
- * EM internal escope: unregister API callback hook for em_free()
+ * EM error scope: unregister API callback hook for em_free()
  */
 #define EM_ESCOPE_HOOKS_UNREGISTER_FREE      (EM_ESCOPE_INTERNAL_MASK | 0x0204)
 /**
  * @def EM_ESCOPE_HOOKS_REGISTER_SEND
- * EM internal escope: register API callback hook for em_send-variants
+ * EM error scope: register API callback hook for em_send-variants
  */
 #define EM_ESCOPE_HOOKS_REGISTER_SEND        (EM_ESCOPE_INTERNAL_MASK | 0x0205)
 /**
  * @def EM_ESCOPE_HOOKS_UNREGISTER_SEND
- * EM internal escope: unregister API callback hook for em_send-variants
+ * EM error scope: unregister API callback hook for em_send-variants
  */
 #define EM_ESCOPE_HOOKS_UNREGISTER_SEND      (EM_ESCOPE_INTERNAL_MASK | 0x0206)
 /**
  * @def EM_ESCOPE_EVENT_SEND_DEVICE
- * EM internal escope: send event to another device
+ * EM error scope: send event to another device
  */
 #define EM_ESCOPE_EVENT_SEND_DEVICE          (EM_ESCOPE_INTERNAL_MASK | 0x0301)
 /**
  * @def EM_ESCOPE_EVENT_SEND_DEVICE_MULTI
- * EM internal escope: send event(s) to another device
+ * EM error scope: send event(s) to another device
  */
 #define EM_ESCOPE_EVENT_SEND_DEVICE_MULTI    (EM_ESCOPE_INTERNAL_MASK | 0x0302)
 

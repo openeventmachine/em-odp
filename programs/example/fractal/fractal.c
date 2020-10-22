@@ -364,7 +364,7 @@ void
 test_start(appl_conf_t *const appl_conf)
 {
 	em_eo_t eo_pixel_handler, eo_worker, eo_imager;
-	em_status_t ret, start_ret;
+	em_status_t ret, start_ret = EM_ERROR;
 
 	/*
 	 * Store the event pool to use, use the EM default pool if no other

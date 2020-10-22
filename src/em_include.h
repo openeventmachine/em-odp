@@ -60,6 +60,17 @@ extern "C" {
 #define likely(x)    odp_likely(!!(x))
 #define unlikely(x)  odp_unlikely(!!(x))
 
+/**
+ * @def EM_CHECK_INIT_CALLED
+ *
+ * Magic number used detect whether an initialization function has been called
+ * prior to a create-function.
+ *
+ * An error will be reported and the creation will fail if the call to _init()
+ * has been omitted.
+ */
+#define EM_CHECK_INIT_CALLED ((uint32_t)0xACDCBEEF)
+
 #include "misc/list.h"
 #include "misc/objpool.h"
 

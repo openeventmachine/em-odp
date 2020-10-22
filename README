@@ -55,12 +55,19 @@ more inlining of code. Try also --disable-shared if a static lib is OK for you.
 See further configure options: ../configure --help
 > make && make install
 
-Tested against odp linux-generic, commit:
-  Commit: 518bb7cf5c8f35c198f40015d999cce7de0c4365 [518bb7c]
-  Date: Friday, 12 June 2020 15:49.56
-  Commit Date: Friday, 3 July 2020 15:20.24
-  changelog: updates for odp v1.24.0.0
-  Add latest API changes and fixed issues.
+Tested against
+odp-linux - https://github.com/OpenDataPlane/odp
+    Commit: 5929f15fe8887bd8e0c2eef766dd6bf26d7d176c [5929f15]
+    Date: Wednesday, 14 October 2020 13:24.22
+    Commit Date: Tuesday, 20 October 2020 10:38.37
+    DEPENDENCIES: update dpdk instructions
+odp-dpdk - https://github.com/OpenDataPlane/odp-dpdk
+    Commit: 2e00d3740f1f5a1f3a4fdeeda6176b485e29466c [2e00d37]
+    Date: Tuesday, 13 October 2020 12:51.32
+    Commit Date: Wednesday, 14 October 2020 9:18.13
+    README.DPDK: add VFIO instructions
+
+Add instructions how to use VFIO Linux driver for PMDs.
 
 Trying to build static test applications without a static ODP library would
 fail.
@@ -73,7 +80,8 @@ compile and install em-odp. Separate build folders are useful if you want to run
 em-odp with different odp installations or configurations.
 > ./bootstrap
 > mkdir build && cd build
-> ../configure --prefix=<em-odp install path> --with-odp-path=<odp install path>
+> ../configure --prefix=<em-odp install path> \
+    --with-odp-path=<odp install path> [--with-odp-lib=libodp-linux]
 See further configure options: ../configure --help
 > make && make install
 
@@ -97,7 +105,7 @@ ODP debug configuration:
 > ../configure --prefix=<odp debug install path> CFLAGS='-O0 -g3'
 EM-ODP debug configuration:
 > ../configure --prefix=<em-odp debug install path> \
-  --with-odp-path=<odp install path> CFLAGS='-O0 -g3'
+  --with-odp-path=<odp install path> CFLAGS='-O0 -g3' --enable-check-level=3
 
 ===============================================================================
 Packet-I/O (ODP-linux-generic + socket, dpdk or netmap based io)
@@ -130,8 +138,10 @@ See the supported dpdk versions from the odp documentation.
 DPDK compilation from source code:
 > cd dpdk
 > make config T=x86_64-native-linuxapp-gcc O=x86_64-native-linuxapp-gcc
+... edit x86_64-native-linuxapp-gcc/.config to your liking ...
 > make install T=x86_64-native-linuxapp-gcc DESTDIR=<dpdk install path> \
   EXTRA_CFLAGS="-fPIC"
+See ODP and DPDK instructions for more detailed info - e.g. uio vs vfio usage.
 Note that 'DESTDIR' is required when compiling to generate a similar
 installation as installing via apt-get would generate, use e.g.
 DESTDIR=./install
@@ -160,13 +170,9 @@ Get the odp-dpdk code:
 The odp-dpdk readme file (<odp-dpdk>/platform/linux-dpdk/README) describes how
 to configure and compile dpdk and odp-dpdk on top of it.
 ODP compilations as above but different installation directories i.e.
-> ../configure --prefix=<odp-dpdk install path>
-
-Tested against odp-dpdk commit:
-Commit: aa55e35150da8099ed9f565173993609650010af [aa55e35]
-Date: Friday, 3 July 2020 17:03.49
-Merge ODP v1.24.0.0
+> ../configure --prefix=<odp-dpdk install path> ...
 
 EM-ODP compilation with odp-dpdk:
-> mkdir build-dpdk && cd build-dpdk
-> ../configure --with-odp-path=<odp-dpdk install path> --prefix=...
+> mkdir build--odp-dpdk && cd build--odp-dpdk
+> ../configure --with-odp-path=<odp-dpdk install path> \
+>              --with-odp-lib=libodp-dpdk --prefix=...

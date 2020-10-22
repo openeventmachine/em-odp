@@ -48,7 +48,7 @@ typedef struct {
 	event_timer_t timer[EM_ODP_MAX_TIMERS];
 } timer_storage_t;
 
-/* EM timer handle points to this. Holds the timer state. */
+/* EM timeout handle points to this. Holds the timer state */
 typedef struct em_timer_timeout_t {
 	odp_timer_t odp_timer;
 	odp_timer_pool_t odp_timer_pool;
@@ -58,6 +58,7 @@ typedef struct em_timer_timeout_t {
 	odp_atomic_u32_t state;
 	em_tmo_flag_t flags;
 	em_queue_t queue;
+	em_tmo_stats_t stats;
 } em_timer_timeout_t;
 
 #endif /* EM_TIMER_TYPES_H_ */

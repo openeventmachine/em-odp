@@ -314,6 +314,7 @@ void test_start(appl_conf_t *const appl_conf)
 {
 	em_eo_t eo;
 	em_timer_attr_t attr;
+	em_timer_res_param_t resparam;
 	em_queue_t queue;
 	em_status_t stat;
 	app_eo_ctx_t *eo_ctx;
@@ -378,12 +379,18 @@ void test_start(appl_conf_t *const appl_conf)
 	/* create shared timer and store handle in
 	 * shared memory. Require the configured app values
 	 */
-	memset(&attr, 0, sizeof(em_timer_attr_t));
+	em_timer_attr_init(&attr);
+
+	/* going to change resolution, so need to check limits */
+	memset(&resparam, 0, sizeof(em_timer_res_param_t));
+	resparam.res_ns = APP_TIMER_RESOLUTION_US * 1000ULL;
+	stat = em_timer_res_capability(&resparam, EM_TIMER_CLKSRC_DEFAULT);
+	test_fatal_if(stat != EM_OK, "Timer does not support the resolution");
+
 	strncpy(attr.name, "TestTimer", EM_TIMER_NAME_LEN);
-	attr.num_tmo = MAX(APP_MAX_TMOS + APP_MAX_PERIODIC + 1,
-			   em_core_count() * 512 + 1024); /* core stashing */
-	attr.resolution = APP_TIMER_RESOLUTION_US * 1000ULL;
-	attr.clk_src = EM_TIMER_CLKSRC_CPU;
+	attr.num_tmo = APP_MAX_TMOS + APP_MAX_PERIODIC + 1;
+	attr.resparam = resparam;
+	attr.resparam.res_hz = 0;
 	m_shm->tmr = em_timer_create(&attr);
 	test_fatal_if(m_shm->tmr == EM_TIMER_UNDEF, "Failed to create timer!");
 
@@ -495,10 +502,10 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 		return EM_ERR_BAD_ID;
 	}
 	APPL_PRINT("Timer \"%s\" info:\n", attr.name);
-	APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resolution);
-	APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.max_tmo / 1000);
+	APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resparam.res_ns);
+	APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.resparam.max_tmo / 1000);
 	APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
-	APPL_PRINT("  -clk_src: %d\n", attr.clk_src);
+	APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 	APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
 		   em_timer_get_freq(m_shm->tmr));
 

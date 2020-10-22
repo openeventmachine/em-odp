@@ -69,7 +69,7 @@ read_config_file(void)
 	 * Option: queue.min_events_default
 	 */
 	conf_str = "queue.min_events_default";
-	ret = libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	ret = _em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
 		return -1;
@@ -963,9 +963,9 @@ print_queue_info(void)
 		&em_shm->queue_tbl.odp_queue_capability;
 	odp_schedule_capability_t *const sched_capa =
 		&em_shm->queue_tbl.odp_schedule_capability;
-	char plain_sz[8] = "n/a";
-	char plain_lf_sz[8] = "n/a", plain_wf_sz[8] = "n/a";
-	char sched_sz[8] = "nolimit";
+	char plain_sz[24] = "n/a";
+	char plain_lf_sz[24] = "n/a", plain_wf_sz[24] = "n/a";
+	char sched_sz[24] = "nolimit";
 
 	if (queue_capa->plain.max_size > 0)
 		snprintf(plain_sz, sizeof(plain_sz), "%u",

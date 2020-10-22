@@ -377,6 +377,14 @@ typedef struct {
 	 * EM only passes the value.
 	 */
 	const void *eo_ctx;
+
+	/**
+	 * Internal check - don't touch!
+	 *
+	 * EM will verify that em_eo_multircv_param_init(param) has been called
+	 * before creating an EO with em_eo_create_multircv(..., param)
+	 */
+	uint32_t __internal_check;
 } em_eo_multircv_param_t;
 
 /**
@@ -468,9 +476,9 @@ em_eo_delete(em_eo_t eo);
  *
  * The function returns 0 and writes an empty string if the EO has no name.
  *
- * @param eo            EO handle
- * @param name          Destination buffer
- * @param maxlen        Maximum length (including the terminating '0')
+ * @param      eo       EO handle
+ * @param[out] name     Destination buffer
+ * @param      maxlen   Maximum length (including the terminating '0')
  *
  * @return Number of characters written (excludes the terminating '0').
  *
@@ -518,7 +526,7 @@ em_eo_find(const char *name);
  */
 em_status_t
 em_eo_add_queue(em_eo_t eo, em_queue_t queue,
-		int num_notif, const em_notif_t *notif_tbl);
+		int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Add a queue to an EO, synchronous
@@ -558,7 +566,7 @@ em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue);
  */
 em_status_t
 em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
-		   int num_notif, const em_notif_t *notif_tbl);
+		   int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Removes a queue from an EO, synchronous
@@ -597,7 +605,7 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue);
  */
 em_status_t
 em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
-		       int num_notif, const em_notif_t *notif_tbl);
+		       int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Removes all queues from an EO, synchronous.
@@ -675,15 +683,16 @@ em_eo_unregister_error_handler(em_eo_t eo);
  * The optional conf-argument can be used to pass applification specific
  * information (e.g. configuration data) to the EO.
  *
- * @param eo         EO handle
- * @param result     Optional pointer to em_status_t, which gets updated to the
- *                   return value of the actual user provided EO global start
- *                   function.
- * @param conf       Optional startup configuration, NULL ok.
- * @param num_notif  If not 0, defines the number of events to send when all
- *                   cores have returned from the start function (in notif_tbl)
- * @param notif_tbl  Array of em_notif_t, the optional notification events
- *                   (array data is copied)
+ * @param      eo      EO handle
+ * @param[out] result  Optional pointer to em_status_t, which gets updated to
+ *                     the return value of the actual user provided EO global
+ *                     start function.
+ * @param conf         Optional startup configuration, NULL ok.
+ * @param num_notif    If not 0, defines the number of notification events to
+ *                     send when all cores have returned from the start
+ *                     function(s).
+ * @param notif_tbl    Array of em_notif_t, the optional notification events
+ *                     (array data is copied)
  *
  * @return EM_OK if successful.
  *
@@ -691,18 +700,18 @@ em_eo_unregister_error_handler(em_eo_t eo);
  */
 em_status_t
 em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
-	    int num_notif, const em_notif_t *notif_tbl);
+	    int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Start Execution Object (EO), synchronous
  *
  * As em_eo_start(), but will not return until the operation is complete.
  *
- * @param eo         EO handle
- * @param result     Optional pointer to em_status_t, which gets updated to the
- *                   return value of the actual user provided EO global start
- *                   function.
- * @param conf	     Optional startup configuration, NULL ok.
+ * @param      eo      EO handle
+ * @param[out] result  Optional pointer to em_status_t, which gets updated to
+ *                     the return value of the actual user provided EO global
+ *                     start function.
+ * @param      conf    Optional startup configuration, NULL ok.
  *
  * @return EM_OK if successful.
  *
@@ -740,7 +749,7 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf);
  * @see em_stop_func_t(), em_stop_local_func_t(), em_eo_start()
  */
 em_status_t
-em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t *notif_tbl);
+em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Stop Execution Object (EO), synchronous
@@ -816,7 +825,7 @@ em_eo_get_state(em_eo_t eo);
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of EOs into
+ * @param[out] num   Pointer to an unsigned int to store the amount of EOs into
  * @return The first EO handle or EM_EO_UNDEF if none exist
  *
  * @see em_eo_get_next()
@@ -863,9 +872,8 @@ em_eo_get_next(void);
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of queues
- *                   into.
- * @param eo         EO handle
+ * @param[out] num  Output the current amount of queues associated with the EO
+ * @param      eo   EO handle
  *
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist or the EO
  *         is invalid.

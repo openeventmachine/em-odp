@@ -386,7 +386,7 @@ em_send(em_event_t event, em_queue_t queue)
 }
 
 int
-em_send_multi(em_event_t *const events, int num, em_queue_t queue)
+em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 {
 	event_hdr_t *ev_hdrs[num];
 	const int is_external = queue_external(queue);
@@ -637,7 +637,7 @@ em_event_get_type(em_event_t event)
 	return ev_hdr->event_type;
 }
 
-int em_event_get_type_multi(em_event_t events[], int num,
+int em_event_get_type_multi(const em_event_t events[], int num,
 			    em_event_type_t types[/*out:num*/])
 {
 	int i;
@@ -676,7 +676,7 @@ int em_event_get_type_multi(em_event_t events[], int num,
 	return num;
 }
 
-int em_event_same_type_multi(em_event_t events[], int num,
+int em_event_same_type_multi(const em_event_t events[], int num,
 			     em_event_type_t *same_type /*out*/)
 {
 	/* Check all args */

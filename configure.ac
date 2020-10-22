@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_api_major_version], [2])
-m4_define([em_api_minor_version], [3])
+m4_define([em_api_minor_version], [4])
 m4_define([em_api_implementation_version], [0])
 m4_define([em_api_implementation_fix], [0])
 
@@ -29,17 +29,17 @@ m4_if(em_api_implementation_fix, [0],
 AC_INIT([EM-ODP],[em_version],[foo at nokia.com])
 
 EM_API_MAJOR_VERSION=em_api_major_version
-AC_SUBST(EM_API_MAJOR_VERSION)
+AC_SUBST([EM_API_MAJOR_VERSION])
 EM_API_MINOR_VERSION=em_api_minor_version
-AC_SUBST(EM_API_MINOR_VERSION)
+AC_SUBST([EM_API_MINOR_VERSION])
 EM_API_IMPLEMENTATION_VERSION=em_api_implementation_version
-AC_SUBST(EM_API_IMPLEMENTATION_VERSION)
+AC_SUBST([EM_API_IMPLEMENTATION_VERSION])
 
 EM_API_VERSION=em_api_version
-AC_SUBST(EM_API_VERSION)
+AC_SUBST([EM_API_VERSION])
 
 EM_VERSION=em_version
-AC_SUBST(EM_VERSION)
+AC_SUBST([EM_VERSION])
 
 ##########################################################################
 # Test if user has set CFLAGS. Automake initializes CFLAGS to "-g -O2"
@@ -60,10 +60,10 @@ AM_SILENT_RULES([yes])
 # Set em-odp library version
 ############################
 EMODP_LIBSO_VERSION=em_lib_version
-AC_SUBST(EMODP_LIBSO_VERSION)
+AC_SUBST([EMODP_LIBSO_VERSION])
 
 EMODP_PKGCONFIG_VERSION=em_pkgconfig_version
-AC_SUBST(EMODP_PKGCONFIG_VERSION)
+AC_SUBST([EMODP_PKGCONFIG_VERSION])
 
 # Checks for programs.
 AC_PROG_CXX
@@ -75,9 +75,10 @@ AM_PROG_AR
 # Use libtool
 LT_INIT([])
 AC_SUBST([LIBTOOL_DEPS])
-AM_PROG_LIBTOOL
 
-PKG_PROG_PKG_CONFIG
+m4_ifdef([PKG_PREREQ], [PKG_PREREQ(0.29)],
+	 [m4_fatal([install pkg-config 0.29 or later before running autoconf/autogen])])
+PKG_PROG_PKG_CONFIG([0.29])
 
 # Checks for header files.
 AC_CHECK_HEADERS([inttypes.h stdarg.h stddef.h])
@@ -112,7 +113,10 @@ AC_SEARCH_LIBS([timer_create],[rt posix4])
 # EM configuration file
 ##########################################################################
 # Default EM configuration file
-default_config_path="${srcdir}/config/em-odp.conf"
+default_config_file="${srcdir}/config/em-odp.conf"
+
+AC_CHECK_PROGS([REALPATH], [realpath])
+AS_IF([test -z "$REALPATH"], [AC_MSG_ERROR([Could not find 'realpath'])])
 
 # Set optional path for the default configuration file,
 # i.e. override the file to be used for generating the built-in default
@@ -122,10 +126,16 @@ default_config_path="${srcdir}/config/em-odp.conf"
 AC_ARG_WITH([config-file],
 	    [AS_HELP_STRING([--with-config-file=FILE],
 			    [Override the default EM configuration file
-			    (file must include all EM configuration options)])],
-	    [default_config_path=$withval], [])
+			     (file must include all EM configuration options)
+			     [default=SRCDIR/config/em-odp.conf]])],
+	    [default_config_file="${withval/#\~/$HOME}"], dnl replace ~ with $HOME
+	    [])
 
-EM_LIBCONFIG([$default_config_path])
+rel_default_config_file=`realpath --relative-to=$(pwd) ${default_config_file}`
+AC_SUBST([default_config_file])
+AC_SUBST([rel_default_config_file])
+
+EM_LIBCONFIG([$rel_default_config_file])
 
 ##########################################################################
 # Default warning setup
@@ -154,6 +164,17 @@ EM_CFLAGS="$EM_CFLAGS $EM_CFLAGS_EXTRA"
 EM_CPPFLAGS="$EM_CPPFLAGS -DENV_64_BIT -DEM_64_BIT"
 
 ##########################################################################
+# EM (em-odp) version information (if available)
+##########################################################################
+AS_IF([test -d $srcdir/.git],
+      [commit=$(git describe --long --always --dirty --tags)
+       date=$(date '+%F %H:%M')
+       build_info="$commit $date"],
+      [build_info="Unknown"])
+
+EM_CFLAGS="$EM_CFLAGS -DEM_BUILD_INFO=\"$build_info\""
+
+##########################################################################
 # EM (em-odp) compile-time options
 ##########################################################################
 
@@ -171,7 +192,7 @@ AC_ARG_ENABLE([check-level],
 	      [AS_HELP_STRING([--enable-check-level[[=VAL]]],
 			      [Override the 'EM_CHECK_LEVEL' define, valid
 			       values are 0...3, yes(=3) or no value(=3)
-			       [default=yes=3]])],
+			       [default=disabled, value from source code]])],
 	      [AS_IF([test "$enableval" -ge 0 -a "$enableval" -le 3 2>/dev/null],
 		     [check_level_info="yes:$enableval (EM_CHECK_LEVEL)"
 		      EM_CHECK_LEVEL="-DEM_CHECK_LEVEL=$enableval"],
@@ -186,7 +207,7 @@ AC_ARG_ENABLE([check-level],
 		EM_CPPFLAGS="$EM_CPPFLAGS $EM_CHECK_LEVEL"
 	      ],[])
 # Substitute @EM_CHECK_LEVEL@ into the pkgconfig file libemodp.pc.in
-AC_SUBST(EM_CHECK_LEVEL)
+AC_SUBST([EM_CHECK_LEVEL])
 
 ##########################################################################
 # Default include setup
@@ -240,7 +261,8 @@ EM_ABI_COMPAT=1
 abi_compat=yes
 AC_ARG_ENABLE([abi-compat],
 	      [AS_HELP_STRING([--disable-abi-compat],
-			      [disables ABI compatible mode])],
+			      [disables ABI compatible mode
+			       [default=enabled]])],
 	      [AS_IF([test "x$enableval" = "xno"],
 		     [EM_ABI_COMPAT=0
 		      abi_compat=no
@@ -260,7 +282,8 @@ lto_enabled=no
 AC_ARG_ENABLE([lto],
 	      [AS_HELP_STRING([--enable-lto],
 			      [Enable Link Time Optimization (LTO)
-			       in compiler and linker])],
+			       in compiler and linker
+			       [default=disabled]])],
 	      [AS_IF([test "x$enableval" = "xyes"],
 		     [lto_enabled=yes
 		      # Fat LTO object file contains GIMPLE bytecodes and the
@@ -269,45 +292,71 @@ AC_ARG_ENABLE([lto],
 		      EM_LTO_FLAGS="-flto -ffat-lto-objects"
 		     ])
 	      ])
-AC_SUBST(EM_LTO_FLAGS)
+AC_SUBST([EM_LTO_FLAGS])
 AM_CFLAGS="$AM_CFLAGS $EM_LTO_FLAGS"
 AM_LDFLAGS="$AM_LDFLAGS $EM_LTO_FLAGS"
-
-##########################################################################
-# adding the ODP library (e.g. with static name 'libodp-linux.a')
-##########################################################################
-# Optional configure parameter for a non-standard install prefix of ODP
-AC_ARG_WITH([odp-path],
-	    [AS_HELP_STRING([--with-odp-path=prefix],
-			    [non-standard install prefix of odp])],
-	    [# extend the compiler and linker flags according to the path set
-	     AM_CPPFLAGS="$AM_CPPFLAGS -I$with_odp_path/include"
-	     AM_CPPFLAGS="$AM_CPPFLAGS -I$with_odp_path/include/odp/arch/$ARCH_ABI"
-	     AM_LDFLAGS="$AM_LDFLAGS -L$with_odp_path/lib"
-	     export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$with_odp_path/lib/pkgconfig"],
-	    [])
 
 ##########################################################################
 # Build without example programs
 ##########################################################################
 AC_ARG_WITH([programs],
 	    [AS_HELP_STRING([--without-programs],
-			    [build without example programs])],
+			    [build without example programs [default=with]])],
 	    [],
 	    [with_programs=yes])
 AM_CONDITIONAL([WITH_PROGRAMS], [test x$with_programs != xno])
 
 ##########################################################################
-# Get configuration from libodp-linux.pc with pkg-config
+# Build programs/examples/tests dynamically (static is default)
+##########################################################################
+AC_ARG_ENABLE([static-applications],
+	      [AS_HELP_STRING([--disable-static-applications],
+			      [disable static linking of internal
+			       em-odp example programs
+			       [default=enabled=static]])],
+	      [],
+	      [enable_static_applications=yes])
+AS_IF([test "x$enable_static" != "xno" -a "x$enable_static_applications" != "xno"],
+      [enable_static_applications=yes], [enable_static_applications=no])
+
+AM_CONDITIONAL([STATIC_APPS], [test "x$enable_static_applications" != "xno"])
+
+##########################################################################
+# ODP library path and name
+##########################################################################
+# Optional configure parameter for a non-standard install prefix of ODP
+AC_ARG_WITH([odp-path],
+	    [AS_HELP_STRING([--with-odp-path=prefix],
+			    [non-standard install prefix of odp])],
+	    [export PKG_CONFIG_PATH="$with_odp_path/lib/pkgconfig:$PKG_CONFIG_PATH"],
+	    [])
+AM_CONDITIONAL([WITH_ODP_PATH_GIVEN], [test "x$with_odp_path" != "xno"])
+AC_SUBST([with_odp_path])
+
+# Optional configure parameter for setting the ODP library name
+# (actually the name of the corresponing .pc file).
+# Defaults to "libodp-linux" if nothing else given.
+libodp_name="libodp-linux"
+AC_ARG_WITH([odp-lib],
+	    [AS_HELP_STRING([--with-odp-lib=odp-library-name],
+			    [name of the odp library (and .pc file)]
+			    [[default=libodp-linux]])],
+	    [AS_IF([test "x$with_odp_lib" != "xyes"],
+		   [libodp_name=$withval])],
+	    [])
+
+AS_IF([test "x$libodp_name" = "xno"],
+      [AC_MSG_ERROR([--with-odp-lib: Please provide ODP lib name])])
+AC_SUBST([libodp_name])
+
+##########################################################################
+# Get configuration for libodp with pkg-config
 ##########################################################################
 AC_CHECK_PROGS([PKGCONFIG], [pkg-config])
 AS_IF([test -z "$PKGCONFIG"],
       [AC_MSG_ERROR([Please install pkg-config])])
 
-AS_IF([test "x$enable_static" = "xyes"],
-      [export PKG_CONFIG="pkg-config --static"])
-
-PKG_CHECK_MODULES([ODP], [libodp-linux])
+PKG_CHECK_MODULES([ODP], [$libodp_name])
 AC_SUBST([ODP_CFLAGS])
 AC_SUBST([ODP_LIBS])
 
@@ -315,7 +364,15 @@ PKG_CHECK_MODULES([ODPHELPER], [libodphelper])
 AC_SUBST([ODPHELPER_CFLAGS])
 AC_SUBST([ODPHELPER_LIBS])
 
-ODP_VERSION=$(pkg-config --modversion libodp-linux)
+PKG_CHECK_MODULES_STATIC([ODP_STATIC], [$libodp_name])
+AC_SUBST([ODP_STATIC_CFLAGS])
+AC_SUBST([ODP_STATIC_LIBS])
+
+PKG_CHECK_MODULES_STATIC([ODPHELPER_STATIC], [libodphelper])
+AC_SUBST([ODPHELPER_STATIC_CFLAGS])
+AC_SUBST([ODPHELPER_STATIC_LIBS])
+
+ODP_VERSION=$(pkg-config --modversion $libodp_name)
 
 ##########################################################################
 # Pkg-config configuration for libemodp.pc
@@ -368,11 +425,18 @@ AC_MSG_RESULT([
 	libdir:			${libdir}
 	includedir:		${includedir}
 
-	odp_version:		${ODP_VERSION}
-	odp_cflags:		${ODP_CFLAGS}
-	odp_libs:		${ODP_LIBS}
-	odphelper_cflags:	${ODPHELPER_CFLAGS}
-	odphelper_libs:		${ODPHELPER_LIBS}
+	odp-library:		${libodp_name}
+	odp-version:		${ODP_VERSION}
+
+	odp-cflags:		${ODP_CFLAGS}
+	odp-libs:		${ODP_LIBS}
+	odphelper-cflags:	${ODPHELPER_CFLAGS}
+	odphelper-libs:		${ODPHELPER_LIBS}
+
+	odp-static-cflags:	${ODP_STATIC_CFLAGS}
+	odp-static-libs:	${ODP_STATIC_LIBS}
+	odphelper-static-cflags:${ODPHELPER_STATIC_CFLAGS}
+	odphelper-static-libs:	${ODPHELPER_STATIC_LIBS}
 
 	cc:			${CC}
 	cc version:		${CC_VERSION}
@@ -391,6 +455,8 @@ AC_MSG_RESULT([
 	ABI compatible:		${abi_compat}
 	link time optimization:	${lto_enabled}
 	example programs:	${with_programs}
+	example static linkage:	${enable_static_applications}
+	default config-file:	${default_config_file}
 
 	EM Compile Time Options
 	=======================

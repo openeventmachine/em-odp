@@ -234,9 +234,8 @@ void test_start(appl_conf_t *const appl_conf)
 	 * Create shared timer and store handle in shared memory.
 	 * Accept all defaults.
 	 */
-	memset(&attr, 0, sizeof(em_timer_attr_t));
+	em_timer_attr_init(&attr);
 	strncpy(attr.name, "ExampleTimer", EM_TIMER_NAME_LEN);
-	attr.clk_src = EM_TIMER_CLKSRC_DEFAULT;
 	m_shm->tmr = em_timer_create(&attr);
 	test_fatal_if(m_shm->tmr == EM_TIMER_UNDEF, "Failed to create timer!");
 
@@ -342,10 +341,11 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	}
 
 	APPL_PRINT("Timer \"%s\" info:\n", attr.name);
-	APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resolution);
-	APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.max_tmo / 1000);
+	APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resparam.res_ns);
+	APPL_PRINT("  -max_tmo: %" PRIu64 " us\n", attr.resparam.max_tmo / 1000);
+	APPL_PRINT("  -min_tmo: %" PRIu64 " us\n", attr.resparam.min_tmo / 1000);
 	APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
-	APPL_PRINT("  -clk_src: %d\n", attr.clk_src);
+	APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 	APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
 		   em_timer_get_freq(m_shm->tmr));
 

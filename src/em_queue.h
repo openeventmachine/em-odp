@@ -101,8 +101,8 @@ print_queue_info(void);
  * Internal func, application should use em_send_multi() instead.
  */
 static inline unsigned int
-queue_unsched_enqueue_multi(em_event_t events[], int num,
-			    queue_elem_t *const q_elem)
+queue_unsched_enqueue_multi(const em_event_t events[], int num,
+			    const queue_elem_t *const q_elem)
 {
 	odp_event_t *const odp_events = events_em2odp(events);
 	odp_queue_t odp_queue = q_elem->odp_queue;
@@ -127,7 +127,7 @@ queue_unsched_enqueue_multi(em_event_t events[], int num,
  * Internal func, application should use em_send() instead.
  */
 static inline em_status_t
-queue_unsched_enqueue(em_event_t event, queue_elem_t *const q_elem)
+queue_unsched_enqueue(em_event_t event, const queue_elem_t *const q_elem)
 {
 	odp_event_t odp_event = event_em2odp(event);
 	odp_queue_t odp_queue = q_elem->odp_queue;
@@ -151,7 +151,7 @@ queue_unsched_enqueue(em_event_t event, queue_elem_t *const q_elem)
 
 /** Is the queue allocated? */
 static inline int
-queue_allocated(queue_elem_t *const queue_elem)
+queue_allocated(const queue_elem_t *const queue_elem)
 {
 	return !objpool_in_pool(&queue_elem->queue_pool_elem);
 }

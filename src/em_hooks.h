@@ -44,7 +44,7 @@ extern "C" {
  * EM API-callback hooks init function (called once at startup).
  */
 em_status_t
-hooks_init(em_api_hooks_t *const api_hooks);
+hooks_init(const em_api_hooks_t *api_hooks);
 
 /**
  * Helper function for registering callback hook functions.

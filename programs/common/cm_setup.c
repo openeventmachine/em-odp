@@ -58,6 +58,10 @@
 #include "cm_pool_config.h"
 #include "cm_pktio.h"
 
+/**
+ * @def USAGE_FMT
+ * Usage help string
+ */
 #define USAGE_FMT \
 "\n"									\
 "Usage: %s APPL&EM-OPTIONS\n"						\
@@ -79,6 +83,57 @@
 "\n"
 
 /**
+ * Stored command line arguments given at startup
+ *
+ * @see USAGE_FMT
+ */
+typedef struct {
+	/** EM cmd line args */
+	struct {
+		/** EM device id */
+		uint16_t device_id;
+		/** RunMode: EM run with one thread per core */
+		int thread_per_core;
+		/** RunMode: EM run with one process per core */
+		int process_per_core;
+		/** Number of EM-cores (== nbr of EM-threads or EM-processes) */
+		int core_count;
+		/** Physical core mask, exact listing of cores for EM */
+		em_core_mask_t phys_mask;
+	} args_em;
+
+	/** Application cmd line args */
+	struct {
+		/** Application name */
+		char name[APPL_NAME_LEN];
+		/** Dispatch rounds before returning */
+		uint32_t dispatch_rounds;
+		/** Packet I/O parameters */
+		struct {
+			/** Interface count */
+			int if_count;
+			/** Interface names + placeholder for '\0' */
+			char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
+			/** Interface identifiers corresponding to 'if_name[]' */
+			int if_ids[IF_MAX_NUM];
+		} pktio;
+	} args_appl;
+
+} parse_args_t;
+
+/**
+ * CPU config to be used
+ */
+typedef struct {
+	int num_cpus;
+	int num_worker;
+	int num_control;
+	odp_cpumask_t cpu_mask;
+	odp_cpumask_t worker_mask;
+	odp_cpumask_t control_mask;
+} cpu_conf_t;
+
+/**
  * Dispatch rounds for em_dispatch() during start-up to properly sync the
  * cores to enter the main dispatch loop at roughly the same time.
  */
@@ -97,36 +152,40 @@
  */
 #define TERM_DISPATCH_ROUNDS 16
 
-/**
- * EM pool configuration, see cm_pool_config.h
- */
-static em_pool_cfg_t default_pool_cfg = DEFAULT_POOL_CFG;
-static em_pool_cfg_t appl_pool_1_cfg = APPL_POOL_1_CFG;
-/* static em_pool_cfg_t appl_pool_2_cfg = APPL_POOL_2_CFG; */
+static void
+parse_args(int argc, char *argv[], parse_args_t *parse_args /* out */);
 
 static void
-parse_args(int argc, char *argv[],
-	   em_conf_t *em_conf /* out param */,
-	   appl_conf_t *appl_conf /* out param */);
-static void
-verify_cpu_setup(int num_cpus, odp_cpumask_t *const cpu_mask);
+verify_cpu_setup(const parse_args_t *parsed,
+		 cpu_conf_t *cpu_conf /* out */);
+
+static odp_platform_init_t *
+set_platform_params(odp_platform_init_t *params);
+
+static odp_instance_t
+init_odp(const parse_args_t *parsed, const cpu_conf_t *cpu_conf);
 
 static void
 init_sync(sync_t *const sync, int num_cpus);
 
+static void
+init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */);
+
+static void
+init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */);
+
+static void
+create_pktio(appl_conf_t *appl_conf/*in/out*/, const cpu_conf_t *cpu_conf);
+static void
+term_pktio(const appl_conf_t *appl_conf);
+
 static int
 create_odp_threads(odp_instance_t instance,
-		   odp_cpumask_t *const cpu_mask, const int num_cpus,
-		   odp_cpumask_t *const control_mask, const int num_control,
-		   odp_cpumask_t *const worker_mask, const int num_worker,
+		   const cpu_conf_t *cpu_conf,
 		   int (*start_fn)(void *fn_arg), void *fn_arg,
 		   odph_thread_t thread_tbl[/*out*/]);
-
 static int
 run_core_fn(void *arg);
-
-static odp_platform_init_t *
-set_platform_params(odp_platform_init_t *params);
 
 static void
 install_sig_handler(int signum, void (*sig_handler)(int), int flags);
@@ -148,46 +207,174 @@ usage(char *progname)
 appl_shm_t *appl_shm;
 
 /**
- * ODP-thread table.
- * Allocate from shared memory so that also process-per-core mode works.
+ * Common setup function for em-odp example programs
  */
-typedef struct {
-	odph_thread_t thread_tbl[MAX_THREADS];
-} thread_tbl_shm_t;
-
-int
-cm_setup(int argc, char *argv[])
+int cm_setup(int argc, char *argv[])
 {
-	em_conf_t em_conf_parse; /* tmp var filled in during arg parsing */
-	em_conf_t *em_conf;
-	appl_conf_t appl_conf_parse; /* tmp var filled during arg parsing */
-	appl_conf_t *appl_conf;
-	sync_t *sync;
-	odp_shm_t shm;
-	odp_init_t init_params;
-	odp_platform_init_t plat_params[PLAT_PARAM_SIZE];
-	odp_platform_init_t *plat_params_ptr;
-	odph_helper_options_t helper_options;
-	odp_cpumask_t *cpu_mask;
-	odp_cpumask_t worker_mask;
-	odp_cpumask_t control_mask;
-	int num_cpus, num_worker, num_control;
-	em_status_t stat;
-	em_pool_t em_pool;
-	int ret;
-	odp_instance_t instance;
-
 	/* use unbuffered stdout */
 	if (setvbuf(stdout, NULL, _IONBF, 0) != 0)
 		APPL_EXIT_FAILURE("setvbuf() fails (errno(%i)=%s)",
 				  errno, strerror(errno));
 
-	/* Init the EM conf params */
-	em_conf_init(&em_conf_parse);
+	/*
+	 * Parse the command line arguments
+	 */
+	parse_args_t parsed; /* filled during cmd line arg parsing */
 
-	/* Parse the command line arguments */
-	memset(&appl_conf_parse, 0, sizeof(appl_conf_parse));
-	parse_args(argc, argv, &em_conf_parse, &appl_conf_parse);
+	memset(&parsed, 0, sizeof(parsed));
+	parse_args(argc, argv, &parsed/* out */);
+
+	/*
+	 * Verify the cpu setup and extract the cpu config
+	 */
+	cpu_conf_t cpu_conf;
+
+	memset(&cpu_conf, 0, sizeof(cpu_conf));
+	verify_cpu_setup(&parsed, &cpu_conf/* out */);
+
+	/*
+	 * Init ODP with given args and cpu setup
+	 *
+	 * Calls odp_init_global() and odp_init_local() for this thread
+	 * before returning.
+	 */
+	odp_instance_t instance;
+
+	instance = init_odp(&parsed, &cpu_conf);
+
+	APPL_PRINT("\n"
+		   "*********************************************************\n"
+		   "Setting up EM on ODP-version:\n"
+		   "%s\n"
+		   "*********************************************************\n"
+		   "\n",
+		   odp_version_impl_str());
+
+	/*
+	 * Setup shared memory
+	 *
+	 * Reserve application shared memory in one chunk.
+	 */
+	odp_shm_t shm = odp_shm_reserve("appl_shm", sizeof(appl_shm_t),
+					ODP_CACHE_LINE_SIZE, ODP_SHM_SINGLE_VA);
+	if (unlikely(shm == ODP_SHM_INVALID))
+		APPL_EXIT_FAILURE("appl shared mem reservation failed");
+	appl_shm = odp_shm_addr(shm);
+	if (unlikely(appl_shm == NULL))
+		APPL_EXIT_FAILURE("obtaining shared mem addr failed");
+	memset(appl_shm, 0, sizeof(appl_shm_t));
+
+	/*
+	 * Initialize application start-up & exit synchronization
+	 */
+	sync_t *const sync = &appl_shm->sync;
+
+	init_sync(sync, cpu_conf.num_cpus);
+
+	/*
+	 * Init EM with given args
+	 *
+	 * Calls em_init() before returning.
+	 */
+	em_conf_t *const em_conf = &appl_shm->em_conf;
+
+	init_em(&parsed, em_conf);
+
+	/*
+	 * Set application conf based on parsed cmd line arguments
+	 */
+	appl_conf_t *const appl_conf = &appl_shm->appl_conf;
+
+	init_appl_conf(&parsed, appl_conf);
+
+	/*
+	 * Create packet-I/O, if requested
+	 */
+	if (appl_conf->pktio.if_count > 0)
+		create_pktio(appl_conf/*in/out*/, &cpu_conf);
+
+	/*
+	 * Signal handler for SIGCHLD in process-per-core mode
+	 *
+	 * Create a signal handler for the SIGCHLD signal that is sent
+	 * to the parent process when a forked child process dies.
+	 */
+	if (em_conf->process_per_core)
+		install_sig_handler(SIGCHLD, sigchld_handler, 0);
+
+	/*
+	 * Signal handler for SIGINT (Ctrl-C)
+	 *
+	 * Create a signal handler for the SIGINT (Ctrl-C) signal to flag
+	 * program termination.
+	 * Set the 'SA_RESETHAND'-flag to reset the SIGINT handler to its
+	 * default disposition after the first handling to be able to stop
+	 * execution if the application misbehaves.
+	 */
+	install_sig_handler(SIGINT, sigint_handler, SA_RESETHAND);
+
+	/*
+	 * Create the odp-threads to use as EM-cores
+	 *
+	 * Create the odp-threads / EM-cores. Each EM-core will run the
+	 * 'run_core_fn(appl_shm)' function in a thread pinned to a single cpu
+	 * as specified by 'cpu_conf'.
+	 */
+	odph_thread_t *const thread_tbl = appl_shm->thread_tbl;
+	int ret = create_odp_threads(instance, &cpu_conf,
+				     run_core_fn /*fn*/, appl_shm /*fn_arg*/,
+				     thread_tbl /*out*/);
+	if (ret != cpu_conf.num_cpus)
+		APPL_EXIT_FAILURE("ODP thread creation failed:%d", ret);
+
+	/*
+	 * Wait for the created odp-threads / EM-cores to return
+	 */
+	ret = odph_thread_join(thread_tbl, cpu_conf.num_cpus);
+	if (ret != cpu_conf.num_cpus)
+		APPL_EXIT_FAILURE("ODP thread join failed:%d", ret);
+
+	/*
+	 * Teardown the application after all the odp-threads / EM-cores
+	 * have ended:
+	 */
+
+	/*
+	 * Terminate packet-I/O, if set up
+	 */
+	if (appl_conf->pktio.if_count > 0)
+		term_pktio(appl_conf);
+
+	/*
+	 * Free shared memory
+	 */
+	ret = odp_shm_free(shm);
+	if (ret != 0)
+		APPL_EXIT_FAILURE("appl shared mem free failed:%d", ret);
+
+	/**
+	 * Terminate ODP
+	 */
+	ret = odp_term_local();
+	if (ret != 0)
+		APPL_EXIT_FAILURE("Last ODP local term failed:%d", ret);
+	ret = odp_term_global(instance);
+	if (ret != 0)
+		APPL_EXIT_FAILURE("odp_term_global() failed:%d", ret);
+
+	APPL_PRINT("\nDone - exit\n\n");
+
+	return EXIT_SUCCESS;
+}
+
+static odp_instance_t
+init_odp(const parse_args_t *parsed, const cpu_conf_t *cpu_conf)
+{
+	odp_init_t init_params;
+	odp_platform_init_t plat_params[PLAT_PARAM_SIZE];
+	odp_platform_init_t *plat_params_ptr;
+	odp_instance_t instance;
+	int ret;
 
 	memset(plat_params, 0, sizeof(plat_params));
 	plat_params_ptr = set_platform_params(&plat_params[0]);
@@ -195,40 +382,12 @@ cm_setup(int argc, char *argv[])
 	/* Initialize the odp init params with 'default' values */
 	odp_init_param_init(&init_params);
 
-	/*
-	 * The physical cpus & mask to use for the odp threads (i.e. em cores),
-	 * contains both odp worker and control threads.
-	 */
-	cpu_mask = &em_conf_parse.phys_mask.odp_cpumask;
-	num_cpus = em_conf_parse.core_count;
-	verify_cpu_setup(num_cpus, cpu_mask);
-
-	/* Initial setting: worker-cores=all and control-cores=none */
-	odp_cpumask_copy(&worker_mask, cpu_mask);
-	odp_cpumask_zero(&control_mask);
-	/*
-	 * Physical core-0, if used, is set as a control-core if more than
-	 * one core is started. If just one core is started then the core is
-	 * set as a worker-core regardless which physical core it is.
-	 */
-	if (num_cpus > 1 && odp_cpumask_isset(cpu_mask, 0)) {
-		odp_cpumask_clr(&worker_mask, 0);
-		odp_cpumask_set(&control_mask, 0);
-	}
-
 	/* Restrict odp worker threads to cores set in the 'worker_mask' */
-	num_worker = odp_cpumask_count(&worker_mask);
-	init_params.num_worker = num_worker;
-	init_params.worker_cpus = &worker_mask;
+	init_params.num_worker = cpu_conf->num_worker;
+	init_params.worker_cpus = &cpu_conf->worker_mask;
 	/* Restrict odp control threads to cores set in the 'control_mask' */
-	num_control = odp_cpumask_count(&control_mask);
-	init_params.num_control = num_control;
-	init_params.control_cpus = &control_mask;
-	/* Sanity check for core counts  */
-	if (num_worker + num_control != num_cpus)
-		APPL_EXIT_FAILURE("Inconsistent core count\n"
-				  "worker:%d + control:%d != cpus:%d",
-				  num_worker, num_control, num_cpus);
+	init_params.num_control = cpu_conf->num_control;
+	init_params.control_cpus = &cpu_conf->control_mask;
 	/*
 	 * List odp features not to be used in the examples. This may optimize
 	 * performance. Note that a real application might need to change this!
@@ -238,10 +397,37 @@ cm_setup(int argc, char *argv[])
 	init_params.not_used.feat.crypto = 1; /* don't use odp crypto */
 	init_params.not_used.feat.ipsec = 1; /* don't use odp ipsec */
 	init_params.not_used.feat.tm = 1; /* don't use the odp traffic manager*/
-	/* Get the odp-helper options, initialized with odph_parse_options() */
+
+	/*
+	 * Initialize the odp helper options by calling odph_parse_options().
+	 * In process-per-core mode additionally pass the '--odph_proc' option.
+	 * This will correctly set 'helper_options.mem_model' in odp.
+	 */
+	odph_helper_options_t helper_options;
+	char name[sizeof(parsed->args_appl.name)];
+	char odp_proc_arg[] = "--odph_proc"; /* only used if '-p' given */
+	int odp_argc = 1;
+	char *odp_argv[2] = {name, NULL};
+
+	memcpy(name, parsed->args_appl.name, sizeof(name));
+
+	if (parsed->args_em.process_per_core) {
+		odp_argc = 2;
+		odp_argv[1] = odp_proc_arg;
+	}
+	/* Initialize the odp helper options */
+	odph_parse_options(odp_argc, odp_argv);
+
+	/* Get the odp-helper options for sanity checks */
 	ret = odph_options(&helper_options /*out*/);
 	if (ret != 0)
-		APPL_EXIT_FAILURE("odph_options failed: %d", ret);
+		APPL_EXIT_FAILURE("odph_options() failed:%d", ret);
+	if ((helper_options.mem_model == ODP_MEM_MODEL_THREAD &&
+	     parsed->args_em.process_per_core) ||
+	    (helper_options.mem_model == ODP_MEM_MODEL_PROCESS &&
+	     parsed->args_em.thread_per_core))
+		APPL_EXIT_FAILURE("EM vs ODP thread/proc option mismatch!");
+
 	/* Set the memory model to use for odp: thread or process */
 	init_params.mem_model = helper_options.mem_model;
 
@@ -258,34 +444,34 @@ cm_setup(int argc, char *argv[])
 	if (ret != 0)
 		APPL_EXIT_FAILURE("ODP schedule config failed:%d", ret);
 
-	APPL_PRINT("\n"
-		   "*********************************************************\n"
-		   "Setting up EM on ODP-version:\n"
-		   "%s\n"
-		   "*********************************************************\n"
-		   "\n",
-		   odp_version_impl_str());
+	/* Print ODP system info */
+	odp_sys_info_print();
 
-	/* Reserve application shared memory in one chunk */
-	shm = odp_shm_reserve("appl_shm", sizeof(appl_shm_t),
-			      ODP_CACHE_LINE_SIZE, ODP_SHM_SINGLE_VA);
-	if (unlikely(shm == ODP_SHM_INVALID))
-		APPL_EXIT_FAILURE("appl shared mem reservation failed");
-	appl_shm = odp_shm_addr(shm);
-	if (unlikely(appl_shm == NULL))
-		APPL_EXIT_FAILURE("obtaining shared mem addr failed");
-	memset(appl_shm, 0, sizeof(appl_shm_t));
+	return instance;
+}
 
-	em_conf = &appl_shm->em_conf;
-	appl_conf = &appl_shm->appl_conf;
-	sync = &appl_shm->sync;
+static void
+init_sync(sync_t *const sync, int num_cpus)
+{
+	odp_barrier_init(&sync->start_barrier, num_cpus);
+	odp_barrier_init(&sync->exit_barrier, num_cpus);
+	env_atomic64_init(&sync->exit_count);
+	env_atomic64_init(&sync->enter_count);
+}
 
-	/* Copy the parsed conf into the shm conf */
-	*em_conf = em_conf_parse;
-	*appl_conf = appl_conf_parse;
+static void
+init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
+{
+	em_status_t stat;
 
-	/* Initialize application start-up & exit synchronization */
-	init_sync(sync, num_cpus);
+	em_conf_init(em_conf);
+
+	/* Set EM conf based on parsed cmd line arguments */
+	em_conf->device_id = parsed->args_em.device_id;
+	em_conf->thread_per_core = parsed->args_em.thread_per_core;
+	em_conf->process_per_core = parsed->args_em.process_per_core;
+	em_conf->core_count = parsed->args_em.core_count;
+	em_conf->phys_mask = parsed->args_em.phys_mask;
 
 	/* Event-Timer: disable=0, enable=1 */
 	em_conf->event_timer = 1;
@@ -294,6 +480,26 @@ cm_setup(int argc, char *argv[])
 	 * Set the default pool config in em_conf, needed internally by EM
 	 * at startup.
 	 */
+	em_pool_cfg_t default_pool_cfg;
+
+	em_pool_cfg_init(&default_pool_cfg);
+	default_pool_cfg.event_type = EM_EVENT_TYPE_SW;
+	default_pool_cfg.align_offset.in_use = 1;
+	default_pool_cfg.align_offset.value = 0;
+	default_pool_cfg.num_subpools = 4;
+	default_pool_cfg.subpool[0].size = 256;
+	default_pool_cfg.subpool[0].num = 16384;
+	default_pool_cfg.subpool[0].cache_size = 64;
+	default_pool_cfg.subpool[1].size = 512;
+	default_pool_cfg.subpool[1].num = 1024;
+	default_pool_cfg.subpool[1].cache_size = 32;
+	default_pool_cfg.subpool[2].size = 1024;
+	default_pool_cfg.subpool[2].num =  1024;
+	default_pool_cfg.subpool[2] .cache_size = 16;
+	default_pool_cfg.subpool[3].size = 2048;
+	default_pool_cfg.subpool[3].num = 1024;
+	default_pool_cfg.subpool[3].cache_size = 8;
+
 	em_conf->default_pool_cfg = default_pool_cfg;
 
 	/*
@@ -304,7 +510,7 @@ cm_setup(int argc, char *argv[])
 	em_conf->log.vlog_fn = NULL;
 
 	/* Packet-I/O */
-	if (appl_conf->pktio.if_count > 0) {
+	if (parsed->args_appl.pktio.if_count > 0) {
 		/*
 		 * Request EM to poll input for pkts in the dispatch loop
 		 */
@@ -323,134 +529,101 @@ cm_setup(int argc, char *argv[])
 	stat = em_init(em_conf);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("em_init(), EM error:%" PRI_STAT "", stat);
+}
 
-	/* Create packet io */
-	if (appl_conf->pktio.if_count > 0) {
-		pktio_mem_reserve();
-		pktio_pool_create(appl_conf->pktio.if_count);
-		pktio_init(appl_conf);
-		/* Create a pktio instance for each interface */
-		for (int i = 0; i < appl_conf->pktio.if_count; i++) {
-			int if_id = pktio_create(appl_conf->pktio.if_name[i],
-						 num_cpus);
-			if (unlikely(if_id < 0))
-				APPL_EXIT_FAILURE("Cannot create pktio if:%s",
-						  appl_conf->pktio.if_name[i]);
-			/* Store the interface id */
-			appl_conf->pktio.if_ids[i] = if_id;
-		}
+static void
+init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
+{
+	size_t len = sizeof(appl_conf->name);
+
+	memcpy(appl_conf->name, parsed->args_appl.name, len);
+	appl_conf->name[len - 1] = '\0';
+
+	if (parsed->args_em.thread_per_core) {
+		appl_conf->num_procs = 1;
+		appl_conf->num_threads = parsed->args_em.core_count;
+	} else {
+		appl_conf->num_procs = parsed->args_em.core_count;
+		appl_conf->num_threads = parsed->args_em.core_count;
 	}
+
+	appl_conf->dispatch_rounds = parsed->args_appl.dispatch_rounds;
 
 	/*
 	 * Create the other event pools used by the application.
 	 * Note that em_term() will delete all remaining pools during
 	 * termination.
 	 */
-	em_pool = em_pool_create(APPL_POOL_1_NAME, APPL_POOL_1,
-				 &appl_pool_1_cfg);
-	if (em_pool == EM_POOL_UNDEF || em_pool != APPL_POOL_1)
+	em_pool_cfg_t appl_pool_1_cfg;
+
+	em_pool_cfg_init(&appl_pool_1_cfg);
+	appl_pool_1_cfg.event_type = EM_EVENT_TYPE_PACKET;
+	appl_pool_1_cfg.num_subpools = 4;
+
+	appl_pool_1_cfg.subpool[0].size =  256;
+	appl_pool_1_cfg.subpool[0].num = 16384;
+	appl_pool_1_cfg.subpool[0].cache_size = 128;
+
+	appl_pool_1_cfg.subpool[1].size = 512;
+	appl_pool_1_cfg.subpool[1].num = 1024;
+	appl_pool_1_cfg.subpool[1].cache_size = 64;
+
+	appl_pool_1_cfg.subpool[2].size = 1024;
+	appl_pool_1_cfg.subpool[2].num = 1024;
+	appl_pool_1_cfg.subpool[2].cache_size = 32;
+
+	appl_pool_1_cfg.subpool[3].size = 2048;
+	appl_pool_1_cfg.subpool[3].num = 1024;
+	appl_pool_1_cfg.subpool[3].cache_size = 16;
+
+	em_pool_t appl_pool = em_pool_create(APPL_POOL_1_NAME, APPL_POOL_1,
+					     &appl_pool_1_cfg);
+	if (appl_pool == EM_POOL_UNDEF || appl_pool != APPL_POOL_1)
 		APPL_EXIT_FAILURE("appl pool:%s(%" PRI_POOL ") create failed",
 				  APPL_POOL_1_NAME, APPL_POOL_1);
-	appl_conf->pools[0] = em_pool;
+	appl_conf->pools[0] = appl_pool;
 	appl_conf->num_pools = 1;
 
-	if (em_conf->process_per_core) {
-		/*
-		 * Create a signal handler for the SIGCHLD signal that is sent
-		 * to the parent process when a forked child process dies.
-		 */
-		install_sig_handler(SIGCHLD, sigchld_handler, 0);
+	appl_conf->pktio.if_count = parsed->args_appl.pktio.if_count;
+	for (int i = 0; i < parsed->args_appl.pktio.if_count; i++) {
+		memcpy(appl_conf->pktio.if_name[i],
+		       parsed->args_appl.pktio.if_name[i], IF_NAME_LEN + 1);
+		appl_conf->pktio.if_ids[i] = parsed->args_appl.pktio.if_ids[i];
 	}
-
-	/*
-	 * Create a signal handler for the SIGINT (Ctrl-C) signal to flag
-	 * program termination.
-	 * Set the 'SA_RESETHAND'-flag to reset the SIGINT handler to its
-	 * default disposition after the first handling to be able to stop
-	 * execution if the application misbehaves.
-	 */
-	install_sig_handler(SIGINT, sigint_handler, SA_RESETHAND);
-
-	/*
-	 * Reserve the odp thread table from shared memory so that
-	 * process-per-core mode also works.
-	 */
-	odp_shm_t thr_shm = odp_shm_reserve("thr_shm", sizeof(thread_tbl_shm_t),
-					    ODP_CACHE_LINE_SIZE,
-					    ODP_SHM_SINGLE_VA);
-
-	if (unlikely(thr_shm == ODP_SHM_INVALID))
-		APPL_EXIT_FAILURE("thread-tbl shared mem reservation failed");
-
-	thread_tbl_shm_t *const thread_tbl_shm = odp_shm_addr(thr_shm);
-
-	if (unlikely(thread_tbl_shm == NULL))
-		APPL_EXIT_FAILURE("obtaining shared mem addr failed");
-	memset(thread_tbl_shm, 0, sizeof(thread_tbl_shm_t));
-
-	odph_thread_t *const thread_tbl = thread_tbl_shm->thread_tbl;
-
-	/*
-	 * Create the odp threads to use as EM-cores
-	 */
-	ret = create_odp_threads(instance, cpu_mask, num_cpus,
-				 &control_mask, num_control,
-				 &worker_mask, num_worker,
-				 run_core_fn /*fn*/, appl_shm /*fn_arg*/,
-				 thread_tbl /*out*/);
-	if (ret != num_cpus)
-		APPL_EXIT_FAILURE("ODP thread creation failed:%d", ret);
-
-	/* Wait for the odp threads to return */
-	ret = odph_thread_join(thread_tbl, num_cpus);
-	if (ret != num_cpus)
-		APPL_EXIT_FAILURE("ODP thread join failed:%d", ret);
-
-	ret = odp_shm_free(thr_shm);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("thread-tbl shared mem free failed:%d", ret);
-
-	/* Free packet io resources */
-	if (appl_conf->pktio.if_count > 0) {
-		/* Stop, close and free the pktio resources */
-		pktio_stop();
-		pktio_close();
-		pktio_deinit(appl_conf);
-		pktio_pool_destroy();
-		pktio_mem_free();
-	}
-
-	ret = odp_shm_free(shm);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("appl shared mem free failed:%d", ret);
-
-	ret = odp_term_local();
-	if (ret != 0)
-		APPL_EXIT_FAILURE("Last ODP local term failed:%d", ret);
-
-	ret = odp_term_global(instance);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("odp_term_global() failed:%d", ret);
-
-	APPL_PRINT("\nDone - exit\n\n");
-
-	return EXIT_SUCCESS;
 }
 
 static void
-init_sync(sync_t *const sync, int num_cpus)
+create_pktio(appl_conf_t *appl_conf/*in/out*/, const cpu_conf_t *cpu_conf)
 {
-	odp_barrier_init(&sync->start_barrier, num_cpus);
-	odp_barrier_init(&sync->exit_barrier, num_cpus);
-	env_atomic64_init(&sync->exit_count);
-	env_atomic64_init(&sync->enter_count);
+	pktio_mem_reserve();
+	pktio_pool_create(appl_conf->pktio.if_count);
+	pktio_init(appl_conf);
+	/* Create a pktio instance for each interface */
+	for (int i = 0; i < appl_conf->pktio.if_count; i++) {
+		int if_id = pktio_create(appl_conf->pktio.if_name[i],
+					 cpu_conf->num_cpus);
+		if (unlikely(if_id < 0))
+			APPL_EXIT_FAILURE("Cannot create pktio if:%s",
+					  appl_conf->pktio.if_name[i]);
+		/* Store the interface id */
+		appl_conf->pktio.if_ids[i] = if_id;
+	}
+}
+
+static void
+term_pktio(const appl_conf_t *appl_conf)
+{
+	/* Stop, close and free the pktio resources */
+	pktio_stop();
+	pktio_close();
+	pktio_deinit(appl_conf);
+	pktio_pool_destroy();
+	pktio_mem_free();
 }
 
 static int
 create_odp_threads(odp_instance_t instance,
-		   odp_cpumask_t *const cpu_mask, const int num_cpus,
-		   odp_cpumask_t *const control_mask, const int num_control,
-		   odp_cpumask_t *const worker_mask, const int num_worker,
+		   const cpu_conf_t *cpu_conf,
 		   int (*start_fn)(void *fn_arg), void *fn_arg,
 		   odph_thread_t thread_tbl[/*out*/])
 {
@@ -466,23 +639,29 @@ create_odp_threads(odp_instance_t instance,
 	APPL_PRINT("num threads: %i\n"
 		   "num worker:  %i\n"
 		   "num control: %i\n",
-		   num_cpus, num_worker, num_control);
-	odp_cpumask_to_str(cpu_mask, cpumaskstr, sizeof(cpumaskstr));
+		   cpu_conf->num_cpus,
+		   cpu_conf->num_worker,
+		   cpu_conf->num_control);
+
+	odp_cpumask_to_str(&cpu_conf->cpu_mask, cpumaskstr,
+			   sizeof(cpumaskstr));
 	APPL_PRINT("cpu mask:            %s\n", cpumaskstr);
-	odp_cpumask_to_str(worker_mask, cpumaskstr, sizeof(cpumaskstr));
+	odp_cpumask_to_str(&cpu_conf->worker_mask, cpumaskstr,
+			   sizeof(cpumaskstr));
 	APPL_PRINT("worker thread mask:  %s\n", cpumaskstr);
-	odp_cpumask_to_str(control_mask, cpumaskstr, sizeof(cpumaskstr));
+	odp_cpumask_to_str(&cpu_conf->control_mask, cpumaskstr,
+			   sizeof(cpumaskstr));
 	APPL_PRINT("control thread mask: %s\n", cpumaskstr);
 
 	memset(&thread_common_param, 0, sizeof(thread_common_param));
 	memset(thread_param_tbl, 0, sizeof(thread_param_tbl));
 
 	thread_common_param.instance = instance;
-	thread_common_param.cpumask = cpu_mask;
+	thread_common_param.cpumask = &cpu_conf->cpu_mask;
 	thread_common_param.sync = 1; /* Synchronize thread start up */
 	thread_common_param.share_param = 0;
 
-	for (int i = 0; i < num_cpus; i++) {
+	for (int i = 0; i < cpu_conf->num_cpus; i++) {
 		thread_param_tbl[i].start = start_fn;
 		thread_param_tbl[i].arg = fn_arg;
 		thread_param_tbl[i].thr_type = ODP_THREAD_WORKER;
@@ -491,14 +670,14 @@ create_odp_threads(odp_instance_t instance,
 	/*
 	 * Configure odp control threads, if any, to run as EM-cores
 	 */
-	int cpu = odp_cpumask_first(control_mask);
-	int last = odp_cpumask_last(cpu_mask);
+	int cpu = odp_cpumask_first(&cpu_conf->control_mask);
+	int last = odp_cpumask_last(&cpu_conf->cpu_mask);
 
 	while (cpu >= 0) {
 		if (cpu > last)
 			APPL_EXIT_FAILURE("Invalid control-cpu:%d", cpu);
 		thread_param_tbl[cpu].thr_type = ODP_THREAD_CONTROL;
-		cpu = odp_cpumask_next(control_mask, cpu);
+		cpu = odp_cpumask_next(&cpu_conf->control_mask, cpu);
 	}
 
 	/*
@@ -506,7 +685,7 @@ create_odp_threads(odp_instance_t instance,
 	 */
 	ret = odph_thread_create(thread_tbl /*out*/,
 				 &thread_common_param, thread_param_tbl,
-				 num_cpus);
+				 cpu_conf->num_cpus);
 	return ret;
 }
 
@@ -769,9 +948,7 @@ run_core_fn(void *arg)
  * @param appl_conf  Application config options parsed from argv[]
  */
 static void
-parse_args(int argc, char *argv[],
-	   em_conf_t *em_conf   /* out param */,
-	   appl_conf_t *appl_conf /* out param */)
+parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 {
 	static const struct option longopts[] = {
 		{"coremask",         required_argument, NULL, 'c'},
@@ -798,8 +975,7 @@ parse_args(int argc, char *argv[],
 		int opt;
 		int long_index;
 
-		opt = getopt_long(argc, argv, shortopts,
-				  longopts, &long_index);
+		opt = getopt_long(argc, argv, shortopts, longopts, &long_index);
 
 		if (opt == -1)
 			break;  /* No more options */
@@ -808,35 +984,36 @@ parse_args(int argc, char *argv[],
 		case 'c': {
 			char *mask_str = optarg;
 			char tmp_str[EM_CORE_MASK_STRLEN];
+			int err;
 
 			/*
 			 * Store the core mask for EM - usage depends on the
 			 * process-per-core or thread-per-core mode selected.
 			 */
-			em_core_mask_zero(&em_conf->phys_mask);
-			int err = em_core_mask_set_str(mask_str,
-						       &em_conf->phys_mask);
+			em_core_mask_zero(&parsed->args_em.phys_mask);
+			err = em_core_mask_set_str(mask_str,
+						   &parsed->args_em.phys_mask);
 			if (err)
 				APPL_EXIT_FAILURE("Invalid coremask(%s) given",
 						  mask_str);
 
-			em_conf->core_count =
-				em_core_mask_count(&em_conf->phys_mask);
+			parsed->args_em.core_count =
+			em_core_mask_count(&parsed->args_em.phys_mask);
 
 			em_core_mask_tostr(tmp_str, sizeof(tmp_str),
-					   &em_conf->phys_mask);
+					   &parsed->args_em.phys_mask);
 			APPL_PRINT("Coremask:   %s\n"
-			       "Core Count: %i\n",
-			       tmp_str, em_conf->core_count);
+				   "Core Count: %i\n",
+				   tmp_str, parsed->args_em.core_count);
 		}
 		break;
 
 		case 'p':
-			em_conf->process_per_core = 1;
+			parsed->args_em.process_per_core = 1;
 			break;
 
 		case 't':
-			em_conf->thread_per_core = 1;
+			parsed->args_em.thread_per_core = 1;
 			break;
 
 		case 'd': {
@@ -849,12 +1026,12 @@ parse_args(int argc, char *argv[],
 				APPL_EXIT_FAILURE("Invalid device-id:%s",
 						  optarg);
 
-			em_conf->device_id = (uint16_t)(device_id & 0xffff);
+			parsed->args_em.device_id = (uint16_t)(device_id & 0xffff);
 		}
 		break;
 
 		case 'r':
-			appl_conf->dispatch_rounds = atoi(optarg);
+			parsed->args_appl.dispatch_rounds = atoi(optarg);
 			if (atoi(optarg) < 0)
 				APPL_EXIT_FAILURE("Invalid dispatch-rounds:%s",
 						  optarg);
@@ -862,27 +1039,26 @@ parse_args(int argc, char *argv[],
 
 		case 'i': {
 			int i;
-			uint16_t len;
+			size_t len, max;
 			char *name;
 
-			for (name = strtok(optarg, ","), i = 0;
-			     name != NULL; name = strtok(NULL, ","), i++) {
+			name = strtok(optarg, ",");
+			for (i = 0; name != NULL; i++) {
 				if (i > IF_MAX_NUM - 1)
 					APPL_EXIT_FAILURE("Too many if's:%d",
 							  i + 1);
-
-				len =
-				strnlen(name,
-					sizeof(appl_conf->pktio.if_name[i]));
-				if (len + 1 > (uint16_t)IF_NAME_LEN)
+				max = sizeof(parsed->args_appl.pktio.if_name[i]);
+				len = strnlen(name, max);
+				if (len + 1 > max)
 					APPL_EXIT_FAILURE("Invalid if name:%s",
 							  name);
 
-				strncpy(appl_conf->pktio.if_name[i], name,
-					len);
-				appl_conf->pktio.if_name[i][len + 1] = '\0';
+				strncpy(parsed->args_appl.pktio.if_name[i], name, len);
+				parsed->args_appl.pktio.if_name[i][len + 1] = '\0';
+
+				name = strtok(NULL, ",");
 			}
-			appl_conf->pktio.if_count = i;
+			parsed->args_appl.pktio.if_count = i;
 		}
 		break;
 
@@ -901,78 +1077,42 @@ parse_args(int argc, char *argv[],
 	optind = 1; /* reset 'extern optind' from the getopt lib */
 
 	/* Sanity check: */
-	if (!em_conf->core_count) {
+	if (!parsed->args_em.core_count) {
 		usage(argv[0]);
 		APPL_EXIT_FAILURE("Give mandatory coremask!");
 	}
 
 	/* Check if a device-id was given, if not use the default '0' */
 	if (device_id == -1) /* not set */
-		em_conf->device_id = 0;
-	APPL_PRINT("Device-id:  0x%" PRIX16 "\n", em_conf->device_id);
+		parsed->args_em.device_id = 0;
+	APPL_PRINT("Device-id:  0x%" PRIX16 "\n", parsed->args_em.device_id);
 
 	/* Sanity check: */
-	if (!(em_conf->process_per_core ^ em_conf->thread_per_core)) {
+	if (!(parsed->args_em.process_per_core ^ parsed->args_em.thread_per_core)) {
 		usage(argv[0]);
 		APPL_EXIT_FAILURE("Select EITHER process-per-core OR thread-per-core!");
 	}
 
-	/*
-	 * Initialize the odp helper options by calling odph_parse_options().
-	 * In process-per-core mode additionally pass the '--odph_proc' option.
-	 * This will correctly set 'helper_options.mem_model' in odp.
-	 */
-	odph_helper_options_t helper_options;
-	char odp_proc_arg[] = "--odph_proc"; /* only used if '-p' given */
-	int odp_argc = 1;
-	char *odp_argv[2] = {argv[0], NULL};
-	int res;
+	/* Store the application name */
+	size_t len = sizeof(parsed->args_appl.name);
 
-	if (em_conf->process_per_core) {
-		odp_argc = 2;
-		odp_argv[1] = odp_proc_arg;
-	}
+	strncpy(parsed->args_appl.name, NO_PATH(argv[0]), len);
+	parsed->args_appl.name[len - 1] = '\0';
 
-	/* Initialize the odp helper options */
-	odph_parse_options(odp_argc, odp_argv);
-
-	/* Get the odp-helper options for sanity checks */
-	res = odph_options(&helper_options);
-	if (res != 0)
-		APPL_EXIT_FAILURE("odph_options():%d", res);
-	if ((helper_options.mem_model == ODP_MEM_MODEL_THREAD &&
-	     em_conf->process_per_core) ||
-	    (helper_options.mem_model == ODP_MEM_MODEL_PROCESS &&
-	     em_conf->thread_per_core))
-		APPL_EXIT_FAILURE("EM vs ODP thread/proc option mismatch!");
-
-	if (em_conf->thread_per_core)
+	if (parsed->args_em.thread_per_core)
 		APPL_PRINT("Thread-per-core mode selected!\n");
 	else
 		APPL_PRINT("Process-per-core mode selected!\n");
-
-	/*
-	 * Set application specific config
-	 */
-	strncpy(appl_conf->name, NO_PATH(argv[0]), APPL_NAME_LEN);
-	appl_conf->name[APPL_NAME_LEN - 1] = '\0'; /* '\0'-terminate str */
-
-	if (em_conf->thread_per_core) {
-		appl_conf->num_procs   = 1;
-		appl_conf->num_threads = em_conf->core_count;
-	} else {
-		appl_conf->num_procs   = em_conf->core_count;
-		appl_conf->num_threads = appl_conf->num_procs;
-	}
 }
 
 /**
- * Verify the cpu setup - sanity check
+ * Verify the cpu setup - sanity check and store cpus to use
  *
  * Verify the cpu count and mask against system values
  */
 static void
-verify_cpu_setup(int num_cpus, odp_cpumask_t *const cpumask)
+verify_cpu_setup(const parse_args_t *parsed,
+		 cpu_conf_t *cpu_conf /* out */)
 {
 	odp_cpumask_t invalid_mask;
 	odp_cpumask_t check_mask;
@@ -981,6 +1121,12 @@ verify_cpu_setup(int num_cpus, odp_cpumask_t *const cpumask)
 	cpu_set_t cpuset;
 	int ret;
 
+	const odp_cpumask_t *cpu_mask = &parsed->args_em.phys_mask.odp_cpumask;
+	int num_cpus = parsed->args_em.core_count;
+
+	/*
+	 * Verify cpu setup
+	 */
 	if (num_cpus > MAX_THREADS)
 		APPL_EXIT_FAILURE("Setup configured for max %d cores, not %d",
 				  MAX_THREADS, num_cpus);
@@ -1006,11 +1152,11 @@ verify_cpu_setup(int num_cpus, odp_cpumask_t *const cpumask)
 	}
 
 	/*
-	 * Make sure no cpu in the cpumask is set in the invalid_mask.
+	 * Make sure no cpu in the cpu_mask is set in the invalid_mask.
 	 * For a valid setup check_mask will be all-zero, otherwise it
 	 * will contain the invalid cpus.
 	 */
-	odp_cpumask_and(&check_mask, &invalid_mask, cpumask);
+	odp_cpumask_and(&check_mask, &invalid_mask, cpu_mask);
 	if (!odp_cpumask_equal(&zero_mask, &check_mask) ||
 	    num_cpus > usable_cpus) {
 		char cpus_str[ODP_CPUMASK_STR_SIZE];
@@ -1018,13 +1164,50 @@ verify_cpu_setup(int num_cpus, odp_cpumask_t *const cpumask)
 
 		memset(cpus_str, '\0', sizeof(cpus_str));
 		memset(check_str, '\0', sizeof(check_str));
-		odp_cpumask_to_str(cpumask, cpus_str, sizeof(cpus_str));
+		odp_cpumask_to_str(cpu_mask, cpus_str, sizeof(cpus_str));
 		odp_cpumask_to_str(&check_mask, check_str, sizeof(check_str));
 
 		APPL_EXIT_FAILURE("Invalid cpus - requested:%d available:%d\n"
-				  "cpumask:%s of which invalid-cpus:%s",
+				  "cpu_mask:%s of which invalid-cpus:%s",
 				  num_cpus, usable_cpus, cpus_str, check_str);
 	}
+
+	/*
+	 * Store the cpu conf to be set up for ODP
+	 */
+	odp_cpumask_t worker_mask, control_mask;
+	int num_worker, num_control;
+
+	/* Initial setting: worker-cores=all and control-cores=none */
+	odp_cpumask_copy(&worker_mask, cpu_mask);
+	odp_cpumask_zero(&control_mask);
+	/*
+	 * Physical core-0, if used, is set as a control-core if more than
+	 * one core is started. If just one core is started then the core is
+	 * set as a worker-core regardless which physical core it is.
+	 */
+	if (num_cpus > 1 && odp_cpumask_isset(cpu_mask, 0)) {
+		odp_cpumask_clr(&worker_mask, 0);
+		odp_cpumask_set(&control_mask, 0);
+	}
+
+	/* Restrict odp worker threads to cores set in the 'worker_mask' */
+	num_worker = odp_cpumask_count(&worker_mask);
+	/* Restrict odp control threads to cores set in the 'control_mask' */
+	num_control = odp_cpumask_count(&control_mask);
+	/* Sanity check for core counts  */
+	if (num_worker + num_control != num_cpus)
+		APPL_EXIT_FAILURE("Inconsistent core count\n"
+				  "worker:%d + control:%d != cpus:%d",
+				  num_worker, num_control, num_cpus);
+
+	/* Store cpu config - out param */
+	odp_cpumask_copy(&cpu_conf->cpu_mask, cpu_mask);
+	cpu_conf->num_cpus = num_cpus;
+	odp_cpumask_copy(&cpu_conf->worker_mask, &worker_mask);
+	cpu_conf->num_worker = num_worker;
+	odp_cpumask_copy(&cpu_conf->control_mask, &control_mask);
+	cpu_conf->num_control = num_control;
 }
 
 /* Used for passing cmd line arguments for odp_init_global() */

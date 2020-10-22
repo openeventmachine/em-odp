@@ -81,7 +81,7 @@ int
 objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem);
 
 static inline int
-objpool_in_pool(objpool_elem_t *elem)
+objpool_in_pool(const objpool_elem_t *elem)
 {
 	return elem->in_pool;
 }

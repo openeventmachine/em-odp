@@ -41,7 +41,7 @@ typedef struct {
 
 static em_queue_group_t
 queue_group_create_escope(const char *name, const em_core_mask_t *mask,
-			  int num_notif, const em_notif_t *notif_tbl,
+			  int num_notif, const em_notif_t notif_tbl[],
 			  em_queue_group_t requested_queue_group,
 			  em_escope_t escope);
 
@@ -271,7 +271,7 @@ default_queue_group_update(void)
  */
 static em_queue_group_t
 queue_group_create_escope(const char *name, const em_core_mask_t *mask,
-			  int num_notif, const em_notif_t *notif_tbl,
+			  int num_notif, const em_notif_t notif_tbl[],
 			  em_queue_group_t requested_queue_group,
 			  em_escope_t escope)
 {
@@ -335,7 +335,7 @@ queue_group_create_escope(const char *name, const em_core_mask_t *mask,
  */
 em_queue_group_t
 queue_group_create(const char *name, const em_core_mask_t *mask,
-		   int num_notif, const em_notif_t *notif_tbl,
+		   int num_notif, const em_notif_t notif_tbl[],
 		   em_queue_group_t requested_queue_group)
 {
 	return queue_group_create_escope(name, mask, num_notif, notif_tbl,
@@ -365,7 +365,7 @@ queue_group_create_sync(const char *name, const em_core_mask_t *mask,
 em_status_t
 queue_group_modify(queue_group_elem_t *const qgrp_elem,
 		   const em_core_mask_t *new_mask,
-		   int num_notif, const em_notif_t *notif_tbl,
+		   int num_notif, const em_notif_t notif_tbl[],
 		   int is_delete)
 {
 	const em_queue_group_t queue_group = qgrp_elem->queue_group;

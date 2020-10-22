@@ -98,7 +98,7 @@ extern "C" {
  */
 em_queue_group_t
 em_queue_group_create(const char *name, const em_core_mask_t *mask,
-		      int num_notif, const em_notif_t *notif_tbl);
+		      int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Create a new queue group to control queue to core mapping, synchronous.
@@ -133,7 +133,7 @@ em_queue_group_create_sync(const char *name, const em_core_mask_t *mask);
  */
 em_status_t
 em_queue_group_delete(em_queue_group_t queue_group,
-		      int num_notif, const em_notif_t *notif_tbl);
+		      int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Delete the queue group, synchronous.
@@ -183,7 +183,7 @@ em_queue_group_delete_sync(em_queue_group_t queue_group);
 em_status_t
 em_queue_group_modify(em_queue_group_t queue_group,
 		      const em_core_mask_t *new_mask,
-		      int num_notif, const em_notif_t *notif_tbl);
+		      int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Modify core mask of an existing queue group, synchronous.
@@ -245,11 +245,11 @@ em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask);
  * The function returns '0' and writes an empty string if the queue group has
  * no name.
  *
- * @param queue_group  Queue group id
- * @param name         Destination buffer
- * @param maxlen       Maximum length (including the terminating '0')
+ * @param      queue_group  Queue group id
+ * @param[out] name         Destination buffer
+ * @param      maxlen       Maximum length (including the terminating '\0')
  *
- * @return Number of characters written (excludes the terminating '0').
+ * @return Number of characters written (excludes the terminating '\0').
  */
 size_t
 em_queue_group_get_name(em_queue_group_t queue_group,
@@ -278,7 +278,7 @@ em_queue_group_get_name(em_queue_group_t queue_group,
  *	}
  * @endcode
  *
- * @param num [out]  Pointer to an unsigned int to store the amount of
+ * @param[out] num   Pointer to an unsigned int to store the amount of
  *                   queue groups into
  * @return The first queue group handle or EM_QUEUE_GROUP_UNDEF if none exist
  *
@@ -326,9 +326,9 @@ em_queue_group_get_next(void);
  *	}
  * @endcode
  *
- * @param num [out]    Pointer to an unsigned int to store the amount of queues
- *                     into.
- * @param queue_group  Queue group handle
+ * @param[out] num          Pointer to an unsigned int to store the amount of
+ *                          queue groups into.
+ * @param      queue_group  Queue group handle
  *
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist or the
  *         queue group is invalid.

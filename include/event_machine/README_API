@@ -3,6 +3,85 @@ OpenEM API Release Notes
 -------------------------------------------------------------------------------
 
 -------------------------------------------------------------------------------
+API 2.4 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=4)
+-------------------------------------------------------------------------------
+Not backwards compatible with previous API version, API 2.4 contains modified
+types requiring small changes to older code.
+
+1. EM Timer: timer version updated from v1.1 to v2.0,
+   see em-odp/include/event_machine/add-ons/event_machine_timer.h for details.
+   New or updated timer types and APIs:
+   - em_timer_attr_t: *updated* type that MUST be initialized with
+                      em_timer_attr_init() before passing it to
+                      em_timer_create().
+     Note: timer resolution is given to em_timer_create() as either
+           nanoseconds or Hertz:
+	   em_timer_attr_t::resparam.res_ns or .res_hz (new option).
+           The user must choose which one to use by setting the other one to 0.
+
+   - em_timer_attr_init(): Mandatory initialization of timer attributes.
+     Enforce the following sequence:
+        em_timer_attr_t attr;
+        em_timer_attr_init(&attr); /* Now mandatory */
+        ...
+        em_timer_t tmr = em_timer_create(&attr);
+     Timer-create will fail if attr-init has been omitted.
+
+   - em_timer_capability() & em_timer_capability_t: Inquire timer capabilities.
+
+   - em_timer_res_capability() & em_timer_res_param_t:
+     Inquire timer capabilities for a specific resolution or maximum timeout.
+
+   - em_tmo_set_periodic(): Allow an absolute start time for periodic timeouts
+     with the new API em_tmo_set_periodic(..., em_timer_tick_t start_abs, ...)
+     Note: Prefer the new em_tmo_set_periodic() for activating/setting periodic
+           timeouts over em_tmo_set_rel().
+           Use em_tmo_set_abs() or em_tmo_set_rel() for oneshot timeouts.
+
+   - em_tmo_get_stats() & em_tmo_stats_t: Get timeout statistics counters.
+     Currently meaningful for periodic timeouts only, 0 otherwise.
+
+2. Pool:
+   - em_pool_cfg_init(): pool-config initialization function.
+     Initialize EM-pool configuration parameters for em_pool_create(),
+     i.e. set em_pool_cfg_t to default values for all fields.
+     After initialization, the user further needs to update the fields of
+     'em_pool_cfg_t' with appropriate sizing information before calling
+     em_pool_create().
+     Always initialize 'pool_cfg' first with em_pool_cfg_init(pool_cfg) to
+     ensure backwards compatibility with potentially added new options.
+
+   - Possibility to configure the core-local event-cache per subpool via
+     em_pool_cfg_t::cache_size during EM-pool creation.
+     The 'cache_size' param is defined in em_pool_cfg_t as:
+     " Maximum number of locally cached subpool events per EM-core.
+       Allocating or freeing events from a core-local event-cache
+       can be faster than using the global event subpool. Cached
+       events are only available on the local core and can reduce
+       the number of globally free events in the subpool, thus set
+       'num > EM-core-count * cache_size'.
+       The actual used cache_size will be smaller than or equal to
+       the requested value, depending on the implementation."
+
+3. EO: init: eo-multircv params must be initialized before creating EO.
+   Enforce the following sequence:
+        em_eo_multircv_param_t param;
+        em_eo_multircv_param_init(&param); /* Now mandatory */
+        eo = em_eo_create_multircv(..., param);
+   EO-create will fail if param-init has been omitted.
+
+4. Queue:
+   - em_queue_get_index(): Get a unique index from a given EM queue handle.
+     Get a unique index corresponding to the given EM queue handle.
+     Returns a unique index in the range 0...EM_MAX_QUEUES-1.
+     The same EM queue handle will always map to the same index.
+     Only meaningful for queues created within the current EM instance.
+
+4. Add missing const qualifiers into the API.
+   Some API calls missed const qualifiers on read-only data pointers.
+   Add the missing 'const' and fix the implementation accordingly.
+
+-------------------------------------------------------------------------------
 API 2.3 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=3)
 -------------------------------------------------------------------------------
 Not backwards compatible with previous API version, API 2.3 contains modified

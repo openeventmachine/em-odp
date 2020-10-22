@@ -7,8 +7,8 @@
 #include "em_include.h"
 
 em_status_t
-poll_drain_mask_check(em_core_mask_t *const logic_mask,
-		      em_core_mask_t *const poll_drain_mask)
+poll_drain_mask_check(const em_core_mask_t *logic_mask,
+		      const em_core_mask_t *poll_drain_mask)
 {
 	/* check if mask is zero (all cores, OK) */
 	if (em_core_mask_iszero(poll_drain_mask))
@@ -26,14 +26,14 @@ poll_drain_mask_check(em_core_mask_t *const logic_mask,
 }
 
 em_status_t
-input_poll_init(em_core_mask_t *const logic_mask, em_conf_t *const conf)
+input_poll_init(const em_core_mask_t *logic_mask, const em_conf_t *conf)
 {
 	return poll_drain_mask_check(logic_mask,
 				     &conf->input.input_poll_mask);
 }
 
 em_status_t
-output_drain_init(em_core_mask_t *const logic_mask, em_conf_t *const conf)
+output_drain_init(const em_core_mask_t *logic_mask, const em_conf_t *conf)
 {
 	return poll_drain_mask_check(logic_mask,
 				     &conf->output.output_drain_mask);

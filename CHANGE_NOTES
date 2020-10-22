@@ -35,13 +35,50 @@ The version numbering scheme reflects the used EM API version:
       a.b = OpenEM API version supported
        .c = implementation number supporting OpenEM API version a.b
        -d = fix number, added if needed
-  So this means that e.g. version 1.2.1-1 stands for
-      a.b = 1.2: supports OpenEM API v1.2
-       .c =  .1: second implementation supporting API 1.2 (starts at .0)
-       -d =  -1: first bugfix for 1.2.1
+  So this means that e.g. version 2.4.1-1 stands for
+      a.b = 2.4: supports OpenEM API v2.4
+       .c =  .1: second implementation supporting API 2.4 (starts at .0)
+       -d =  -1: first bugfix for 2.4.1
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v2.4.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.4 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * Changes for the Timer, Pool, EO and Queue APIs *
+
+- Parameter/attribute initialization function usage is now mandatory before
+  calling "create"-functions for EO-multircv, Timer and Pool:
+    - call em_eo_multircv_param_init() before em_eo_create_multircv()
+    - call em_pool_cfg_init() before em_pool_create()
+    - call em_timer_attr_init() before em_timer_create()
+
+- Build:
+  - configure: option --with-odp-lib=[name of used odp library] added.
+    Add the 'configure' script option --with-odp-lib=odp-library-name
+    that allows the user to specify the name of the used ODP library.
+    The library name defaults to "libodp-linux" if the option is omitted.
+    E.g. configure em-odp to use odp-dpdk instead of odp-linux:
+      > cd em-odp/build
+      > ../configure ... [--with-odp-path=...] --with-odp-lib=libodp-dpdk
+      > make
+  - pkg-config: update em-odp dependencies in the package config file.
+    Add explicit dependency on ODP: "Requires: @libodp_name@" (where the ODP
+    library name is taken from the configure option --with-odp-lib=... if given)
+    (em-odp/pkgconfig/libemodp.pc.in => <install-dir>/lib/pkgconfig/libemodp.pc)
+  - Support for 'make dist' and 'make distcheck'
+    - make dist: create em-odp-2.4.0.tar.gz distribution
+    - make distcheck: validate the distribution,
+      i.e. use the .tar.gz: compile, install, clean etc.
+
+- Fixes:
+  - GCC 10 compilation fixed
+  - pool: incorrect return value used when EM-pool creation failed
+  - em_eo_get_name() return value used incorrectly
+  - Refactoring EM example program startup
 
 --------------------------------------------------------------------------------
 Event Machine on ODP v2.3.0

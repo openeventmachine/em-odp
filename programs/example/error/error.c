@@ -198,7 +198,7 @@ test_start(appl_conf_t *const appl_conf)
 	em_eo_t eo;
 	em_event_t event;
 	em_queue_t queue;
-	em_status_t ret, start_ret;
+	em_status_t ret, start_ret = EM_ERROR;
 	error_event_t *error;
 
 	/*

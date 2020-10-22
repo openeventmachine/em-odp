@@ -44,7 +44,7 @@ extern "C" {
 #define invalid_eo(eo) ((unsigned int)eo_hdl2idx((eo)) >= EM_MAX_EOS)
 
 em_status_t
-eo_init(eo_tbl_t *const eo_tbl, eo_pool_t *const eo_pool);
+eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool);
 
 em_eo_t
 eo_alloc(void);
@@ -66,31 +66,31 @@ eo_delete_queue_all(eo_elem_t *const eo_elem);
 
 em_status_t
 eo_start_local_req(eo_elem_t *const eo_elem,
-		   int num_notif, const em_notif_t *notif_tbl);
+		   int num_notif, const em_notif_t notif_tbl[]);
 em_status_t
 eo_start_sync_local_req(eo_elem_t *const eo_elem);
 
 int
-eo_start_buffer_events(em_event_t *const events, int num, em_queue_t queue,
+eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue,
 		       em_event_group_t event_group);
 void
 eo_start_send_buffered_events(eo_elem_t *const eo_elem);
 
 em_status_t
 eo_stop_local_req(eo_elem_t *const eo_elem,
-		  int num_notif, const em_notif_t *notif_tbl);
+		  int num_notif, const em_notif_t notif_tbl[]);
 em_status_t
 eo_stop_sync_local_req(eo_elem_t *const eo_elem);
 
 em_status_t
 eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
-			  int num_notif, const em_notif_t *notif_tbl);
+			  int num_notif, const em_notif_t notif_tbl[]);
 em_status_t
 eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
 			       queue_elem_t *const q_elem);
 em_status_t
 eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
-			      int num_notif, const em_notif_t *notif_tbl);
+			      int num_notif, const em_notif_t notif_tbl[]);
 em_status_t
 eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues);
 

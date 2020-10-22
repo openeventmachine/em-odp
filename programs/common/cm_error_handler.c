@@ -106,7 +106,6 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 			size_t nlen;
 
 			nlen = em_eo_get_name(eo, eo_name, sizeof(eo_name));
-			nlen = nlen > 0 ? nlen + 1 : 0;
 			eo_name[nlen] = '\0';
 
 			snprintf(eo_str, sizeof(eo_str),

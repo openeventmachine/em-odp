@@ -171,7 +171,7 @@ void
 test_start(appl_conf_t *const appl_conf)
 {
 	em_eo_t eo;
-	em_status_t stat, stat_eo_start;
+	em_status_t stat, stat_eo_start = EM_ERROR;
 	test_eo_ctx_t *const test_eo_ctx = &test_shm->test_eo_ctx;
 	em_notif_t notif_tbl[1];
 	em_queue_prio_t queue_prio;
