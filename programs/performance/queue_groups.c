@@ -276,14 +276,23 @@ int main(int argc, char *argv[])
 em_status_t
 error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 {
-	if (unlikely(error == EM_ERR_ALLOC_FAILED &&
-		     escope == EM_ESCOPE_QUEUE_GROUP_CREATE))
+	if (error == EM_ERR_ALLOC_FAILED &&
+	    escope == EM_ESCOPE_QUEUE_GROUP_CREATE) {
 		APPL_PRINT("\nNo more free queue groups left\n"
 			   "\nTest finished\n\n");
-	else
-		error = test_error_handler(eo, error, escope, args);
+		return error;
+	}
 
-	return error;
+	if (appl_shm->exit_flag && EM_ESCOPE(escope) &&
+	    !EM_ERROR_IS_FATAL(error)) {
+		/* Suppress non-fatal EM-error logs during tear-down */
+		if (escope == EM_ESCOPE_EO_ADD_QUEUE_SYNC) {
+			APPL_PRINT("\nExit: suppress queue setup error\n\n");
+			return error;
+		}
+	}
+
+	return test_error_handler(eo, error, escope, args);
 }
 
 /**
@@ -552,9 +561,13 @@ test_step(void)
 		q_ctx = &perf_shm->queue_context_tbl[i % NUM_QUEUES];
 		ret = em_send(event, q_ctx->this_queue);
 
-		test_fatal_if(ret != EM_OK,
-			      "EM send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
-			      ret, q_ctx->this_queue);
+		if (unlikely(ret != EM_OK)) {
+			test_fatal_if(!appl_shm->exit_flag,
+				      "EM send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
+				      ret, q_ctx->this_queue);
+			em_free(event);
+			return;
+		}
 	}
 
 	perf_shm->test_status.step++;
@@ -851,6 +864,9 @@ next_test_step(void)
 
 	create_and_link_queues(NUM_QUEUES);
 
+	if (unlikely(appl_shm->exit_flag))
+		return;
+
 	test_step();
 }
 
@@ -867,6 +883,7 @@ create_and_link_queues(int num_queues)
 	em_queue_prio_t prio;
 	em_queue_t queue, prev_queue;
 	queue_context_t *q_ctx;
+	em_status_t ret;
 	int i;
 
 	prev_queue = EM_QUEUE_UNDEF;
@@ -896,11 +913,15 @@ create_and_link_queues(int num_queues)
 			      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
 			      perf_shm->eo, queue);
 
-		test_fatal_if(em_eo_add_queue_sync(perf_shm->eo, queue) !=
-			      EM_OK, "em_eo_queue_add failed\t"
-			      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
-			      perf_shm->eo, queue);
-
+		ret = em_eo_add_queue_sync(perf_shm->eo, queue);
+		if (unlikely(ret != EM_OK)) {
+			test_fatal_if(!appl_shm->exit_flag,
+				      "em_eo_add_queue_sync():%" PRI_STAT "\n"
+				      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
+				      ret, perf_shm->eo, queue);
+			em_queue_delete(queue);
+			return;
+		}
 		/* Link queues */
 		q_ctx->this_queue = queue;
 		q_ctx->next_queue = prev_queue;
@@ -934,10 +955,13 @@ unschedule_and_delete_queues(int num_queues)
 		queue = perf_shm->queue_tbl[i];
 
 		ret = em_eo_remove_queue_sync(perf_shm->eo, queue);
-		test_fatal_if(ret != EM_OK,
-			      "em_eo_remove_queue():%" PRI_STAT "\t"
-			      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
-			      ret, perf_shm->eo, queue);
+		if (unlikely(ret != EM_OK)) {
+			test_fatal_if(!appl_shm->exit_flag,
+				      "em_eo_remove_queue_sync failed:\t"
+				      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
+				      perf_shm->eo, queue);
+			return;
+		}
 
 		ret = em_queue_delete(queue);
 		test_fatal_if(ret != EM_OK, "em_queue_delete():%" PRI_STAT "\t"

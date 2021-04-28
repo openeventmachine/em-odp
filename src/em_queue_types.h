@@ -251,7 +251,7 @@ COMPILE_TIME_ASSERT(EM_QUEUE_PRIO_HIGHEST - EM_QUEUE_PRIO_NUM + 1 ==
 		    EM_QUEUE_PRIO_LOWEST, LOCAL_QUEUE_PRIO_ARRAY_ERROR);
 
 /**
- *
+ * Track output-queues used during a dispatch round (burst)
  */
 typedef struct output_queue_track_t {
 	unsigned int idx_cnt;

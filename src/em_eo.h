@@ -97,8 +97,11 @@ eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues);
 unsigned int
 eo_count(void);
 
+size_t eo_get_name(const eo_elem_t *const eo_elem,
+		   char name[/*out*/], const size_t maxlen);
+
 static inline int
-eo_allocated(eo_elem_t *const eo_elem)
+eo_allocated(const eo_elem_t *const eo_elem)
 {
 	return !objpool_in_pool(&eo_elem->eo_pool_elem);
 }
@@ -134,12 +137,25 @@ eo_elem_get(em_eo_t eo)
 
 /** Returns the EO element of the currently active EO (if any)*/
 static inline eo_elem_t *
-get_current_eo_elem(void)
+eo_elem_current(void)
 {
-	if (likely(em_locm.current.q_elem != NULL))
-		return em_locm.current.q_elem->eo_elem;
-	else
+	const queue_elem_t *const q_elem = em_locm.current.q_elem;
+
+	if (unlikely(q_elem == NULL))
 		return NULL;
+
+	return q_elem->eo_elem;
+}
+
+static inline em_eo_t
+eo_current(void)
+{
+	const queue_elem_t *const q_elem = em_locm.current.q_elem;
+
+	if (unlikely(q_elem == NULL))
+		return EM_EO_UNDEF;
+
+	return q_elem->eo;
 }
 
 /**
@@ -147,7 +163,7 @@ get_current_eo_elem(void)
  * Handle the internal event requesting a local function call.
  */
 void
-i_event__eo_local_func_call_req(internal_event_t *const i_ev);
+i_event__eo_local_func_call_req(const internal_event_t *i_ev);
 
 #ifdef __cplusplus
 }

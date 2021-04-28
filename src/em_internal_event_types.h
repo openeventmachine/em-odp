@@ -109,10 +109,7 @@ typedef union internal_event_t {
 	/** 'queue group' operation event */
 	struct {
 		uint64_t id;
-		em_event_group_t event_group;
 		em_queue_group_t queue_group;
-		int num_notif;
-		em_notif_t notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
 	} q_grp;
 
 	/** core local function call request event */

@@ -63,13 +63,16 @@ read_config_file(void)
 	int val = 0;
 	int ret;
 
+	const odp_pool_capability_t *capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+
 	EM_PRINT("EM-pool config:\n");
 
 	/*
 	 * Option: pool.statistics_enable
 	 */
 	conf_str = "pool.statistics_enable";
-	ret = _em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
 		return -1;
@@ -83,7 +86,7 @@ read_config_file(void)
 	 * Option: pool.align_offset
 	 */
 	conf_str = "pool.align_offset";
-	ret = _em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
 		return -1;
@@ -98,6 +101,26 @@ read_config_file(void)
 	EM_PRINT("  %s: %d (max: %d)\n",
 		 conf_str, val, ALIGN_OFFSET_MAX);
 
+	/*
+	 * Option: pool.pkt_headroom
+	 */
+	conf_str = "pool.pkt_headroom";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+
+	if (val < 0 || (unsigned int)val > capa->pkt.max_headroom) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n",
+		       conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.pool.pkt_headroom = val;
+	EM_PRINT("  %s: %d (max: %u)\n",
+		 conf_str, val, capa->pkt.max_headroom);
+
 	return 0;
 }
 
@@ -106,7 +129,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	  const em_pool_cfg_t *default_pool_cfg)
 {
 	em_pool_t pool;
-	int i, j, ret;
+	int ret;
 	const int cores = em_core_count();
 
 	memset(mpool_tbl, 0, sizeof(mpool_tbl_t));
@@ -117,13 +140,16 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	if (ret != 0)
 		return EM_ERR_OPERATION_FAILED;
 
-	for (i = 0; i < EM_CONFIG_POOLS; i++) {
-		em_pool_t pool = pool_idx2hdl(i);
+	for (int i = 0; i < EM_CONFIG_POOLS; i++) {
+		pool = pool_idx2hdl(i);
 		mpool_elem_t *mpool_elem = pool_elem_get(pool);
+
+		if (unlikely(!mpool_elem))
+			return EM_ERR_BAD_POINTER;
 
 		mpool_elem->em_pool = pool;
 		mpool_elem->event_type = EM_EVENT_TYPE_UNDEF;
-		for (j = 0; j < EM_MAX_SUBPOOLS; j++) {
+		for (int j = 0; j < EM_MAX_SUBPOOLS; j++) {
 			mpool_elem->odp_pool[j] = ODP_POOL_INVALID;
 			mpool_elem->size[j] = 0;
 		}
@@ -132,11 +158,12 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 			    &mpool_elem->objpool_elem);
 	}
 
-	if (read_config_file())
-		return EM_ERR_LIB_FAILED;
-
 	/* Store common ODP pool capabilities in the mpool_tbl for easy access*/
 	if (odp_pool_capability(&mpool_tbl->odp_pool_capability) != 0)
+		return EM_ERR_LIB_FAILED;
+
+	/* Read EM-pool related runtime config options */
+	if (read_config_file())
 		return EM_ERR_LIB_FAILED;
 
 	/* Create the 'EM_POOL_DEFAULT' pool */
@@ -149,7 +176,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 }
 
 em_status_t
-pool_term(mpool_tbl_t *const mpool_tbl)
+pool_term(const mpool_tbl_t *mpool_tbl)
 {
 	em_status_t stat = EM_OK;
 	int i;
@@ -162,7 +189,7 @@ pool_term(mpool_tbl_t *const mpool_tbl)
 
 	for (i = 0; i < EM_CONFIG_POOLS; i++) {
 		em_pool_t pool = pool_idx2hdl(i);
-		mpool_elem_t *mpool_elem = pool_elem_get(pool);
+		const mpool_elem_t *mpool_elem = pool_elem_get(pool);
 		em_status_t ret;
 
 		if (pool_allocated(mpool_elem)) {
@@ -223,9 +250,10 @@ pool_free(em_pool_t pool)
 
 int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg)
 {
-	odp_pool_capability_t *const odp_pool_capa =
+	const odp_pool_capability_t *capa =
 		&em_shm->mpool_tbl.odp_pool_capability;
-	uint32_t min_cache_size, cache_size;
+	uint32_t min_cache_size;
+	uint32_t cache_size;
 
 	if (unlikely(pool_cfg == NULL ||
 		     pool_cfg->__internal_check != EM_CHECK_INIT_CALLED ||
@@ -235,25 +263,28 @@ int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg)
 		      pool_cfg->event_type != EM_EVENT_TYPE_PACKET)))
 		return -1;
 
-	if (pool_cfg->align_offset.in_use) {
-		if (pool_cfg->align_offset.value > ALIGN_OFFSET_MAX ||
-		    !POWEROF2(pool_cfg->align_offset.value))
-			return -2;
-	}
+	if (pool_cfg->align_offset.in_use &&
+	    (pool_cfg->align_offset.value > ALIGN_OFFSET_MAX ||
+	     !POWEROF2(pool_cfg->align_offset.value)))
+		return -2;
+
+	if (pool_cfg->pkt.headroom.in_use &&
+	    pool_cfg->pkt.headroom.value > capa->pkt.max_headroom)
+		return -3;
 
 	if (pool_cfg->event_type == EM_EVENT_TYPE_SW)
-		min_cache_size = odp_pool_capa->buf.min_cache_size;
+		min_cache_size = capa->buf.min_cache_size;
 	else
-		min_cache_size = odp_pool_capa->pkt.min_cache_size;
+		min_cache_size = capa->pkt.min_cache_size;
 
 	for (int i = 0; i < pool_cfg->num_subpools; i++) {
 		if (unlikely(pool_cfg->subpool[i].size <= 0 ||
 			     pool_cfg->subpool[i].num <= 0))
-			return -(3 * 10 + i); /* -30, -31, ... */
+			return -(4 * 10 + i); /* -40, -41, ... */
 
 		cache_size = pool_cfg->subpool[i].cache_size;
 		if (unlikely(cache_size < min_cache_size))
-			return -(4 * 10 + i); /* -40, -41, ... */
+			return -(5 * 10 + i); /* -50, -51, ... */
 		/*
 		 * If the given cache size is larger than odp-max,
 		 * then use odp-max:
@@ -266,135 +297,211 @@ int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg)
 	return 0;
 }
 
-em_pool_t
-pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
+/*
+ * Helper to pool_create() - preallocate all events in the pool for ESV to
+ * maintain event state over multiple alloc- and free-operations.
+ */
+static void
+pool_prealloc(const mpool_elem_t *pool_elem)
 {
-	em_pool_t allocated_pool;
-	em_pool_cfg_t sorted_cfg;
-	odp_pool_param_t pool_params;
-	odp_pool_t odp_pool;
-	char pool_name[ODP_POOL_NAME_LEN];
-	int i, j, n;
-	uint32_t size, num;
-	uint32_t cache_size, max_cache_size;
-	mpool_elem_t *mpool_elem;
-	odp_pool_capability_t *const odp_pool_capa =
-		&em_shm->mpool_tbl.odp_pool_capability;
+	em_event_t event;
+	event_hdr_t *ev_hdr;
+	uint64_t num_tot = 0;
+	uint64_t num = 0;
+	const uint32_t size = pool_elem->pool_cfg.subpool[0].size;
+	list_node_t evlist;
+	list_node_t *node;
 
-	/* Allocate a free EM pool */
-	allocated_pool = pool_alloc(pool /* requested pool or 'undef'*/);
-	if (unlikely(allocated_pool == EM_POOL_UNDEF))
-		return EM_POOL_UNDEF;
-	pool = allocated_pool;
+	list_init(&evlist);
 
-	mpool_elem = pool_elem_get(pool);
-	/* Sanity check */
-	if (mpool_elem->em_pool != pool)
-		return EM_POOL_UNDEF;
+	for (int i = 0; i < pool_elem->num_subpools; i++)
+		num_tot += pool_elem->pool_cfg.subpool[i].num;
 
-	mpool_elem->event_type = pool_cfg->event_type;
-	/* Store successfully created subpools later */
-	mpool_elem->num_subpools = 0;
-	/* Store the event pool name, if given */
-	if (name && *name) {
-		strncpy(mpool_elem->name, name, sizeof(mpool_elem->name));
-		mpool_elem->name[sizeof(mpool_elem->name) - 1] = '\0';
-	} else {
-		mpool_elem->name[0] = '\0';
+	do {
+		event = event_prealloc(pool_elem, size, pool_elem->event_type);
+		if (likely(event != EM_EVENT_UNDEF)) {
+			ev_hdr = event_to_hdr(event);
+			list_add(&evlist, &ev_hdr->start_node);
+			num++;
+		}
+	} while (event != EM_EVENT_UNDEF);
+
+	if (unlikely(num < num_tot))
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_TOO_SMALL),
+			       EM_ESCOPE_POOL_CREATE,
+			       "events expected:%" PRIu64 " actual:%" PRIu64 "",
+			       num_tot, num);
+
+	while (!list_is_empty(&evlist)) {
+		node = list_rem_first(&evlist);
+		ev_hdr = start_node_to_event_hdr(node);
+		em_free(ev_hdr->event);
 	}
+}
 
-	sorted_cfg = *pool_cfg;
-	/* Sort the subpools in ascending order based on the buffer size */
-	n = sorted_cfg.num_subpools;
-	for (i = 0; i < n; i++) {
-		for (j = i + 1; j < n; j++) {
-			if (sorted_cfg.subpool[i].size >
-			    sorted_cfg.subpool[j].size) {
-				size = sorted_cfg.subpool[i].size;
-				num = sorted_cfg.subpool[i].num;
-				cache_size = sorted_cfg.subpool[i].cache_size;
-				sorted_cfg.subpool[i] = sorted_cfg.subpool[j];
-				sorted_cfg.subpool[j].size = size;
-				sorted_cfg.subpool[j].num = num;
-				sorted_cfg.subpool[j].cache_size = cache_size;
-			}
+/*
+ * pool_create() helper: sort subpool cfg in ascending order based on buf size
+ */
+static void
+sort_pool_cfg(const em_pool_cfg_t *pool_cfg, em_pool_cfg_t *sorted_cfg /*out*/)
+{
+	const int num_subpools = pool_cfg->num_subpools;
+
+	*sorted_cfg = *pool_cfg;
+
+	for (int i = 0; i < num_subpools - 1; i++) {
+		int idx = i; /* array index containing smallest size */
+
+		for (int j = i + 1; j < num_subpools; j++) {
+			if (sorted_cfg->subpool[j].size <
+			    sorted_cfg->subpool[idx].size)
+				idx = j; /* store idx to smallest */
+		}
+
+		/* min size at [idx], swap with [i] */
+		if (idx != i) {
+			uint32_t size = sorted_cfg->subpool[i].size;
+			uint32_t num = sorted_cfg->subpool[i].num;
+			uint32_t cache_size = sorted_cfg->subpool[i].cache_size;
+
+			sorted_cfg->subpool[i] = sorted_cfg->subpool[idx];
+
+			sorted_cfg->subpool[idx].size = size;
+			sorted_cfg->subpool[idx].num = num;
+			sorted_cfg->subpool[idx].cache_size = cache_size;
 		}
 	}
+}
 
-	/* Cache size:
-	 * Set the requested subpool cache-size based on user provided value and
-	 * limit set by odp-pool-capability.
-	 * Requested value can be larger than odp-max, use odp--max in this
-	 * case.
-	 * Verification against odp-min value done in invalid_pool_cfg().
-	 */
+/*
+ * pool_create() helper: set pool event-cache size.
+ *
+ * Set the requested subpool cache-size based on user provided value and
+ * limit set by odp-pool-capability.
+ * Requested value can be larger than odp-max, use odp--max in this
+ * case.
+ * Verification against odp-min value done in invalid_pool_cfg().
+ */
+static void
+set_poolcache_size(em_pool_cfg_t *pool_cfg)
+{
+	const odp_pool_capability_t *capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+	int num_subpools = pool_cfg->num_subpools;
+	uint32_t max_cache_size;
+
 	if (pool_cfg->event_type == EM_EVENT_TYPE_SW)
-		max_cache_size = odp_pool_capa->buf.max_cache_size;
+		max_cache_size = capa->buf.max_cache_size;
 	else
-		max_cache_size = odp_pool_capa->pkt.max_cache_size;
+		max_cache_size = capa->pkt.max_cache_size;
 
-	n = sorted_cfg.num_subpools;
-	for (i = 0; i < n; i++) {
-		cache_size = sorted_cfg.subpool[i].cache_size;
-		if (max_cache_size < sorted_cfg.subpool[i].cache_size)
-			sorted_cfg.subpool[i].cache_size = max_cache_size;
+	for (int i = 0; i < num_subpools; i++) {
+		if (max_cache_size < pool_cfg->subpool[i].cache_size)
+			pool_cfg->subpool[i].cache_size = max_cache_size;
 	}
+}
 
-	/* store the sorted config */
-	mpool_elem->pool_cfg = sorted_cfg;
-
+/*
+ * pool_create() helper: initialize the pool statistics for this EM-pool
+ */
+static void
+init_pool_stat(em_pool_t pool)
+{
 	const int cores = em_core_count();
 	const int pool_idx = pool_hdl2idx(pool);
 	mpool_statistics_t *const pstat_core = em_shm->mpool_tbl.pool_stat_core;
 
-	for (i = 0; i < cores; i++) {
-		for (j = 0; j < EM_MAX_SUBPOOLS; j++) {
+	for (int i = 0; i < cores; i++) {
+		for (int j = 0; j < EM_MAX_SUBPOOLS; j++) {
 			pstat_core[i].stat[pool_idx][j].alloc = 0;
 			pstat_core[i].stat[pool_idx][j].free = 0;
 		}
 	}
+}
 
-	/*
-	 * Align the event payload by pushing the start-location into the buffer
-	 * 'headroom' - if done, then the subpool size can also be decremented
-	 * by the same amount.
-	 */
-	uint32_t align_offset = em_shm->opt.pool.align_offset;
+/*
+ * pool_create() helper: determine payload alignment.
+ */
+static int
+set_align(const em_pool_cfg_t *pool_cfg,
+	  uint32_t *align_offset /*out*/, uint32_t *odp_align /*out*/)
+{
+	const odp_pool_capability_t *capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+	uint32_t offset = 0;
+	uint32_t align = ODP_CACHE_LINE_SIZE;
 
-	/* Pool-specific config overrides config file 'align_offset' value */
+	/* Pool-specific param overrides config file 'align_offset' value */
 	if (pool_cfg->align_offset.in_use)
-		align_offset = pool_cfg->align_offset.value;
+		offset = pool_cfg->align_offset.value; /* pool cfg */
+	else
+		offset = em_shm->opt.pool.align_offset; /* cfg file */
+
 	/* Set subpool minimum alignment */
-	uint32_t odp_align = ODP_CACHE_LINE_SIZE;
-
 	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
-		if (odp_align > odp_pool_capa->pkt.max_align)
-			odp_align = odp_pool_capa->pkt.max_align;
+		if (align > capa->pkt.max_align)
+			align = capa->pkt.max_align;
 	} else {
-		if (odp_align > odp_pool_capa->buf.max_align)
-			odp_align = odp_pool_capa->buf.max_align;
+		if (align > capa->buf.max_align)
+			align = capa->buf.max_align;
 	}
-	/* verify alignment requirements */
-	if (!POWEROF2(odp_align) || odp_align <= align_offset) {
-		INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_POOL_CREATE,
-			       "EM-pool:\"%s\" align mismatch:\n"
-			       "align:%u cfg:align_offset:%u",
-			       name, odp_align, align_offset);
-		goto error;
-	}
-	/* Store the event payload alignment requirement for the pool */
-	mpool_elem->align_offset = align_offset;
 
-	for (i = 0; i < sorted_cfg.num_subpools; i++) {
+	*align_offset = offset;
+	*odp_align = align;
+
+	/* verify alignment requirements */
+	if (!POWEROF2(align) || align <= offset)
+		return -1;
+
+	return 0;
+}
+
+/*
+ * pool_create() helper: set the pkt headroom
+ */
+static int
+set_pkt_headroom(const em_pool_cfg_t *pool_cfg,
+		 uint32_t *pkt_headroom /*out*/,
+		 uint32_t *max_headroom /*out, for err print only*/)
+{
+	const odp_pool_capability_t *capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+	/* default value from cfg file */
+	uint32_t headroom = em_shm->opt.pool.pkt_headroom;
+
+	/* Pool-specific param overrides config file value */
+	if (pool_cfg->pkt.headroom.in_use)
+		headroom = pool_cfg->pkt.headroom.value;
+
+	*pkt_headroom = headroom;
+	*max_headroom = capa->pkt.max_headroom;
+
+	if (unlikely(headroom > capa->pkt.max_headroom))
+		return -1;
+
+	return 0;
+}
+
+static int
+create_subpools(const em_pool_cfg_t *pool_cfg,
+		uint32_t align_offset, uint32_t odp_align, uint32_t pkt_headroom,
+		mpool_elem_t *mpool_elem /*out*/)
+{
+	const int num_subpools = pool_cfg->num_subpools;
+
+	for (int i = 0; i < num_subpools; i++) {
+		char pool_name[ODP_POOL_NAME_LEN];
+		odp_pool_param_t pool_params;
+		uint32_t size = pool_cfg->subpool[i].size;
+		uint32_t cache_size = pool_cfg->subpool[i].cache_size;
+
 		odp_pool_param_init(&pool_params);
-		size = sorted_cfg.subpool[i].size;
-		cache_size = sorted_cfg.subpool[i].cache_size;
 
 		if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
 			pool_params.type = ODP_POOL_PACKET;
 			/* num == max_num */
-			pool_params.pkt.num = sorted_cfg.subpool[i].num;
-			pool_params.pkt.max_num = sorted_cfg.subpool[i].num;
+			pool_params.pkt.num = pool_cfg->subpool[i].num;
+			pool_params.pkt.max_num = pool_cfg->subpool[i].num;
 
 			if (size > align_offset)
 				size = size - align_offset;
@@ -411,41 +518,151 @@ pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
 			 */
 			pool_params.pkt.uarea_size = sizeof(event_hdr_t);
 			/*
-			 * Reserve space for alloc-alignment in the headroom,
-			 * use default headroom value unless it's smaller than
-			 * needed:
+			 * Set the pkt headroom.
+			 * Make sure the alloc-alignment fits into the headroom.
 			 */
-			if (pool_params.pkt.headroom < align_offset)
+			pool_params.pkt.headroom = pkt_headroom;
+			if (pkt_headroom < align_offset)
 				pool_params.pkt.headroom = align_offset;
+
 			pool_params.pkt.cache_size = cache_size;
 		} else { /* pool_cfg->event_type == EM_EVENT_TYPE_SW */
 			pool_params.type = ODP_POOL_BUFFER;
-			pool_params.buf.num = sorted_cfg.subpool[i].num;
+			pool_params.buf.num = pool_cfg->subpool[i].num;
 			pool_params.buf.size = size + sizeof(event_hdr_t)
 					       - align_offset;
 			pool_params.buf.align = odp_align;
 			pool_params.buf.cache_size = cache_size;
 		}
 
-		snprintf(pool_name, sizeof(pool_name),
-			 "%" PRI_POOL ":%d-%s", pool, i, mpool_elem->name);
+		snprintf(pool_name, sizeof(pool_name), "%" PRI_POOL ":%d-%s",
+			 mpool_elem->em_pool, i, mpool_elem->name);
 		pool_name[sizeof(pool_name) - 1] = '\0';
 
-		odp_pool = odp_pool_create(pool_name, &pool_params);
-		if (unlikely(odp_pool == ODP_POOL_INVALID)) {
-			INTERNAL_ERROR(EM_FATAL(EM_ERR_ALLOC_FAILED),
-				       EM_ESCOPE_POOL_CREATE,
-				       "EM-subpool:\"%s\" create fails",
-				       pool_name);
-			goto error;
-		}
+		odp_pool_t odp_pool = odp_pool_create(pool_name, &pool_params);
+
+		if (unlikely(odp_pool == ODP_POOL_INVALID))
+			return -1;
 
 		/*odp_pool_print(odp_pool);*/
 
 		mpool_elem->odp_pool[i] = odp_pool;
-		mpool_elem->size[i] = sorted_cfg.subpool[i].size;
+		mpool_elem->size[i] = pool_cfg->subpool[i].size;
 		mpool_elem->num_subpools++; /* created subpools for delete */
 	}
+
+	return 0;
+}
+
+em_pool_t
+pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
+{
+	/* Allocate a free EM pool */
+	const em_pool_t pool = pool_alloc(req_pool/* requested or undef*/);
+
+	if (unlikely(pool == EM_POOL_UNDEF))
+		return EM_POOL_UNDEF;
+
+	mpool_elem_t *mpool_elem = pool_elem_get(pool);
+
+	/* Sanity check */
+	if (!mpool_elem || mpool_elem->em_pool != pool)
+		return EM_POOL_UNDEF;
+
+	mpool_elem->event_type = pool_cfg->event_type;
+	/* Store successfully created subpools later */
+	mpool_elem->num_subpools = 0;
+	/* Store the event pool name, if given */
+	if (name && *name) {
+		strncpy(mpool_elem->name, name, sizeof(mpool_elem->name));
+		mpool_elem->name[sizeof(mpool_elem->name) - 1] = '\0';
+	} else {
+		mpool_elem->name[0] = '\0';
+	}
+
+	em_pool_cfg_t sorted_cfg;
+
+	/*
+	 * Sort the subpool cfg in ascending order based on the buffer size
+	 */
+	sort_pool_cfg(pool_cfg, &sorted_cfg/*out*/);
+
+	/*
+	 * Set the cache-size of each subpool in the EM-pool
+	 */
+	set_poolcache_size(&sorted_cfg);
+
+	/* Store the sorted config */
+	mpool_elem->pool_cfg = sorted_cfg;
+
+	/*
+	 * Initialize pool-statistics for this pool
+	 */
+	init_pool_stat(pool);
+
+	/*
+	 * Determine the payload alignment req for em_alloc...():
+	 * Align the event payload in alloc by pushing the start-location into
+	 * the buffer 'headroom' - if done, then the subpool size can also be
+	 * decremented by the same amount.
+	 */
+	uint32_t align_offset = 0;
+	uint32_t odp_align = 0;
+
+	/*
+	 * Event payload alignment requirement for the pool
+	 */
+	int err = set_align(pool_cfg, &align_offset/*out*/, &odp_align/*out*/);
+
+	if (err) {
+		INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_POOL_CREATE,
+			       "EM-pool:\"%s\" align mismatch:\n"
+			       "align:%u cfg:align_offset:%u",
+			       name, odp_align, align_offset);
+		goto error;
+	}
+	/* store the align offset, needed in pkt-alloc */
+	mpool_elem->align_offset = align_offset;
+
+	/*
+	 * Set the headroom for events in EM packet pools
+	 */
+	uint32_t pkt_headroom = 0;
+	uint32_t max_headroom = 0;
+
+	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
+		err = set_pkt_headroom(pool_cfg, &pkt_headroom/*out*/,
+				       &max_headroom /*out*/);
+		if (unlikely(err)) {
+			INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_POOL_CREATE,
+				       "EM-pool:\"%s\" invalid pkt headroom:\n"
+				       "headroom:%u vs. max:headroom:%u",
+				       name, pkt_headroom, max_headroom);
+			goto error;
+		}
+	}
+
+	/*
+	 * Create the subpools for the EM event-pool.
+	 * Each EM subpool is an ODP pool.
+	 */
+	err = create_subpools(&sorted_cfg, align_offset, odp_align,
+			      pkt_headroom, mpool_elem /*out*/);
+	if (unlikely(err)) {
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_ALLOC_FAILED),
+			       EM_ESCOPE_POOL_CREATE,
+			       "EM-pool:\"%s\" create fails:\n"
+			       "subpools req:%d vs. subpools created:%d",
+			       name, sorted_cfg.num_subpools,
+			       mpool_elem->num_subpools);
+			goto error;
+	}
+
+	/*
+	 * ESV: preallocate all events in the pool
+	 */
+	if (esv_enabled() && em_shm->opt.esv.prealloc_pools)
+		pool_prealloc(mpool_elem);
 
 	/* Success! */
 	return mpool_elem->em_pool;
@@ -491,7 +708,8 @@ pool_find(const char *name)
 {
 	if (name && *name) {
 		for (int i = 0; i < EM_CONFIG_POOLS; i++) {
-			mpool_elem_t *mpool_elem = &em_shm->mpool_tbl.pool[i];
+			const mpool_elem_t *mpool_elem =
+				&em_shm->mpool_tbl.pool[i];
 
 			if (pool_allocated(mpool_elem) &&
 			    !strncmp(name, mpool_elem->name, EM_POOL_NAME_LEN))

@@ -77,10 +77,34 @@ extern "C" {
 	} *(type_t)
 
 /**
+ * @def EM_STATIC_CAST
+ * Support C++ static casts in EM API files
+ */
+#ifndef __cplusplus
+#define EM_STATIC_CAST(type, value)  ((type)(value))
+#else
+#define EM_STATIC_CAST(type, value)  (static_cast < type > (value))
+#endif
+
+/**
+ * @def EM_REINTERPRET_CAST
+ * Support C++ reinterpret casts in EM API files
+ */
+#ifndef __cplusplus
+#define EM_REINTERPRET_CAST(type, value)  ((type)(value))
+#else
+#define EM_REINTERPRET_CAST(type, value)  (reinterpret_cast < type > (value))
+#endif
+
+/**
  * @def EM_HDL_UNDEF
  * Undefined EM-handle
  */
-#define EM_HDL_UNDEF EM_UNDEF_UINTPTR
+#ifndef __cplusplus
+#define EM_HDL_UNDEF NULL
+#else
+#define EM_HDL_UNDEF nullptr
+#endif
 
 /**
  * @def PRI_HDL

@@ -38,24 +38,26 @@
 #include "em_include.h"
 #include "add-ons/event_timer/em_timer.h"
 
-/** Thread-local pointer to EM shared memory */
-ENV_LOCAL em_shm_t *em_shm;
+/** EM shared memory */
+em_shm_t *em_shm;
 
 /** Core local variables */
 ENV_LOCAL em_locm_t em_locm ENV_CACHE_LINE_ALIGNED = {
 		.current.egrp = EM_EVENT_GROUP_UNDEF,
 		.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE,
 		.local_queues.empty = 1,
-		.do_input_poll = EM_FALSE,
-		.do_output_drain = EM_FALSE
+		.do_input_poll = false,
+		.do_output_drain = false
 		/* other members initialized to 0 or NULL as per C standard */
 };
 
 void em_conf_init(em_conf_t *conf)
 {
-	if (unlikely(!conf))
+	if (unlikely(!conf)) {
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
 			       EM_ESCOPE_CONF_INIT, "Conf pointer NULL!");
+		return;
+	}
 	memset(conf, 0, sizeof(em_conf_t));
 	em_pool_cfg_init(&conf->default_pool_cfg);
 }
@@ -72,6 +74,15 @@ em_init(const em_conf_t *conf)
 	stat = early_log_init(conf->log.log_fn, conf->log.vlog_fn);
 	RETURN_ERROR_IF(stat != EM_OK, EM_FATAL(stat),
 			EM_ESCOPE_INIT, "User provided log funcs invalid!");
+
+	/* Sanity check: em_shm should not be set yet */
+	RETURN_ERROR_IF(em_shm != NULL,
+			EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_INIT,
+			"EM shared memory ptr set - already initialized?");
+	/* Sanity check: either process- or thread-per-core, but not both */
+	RETURN_ERROR_IF(!(conf->process_per_core ^ conf->thread_per_core),
+			EM_FATAL(EM_ERR_BAD_ARG), EM_ESCOPE_INIT,
+			"Select EITHER process-per-core OR thread-per-core!");
 
 	/*
 	 * Reserve the EM shared memory once at start-up.
@@ -108,7 +119,7 @@ em_init(const em_conf_t *conf)
 	error_init();
 
 	/* Initialize libconfig */
-	ret = _em_libconfig_init_global(&em_shm->libconfig);
+	ret = em_libconfig_init_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_OPERATION_FAILED, EM_ESCOPE_INIT,
 			"libconfig initialization failed:%d", ret);
 
@@ -141,6 +152,20 @@ em_init(const em_conf_t *conf)
 	stat = output_drain_init(&em_shm->core_map.logic_mask, conf);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"output_drain_init() failed:%" PRI_STAT "", stat);
+
+	/*
+	 * Initialize Event State Verification (ESV), if enabled at compile time
+	 */
+	if (EM_ESV_ENABLE) {
+		stat = esv_init();
+		RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+				"esv_init() failed:%" PRI_STAT "", stat);
+	}
+
+	/* Initialize EM callbacks/hooks */
+	stat = hooks_init(&conf->api_hooks);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"hooks_init() failed:%" PRI_STAT "", stat);
 
 	/*
 	 * Initialize the EM buffer pools and create the EM_DEFAULT_POOL based
@@ -201,11 +226,6 @@ em_init(const em_conf_t *conf)
 				stat);
 	}
 
-	/* Initialize EM callbacks/hooks */
-	stat = hooks_init(&conf->api_hooks);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-			"hooks_init() failed:%" PRI_STAT "", stat);
-
 	/* Initialize basic Event Chaining support */
 	stat = chaining_init(&em_shm->event_chaining);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
@@ -217,34 +237,41 @@ em_init(const em_conf_t *conf)
 em_status_t
 em_init_core(void)
 {
+	em_locm_t *const locm = &em_locm;
 	odp_shm_t shm;
-	int init_count;
+	em_shm_t *shm_addr;
 	em_status_t stat;
+	int init_count;
 
 	/* Lookup the EM shared memory on each EM-core */
 	shm = odp_shm_lookup("em_shm");
-	RETURN_ERROR_IF(shm == ODP_SHM_INVALID, EM_ERR_NOT_FOUND,
-			EM_ESCOPE_INIT_CORE, "Shared memory lookup failed!");
+	RETURN_ERROR_IF(shm == ODP_SHM_INVALID,
+			EM_ERR_NOT_FOUND, EM_ESCOPE_INIT_CORE,
+			"Shared memory lookup failed!");
 
-	/* Store the EM-core local pointer to EM shared memory */
-	em_shm = odp_shm_addr(shm);
-	RETURN_ERROR_IF(em_shm == NULL, EM_ERR_BAD_POINTER,
-			EM_ESCOPE_INIT_CORE, "Shared memory ptr NULL!");
+	shm_addr = odp_shm_addr(shm);
+	RETURN_ERROR_IF(shm_addr == NULL, EM_ERR_BAD_POINTER, EM_ESCOPE_INIT_CORE,
+			"Shared memory ptr NULL");
+
+	if (shm_addr->conf.process_per_core && em_shm == NULL)
+		em_shm = shm_addr;
+
+	RETURN_ERROR_IF(shm_addr != em_shm, EM_ERR_BAD_POINTER, EM_ESCOPE_INIT_CORE,
+			"Shared memory init fails: em_shm:%p != shm_addr:%p",
+			em_shm, shm_addr);
 
 	/* Store the EM core id of this core, returned by em_core_id() */
-	em_locm.core_id = phys_to_logic_core_id(odp_cpu_id());
+	locm->core_id = phys_to_logic_core_id(odp_cpu_id());
 
 	/* Check if input_poll_fn should be executed on this core */
-	stat = input_poll_init_local(&em_locm.do_input_poll,
-				     em_locm.core_id,
-				     &em_shm->conf);
+	stat = input_poll_init_local(&locm->do_input_poll,
+				     locm->core_id, &em_shm->conf);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
 			"input_poll_init_local() failed:%" PRI_STAT "", stat);
 
 	/* Check if output_drain_fn should be executed on this core */
-	stat = output_drain_init_local(&em_locm.do_output_drain,
-				       em_locm.core_id,
-				       &em_shm->conf);
+	stat = output_drain_init_local(&locm->do_output_drain,
+				       locm->core_id, &em_shm->conf);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
 			"output_drain_init_local() failed:%" PRI_STAT "", stat);
 
@@ -297,11 +324,12 @@ em_term(const em_conf_t *conf)
 {
 	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
-	em_event_t *em_ev_tbl;
+	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 	odp_queue_t odp_queue;
 	em_status_t stat;
 	int num_events;
-	int ret, i;
+	int ret;
+	bool esv_ena = esv_enabled();
 
 	(void)conf;
 
@@ -314,31 +342,34 @@ em_term(const em_conf_t *conf)
 	 */
 	odp_schedule_resume();
 	/* run loop twice: first with sched enabled and then paused */
-	for (i = 0; i < 2; i++) {
+	for (int i = 0; i < 2; i++) {
 		do {
 			num_events =
 			odp_schedule_multi_no_wait(&odp_queue, odp_ev_tbl,
 						   EM_SCHED_MULTI_MAX_BURST);
-			if (num_events > 0) {
-				em_ev_tbl = events_odp2em(odp_ev_tbl);
-				/*
-				 * Events might originate from outside of EM
-				 * and need hdr-init.
-				 */
-				event_to_hdr_init_multi(em_ev_tbl, ev_hdr_tbl,
-							num_events);
-				em_free_multi(em_ev_tbl, num_events);
-			}
+			if (num_events <= 0)
+				break;
+			/*
+			 * Events might originate from outside of EM and need init.
+			 */
+			event_init_odp_multi(odp_ev_tbl, em_ev_tbl/*out*/,
+					     ev_hdr_tbl/*out*/, num_events,
+					     true/*is_extev*/);
+			if (esv_ena)
+				evstate_em2usr_multi(em_ev_tbl, ev_hdr_tbl,
+						     num_events, EVSTATE__TERM);
+
+			em_free_multi(em_ev_tbl, num_events);
 		} while (num_events > 0);
 
 		odp_schedule_pause();
 	}
 
 	stat = chaining_term(&em_shm->event_chaining);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"chaining_term() failed:%" PRI_STAT "", stat);
 
-	ret = _em_libconfig_term_global(&em_shm->libconfig);
+	ret = em_libconfig_term_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"EM config term failed:%d");
 
@@ -346,9 +377,14 @@ em_term(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"pool_term() failed:%" PRI_STAT "", stat);
 
+	/*
+	 * Free the EM shared memory
+	 */
 	ret = odp_shm_free(em_shm->this_shm);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"odp_shm_free() failed:%d", ret);
+	/* Set em_shm = NULL to allow a new call to em_init() */
+	em_shm = NULL;
 
 	return EM_OK;
 }

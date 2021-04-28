@@ -107,10 +107,12 @@ em_eo_create(const char *name,
 
 void em_eo_multircv_param_init(em_eo_multircv_param_t *param)
 {
-	if (unlikely(!param))
+	if (unlikely(!param)) {
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
 			       EM_ESCOPE_EO_MULTIRCV_PARAM_INIT,
 			       "Param pointer NULL!");
+		return;
+	}
 	memset(param, 0, sizeof(em_eo_multircv_param_t));
 	param->max_events = EM_EO_MULTIRCV_MAX_EVENTS;
 	param->__internal_check = EM_CHECK_INIT_CALLED;
@@ -233,8 +235,7 @@ em_eo_delete(em_eo_t eo)
 size_t
 em_eo_get_name(em_eo_t eo, char *name, size_t maxlen)
 {
-	eo_elem_t *const eo_elem = eo_elem_get(eo);
-	size_t len;
+	const eo_elem_t *eo_elem = eo_elem_get(eo);
 
 	if (name == NULL || maxlen == 0) {
 		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EO_GET_NAME,
@@ -257,14 +258,7 @@ em_eo_get_name(em_eo_t eo, char *name, size_t maxlen)
 		return 0;
 	}
 
-	len = strnlen(eo_elem->name, sizeof(eo_elem->name) - 1);
-	if (maxlen - 1 < len)
-		len = maxlen - 1;
-
-	memcpy(name, eo_elem->name, len);
-	name[len] = '\0';
-
-	return len;
+	return eo_get_name(eo_elem, name, maxlen);
 }
 
 em_eo_t
@@ -272,7 +266,7 @@ em_eo_find(const char *name)
 {
 	if (name && *name) {
 		for (int i = 0; i < EM_MAX_EOS; i++) {
-			eo_elem_t *eo_elem = &em_shm->eo_tbl.eo_elem[i];
+			const eo_elem_t *eo_elem = &em_shm->eo_tbl.eo_elem[i];
 
 			if (eo_elem->state != EM_EO_STATE_UNDEF &&
 			    !strncmp(name, eo_elem->name, EM_EO_NAME_LEN - 1))
@@ -339,7 +333,8 @@ em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue)
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	em_queue_type_t q_type;
 	em_status_t err;
-	int valid, lock_taken;
+	int valid;
+	int lock_taken;
 
 	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
 			EM_ERR_BAD_ID, EM_ESCOPE_EO_ADD_QUEUE_SYNC,
@@ -445,7 +440,8 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	em_queue_type_t q_type;
 	em_status_t ret;
-	int valid, lock_taken;
+	int valid;
+	int lock_taken;
 
 	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
 			EM_ERR_BAD_ID, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
@@ -478,7 +474,6 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 
 	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_caller);
 	if (unlikely(!lock_taken)) {
-		ret = EM_ERR_LIB_FAILED;
 		env_spinlock_unlock(&em_shm->sync_api.lock_global);
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 				      EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
@@ -615,14 +610,16 @@ em_eo_register_error_handler(em_eo_t eo, em_error_handler_t handler)
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 
-	RETURN_ERROR_IF(eo_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_REGISTER_ERROR_HANDLER,
-			"Invalid EO id %" PRI_EO "", eo);
+	RETURN_ERROR_IF(eo_elem == NULL || handler == NULL,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EO_REGISTER_ERROR_HANDLER,
+			"Invalid args: EO:%" PRI_EO " handler:%p", eo, handler);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem),
 			EM_ERR_BAD_STATE, EM_ESCOPE_EO_REGISTER_ERROR_HANDLER,
-			"EO not allocated:%" PRI_EO "", eo);
+			"EO:%" PRI_EO " not allocated", eo);
 
+	env_spinlock_lock(&eo_elem->lock);
 	eo_elem->error_handler_func = handler;
+	env_spinlock_unlock(&eo_elem->lock);
 
 	return EM_OK;
 }
@@ -632,14 +629,16 @@ em_eo_unregister_error_handler(em_eo_t eo)
 {
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 
-	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID,
+	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG,
 			EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER,
 			"Invalid EO id %" PRI_EO "", eo);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_BAD_STATE,
 			EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER,
 			"EO not allocated:%" PRI_EO "", eo);
 
+	env_spinlock_lock(&eo_elem->lock);
 	eo_elem->error_handler_func = NULL;
+	env_spinlock_unlock(&eo_elem->lock);
 
 	return EM_OK;
 }
@@ -648,8 +647,9 @@ em_status_t
 em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 	    int num_notif, const em_notif_t notif_tbl[])
 {
+	em_locm_t *const locm = &em_locm;
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
-	queue_elem_t *const save_q_elem = em_locm.current.q_elem;
+	queue_elem_t *const save_q_elem = locm->current.q_elem;
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
 
@@ -667,7 +667,7 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 
 	eo_elem->state = EM_EO_STATE_STARTING;
 	/* This core is in the EO start function: buffer all sent events */
-	em_locm.start_eo_elem = eo_elem;
+	locm->start_eo_elem = eo_elem;
 	/*
 	 * Use a tmp q_elem as the 'current q_elem' to enable calling
 	 * em_eo_current() from the EO start functions.
@@ -677,12 +677,12 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 	memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
 	tmp_q_elem.eo = eo;
 
-	em_locm.current.q_elem = &tmp_q_elem;
+	locm->current.q_elem = &tmp_q_elem;
 	/* Call the global EO start function */
 	ret = eo_elem->start_func(eo_elem->eo_ctx, eo, conf);
 	/* Restore the original 'current q_elem' */
-	em_locm.current.q_elem = save_q_elem;
-	em_locm.start_eo_elem = NULL;
+	locm->current.q_elem = save_q_elem;
+	locm->start_eo_elem = NULL;
 
 	/* Store the return value of the actual EO global start function */
 	if (result != NULL)
@@ -759,8 +759,9 @@ eo_start_error:
 em_status_t
 em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 {
+	em_locm_t *const locm = &em_locm;
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
-	queue_elem_t *const save_q_elem = em_locm.current.q_elem;
+	queue_elem_t *const save_q_elem = locm->current.q_elem;
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
 	int lock_taken;
@@ -776,7 +777,7 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 
 	eo_elem->state = EM_EO_STATE_STARTING;
 	/* This core is in the EO start function: buffer all sent events */
-	em_locm.start_eo_elem = eo_elem;
+	locm->start_eo_elem = eo_elem;
 	/*
 	 * Use a tmp q_elem as the 'current q_elem' to enable calling
 	 * em_eo_current() from the EO start functions.
@@ -785,12 +786,12 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 	 */
 	memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
 	tmp_q_elem.eo = eo;
-	em_locm.current.q_elem = &tmp_q_elem;
+	locm->current.q_elem = &tmp_q_elem;
 	/* Call the global EO start function */
 	ret = eo_elem->start_func(eo_elem->eo_ctx, eo, conf);
 	/* Restore the original 'current q_elem' */
-	em_locm.current.q_elem = save_q_elem;
-	em_locm.start_eo_elem = NULL;
+	locm->current.q_elem = save_q_elem;
+	locm->start_eo_elem = NULL;
 
 	/* Store the return value of the actual EO global start function */
 	if (result != NULL)
@@ -826,13 +827,13 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 			goto eo_start_sync_error;
 		}
 
-		em_locm.start_eo_elem = eo_elem;
-		em_locm.current.q_elem = &tmp_q_elem;
+		locm->start_eo_elem = eo_elem;
+		locm->current.q_elem = &tmp_q_elem;
 		/* Call the local start on this core */
 		ret = eo_elem->start_local_func(eo_elem->eo_ctx, eo);
 		/* Restore the original 'current q_elem' */
-		em_locm.current.q_elem = save_q_elem;
-		em_locm.start_eo_elem = NULL;
+		locm->current.q_elem = save_q_elem;
+		locm->start_eo_elem = NULL;
 
 		if (unlikely(ret != EM_OK)) {
 			INTERNAL_ERROR(ret, EM_ESCOPE_EO_START_SYNC,
@@ -942,8 +943,9 @@ em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[])
 em_status_t
 em_eo_stop_sync(em_eo_t eo)
 {
+	em_locm_t *const locm = &em_locm;
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
-	queue_elem_t *const save_q_elem = em_locm.current.q_elem;
+	queue_elem_t *const save_q_elem = locm->current.q_elem;
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
 	int lock_taken;
@@ -989,11 +991,11 @@ em_eo_stop_sync(em_eo_t eo)
 	tmp_q_elem.eo = eo;
 
 	if (eo_elem->stop_local_func != NULL) {
-		em_locm.current.q_elem = &tmp_q_elem;
+		locm->current.q_elem = &tmp_q_elem;
 		/* Call the local stop on this core */
 		ret = eo_elem->stop_local_func(eo_elem->eo_ctx, eo_elem->eo);
 		/* Restore the original 'current q_elem' */
-		em_locm.current.q_elem = save_q_elem;
+		locm->current.q_elem = save_q_elem;
 
 		if (unlikely(ret != EM_OK)) {
 			env_spinlock_unlock(&em_shm->sync_api.lock_caller);
@@ -1030,14 +1032,14 @@ em_eo_stop_sync(em_eo_t eo)
 
 	env_spinlock_unlock(&em_shm->sync_api.lock_global);
 
-	em_locm.current.q_elem = &tmp_q_elem;
+	locm->current.q_elem = &tmp_q_elem;
 	/*
 	 * Call the Global EO stop function now that all
 	 * EO local stop functions are done.
 	 */
 	ret = eo_elem->stop_func(eo_elem->eo_ctx, eo);
 	/* Restore the original 'current q_elem' */
-	em_locm.current.q_elem = save_q_elem;
+	locm->current.q_elem = save_q_elem;
 
 	RETURN_ERROR_IF(ret != EM_OK, ret, EM_ESCOPE_EO_STOP_SYNC,
 			"EO:%" PRI_EO " stop-func failed", eo);
@@ -1057,18 +1059,13 @@ eo_stop_sync_error:
 em_eo_t
 em_eo_current(void)
 {
-	queue_elem_t *const q_elem = em_locm.current.q_elem;
-
-	if (unlikely(q_elem == NULL))
-		return EM_EO_UNDEF;
-
-	return q_elem->eo;
+	return eo_current();
 }
 
 void *
 em_eo_get_context(em_eo_t eo)
 {
-	eo_elem_t *const eo_elem = eo_elem_get(eo);
+	const eo_elem_t *eo_elem = eo_elem_get(eo);
 	em_eo_state_t eo_state;
 
 	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
@@ -1091,7 +1088,7 @@ em_eo_get_context(em_eo_t eo)
 em_eo_state_t
 em_eo_get_state(em_eo_t eo)
 {
-	eo_elem_t *const eo_elem = eo_elem_get(eo);
+	const eo_elem_t *eo_elem = eo_elem_get(eo);
 
 	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_GET_STATE,
@@ -1147,7 +1144,7 @@ em_eo_get_next(void)
 em_queue_t
 em_eo_queue_get_first(unsigned int *num, em_eo_t eo)
 {
-	eo_elem_t *const eo_elem = eo_elem_get(eo);
+	const eo_elem_t *eo_elem = eo_elem_get(eo);
 
 	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_QUEUE_GET_FIRST,
@@ -1174,7 +1171,7 @@ em_eo_queue_get_first(unsigned int *num, em_eo_t eo)
 	 * This is potentially a slow implementation and perhaps worth
 	 * re-thinking?
 	 */
-	queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
+	const queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
 
 	_eo_q_iter_idx = 0; /* reset list */
 	_eo_q_iter_eo = eo;
@@ -1198,7 +1195,7 @@ em_eo_queue_get_next(void)
 
 	_eo_q_iter_idx++;
 
-	queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
+	const queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
 
 	/* find next */
 	while (!queue_allocated(&queue_tbl->queue_elem[_eo_q_iter_idx]) ||

@@ -55,7 +55,7 @@ extern "C" {
  */
 EM_HANDLE_T(em_pool_t);
 /** Undefined EM pool */
-#define EM_POOL_UNDEF ((em_pool_t)EM_HDL_UNDEF)
+#define EM_POOL_UNDEF  EM_STATIC_CAST(em_pool_t, EM_HDL_UNDEF)
 /** em_pool_t printf format */
 #define PRI_POOL  PRI_HDL
 

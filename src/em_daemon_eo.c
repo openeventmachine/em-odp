@@ -45,7 +45,8 @@ void
 daemon_eo_create(void)
 {
 	em_eo_t eo;
-	em_status_t stat, stat_eo_start = EM_ERROR;
+	em_status_t stat;
+	em_status_t stat_eo_start = EM_ERROR;
 
 	eo = em_eo_create("daemon-eo", daemon_eo_start, NULL /*start_local*/,
 			  daemon_eo_stop, NULL /*stop_local*/,

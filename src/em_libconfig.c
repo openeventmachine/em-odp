@@ -36,7 +36,7 @@
 #include "em_include.h"
 #include "include/em_libconfig_config.h"
 
-int _em_libconfig_init_global(libconfig_t *libconfig)
+int em_libconfig_init_global(libconfig_t *libconfig)
 {
 	const char *filename;
 	const char *vers;
@@ -106,7 +106,7 @@ fail:
 	return -1;
 }
 
-int _em_libconfig_term_global(libconfig_t *libconfig)
+int em_libconfig_term_global(libconfig_t *libconfig)
 {
 	config_destroy(&libconfig->cfg_default);
 	config_destroy(&libconfig->cfg_runtime);
@@ -114,8 +114,8 @@ int _em_libconfig_term_global(libconfig_t *libconfig)
 	return 0;
 }
 
-int _em_libconfig_lookup_int(libconfig_t *libconfig, const char *path,
-			     int *value)
+int em_libconfig_lookup_int(const libconfig_t *libconfig, const char *path,
+			    int *value /*out*/)
 {
 	int ret_def = CONFIG_FALSE;
 	int ret_rt = CONFIG_FALSE;
@@ -128,8 +128,8 @@ int _em_libconfig_lookup_int(libconfig_t *libconfig, const char *path,
 	return  (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) ? 1 : 0;
 }
 
-int _em_libconfig_lookup_bool(libconfig_t *libconfig, const char *path,
-			      bool *value)
+int em_libconfig_lookup_bool(const libconfig_t *libconfig, const char *path,
+			     bool *value /*out*/)
 {
 	int ret_def = CONFIG_FALSE;
 	int ret_rt = CONFIG_FALSE;
@@ -149,15 +149,15 @@ int _em_libconfig_lookup_bool(libconfig_t *libconfig, const char *path,
 	return  ret_val;
 }
 
-int _em_libconfig_lookup_array(libconfig_t *libconfig, const char *path,
-			       int value[], int max_num)
+int em_libconfig_lookup_array(const libconfig_t *libconfig, const char *path,
+			      int value[/*out*/], int max_num)
 {
 	const config_t *config;
-	config_setting_t *setting;
-	int num, i, j;
+	const config_setting_t *setting;
+	int num;
 	int num_out = 0;
 
-	for (j = 0; j < 2; j++) {
+	for (int j = 0; j < 2; j++) {
 		if (j == 0)
 			config = &libconfig->cfg_default;
 		else
@@ -180,7 +180,7 @@ int _em_libconfig_lookup_array(libconfig_t *libconfig, const char *path,
 		if (num <= 0 || num > max_num)
 			return 0;
 
-		for (i = 0; i < num; i++)
+		for (int i = 0; i < num; i++)
 			value[i] = config_setting_get_int_elem(setting, i);
 
 		num_out = num;
@@ -190,11 +190,11 @@ int _em_libconfig_lookup_array(libconfig_t *libconfig, const char *path,
 	return num_out;
 }
 
-static int lookup_int(config_t *cfg,
+static int lookup_int(const config_t *cfg,
 		      const char *base_path,
 		      const char *local_path,
 		      const char *name,
-		      int *value)
+		      int *value /*out*/)
 {
 	char path[256];
 
@@ -212,9 +212,9 @@ static int lookup_int(config_t *cfg,
 	return 0;
 }
 
-int _em_libconfig_lookup_ext_int(libconfig_t *libconfig, const char *base_path,
-				 const char *local_path, const char *name,
-				 int *value)
+int em_libconfig_lookup_ext_int(const libconfig_t *libconfig,
+				const char *base_path, const char *local_path,
+				const char *name, int *value /*out*/)
 {
 	if (lookup_int(&libconfig->cfg_runtime,
 		       base_path, local_path, name, value))

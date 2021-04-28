@@ -1,4 +1,4 @@
-Copyright (c) 2013-2020, Nokia Solutions and Networks
+Copyright (c) 2013-2021, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -42,6 +42,97 @@ The version numbering scheme reflects the used EM API version:
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine on ODP v2.5.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.5 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * Changes for ESV, Timer, Event, Pool, Extension-APIs, C++ *
+
+- Error: don't allow error handlers to return fatal EM-errors.
+  Fatal EM reported errors must be dealt with in the error handler, since EM
+  cannot continue running after a fatal error.
+  EM will now abort if an error handler returns a fatal error.
+
+- Event State Verification (ESV)
+  ESV is an EM-internal feature that aims to catch invalid EM-event usage.
+  The idea is to catch invalid/illegal EM event usage in the application and
+  report it as a FATAL-error to immediately abort the application​.
+  The event-state is tracked and updated every time the event is transferred
+  between EM and the application, e.g. in dispatch, em_send(), em_alloc(),
+  em_free() etc.​
+  Example scenarios that are detected:​ double-free, double-send, use-after-send,
+  use-after-free etc.
+  Additionally, an event-generation-count (evgen) has been added into the
+  EM event handle (em_event_t) to catch usage of events that are no longer
+  “owned” by the application (EO).
+  The event handle will also change throughout the lifetime of the event.
+  Using an out-of-date/obsolete event handle results in ESV error​.
+  An event handle becomes invalid after it has been given to EM, e.g. reusing a
+  stored event-handle after it has been sent will result in error, even if the
+  same event would have been received again, because the event-handle has
+  changed​.
+  ESV is (currently) disabled by default and can be taken into use via a
+  configure-option​:
+        em-odp/build $> ../configure --prefix=… --enable-esv​
+        em-odp/build $> make clean && make –j16 install​
+  Using --enable-esv defines EM_ESV_ENABLE as ‘1’.
+  ​
+  Example Scenario - ESV Error:
+    a) EO-receives an event​
+    b) em_send(event, …)​ - EO sends the event
+    c) em_free(event)    - EO calls free for an already sent event
+       ==> Fatal Error:
+   "
+   EM ERROR:0x80000010  ESCOPE:0xFF000603  EO:0x5-"eo-a"​
+   core:00 ecount:0(0) em_event_state.c:335 evstate_error()​
+   Event:0x27f4a84c5d9c0 state error -- \
+      counts current(vs.expected): evgen:2(3) free:1(1) send:1(0)​
+      prev-state:em_send() core:00: EO:0x5-"eo-a" Q:0x1d-"q-a" u32[0]:0x00000000​
+   => new-state:em_free()  core:00: EO:0x5-"eo-a" Q:0x1d-"q-a" u32[0]:0x00000000​
+      event:0x00027f4a84c5d9c0: ptr:0x7f4a84c5d9c0
+   "
+  Note: ESV-errors are always reported with the same error-code:​
+        EM_FATAL(EM_ERR_EVENT_STATE) = 0x80000010​
+	'prev-state' shows the previous good state of the event. i.e. the
+	previous place where EM observed the event in a valid state.
+	'new-state' shows the current detected illegal state that
+	caused the error.
+
+  Using ESV has an impact on performance.
+  Each event-state transition updates an atomic counter and stores further
+  state data (EO, queue, core etc)​.
+  The impact, of course, depends on the “number of state-transitions / second”​
+
+- Event State Verification (ESV) options - config/em-odp.conf:
+  Note: Options only considered if ESV is enabled at compile-time
+          via the configure option '--enable-esv', see configure.ac
+  - Option 'esv.enable'
+    Runtime ESV enable/disable option. Allows the user to disable ESV
+    without recompilation when 'configure --enable-esv'.
+  - Option 'esv.store_payload_first_u32'
+    Store the first 32bits of the event payload during each valid
+    event-state transition. This allows for a comparison of the payload
+    content between the previous valid state and the invalid state.
+    Note: The first 32bits of the payload will always be printed in the
+          error log for the invalid state regardless of this setting.
+    Enabling will impact performace somewhat.
+  - Option 'esv.prealloc_pools'
+    Preallocate all events in a pool during pool creation to set
+    an initial ESV-state for each event that can be tracked over
+    multiple allocs and frees.
+
+- EM config file options - config/em-odp.conf:
+  - Option 'pool.pkt_headroom':
+    Default minimum packet headroom in bytes for events allocated from
+    EM-pools of type: EM_EVENT_TYPE_PACKET. Ignored for other pool types.
+
+- Fixes:
+  - timer: fix timer capability max_tmo values
+  - event: fix: incorrect loop index when allocating multiple events
+  - queue: fix em_queue_get_index() return on error
+  - code style fixes (reported by code checkers)
 
 --------------------------------------------------------------------------------
 Event Machine on ODP v2.4.0

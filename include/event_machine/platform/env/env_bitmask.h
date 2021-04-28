@@ -182,7 +182,7 @@ static inline int env_bitmask_count(const env_bitmask_t *mask)
  *
  * @note bits ar 'or'ed into mask, so any previously set bits will remain set.
  */
-static inline void env_bitmask_set_bits(uint64_t bits[], int len,
+static inline void env_bitmask_set_bits(const uint64_t bits[], int len,
 					env_bitmask_t *mask)
 {
 	(void)bits;
@@ -203,13 +203,13 @@ static inline void env_bitmask_set_bits(uint64_t bits[], int len,
  * ...
  * cores 0-127: bits[0]=0xffffffffffffffff, bits[1]=0xffffffffffffffff (len=2)
  * ...
- * @param bits[] array of uint64_t:s that the bit mask will be stored in
- * @param len    number of array elements in bits[].
- * @param mask   bit mask to get bits from.
+ * @param[out] bits[] array of uint64_t:s that the bit mask will be stored in
+ * @param      len    number of array elements in bits[].
+ * @param      mask   bit mask to get bits from.
  *
  * @return  The number of uint64_t:s written into bits[].
  */
-static inline int env_bitmask_get_bits(uint64_t bits[], int len,
+static inline int env_bitmask_get_bits(uint64_t bits[/*out*/], int len,
 				       const env_bitmask_t *mask)
 {
 	(void)bits;

@@ -56,7 +56,7 @@ ODP_STATIC_ASSERT(offsetof(env_shm_buf_t, data) == ENV_CACHE_LINE_SIZE,
 		  "ENV_SHM_ALIGNMENT_ERROR");
 
 static void *
-_shared_reserve(const char *name, size_t size)
+shared_reserve(const char *name, size_t size)
 {
 	env_shm_buf_t *env_shm_buf;
 	odp_shm_t shm;
@@ -79,7 +79,7 @@ env_shared_reserve(const char *name, size_t size)
 	if (unlikely(name == NULL || size == 0))
 		return NULL;
 
-	return _shared_reserve(name, size);
+	return shared_reserve(name, size);
 }
 
 void *
@@ -106,13 +106,13 @@ env_shared_malloc(size_t size)
 	if (unlikely(size == 0))
 		return NULL;
 
-	return _shared_reserve(NULL, size);
+	return shared_reserve(NULL, size);
 }
 
 void
 env_shared_free(void *buf)
 {
-	env_shm_buf_t *env_shm_buf;
+	const env_shm_buf_t *env_shm_buf;
 	odp_shm_t shm;
 	int ret;
 

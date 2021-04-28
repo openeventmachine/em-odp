@@ -68,7 +68,7 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 		      const int num_events, queue_elem_t *const q_elem);
 
 static inline int
-atomic_group_allocated(atomic_group_elem_t *const agrp_elem)
+atomic_group_allocated(const atomic_group_elem_t *agrp_elem)
 {
 	return !objpool_in_pool(&agrp_elem->atomic_group_pool_elem);
 }
@@ -124,10 +124,11 @@ atomic_group_rem_queue_list(atomic_group_elem_t *const ag_elem,
 static inline void
 atomic_group_release(void)
 {
+	em_locm_t *const locm = &em_locm;
 	atomic_group_elem_t *const agrp_elem =
-	atomic_group_elem_get(em_locm.current.sched_q_elem->atomic_group);
+		atomic_group_elem_get(locm->current.sched_q_elem->atomic_group);
 
-	em_locm.atomic_group_released = 1;
+	locm->atomic_group_released = 1;
 	env_spinlock_unlock(&agrp_elem->lock);
 }
 

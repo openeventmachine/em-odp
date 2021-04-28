@@ -75,6 +75,7 @@ core_map_init(core_map_t *const core_map, int core_count,
 em_status_t
 core_map_init_local(core_map_t *const core_map)
 {
+	em_locm_t *const locm = &em_locm;
 	const int phys_core = odp_cpu_id();
 	const int odp_thr = odp_thread_id();
 
@@ -85,16 +86,16 @@ core_map_init_local(core_map_t *const core_map)
 		return EM_ERR_LIB_FAILED;
 
 	/* Store the EM core id of this core, returned by em_core_id() */
-	em_locm.core_id = core_map->phys_vs_logic.logic[phys_core];
+	locm->core_id = core_map->phys_vs_logic.logic[phys_core];
 
-	if (unlikely(em_locm.core_id < 0))
+	if (unlikely(locm->core_id < 0))
 		return EM_ERR_TOO_SMALL;
-	if (unlikely(em_locm.core_id >= EM_MAX_CORES))
+	if (unlikely(locm->core_id >= EM_MAX_CORES))
 		return EM_ERR_TOO_LARGE;
 
 	env_spinlock_lock(&core_map->lock);
-	core_map->thr_vs_logic.logic[odp_thr] = em_locm.core_id;
-	core_map->thr_vs_logic.odp_thr[em_locm.core_id] = odp_thr;
+	core_map->thr_vs_logic.logic[odp_thr] = locm->core_id;
+	core_map->thr_vs_logic.odp_thr[locm->core_id] = odp_thr;
 	env_spinlock_unlock(&core_map->lock);
 
 	return EM_OK;

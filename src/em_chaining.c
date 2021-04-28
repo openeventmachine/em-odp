@@ -83,7 +83,7 @@ read_config_file(void)
 	 * Option: event_chaining.num_order_queues
 	 */
 	conf_str = "event_chaining.num_order_queues";
-	ret = _em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
 		return -1;
@@ -102,7 +102,7 @@ read_config_file(void)
 }
 
 em_status_t
-chaining_init(event_chaining_t *const event_chaining)
+chaining_init(event_chaining_t *event_chaining)
 {
 	em_queue_conf_t queue_conf;
 	em_output_queue_conf_t output_conf;
@@ -134,8 +134,8 @@ chaining_init(event_chaining_t *const event_chaining)
 	for (i = 0; i < num; i++) {
 		char name[EM_QUEUE_NAME_LEN];
 
-		snprintf(name, sizeof(name), "Event-Chaining-Output-%02u",
-			 idx++);
+		snprintf(name, sizeof(name), "Event-Chaining-Output-%02u", idx);
+		idx++;
 		name[sizeof(name) - 1] = '\0';
 
 		output_queue = em_queue_create(name, EM_QUEUE_TYPE_OUTPUT,
@@ -153,7 +153,7 @@ chaining_init(event_chaining_t *const event_chaining)
 }
 
 em_status_t
-chaining_term(event_chaining_t *const event_chaining)
+chaining_term(const event_chaining_t *event_chaining)
 {
 	const unsigned int num = event_chaining->num_output_queues;
 	em_queue_t output_queue;
@@ -186,7 +186,7 @@ chaining_output(const em_event_t events[], const unsigned int num,
 		return 0;
 
 	if (num == 1) {
-		event_hdr_t *const ev_hdr = event_to_hdr(events[0]);
+		const event_hdr_t *ev_hdr = event_to_hdr(events[0]);
 		em_status_t stat;
 
 		chaining_queue = ev_hdr->queue;

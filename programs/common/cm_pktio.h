@@ -511,6 +511,16 @@ pktio_copy_event(em_event_t event)
 		return EM_EVENT_UNDEF;
 	}
 
+	/*
+	 * Reset the user ptr - EM uses the user ptr to determine whether the
+	 * event (ev_hdr) has been initialized or not. Clear the user ptr here
+	 * to indicate "not initialized" - the odp_packet_copy() above has
+	 * copied also the pkt user area into the new odp-event and that needs
+	 * to be changed for EM to work (otherwise e.g. ev_hdr->event would
+	 * point to the same event etc).
+	 */
+	odp_packet_user_ptr_set(new_pkt, NULL);
+
 	return pktio_em_event_get(new_pkt);
 }
 

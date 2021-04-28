@@ -702,7 +702,6 @@ int
 pktio_tx(const em_event_t events[], const unsigned int num,
 	 const em_queue_t output_queue, void *output_fn_args)
 {
-	odp_event_t *const odp_events = em_odp_events2odp(events);
 	/* Create idx to select tx-burst, always same idx for same em queue */
 	const int burst_idx = (int)((uintptr_t)output_queue %
 				    MAX_TX_BURST_BUFS);
@@ -715,6 +714,11 @@ pktio_tx(const em_event_t events[], const unsigned int num,
 
 	if (unlikely(num == 0 || !pktio_shm->pktio_started))
 		return 0;
+
+	/* Convert into ODP-events */
+	odp_event_t odp_events[num];
+
+	em_odp_events2odp(events, odp_events, num);
 
 	/*
 	 * 'sched_ctx_type = em_sched_context_type_current(&src_sched_queue)'

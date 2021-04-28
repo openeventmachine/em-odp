@@ -64,6 +64,82 @@ COMPILE_TIME_ASSERT(sizeof(em_event_t) == sizeof(odp_event_t),
 #define PKT_USERPTR_MAGIC_NBR ((void *)(intptr_t)0xA5A5)
 
 /**
+ * Internal representation of the event handle (em_event_t) when using
+ * Event State Verification (ESV)
+ *
+ * An event-generation-count is encoded into the high bits of the event handle
+ * to catch illegal usage after the event ownership has been transferred.
+ * Each user-to-EM event state transition increments the .evgen and thus
+ * obsoletes any further use of the handle by that user.
+ */
+typedef union {
+	em_event_t event;
+	struct {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+		uint64_t evptr : 48;
+		uint64_t evgen : 16;
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+		uint64_t evgen : 16;
+		uint64_t evptr : 48;
+#endif
+	};
+} evhdl_t;
+
+COMPILE_TIME_ASSERT(sizeof(evhdl_t) == sizeof(em_event_t), EVHDL_T_SIZE_ERROR);
+
+/**
+ * Event-state counters: 'free_cnt' and 'send_cnt'.
+ *
+ * Updated as one single atomic var via 'evstate_cnt_t::atom64'.
+ */
+typedef union ODP_ALIGNED(sizeof(uint64_t)) {
+	uint64_t u64; /* updated atomically in the event-hdr */
+	struct {
+		uint16_t evgen;
+		uint16_t rsvd;
+		union {
+			struct {
+				uint16_t free_cnt;
+				uint16_t send_cnt;
+			};
+			uint32_t free_send_cnt;
+		};
+	};
+} evstate_cnt_t;
+
+/* Verify size of struct, i.e. accept no padding */
+COMPILE_TIME_ASSERT(sizeof(evstate_cnt_t) == sizeof(uint64_t),
+		    EVSTATE_CNT_T_SIZE_ERROR);
+
+/**
+ * Event-state information (no atomic update)
+ */
+typedef struct {
+	/**
+	 * Event state, updated on valid state trasitions.
+	 * "Best effort" update, i.e. atomic update of state not
+	 * guaranteed in invalid simultaneous state updates.
+	 *
+	 * Contains the previously known good state and will be
+	 * printed when detecting an invalid state transition.
+	 */
+	em_eo_t eo;
+	em_queue_t queue;
+	/**
+	 * EM API operation ID.
+	 * Identifies the previously called API func that altered state
+	 */
+	uint16_t api_op;
+	/** EM core that called API('api_op') */
+	uint16_t core;
+	/**
+	 * First 'word' of the event payload as seen
+	 * at the time of the previous state update.
+	 */
+	uint32_t payload_first;
+} ev_hdr_state_t;
+
+/**
  * Event header
  *
  * SW & I/O originated events.
@@ -75,11 +151,40 @@ typedef struct {
 	 *   the same cache line as the event payload to reduce overall
 	 *   cache-misses.
 	 */
+	union {
+		uint8_t u8[32];
+		struct {
+			/**
+			 * Together, free_cnt and send_cnt, can be used to
+			 * detect invalid states and operations on the event,
+			 * e.g.:
+			 * double-free, double-send, send-after-free,
+			 * free-after-send, usage-after-output,
+			 * usage-after-timer-tmo-set/ack/cancel/delete etc.
+			 */
+			/** Free count incremented when this event is freed */
+			evstate_cnt_t state_cnt;
+
+			/**
+			 * Event state, updated on valid state trasitions.
+			 * "Best effort" update, i.e. atomic update not
+			 * guaranteed in invalid simultaneous state-updates.
+			 *
+			 * Contains the previously known good state and will be
+			 * printed when detecting an invalid state transition.
+			 */
+			ev_hdr_state_t state;
+		};
+	};
 
 	/**
 	 * EO-start send event buffering, event linked-list node
 	 */
-	list_node_t start_node;
+	list_node_t start_node ODP_ALIGNED(32);
+	/**
+	 * Event size
+	 */
+	size_t event_size;
 	/**
 	 * Handle of the EM pool the event was allocated from.
 	 * @note only used if EM config file: pool.statistics_enable=true
@@ -90,14 +195,6 @@ typedef struct {
 	 * @note only used if EM config file: pool.statistics_enable=true
 	 */
 	int32_t subpool;
-	/**
-	 * Atomic alloc/free counter to catch double free errors
-	 */
-	env_atomic32_t allocated;
-	/**
-	 * Event size
-	 */
-	size_t event_size;
 	/**
 	 * Payload alloc alignment offset/push into free area of ev_hdr.
 	 * Only used by events based on ODP buffers that have the ev_hdr in the
@@ -154,7 +251,8 @@ typedef struct {
 	void *end[0] ODP_ALIGNED(16); /* pad to next 16B boundary */
 } event_hdr_t;
 
-COMPILE_TIME_ASSERT(sizeof(event_hdr_t) == 96, EVENT_HDR_SIZE_ERROR);
+COMPILE_TIME_ASSERT(sizeof(event_hdr_t) <= 128, EVENT_HDR_SIZE_ERROR);
+COMPILE_TIME_ASSERT(sizeof(event_hdr_t) % 32 == 0, EVENT_HDR_SIZE_ERROR2);
 
 #ifdef __cplusplus
 }

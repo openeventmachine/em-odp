@@ -37,18 +37,21 @@ em_status_t
 atomic_group_init(atomic_group_tbl_t *const atomic_group_tbl,
 		  atomic_group_pool_t *const atomic_group_pool)
 {
-	int i, ret;
 	atomic_group_elem_t *atomic_group_elem;
 	const int cores = em_core_count();
+	int ret;
 
 	memset(atomic_group_tbl, 0, sizeof(atomic_group_tbl_t));
 	memset(atomic_group_pool, 0, sizeof(atomic_group_pool_t));
 	env_atomic32_init(&em_shm->atomic_group_count);
 
-	for (i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
+	for (int i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
 		em_atomic_group_t agrp = agrp_idx2hdl(i);
 		atomic_group_elem_t *const agrp_elem =
 				atomic_group_elem_get(agrp);
+
+		if (unlikely(!agrp_elem))
+			return EM_ERR_BAD_POINTER;
 
 		agrp_elem->atomic_group = agrp; /* store handle */
 
@@ -62,7 +65,7 @@ atomic_group_init(atomic_group_tbl_t *const atomic_group_tbl,
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
+	for (int i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
 		atomic_group_elem = &atomic_group_tbl->ag_elem[i];
 		objpool_add(&atomic_group_pool->objpool, i % cores,
 			    &atomic_group_elem->atomic_group_pool_elem);
@@ -72,7 +75,7 @@ atomic_group_init(atomic_group_tbl_t *const atomic_group_tbl,
 }
 
 static inline atomic_group_elem_t *
-ag_pool_elem2ag_elem(objpool_elem_t *const atomic_group_pool_elem)
+ag_pool_elem2ag_elem(const objpool_elem_t *const atomic_group_pool_elem)
 {
 	return (atomic_group_elem_t *)((uintptr_t)atomic_group_pool_elem -
 			offsetof(atomic_group_elem_t, atomic_group_pool_elem));
@@ -84,8 +87,8 @@ ag_pool_elem2ag_elem(objpool_elem_t *const atomic_group_pool_elem)
 em_atomic_group_t
 atomic_group_alloc(void)
 {
-	atomic_group_elem_t *ag_elem;
-	objpool_elem_t *ag_p_elem;
+	const atomic_group_elem_t *ag_elem;
+	const objpool_elem_t *ag_p_elem;
 
 	ag_p_elem = objpool_rem(&em_shm->atomic_group_pool.objpool,
 				em_core_id());
@@ -139,12 +142,14 @@ atomic_group_count(void)
 static inline int
 ag_local_processing_ended(atomic_group_elem_t *const ag_elem)
 {
+	em_locm_t *const locm = &em_locm;
+
 	/*
 	 * Check if atomic group processing has ended for this core, meaning
 	 * the application called em_atomic_processing_end()
 	 */
-	if (em_locm.atomic_group_released) {
-		em_locm.atomic_group_released = 0;
+	if (locm->atomic_group_released) {
+		locm->atomic_group_released = 0;
 		/*
 		 * Try to acquire the atomic group lock and continue processing.
 		 * It is possible that another core has acquired the lock
@@ -159,10 +164,10 @@ ag_local_processing_ended(atomic_group_elem_t *const ag_elem)
 }
 
 static inline int
-ag_internal_enq(atomic_group_elem_t *const ag_elem, em_event_t ev_tbl[],
+ag_internal_enq(const atomic_group_elem_t *ag_elem, const em_event_t ev_tbl[],
 		const int num_events, const em_queue_prio_t priority)
 {
-	odp_event_t *const odp_ev_tbl = events_em2odp(ev_tbl);
+	odp_event_t odp_ev_tbl[num_events];
 	odp_queue_t plain_q;
 	int ret;
 
@@ -170,6 +175,8 @@ ag_internal_enq(atomic_group_elem_t *const ag_elem, em_event_t ev_tbl[],
 		plain_q = ag_elem->internal_queue.hi_prio;
 	else
 		plain_q = ag_elem->internal_queue.lo_prio;
+
+	events_em2odp(ev_tbl, odp_ev_tbl, num_events);
 
 	/* Enqueue events to internal queue */
 	ret = odp_queue_enq_multi(plain_q, odp_ev_tbl, num_events);
@@ -180,21 +187,29 @@ ag_internal_enq(atomic_group_elem_t *const ag_elem, em_event_t ev_tbl[],
 }
 
 static inline int
-ag_internal_deq(atomic_group_elem_t *const ag_elem, em_event_t ev_tbl[],
+ag_internal_deq(const atomic_group_elem_t *ag_elem, em_event_t ev_tbl[/*out*/],
 		const int num_events)
 {
+	/*
+	 * Dequeue odp events directly into ev_tbl[].
+	 * The function call_eo_receive_fn/multi() will convert to
+	 * EM events with event-generation counts, if ESV is enabled,
+	 * before passing the events to the user EO.
+	 */
 	odp_event_t *const ag_ev_tbl = (odp_event_t *const)ev_tbl;
-	int hi_cnt, lo_cnt;
+	int hi_cnt;
+	int lo_cnt;
 
 	/* hi-prio events */
 	hi_cnt = odp_queue_deq_multi(ag_elem->internal_queue.hi_prio,
-				     ag_ev_tbl, num_events);
+				     ag_ev_tbl/*out*/, num_events);
 	if (hi_cnt == num_events || hi_cnt < 0)
 		return hi_cnt;
 
 	/* ...then lo-prio events */
 	lo_cnt = odp_queue_deq_multi(ag_elem->internal_queue.lo_prio,
-				     &ag_ev_tbl[hi_cnt], num_events - hi_cnt);
+				     &ag_ev_tbl[hi_cnt]/*out*/,
+				     num_events - hi_cnt);
 	if (unlikely(lo_cnt < 0))
 		return hi_cnt;
 
@@ -236,22 +251,23 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 	if (!env_spinlock_trylock(&ag_elem->lock))
 		return;
 
+	em_locm_t *const locm = &em_locm;
+
 	/* hint */
 	odp_schedule_release_atomic();
 
-	em_locm.atomic_group_released = 0;
+	locm->atomic_group_released = 0;
 	/*
 	 * Loop until no more events or until atomic processing end.
 	 * Events in the ag_elem->internal_queue:s have been scheduled
 	 * already once and should be dispatched asap.
 	 */
-	do {
-		em_event_t deq_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-		event_hdr_t *deq_hdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	em_event_t deq_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	event_hdr_t *deq_hdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
 
-		const int deq_cnt =
-			ag_internal_deq(ag_elem, deq_ev_tbl,
-					EM_SCHED_AG_MULTI_MAX_BURST);
+	do {
+		int deq_cnt = ag_internal_deq(ag_elem, deq_ev_tbl /*out*/,
+					      EM_SCHED_AG_MULTI_MAX_BURST);
 
 		if (unlikely(deq_cnt <= 0)) {
 			env_spinlock_unlock(&ag_elem->lock);
@@ -259,8 +275,8 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 			return;
 		}
 
-		em_locm.event_burst_cnt = deq_cnt;
-		event_to_hdr_multi(deq_ev_tbl, deq_hdr_tbl, deq_cnt);
+		locm->event_burst_cnt = deq_cnt;
+		event_to_hdr_multi(deq_ev_tbl, deq_hdr_tbl /*out*/, deq_cnt);
 		int tbl_idx = 0; /* index into 'deq_hdr_tbl[]' */
 
 		/*

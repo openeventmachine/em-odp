@@ -57,7 +57,7 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 	const int core_id = em_core_id();
 
 	if (EM_ESCOPE(escope)) {
-		char error_str[256];
+		char error_str[512];
 
 		if (unlikely(appl_shm->exit_flag &&
 			     !EM_ERROR_IS_FATAL(error))) {
@@ -129,8 +129,10 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 		 * Abort process, flush all open streams, dump stack,
 		 * generate core dump, never return.
 		 */
-		env_panic("\nFATAL ERROR:0x%08X on core:%02i - ABORT!\n\n",
-			  error, core_id);
+		fprintf(stderr,
+			"\nFATAL EM ERROR:0x%08X on core:%02i - ABORT!\n\n",
+			error, core_id);
+		abort();
 	}
 	return error;
 }

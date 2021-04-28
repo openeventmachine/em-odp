@@ -75,8 +75,8 @@ int vdefault_log(em_log_level_t level, const char *fmt, va_list args)
 	case EM_LOG_PRINT:
 		logfd = stdout;
 		break;
-	case EM_LOG_ERR:
 	default:
+		/* also level=EM_LOG_ERR */
 		logfd = stderr;
 		break;
 	}
@@ -151,7 +151,7 @@ early_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 
 	if (unlikely(EM_ERROR_IS_FATAL(error))) {
 		log_fn(EM_LOG_ERR,
-		       "FATAL ERROR:0x%08X (Early Error) - ABORT!\n",
+		       "FATAL EM ERROR:0x%08X (Early Error) - ABORT!\n",
 		       error);
 		abort();
 	}
@@ -228,7 +228,7 @@ default_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 	}
 
 	if (unlikely(EM_ERROR_IS_FATAL(error))) {
-		EM_LOG(EM_LOG_ERR, "FATAL ERROR:0x%08X - ABORT!\n", error);
+		EM_LOG(EM_LOG_ERR, "FATAL EM ERROR:0x%08X - ABORT!\n", error);
 		abort();
 	}
 
@@ -256,33 +256,51 @@ select_error_handler(em_status_t error, em_escope_t escope, va_list args_list)
 		 */
 		error = early_error_handler(EM_EO_UNDEF, error, escope,
 					    args_list);
-	} else {
-		eo_elem_t *eo_elem = get_current_eo_elem();
-		em_eo_t eo = EM_EO_UNDEF;
-		em_error_handler_t error_handler = default_error_handler;
+		return error;
+	}
 
-		if (em_shm != NULL)
-			error_handler = em_shm->error_handler.em_error_handler;
+	em_error_handler_t error_handler;
+	em_error_handler_t eo_handler;
+	em_log_func_t log_fn = em_shm->log_fn;
+	const eo_elem_t *const eo_elem = eo_elem_current();
+	em_eo_t eo = EM_EO_UNDEF;
 
-		if (eo_elem != NULL) {
-			eo = eo_elem->eo;
-			if (eo_elem->error_handler_func)
-				error_handler = eo_elem->error_handler_func;
-		}
+	/* Global error handler, default or user registered */
+	error_handler = em_shm->error_handler.em_error_handler;
 
-		if (error_handler) {
-			/*
-			 * Call the selected error handler and possibly
-			 * change the error code.
-			 */
-			error = error_handler(eo, error, escope, args_list);
-		}
+	if (eo_elem && eo_allocated(eo_elem)) {
+		eo_handler = eo_elem->error_handler_func;
+		eo = eo_elem->eo;
+		if (eo_handler)
+			error_handler = eo_handler;
+	}
 
-		if (error != EM_OK) {
-			/* Increase the error count, used in logs/printouts */
-			increment_global_err_cnt();
-			em_locm.error_count += 1;
-		}
+	/* fallback, should never happen */
+	if (unlikely(error_handler == NULL)) {
+		error_handler = early_error_handler;
+		log_fn = early_log.log_fn; /* for the "FATAL EM ERROR:" below */
+	}
+
+	/*
+	 * Call the selected error handler and possibly change the error code.
+	 */
+	error = error_handler(eo, error, escope, args_list);
+
+	if (error != EM_OK) {
+		/* Increase the error count, used in logs/printouts */
+		increment_global_err_cnt();
+		em_locm.error_count += 1;
+	}
+
+	/*
+	 * An error handler cannot return a fatal EM-error and continue running.
+	 */
+	if (unlikely(EM_ESCOPE(escope) && EM_ERROR_IS_FATAL(error))) {
+		log_fn(EM_LOG_ERR,
+		       "FATAL EM ERROR:0x%08X  ESCOPE:0x%08X - ABORT!\n"
+		       "EM: an error-handler must not return a fatal EM-error!",
+		       error, escope);
+		abort();
 	}
 
 	/* Return input error or value changed by error_handler */
@@ -291,11 +309,11 @@ select_error_handler(em_status_t error, em_escope_t escope, va_list args_list)
 
 /**
  * Called ONLY from INTERNAL_ERROR macro - do not use for anything else!
- * _internal_error((error), (escope), __FILE__, __func__, __LINE__,
+ * internal_error((error), (escope), __FILE__, __func__, __LINE__,
  *                 (format), ## __VA_ARGS__)
  */
 em_status_t
-_internal_error(em_status_t error, em_escope_t escope, ...)
+internal_error(em_status_t error, em_escope_t escope, ...)
 {
 	/*
 	 * va_list contains:

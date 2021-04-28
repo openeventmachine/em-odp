@@ -56,7 +56,7 @@ em_status_t
 event_group_free(em_event_group_t event_group);
 
 static inline int
-event_group_allocated(event_group_elem_t *const egrp_elem)
+event_group_allocated(const event_group_elem_t *egrp_elem)
 {
 	return !objpool_in_pool(&egrp_elem->event_group_pool_elem);
 }
@@ -88,7 +88,7 @@ event_group_elem_get(const em_event_group_t event_group)
 }
 
 static inline uint64_t
-event_group_gen_get(event_group_elem_t *const egrp_elem)
+event_group_gen_get(const event_group_elem_t *egrp_elem)
 {
 	if (unlikely(egrp_elem != NULL)) {
 		egrp_counter_t egrp_count;
@@ -108,6 +108,7 @@ static inline void
 set_local_safe(const em_event_group_t egrp, const int32_t egrp_gen,
 	       const unsigned int decr)
 {
+	em_locm_t *const locm = &em_locm;
 	uint64_t current_count;
 	egrp_counter_t new_count;
 	event_group_elem_t *const egrp_elem = event_group_elem_get(egrp);
@@ -122,15 +123,15 @@ set_local_safe(const em_event_group_t egrp, const int32_t egrp_gen,
 			INTERNAL_ERROR(EM_ERR_BAD_ID,
 				       EM_ESCOPE_EVENT_GROUP_UPDATE,
 				       "Expired event group event received!");
-			em_locm.current.egrp = EM_EVENT_GROUP_UNDEF;
+			locm->current.egrp = EM_EVENT_GROUP_UNDEF;
 			return;
 		}
 	} while (!EM_ATOMIC_CMPSET(&egrp_elem->pre.atomic,
 				   current_count, new_count.all));
 
-	em_locm.current.egrp_gen = egrp_gen;
-	em_locm.current.egrp = egrp;
-	em_locm.current.egrp_elem = egrp_elem;
+	locm->current.egrp_gen = egrp_gen;
+	locm->current.egrp = egrp;
+	locm->current.egrp_elem = egrp_elem;
 }
 
 /**
@@ -152,8 +153,10 @@ event_group_set_local(const em_event_group_t egrp, const int32_t egrp_gen,
 		/* Group is validated before setting */
 		set_local_safe(egrp, egrp_gen, decr);
 	} else {
-		em_locm.current.egrp_elem = event_group_elem_get(egrp);
-		em_locm.current.egrp = egrp;
+		em_locm_t *const locm = &em_locm;
+
+		locm->current.egrp_elem = event_group_elem_get(egrp);
+		locm->current.egrp = egrp;
 	}
 }
 
@@ -250,9 +253,11 @@ save_current_evgrp(em_event_group_t *save_egrp /*out*/,
 		   event_group_elem_t **save_egrp_elem /*out*/,
 		   int32_t *save_egrp_gen /*out*/)
 {
-	*save_egrp_elem = em_locm.current.egrp_elem;
-	*save_egrp = em_locm.current.egrp;
-	*save_egrp_gen = em_locm.current.egrp_gen;
+	const em_locm_t *locm = &em_locm;
+
+	*save_egrp_elem = locm->current.egrp_elem;
+	*save_egrp = locm->current.egrp;
+	*save_egrp_gen = locm->current.egrp_gen;
 }
 
 static inline void
@@ -260,9 +265,11 @@ restore_current_evgrp(const em_event_group_t saved_egrp,
 		      event_group_elem_t *const saved_egrp_elem,
 		      const int32_t saved_egrp_gen)
 {
-	em_locm.current.egrp_elem = saved_egrp_elem;
-	em_locm.current.egrp = saved_egrp;
-	em_locm.current.egrp_gen = saved_egrp_gen;
+	em_locm_t *const locm = &em_locm;
+
+	locm->current.egrp_elem = saved_egrp_elem;
+	locm->current.egrp = saved_egrp;
+	locm->current.egrp_gen = saved_egrp_gen;
 }
 
 unsigned int

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2020, Nokia Solutions and Networks
+ *   Copyright (c) 2020-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -48,6 +48,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <sys/mman.h>
 
 #include <event_machine.h>
 #include <event_machine/add-ons/event_machine_timer.h>
@@ -59,7 +60,7 @@
 
 #include "timer_test_periodic.h"
 
-#define VERSION "WIP v0.3"
+#define VERSION "WIP v0.7"
 struct {
 	int num_periodic;
 	uint64_t res_ns;
@@ -81,10 +82,15 @@ struct {
 	int dispatch;
 	int jobs;
 	long cpucycles;
+	int info_only;
+	int usehuge;		/* for trace buffer */
 	int bg_events;
 	uint64_t bg_time_ns;
 	int bg_size;
 	int bg_chunk;
+	int mz_mb;
+	int mz_huge;
+	uint64_t mz_ns;
 
 } g_options = { .num_periodic =  1,	/* defaults for basic check */
 		.res_ns =        DEF_RES_NS,
@@ -101,15 +107,21 @@ struct {
 		.num_runs =	 1,
 		.tracebuf =	 DEF_TMO_DATA,
 		.stoplim =	 ((STOP_THRESHOLD * DEF_TMO_DATA) / 100),
-		.noskip =	 0,
+		.noskip =	 1,
 		.profile =	 0,
 		.dispatch =	 0,
 		.jobs =          0,
 		.cpucycles =	 0,
+		.info_only =	 0,
+		.usehuge =	 0,
 		.bg_events =     0,
-		.bg_time_ns =	 2000,
-		.bg_size =       1000 * 1024,
-		.bg_chunk =      20 * 1024};
+		.bg_time_ns =	 10000,
+		.bg_size =       5000 * 1024,
+		.bg_chunk =      50 * 1024,
+		.mz_mb =	 0,
+		.mz_huge =	 0,
+		.mz_ns =	 0
+		};
 
 typedef struct app_eo_ctx_t {
 	e_state state;
@@ -130,6 +142,8 @@ typedef struct app_eo_ctx_t {
 	time_stamp started;
 	time_stamp stopped;
 	void *bg_data;
+	void *mz_data;
+	uint64_t mz_count;
 	tmo_setup *tmo_data;
 	core_data cdat[MAX_CORES];
 } app_eo_ctx_t;
@@ -173,17 +187,14 @@ static int parse_my_args(int first, int argc, char *argv[]);
 static void analyze(app_eo_ctx_t *eo_ctx);
 static void write_trace(app_eo_ctx_t *eo_ctx, const char *name);
 static void cleanup(app_eo_ctx_t *eo_ctx);
-static int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns,
-		     int count);
+static int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns, int count);
 static uint64_t linux_time_ns(void);
-static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
-				const em_eo_conf_t *conf);
+static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
 static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo);
 static em_status_t app_eo_stop(void *eo_context, em_eo_t eo);
 static em_status_t app_eo_stop_local(void *eo_context, em_eo_t eo);
 static void app_eo_receive(void *eo_context, em_event_t event,
-			   em_event_type_t type, em_queue_t queue,
-			   void *q_context);
+			   em_event_type_t type, em_queue_t queue, void *q_context);
 static time_stamp get_time(void);
 static uint64_t time_to_ns(time_stamp t);
 static time_stamp time_diff(time_stamp t2, time_stamp t1);
@@ -194,20 +205,23 @@ static void profile_all_stats(int cores, app_eo_ctx_t *eo_ctx);
 static void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns,
 			    uint64_t tmrtick, time_stamp timetick);
 static void timing_statistics(app_eo_ctx_t *eo_ctx);
-static void add_prof(app_eo_ctx_t *eo_ctx, time_stamp t1,
-		     e_op op, app_msg_t *msg);
+static void add_prof(app_eo_ctx_t *eo_ctx, time_stamp t1, e_op op, app_msg_t *msg);
 static int do_one_tmo(int id, app_eo_ctx_t *eo_ctx,
-		      time_stamp *min, time_stamp *max, time_stamp *first);
-static tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count);
-static uint64_t random_tmo(void);
+		      time_stamp *min, time_stamp *max, time_stamp *first, int64_t *tgt_max_ns);
+static tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count, int *last);
+static uint64_t random_tmo_ns(void);
 static uint64_t random_work_ns(rnd_state_t *rng);
 static void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 		     em_queue_t *queue, void **q_ctx);
 static void exit_cb(em_eo_t eo);
 static void send_bg_events(app_eo_ctx_t *eo_ctx);
 static int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx);
+static int do_memzero(app_msg_t *msg, app_eo_ctx_t *eo_ctx);
 static em_status_t my_error_handler(em_eo_t eo, em_status_t error,
 				    em_escope_t escope, va_list args);
+static void *allocate_tracebuf(int numbuf, size_t bufsize, size_t *realsize);
+static void free_tracebuf(void *ptr, size_t realsize);
+static void prefault(void *buf, size_t size);
 
 /* --------------------------------------- */
 em_status_t my_error_handler(em_eo_t eo, em_status_t error,
@@ -241,7 +255,7 @@ void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 	(void)queue;
 	(void)q_ctx;
 
-	if (!my_eo_ctx)
+	if (unlikely(!my_eo_ctx))
 		return;
 
 	if (g_options.dispatch) {
@@ -252,7 +266,6 @@ void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 				  0, count++);
 		}
 	}
-
 	my_eo_ctx->cdat[em_core_id()].enter = get_time();
 }
 
@@ -261,7 +274,7 @@ void exit_cb(em_eo_t eo)
 	static int count;
 	app_eo_ctx_t *const my_eo_ctx = em_eo_get_context(eo);
 
-	if (!my_eo_ctx)
+	if (unlikely(!my_eo_ctx))
 		return;
 
 	if (g_options.dispatch)
@@ -276,11 +289,53 @@ void exit_cb(em_eo_t eo)
 	}
 }
 
+void prefault(void *buf, size_t size)
+{
+	uint8_t *ptr = (uint8_t *)buf;
+
+	/* write all pages to allocate and pre-fault */
+	APPL_PRINT("Pre-faulting %lu bytes at %p (EM core %d)\n", size, buf, em_core_id());
+	for (size_t i = 0; i < size; i += 4096)
+		*(ptr + i) = (uint8_t)i;
+}
+
+void *allocate_tracebuf(int numbuf, size_t bufsize, size_t *realsize)
+{
+	if (g_options.usehuge) {
+		*realsize = numbuf * bufsize;
+		void *ptr = mmap(NULL, *realsize, PROT_READ | PROT_WRITE,
+			    MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE | MAP_HUGETLB | MAP_LOCKED,
+			    -1, 0);
+		if (ptr == MAP_FAILED) {
+			APPL_PRINT("Huge page mapping failed for trace buffer (%lu bytes)\n",
+				   *realsize);
+			return NULL;
+		} else {
+			return ptr;
+		}
+
+	} else {
+		void *buf = calloc(numbuf, bufsize);
+
+		*realsize = numbuf * bufsize;
+		prefault(buf, *realsize);
+		return buf;
+	}
+}
+
+void free_tracebuf(void *ptr, size_t realsize)
+{
+	if (g_options.usehuge)
+		munmap(ptr, realsize);
+	else
+		free(ptr);
+}
+
 inline time_stamp get_time(void)
 {
 	time_stamp t;
 
-	if (g_options.cpucycles)
+	if (unlikely(g_options.cpucycles))
 		t.u64 = get_cpu_cycle();
 	else
 		t.odp = odp_time_global();
@@ -291,7 +346,7 @@ uint64_t time_to_ns(time_stamp t)
 {
 	double ns;
 
-	if (g_options.cpucycles) {
+	if (unlikely(g_options.cpucycles)) { /* todo drop cpucycles choice to get rid of this? */
 		double hz = (double)m_shm->eo_context.time_hz;
 
 		ns = (1000000000.0 / hz) * (double)t.u64;
@@ -305,7 +360,7 @@ time_stamp time_diff(time_stamp t2, time_stamp t1)
 {
 	time_stamp t;
 
-	if (g_options.cpucycles)
+	if (unlikely(g_options.cpucycles))
 		t.u64 = t2.u64 - t1.u64;
 	else
 		t.odp = odp_time_diff(t2.odp, t1.odp);
@@ -317,7 +372,7 @@ time_stamp time_sum(time_stamp t1, time_stamp t2)
 {
 	time_stamp t;
 
-	if (g_options.cpucycles)
+	if (unlikely(g_options.cpucycles))
 		t.u64 = t1.u64 + t2.u64;
 	else
 		t.odp = odp_time_sum(t1.odp, t2.odp);
@@ -377,7 +432,6 @@ void send_stop(app_eo_ctx_t *eo_ctx)
 
 	msg->command = CMD_DONE;
 	msg->id = em_core_id();
-
 	ret = em_send(event, eo_ctx->hb_q);
 	test_fatal_if(ret != EM_OK, "em_send():%" PRI_STAT, ret);
 }
@@ -410,10 +464,10 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		return;
 	}
 
-	fprintf(fle, "\n\n#BEGIN TRACE FORMAT 1\n");
-	fprintf(fle, "resol,res_hz,period,max_period,clksrc,num_tmo,loops,");
-	fprintf(fle, "traces,noskip,SW-ver\n");
-	fprintf(fle, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s\n",
+	fprintf(fle, "\n\n#BEGIN TRACE FORMAT 1\n"); /* for offline analyzers */
+	fprintf(fle, "res_ns,res_hz,period_ns,max_period_ns,clksrc,num_tmo,loops,");
+	fprintf(fle, "traces,noskip,SW-ver,bg,mz\n");
+	fprintf(fle, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s,\"%d/%lu\",\"%d/%lu\"\n",
 		g_options.res_ns,
 		g_options.res_hz,
 		g_options.period_ns,
@@ -423,7 +477,10 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		g_options.num_runs,
 		g_options.tracebuf,
 		g_options.noskip,
-		VERSION);
+		VERSION,
+		g_options.bg_events, g_options.bg_time_ns / 1000UL,
+		g_options.mz_mb, g_options.mz_ns / 1000000UL
+		);
 	fprintf(fle, "time_hz,meas_time_hz,timer_hz,meas_timer_hz,linux_hz\n");
 	fprintf(fle, "%lu,%lu,%lu,%lu,%lu\n",
 		eo_ctx->time_hz,
@@ -472,12 +529,11 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		fclose(fle);
 }
 
-uint64_t random_tmo(void)
+uint64_t random_tmo_ns(void)
 {
-	uint64_t r;
+	uint64_t r = random() % (g_options.max_period_ns - g_options.min_period_ns + 1);
 
-	r = random() % (g_options.max_period_ns - g_options.min_period_ns + 1);
-	return r + g_options.min_period_ns;
+	return r + g_options.min_period_ns; /* ns between min/max period */
 }
 
 uint64_t random_work_ns(rnd_state_t *rng)
@@ -495,69 +551,92 @@ uint64_t random_work_ns(rnd_state_t *rng)
 	return r + g_options.min_work_ns;
 }
 
-tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count)
+tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count, int *last)
 {
 	int cores = em_core_count();
+	tmo_trace *trc = NULL;
+	int last_count = 0;
 
 	for (int c = 0; c < cores; c++) {
-		for (int i = 0; i < g_options.tracebuf; i++) { /* find id */
+		for (int i = 0; i < eo_ctx->cdat[c].count; i++) { /* find id */
 			if (eo_ctx->cdat[c].trc[i].op == OP_TMO &&
-			    eo_ctx->cdat[c].trc[i].id == id &&
-			    eo_ctx->cdat[c].trc[i].count == count) {
-				return &eo_ctx->cdat[c].trc[i];
+			    eo_ctx->cdat[c].trc[i].id == id) { /* this TMO */
+				if (eo_ctx->cdat[c].trc[i].count == count) {
+					trc = &eo_ctx->cdat[c].trc[i];
+				} else {
+					/* always run through for last_count */
+					if (eo_ctx->cdat[c].trc[i].count > last_count)
+						last_count = eo_ctx->cdat[c].trc[i].count;
+				}
 			}
 		}
 	}
-	return NULL;
+	*last = last_count;
+	return trc;
 }
 
 int do_one_tmo(int id, app_eo_ctx_t *eo_ctx,
-	       time_stamp *min, time_stamp *max, time_stamp *first)
+	       time_stamp *min, time_stamp *max, time_stamp *first, int64_t *tgt_max)
 {
 	int num = 0;
 	time_stamp diff;
 	time_stamp prev = {0};
 	int last = 0;
+	int last_num;
+	uint64_t period_ns = eo_ctx->tmo_data[id].period_ns;
+	uint64_t first_ns = time_to_ns(eo_ctx->tmo_data[id].start_ts);
+	int64_t max_tgt_diff = 0;
 
 	max->u64 = 0;
-	min->u64 = UINT64_MAX;
+	min->u64 = INT64_MAX;
 
-	/* find in sequential order for diff */
+	/* find in sequential order for diff to work */
 	for (int count = 1; count < g_options.tracebuf; count++) {
-		tmo_trace *tmo = find_tmo(eo_ctx, id, count);
+		tmo_trace *tmo = find_tmo(eo_ctx, id, count, &last_num);
 
 		if (!tmo) {
 			if (last != count - 1)
-				APPL_PRINT("MISSING TMO: id %d, count %d\n",
-					   id, count);
+				APPL_PRINT("MISSING TMO: id %d, count %d\n", id, count);
+			*tgt_max = max_tgt_diff;
 			return num;
 		}
 		last++;
-		if (!num) { /* skip first for min/max */
-			diff = time_diff(tmo->ts,
-					 eo_ctx->tmo_data[id].start_ts);
+		if (!num) { /* skip first for min/max but store time */
+			diff = time_diff(tmo->ts, eo_ctx->tmo_data[id].start_ts);
 			*first = diff;
-			prev = tmo->ts;
-			num++;
-			continue;
+			if (eo_ctx->tmo_data[id].first_ns != eo_ctx->tmo_data[id].period_ns)
+				first_ns = time_to_ns(tmo->ts); /* ignore first */
+
+		} else {
+			diff = time_diff(tmo->ts, prev);
+			if (last_num > count) { /*skip last diff, could be while stopping */
+				if (time_to_ns(diff) > time_to_ns(*max))
+					*max = diff;
+				if (time_to_ns(diff) < time_to_ns(*min))
+					*min = diff;
+
+				/* calculate distance to target */
+				uint64_t tgt = first_ns + count * period_ns;
+				int64_t tgtdiff = (int64_t)time_to_ns(tmo->ts) - (int64_t)tgt;
+
+				if (llabs(max_tgt_diff) < llabs(tgtdiff))
+					max_tgt_diff = tgtdiff;
+			}
 		}
-		diff = time_diff(tmo->ts, prev);
-		if (diff.u64 > max->u64)
-			*max = diff;
-		if (diff.u64 < min->u64)
-			*min = diff;
 		prev = tmo->ts;
 		num++;
 	}
+	*tgt_max = max_tgt_diff;
 	return num;
 }
 
 void timing_statistics(app_eo_ctx_t *eo_ctx)
 {
+	/* todo: a lot to improve here */
 	time_stamp max_ts = {0}, min_ts = {0}, first_ts = {0};
+	int64_t tgt_max = 0;
 	const int cores = em_core_count();
-	uint64_t system_used = time_to_ns(time_diff(eo_ctx->stopped,
-						    eo_ctx->started));
+	uint64_t system_used = time_to_ns(time_diff(eo_ctx->stopped, eo_ctx->started));
 
 	for (int c = 0; c < cores; c++) {
 		core_data *cdat = &eo_ctx->cdat[c];
@@ -570,18 +649,24 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 
 	for (int id = 0; id < g_options.num_periodic; id++) { /* each timeout */
 		tmo_setup *tmo_data = &eo_ctx->tmo_data[id];
-		int num = do_one_tmo(id, eo_ctx, &min_ts, &max_ts, &first_ts);
+		int num = do_one_tmo(id, eo_ctx, &min_ts, &max_ts, &first_ts, &tgt_max);
 
-		APPL_PRINT("STAT-TMO [%d]: %d tmos, period %luns (",
-			   id, num, tmo_data->period_ns);
-		if (num > 1)
-			APPL_PRINT("%lu ticks), interval %ldns ... %ldns\n",
-				   tmo_data->ticks,
-				   (int64_t)time_to_ns(min_ts) - (int64_t)tmo_data->period_ns,
-				   (int64_t)time_to_ns(max_ts) - (int64_t)tmo_data->period_ns);
-		else
+		APPL_PRINT("STAT-TMO [%d]: %d tmos, period %luns (", id, num, tmo_data->period_ns);
+		if (num > 1) {
+			int64_t maxdiff = (int64_t)time_to_ns(max_ts) -
+					  (int64_t)tmo_data->period_ns;
+
+			int64_t mindiff = (int64_t)time_to_ns(min_ts) -
+					  (int64_t)tmo_data->period_ns;
+
+			APPL_PRINT("%lu ticks), interval %ldns ... +%ldns",
+				   tmo_data->ticks, mindiff, maxdiff);
+			APPL_PRINT(" (%ldus ... +%ldus)\n", mindiff / 1000, maxdiff / 1000);
+			APPL_PRINT("  - Max diff from target %.2fus\n", (double)tgt_max / 1000);
+		} else {
 			APPL_PRINT("%lu ticks), 1st period %lu\n",
 				   tmo_data->ticks, time_to_ns(first_ts));
+		}
 		if (num == 0)
 			APPL_PRINT("	ERROR - no timeouts received\n");
 	}
@@ -611,8 +696,7 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 				uint64_t ns;
 
 				if (prev_count != cdat->trc[i].count)
-					APPL_PRINT("No enter cnt=%d\n",
-						   prev_count);
+					APPL_PRINT("No enter cnt=%d\n", prev_count);
 
 				diff_ts = time_diff(cdat->trc[i].ts, prev_ts);
 				ns = time_to_ns(diff_ts);
@@ -621,14 +705,13 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 					min = ns;
 				if (ns > max)
 					max = ns;
-
 				avg += ns;
 				num++;
 			}
 		}
 	}
 
-	APPL_PRINT("%d dispatcher enter-exits\n", num);
+	APPL_PRINT("%d dispatcher enter-exit samples\n", num);
 	APPL_PRINT("PROF-DISPATCH rcv time: min %luns, max %luns, avg %luns\n",
 		   min, max, num > 0 ? avg / num : 0);
 }
@@ -672,7 +755,7 @@ void analyze(app_eo_ctx_t *eo_ctx)
 	int cancelled = 0;
 	int job_del = 0;
 
-	/* checks TODO */
+	/* more checks TODO? */
 
 	timing_statistics(eo_ctx);
 
@@ -688,11 +771,16 @@ void analyze(app_eo_ctx_t *eo_ctx)
 	if (g_options.csv != NULL)
 		write_trace(eo_ctx, g_options.csv);
 
-	APPL_PRINT("%d/%d timeouts were cancelled\n",
-		   cancelled, g_options.num_periodic);
+	/* TODO perhaps add error if all were not cancelled? */
+	APPL_PRINT("%d/%d timeouts were cancelled\n", cancelled, g_options.num_periodic);
 	if (g_options.bg_events)
-		APPL_PRINT("%d/%d bg jobs were deleted\n",
-			   job_del, g_options.bg_events);
+		APPL_PRINT("%d/%d bg jobs were deleted\n", job_del, g_options.bg_events);
+	if (g_options.mz_mb)
+		APPL_PRINT("%lu memzeros\n", eo_ctx->mz_count);
+	double span = time_to_ns(eo_ctx->stopped) - time_to_ns(eo_ctx->started);
+
+	span /= 1000000000;
+	APPL_PRINT("Timer runtime %fs\n", span);
 }
 
 int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns, int count)
@@ -721,16 +809,14 @@ void send_bg_events(app_eo_ctx_t *eo_ctx)
 	for (int n = 0; n < g_options.bg_events; n++) {
 		em_event_t event = em_alloc(sizeof(app_msg_t),
 					    EM_EVENT_TYPE_SW, m_shm->pool);
-		test_fatal_if(event == EM_EVENT_UNDEF,
-			      "Can't allocate bg event!\n");
+		test_fatal_if(event == EM_EVENT_UNDEF, "Can't allocate bg event!\n");
 		app_msg_t *msg = em_event_pointer(event);
 
 		msg->command = CMD_BGWORK;
 		msg->count = 0;
-		msg->id = -1;
+		msg->id = n + 1;
 		msg->arg = g_options.bg_time_ns;
-		test_fatal_if(em_send(event, eo_ctx->bg_q) != EM_OK,
-			      "Can't allocate bg event!\n");
+		test_fatal_if(em_send(event, eo_ctx->bg_q) != EM_OK, "Can't allocate bg event!\n");
 	}
 }
 
@@ -748,8 +834,7 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 	eo_ctx->started = get_time();
 
 	for (int i = 0; i < g_options.num_periodic; i++) {
-		event = em_alloc(sizeof(app_msg_t),
-				 EM_EVENT_TYPE_SW, m_shm->pool);
+		event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW, m_shm->pool);
 		test_fatal_if(event == EM_EVENT_UNDEF,
 			      "Can't allocate test event (%ldB)!\n",
 			      sizeof(app_msg_t));
@@ -776,7 +861,7 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 		if (g_options.period_ns) {
 			eo_ctx->tmo_data[i].period_ns = g_options.period_ns;
 		} else { /* 0: use random */
-			eo_ctx->tmo_data[i].period_ns = random_tmo();
+			eo_ctx->tmo_data[i].period_ns = random_tmo_ns();
 		}
 		if (max_period < eo_ctx->tmo_data[i].period_ns)
 			max_period = eo_ctx->tmo_data[i].period_ns;
@@ -784,14 +869,13 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 
 		if (EXTRA_PRINTS && i == 0) {
 			APPL_PRINT("Timer Hz %lu ", eo_ctx->test_hz);
-			APPL_PRINT("= Period ns: %f => period %lu ticks\n",
-				   ns, period);
+			APPL_PRINT("= Period ns: %f => period %lu ticks\n", ns, period);
 		}
 
 		test_fatal_if(period < 1, "timer resolution is too low!\n");
 
 		if (g_options.first_ns < 0) /* use random */
-			eo_ctx->tmo_data[i].first_ns = random_tmo();
+			eo_ctx->tmo_data[i].first_ns = random_tmo_ns();
 		else if (g_options.first_ns == 0) /* use period */
 			eo_ctx->tmo_data[i].first_ns = eo_ctx->tmo_data[i].period_ns;
 		else
@@ -826,7 +910,7 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 		eo_ctx->tmo_data[i].ack_late = 0;
 		eo_ctx->tmo_data[i].ticks = period;
 		eo_ctx->max_period = max_period;
-		eo_ctx->cooloff = max_period / 1000000000ULL * 2;
+		eo_ctx->cooloff = (max_period / 1000000000ULL * 2) + 1;
 		if (eo_ctx->cooloff < 4)
 			eo_ctx->cooloff = 4; /* HB periods (sec) */
 	}
@@ -834,10 +918,8 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 
 void add_prof(app_eo_ctx_t *eo_ctx, time_stamp t1, e_op op, app_msg_t *msg)
 {
-	time_stamp t2, dif;
+	time_stamp dif = time_diff(get_time(), t1);
 
-	t2 = get_time();
-	dif = time_diff(t2, t1);
 	add_trace(eo_ctx, msg->id, op, dif.u64, msg->count);
 	/* if this filled the buffer it's handled on next tmo */
 }
@@ -852,35 +934,32 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 	em_tmo_stats_t ctrs = { 0 }; /* init to avoid gcc warning with LTO */
 
 	msg->count++;
-	if (likely(state == STATE_RUN)) {
+	if (likely(state == STATE_RUN)) { /* add trace */
 		if (!add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count))
 			send_stop(eo_ctx);
 
 		if (g_options.work_prop) {
 			uint64_t work = random_work_ns(&eo_ctx->cdat[core].rng);
 
-			if (work) {
-				time_stamp now, t2;
-				uint64_t ns;
+			if (work) { /* add extra delay */
+				time_stamp t2;
+				uint64_t ns = time_to_ns(get_time());
 
-				now = get_time();
-				ns = time_to_ns(now);
 				do {
 					t2 = get_time();
 				} while (time_to_ns(t2) < (ns + work));
-				add_trace(eo_ctx, msg->id, OP_WORK,
-					  work, msg->count);
+				add_trace(eo_ctx, msg->id, OP_WORK, work, msg->count);
 			}
 		}
 	} else if (state == STATE_COOLOFF) { /* trace, but cancel */
 		em_event_t tmo_event = EM_EVENT_UNDEF;
 
-		add_trace(eo_ctx, msg->id, OP_TMO,
-			  0, msg->count);
+		add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count);
 		em_tmo_get_stats(msg->tmo, &ctrs);
 		APPL_PRINT("STAT-ACK [%d]:  %lu acks, %lu late, %lu skips\n",
 			   msg->id, ctrs.num_acks, ctrs.num_late_ack, ctrs.num_period_skips);
 		eo_ctx->tmo_data[msg->id].ack_late = ctrs.num_late_ack;
+
 		if (g_options.profile)
 			t1 = get_time();
 		em_tmo_delete(msg->tmo, &tmo_event);
@@ -891,9 +970,8 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (tmo_event != EM_EVENT_UNDEF)
 			em_free(tmo_event);
 
-		add_trace(eo_ctx, msg->id, OP_CANCEL,
-			  0, msg->count);
-		return 1;
+		add_trace(eo_ctx, msg->id, OP_CANCEL, 0, msg->count);
+		return 0; /* delete this event also */
 	}
 
 	add_trace(eo_ctx, msg->id, OP_ACK, 0, msg->count);
@@ -921,12 +999,10 @@ void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns, uint64_t tmrtick,
 	APPL_PRINT("%lu timer ticks in %luns (linux time) ", tmr_t2, linux_t2);
 	double hz = 1000000000 /
 		    ((double)linux_t2 / (double)tmr_t2);
-	APPL_PRINT("=> %.1fHz (%.1fMHz). Timer reports %luHz\n",
-		   hz, hz / 1000000, eo_ctx->test_hz);
+	APPL_PRINT("=> %.1fHz (%.1fMHz). Timer reports %luHz\n", hz, hz / 1000000, eo_ctx->test_hz);
 	eo_ctx->meas_test_hz = round(hz);
 	hz = 1000000000 / ((double)linux_t2 / (double)time_t2.u64);
-	APPL_PRINT("Timestamp measured: %.1fHz (%.1fMHz)\n",
-		   hz, hz / 1000000);
+	APPL_PRINT("Timestamp measured: %.1fHz (%.1fMHz)\n", hz, hz / 1000000);
 	eo_ctx->meas_time_hz = round(hz);
 
 	if (g_options.cpucycles == 1) /* use measured */
@@ -935,6 +1011,33 @@ void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns, uint64_t tmrtick,
 		eo_ctx->time_hz = (uint64_t)g_options.cpucycles;
 
 	test_fatal_if(tmr_t2 < 1, "TIMER SEEMS NOT RUNNING AT ALL!?");
+}
+
+int do_memzero(app_msg_t *msg, app_eo_ctx_t *eo_ctx)
+{
+	static int count;
+
+	add_trace(eo_ctx, -1, OP_MEMZERO, g_options.mz_mb, msg->count);
+	if (eo_ctx->mz_data == NULL) { /* first time we only allocate */
+		if (g_options.mz_huge) {
+			eo_ctx->mz_data = mmap(NULL, g_options.mz_mb * 1024UL * 1024UL,
+					       PROT_READ | PROT_WRITE,
+					       MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE |
+					       MAP_HUGETLB | MAP_LOCKED,
+					       -1, 0);
+			if (eo_ctx->mz_data == MAP_FAILED)
+				eo_ctx->mz_data = NULL;
+		} else {
+			eo_ctx->mz_data = malloc(g_options.mz_mb * 1024UL * 1024UL);
+		}
+		test_fatal_if(eo_ctx->mz_data == NULL, "mz_mem reserve failed!");
+	} else {
+		memset(eo_ctx->mz_data, 0, g_options.mz_mb * 1024UL * 1024UL);
+		eo_ctx->mz_count++;
+	}
+	add_trace(eo_ctx, -1, OP_MEMZERO_END, g_options.mz_mb, count);
+	__atomic_fetch_add(&count, 1, __ATOMIC_RELAXED);
+	return 0;
 }
 
 int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx)
@@ -949,8 +1052,7 @@ int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx)
 	if (__atomic_load_n(&eo_ctx->state, __ATOMIC_ACQUIRE) != STATE_RUN) {
 		eo_ctx->cdat[core].jobs_deleted++;
 		if (EXTRA_PRINTS)
-			APPL_PRINT("Deleting job after %u iterations\n",
-				   msg->count);
+			APPL_PRINT("Deleting job after %u iterations\n", msg->count);
 		return 0; /* stop & delete */
 	}
 
@@ -963,12 +1065,11 @@ int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx)
 
 	random_r(&eo_ctx->cdat[core].rng.rdata, &rnd);
 	rnd = rnd % blocks;
-	uint64_t *dptr = (uint64_t *)((uintptr_t)eo_ctx->bg_data +
-				      rnd * g_options.bg_chunk);
+	uint64_t *dptr = (uint64_t *)((uintptr_t)eo_ctx->bg_data + rnd * g_options.bg_chunk);
 	/* printf("%d: %p - %p\n", rnd, eo_ctx->bg_data, dptr); */
 
 	do {
-		/* jump around reading from selected chunk */
+		/* jump around memory reading from selected chunk */
 		random_r(&eo_ctx->cdat[core].rng.rdata, &rnd);
 		rnd = rnd % (g_options.bg_chunk / sizeof(uint64_t));
 		/* printf("%d: %p - %p\n", rnd, eo_ctx->bg_data, dptr+rnd); */
@@ -977,8 +1078,20 @@ int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx)
 	} while (time_to_ns(ts) < msg->arg);
 
 	*dptr = sum;
-	test_fatal_if(em_send(evt, eo_ctx->bg_q) != EM_OK,
-		      "Failed to send BG job event!");
+
+	if (g_options.mz_mb && msg->id == 1) { /* use only one job stream for memzero */
+		static time_stamp last_mz = {0};
+
+		if (msg->count < 10)	/* don't do mz before some time */
+			last_mz = get_time();
+		ts = time_diff(get_time(), last_mz);
+		if (time_to_ns(ts) > g_options.mz_ns) {
+			do_memzero(msg, eo_ctx);
+			last_mz = get_time();
+		}
+	}
+
+	test_fatal_if(em_send(evt, eo_ctx->bg_q) != EM_OK, "Failed to send BG job event!");
 	return 1;
 }
 
@@ -996,8 +1109,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 	/* heartbeat runs states of the test */
 
 	msg->count++;
-	add_trace(eo_ctx, -1, OP_HB,
-		  linux_time_ns(), msg->count);
+	add_trace(eo_ctx, -1, OP_HB, linux_time_ns(), msg->count);
 
 	if (EXTRA_PRINTS)
 		APPL_PRINT(".");
@@ -1007,6 +1119,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (msg->count > eo_ctx->last_hbcount + INIT_WAIT) {
 			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
 			eo_ctx->last_hbcount = msg->count;
+			APPL_PRINT("ROUND %d\n", runs + 1);
 			APPL_PRINT("Starting tick measurement\n");
 		}
 		break;
@@ -1024,8 +1137,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 			if (g_options.num_runs > 1)
 				APPL_PRINT("** Round %d\n", runs + 1);
 			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
-			add_trace(eo_ctx, -1, OP_STATE,
-				  linux_time_ns(), eo_ctx->state);
+			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
 		}
 		break;
 
@@ -1033,8 +1145,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (g_options.bg_events)
 			send_bg_events(eo_ctx);
 		__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
-		add_trace(eo_ctx, -1, OP_STATE,
-			  linux_time_ns(), eo_ctx->state);
+		add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
 		start_periodic(eo_ctx);
 		eo_ctx->last_hbcount = msg->count;
 		break;
@@ -1048,20 +1159,16 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 			}
 		}
 		if (done) {
-			__atomic_fetch_add(&eo_ctx->state, 1,
-					   __ATOMIC_SEQ_CST);
-			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(),
-				  eo_ctx->state);
+			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
+			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
 			eo_ctx->last_hbcount = msg->count;
 		}
 		break;
 
 	case STATE_COOLOFF:
 		if (msg->count > (eo_ctx->last_hbcount + eo_ctx->cooloff)) {
-			__atomic_fetch_add(&eo_ctx->state, 1,
-					   __ATOMIC_SEQ_CST);
-			add_trace(eo_ctx, -1, OP_STATE,
-				  linux_time_ns(), eo_ctx->state);
+			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
+			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
 			eo_ctx->last_hbcount = msg->count;
 		}
 		break;
@@ -1070,8 +1177,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		APPL_PRINT("\n");
 		analyze(eo_ctx);
 		cleanup(eo_ctx);
-		__atomic_store_n(&eo_ctx->state, STATE_INIT,
-				 __ATOMIC_SEQ_CST);
+		__atomic_store_n(&eo_ctx->state, STATE_INIT, __ATOMIC_SEQ_CST);
 		runs++;
 		if (runs >= g_options.num_runs && g_options.num_runs != 0) {
 			/* terminate test app */
@@ -1082,13 +1188,11 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		break;
 
 	default:
-		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-			   "Invalid test state");
+		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Invalid test state");
 	}
 
 	if (em_tmo_ack(eo_ctx->heartbeat_tmo, event) != EM_OK)
-		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-			   "HB ack() fail!\n");
+		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "HB ack() fail!\n");
 }
 
 void usage(void)
@@ -1099,8 +1203,7 @@ void usage(void)
 	for (int i = 0; ; i++) {
 		if (longopts[i].name == NULL || descopts[i] == NULL)
 			break;
-		printf("--%s or -%c: %s\n", longopts[i].name, longopts[i].val,
-		       descopts[i]);
+		printf("--%s or -%c: %s\n", longopts[i].name, longopts[i].val, descopts[i]);
 	}
 }
 
@@ -1113,8 +1216,7 @@ int parse_my_args(int first, int argc, char *argv[])
 		char *endptr;
 		int64_t num;
 
-		opt = getopt_long(argc, argv, shortopts,
-				  longopts, &long_index);
+		opt = getopt_long(argc, argv, shortopts, longopts, &long_index);
 
 		if (opt == -1)
 			break;  /* No more options */
@@ -1134,6 +1236,14 @@ int parse_my_args(int first, int argc, char *argv[])
 		break;
 		case 'd': {
 			g_options.dispatch = 1;
+		}
+		break;
+		case 'i': {
+			g_options.info_only = 1;
+		}
+		break;
+		case 'u': {
+			g_options.usehuge = 1;
 		}
 		break;
 		case 'g': {
@@ -1187,8 +1297,7 @@ int parse_my_args(int first, int argc, char *argv[])
 		case 'e': {
 			unsigned int min_us, max_us, prop;
 
-			if (sscanf(optarg, "%u,%u,%u",
-				   &min_us, &max_us, &prop) != 3)
+			if (sscanf(optarg, "%u,%u,%u", &min_us, &max_us, &prop) != 3)
 				return 0;
 			if (prop > 100 || max_us < 1)
 				return 0;
@@ -1197,11 +1306,25 @@ int parse_my_args(int first, int argc, char *argv[])
 			g_options.work_prop = prop;
 		}
 		break;
+		case 'o': {
+			unsigned int mb;
+			uint64_t ms;
+			unsigned int hp = 0;
+
+			if (sscanf(optarg, "%u,%lu,%u", &mb, &ms, &hp) < 2)
+				return 0;
+			if (mb < 1 || ms < 1)
+				return 0;
+			g_options.mz_mb = mb;
+			g_options.mz_ns = ms * 1000UL * 1000UL;
+			if (hp)
+				g_options.mz_huge = 1;
+		}
+		break;
 		case 'j': {
 			unsigned int evts, us, kb, chunk;
 
-			num = sscanf(optarg, "%u,%u,%u,%u",
-				     &evts, &us, &kb, &chunk);
+			num = sscanf(optarg, "%u,%u,%u,%u", &evts, &us, &kb, &chunk);
 			if (num == 0 || evts < 1)
 				return 0;
 			g_options.bg_events = evts;
@@ -1282,15 +1405,7 @@ int parse_my_args(int first, int argc, char *argv[])
 }
 
 /**
- * Before EM - Init of the test application.
- *
- * The shared memory is needed if EM instance runs on multiple processes.
- * Doing it like this makes it possible to run the app both as threads (-t)
- * as well as processes (-p).
- *
- * @attention Run on all cores.
- *
- * @see cm_setup() for setup and dispatch.
+ * Before EM - Init
  */
 void test_init(void)
 {
@@ -1298,14 +1413,12 @@ void test_init(void)
 
 	/* first core creates ShMem */
 	if (core == 0) {
-		m_shm = env_shared_reserve("Timer_test",
-					   sizeof(timer_app_shm_t));
+		m_shm = env_shared_reserve("Timer_test", sizeof(timer_app_shm_t));
 		/* initialize it */
 		if (m_shm)
 			memset(m_shm, 0, sizeof(timer_app_shm_t));
 
-		APPL_PRINT("%ldk shared memory for app context\n",
-			   sizeof(timer_app_shm_t) / 1000);
+		APPL_PRINT("%ldk shared memory for app context\n", sizeof(timer_app_shm_t) / 1000);
 
 	} else {
 		m_shm = env_shared_lookup("Timer_test");
@@ -1321,16 +1434,7 @@ void test_init(void)
 }
 
 /**
- * Startup of the timer test EM application.
- *
- * At this point EM is up, but no EOs exist. EM API can be used to create
- * queues, EOs etc.
- *
- * @attention Run only on one EM core.
- *
- * @param appl_conf Application configuration
- *
- * @see cm_setup() for setup and dispatch.
+ * Startup of the timer test EM application
  */
 void test_start(appl_conf_t *const appl_conf)
 {
@@ -1348,6 +1452,7 @@ void test_start(appl_conf_t *const appl_conf)
 		m_shm->pool = EM_POOL_DEFAULT;
 
 	eo_ctx = &m_shm->eo_context;
+	memset(eo_ctx, 0, sizeof(app_eo_ctx_t));
 	eo_ctx->tmo_data = calloc(g_options.num_periodic, sizeof(tmo_setup));
 	test_fatal_if(eo_ctx->tmo_data == NULL, "Can't alloc tmo_setups");
 
@@ -1398,6 +1503,15 @@ void test_start(appl_conf_t *const appl_conf)
 
 	em_timer_attr_init(&attr);
 	stat = em_timer_capability(&capa, g_options.clock_src);
+
+	APPL_PRINT("Timer capability for clksrc %d:\n", g_options.clock_src);
+	APPL_PRINT(" max_res %luns %luhz min_tmo %lu max_tmo %lu\n",
+		   capa.max_res.res_ns, capa.max_res.res_hz,
+		   capa.max_res.min_tmo, capa.max_res.max_tmo);
+	APPL_PRINT(" max_tmo %luns %luhz min_tmo %lu max_tmo %lu\n",
+		   capa.max_tmo.res_ns, capa.max_tmo.res_hz,
+		   capa.max_tmo.min_tmo, capa.max_tmo.max_tmo);
+
 	test_fatal_if(stat != EM_OK, "Given clk_src is not supported\n");
 	memset(&res_capa, 0, sizeof(em_timer_res_param_t));
 	if (!g_options.res_hz) {
@@ -1409,7 +1523,16 @@ void test_start(appl_conf_t *const appl_conf)
 		APPL_PRINT("Trying %lu Hz resolution capability on clk %d\n",
 			   res_capa.res_hz, g_options.clock_src);
 	}
+
+	APPL_PRINT("Asking timer capability for clksrc %d:\n", g_options.clock_src);
+	APPL_PRINT("%luns %luhz min_tmo %lu max_tmo %lu\n",
+		   res_capa.res_ns, res_capa.res_hz,
+		   res_capa.min_tmo, res_capa.max_tmo);
 	stat = em_timer_res_capability(&res_capa, g_options.clock_src);
+	APPL_PRINT("-> Timer res_capability:\n");
+	APPL_PRINT("max_res %luns %luhz min_tmo %lu max_tmo %lu\n",
+		   res_capa.res_ns, res_capa.res_hz,
+		   res_capa.min_tmo, res_capa.max_tmo);
 	test_fatal_if(stat != EM_OK, "Given resolution is not supported (ret %d)\n", stat);
 
 	if (!g_options.max_period_ns) {
@@ -1422,19 +1545,29 @@ void test_start(appl_conf_t *const appl_conf)
 		if (g_options.min_period_ns < res_capa.min_tmo)
 			g_options.min_period_ns = res_capa.min_tmo;
 	}
-	strncpy(attr.name, "TestTimer", EM_TIMER_NAME_LEN);
-	attr.resparam = res_capa;
-	attr.num_tmo = g_options.num_periodic;
-	attr.resparam.max_tmo = g_options.max_period_ns; /* don't need more */
-	m_shm->test_tmr = em_timer_create(&attr);
-	test_fatal_if(m_shm->test_tmr == EM_TIMER_UNDEF,
-		      "Failed to create test timer!");
-	eo_ctx->test_tmr = m_shm->test_tmr;
-	g_options.res_ns = attr.resparam.res_ns;
+
+	if (g_options.info_only) { /* stop here */
+		raise(SIGINT);
+	} else {
+		strncpy(attr.name, "TestTimer", EM_TIMER_NAME_LEN);
+		attr.resparam = res_capa;
+		if (g_options.res_hz) /* can only have one */
+			attr.resparam.res_ns = 0;
+		else
+			attr.resparam.res_hz = 0;
+		attr.num_tmo = g_options.num_periodic;
+		attr.resparam.max_tmo = g_options.max_period_ns; /* don't need more */
+		m_shm->test_tmr = em_timer_create(&attr);
+		test_fatal_if(m_shm->test_tmr == EM_TIMER_UNDEF, "Failed to create test timer!");
+		eo_ctx->test_tmr = m_shm->test_tmr;
+		g_options.res_ns = attr.resparam.res_ns;
+	}
 
 	/* Start EO */
 	stat = em_eo_start_sync(eo, NULL, NULL);
 	test_fatal_if(stat != EM_OK, "Failed to start EO!");
+
+	mlockall(MCL_FUTURE);
 }
 
 void
@@ -1449,44 +1582,38 @@ test_stop(appl_conf_t *const appl_conf)
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
 
 	eo = em_eo_find(APP_EO_NAME);
-	test_fatal_if(eo == EM_EO_UNDEF,
-		      "Could not find EO:%s", APP_EO_NAME);
+	test_fatal_if(eo == EM_EO_UNDEF, "Could not find EO:%s", APP_EO_NAME);
 
 	ret = em_eo_stop_sync(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
+	test_fatal_if(ret != EM_OK, "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
 	ret = em_eo_delete(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
+	test_fatal_if(ret != EM_OK, "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 
 	ret = em_timer_delete(m_shm->hb_tmr);
-	test_fatal_if(ret != EM_OK,
-		      "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
+	test_fatal_if(ret != EM_OK, "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
 		      m_shm->hb_tmr, ret);
-	ret = em_timer_delete(m_shm->test_tmr);
-	test_fatal_if(ret != EM_OK,
-		      "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
-		      m_shm->test_tmr, ret);
-
+	if (m_shm->test_tmr != EM_TIMER_UNDEF) {
+		ret = em_timer_delete(m_shm->test_tmr);
+		test_fatal_if(ret != EM_OK, "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
+			      m_shm->test_tmr, ret);
+	}
 	free(m_shm->eo_context.tmo_data);
 }
 
-void
-test_term(void)
+void test_term(void)
 {
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
 
 	if (m_shm != NULL) {
+		em_unregister_error_handler();
 		env_shared_free(m_shm);
 		m_shm = NULL;
-		em_unregister_error_handler();
 	}
 }
 
-static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
-				const em_eo_conf_t *conf)
+static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 {
 	#define PRINT_MAX_TMRS 4
 	em_timer_attr_t attr;
@@ -1500,6 +1627,9 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 
 	(void)eo;
 	(void)conf;
+
+	if (g_options.info_only)
+		return EM_OK;
 
 	APPL_PRINT("EO start\n");
 
@@ -1565,27 +1695,34 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 	APPL_PRINT(" bg events:    %u\n", g_options.bg_events);
 	eo_ctx->bg_data = NULL;
 	if (g_options.bg_events) {
-		APPL_PRINT(" bg work:      %luus\n",
-			   g_options.bg_time_ns / 1000);
+		APPL_PRINT(" bg work:      %luus\n", g_options.bg_time_ns / 1000);
 		APPL_PRINT(" bg data:      %ukiB\n", g_options.bg_size / 1024);
 		APPL_PRINT(" bg chunk:     %ukiB (%u blks)\n",
 			   g_options.bg_chunk / 1024,
 			   g_options.bg_size / g_options.bg_chunk);
-		APPL_PRINT(" bg trace:     %s\n",
-			   g_options.jobs ? "yes" : "no");
+		APPL_PRINT(" bg trace:     %s\n", g_options.jobs ? "yes" : "no");
 
 		eo_ctx->bg_data = malloc(g_options.bg_size);
 		test_fatal_if(eo_ctx->bg_data == NULL,
 			      "Can't allocate bg work data (%dkiB)!\n",
 			      g_options.bg_size / 1024);
 	}
+	APPL_PRINT(" memzero:      ");
+	if (g_options.mz_mb)
+		APPL_PRINT("%uMB %severy %lums\n",
+			   g_options.mz_mb,
+			   g_options.mz_huge ? "(mmap huge) " : "",
+			   g_options.mz_ns / 1000000UL);
+	else
+		APPL_PRINT("no\n");
 
 	APPL_PRINT("\nTracing first %d tmo events\n", g_options.tracebuf);
 
+	if (g_options.bg_events)
+		prefault(eo_ctx->bg_data, g_options.bg_size);
+
 	/* create periodic timeout for heartbeat */
-	eo_ctx->heartbeat_tmo = em_tmo_create(m_shm->hb_tmr,
-					      EM_TMO_FLAG_PERIODIC,
-					      eo_ctx->hb_q);
+	eo_ctx->heartbeat_tmo = em_tmo_create(m_shm->hb_tmr, EM_TMO_FLAG_PERIODIC, eo_ctx->hb_q);
 	test_fatal_if(eo_ctx->heartbeat_tmo == EM_TMO_UNDEF,
 		      "Can't allocate heartbeat_tmo!\n");
 
@@ -1612,23 +1749,18 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 
 	period = ts.tv_nsec + (ts.tv_sec * 1000000000ULL);
 	eo_ctx->linux_hz = 1000000000ULL / period;
-	APPL_PRINT("Linux reports clock running at %" PRIu64 " hz\n",
-		   eo_ctx->linux_hz);
-
-	APPL_PRINT("ODP says time_global runs at %luHz\n",
-		   odp_time_global_res());
+	APPL_PRINT("Linux reports clock running at %" PRIu64 " hz\n", eo_ctx->linux_hz);
+	APPL_PRINT("ODP says time_global runs at %luHz\n", odp_time_global_res());
 	if (!g_options.cpucycles)
 		eo_ctx->time_hz = odp_time_global_res();
 
 	/* start heartbeat */
 	__atomic_store_n(&eo_ctx->state, STATE_INIT, __ATOMIC_SEQ_CST);
 
-	em_status_t stat = em_tmo_set_periodic(eo_ctx->heartbeat_tmo, 0,
-					       eo_ctx->hb_hz, event);
+	em_status_t stat = em_tmo_set_periodic(eo_ctx->heartbeat_tmo, 0, eo_ctx->hb_hz, event);
 
 	if (EXTRA_PRINTS && stat != EM_OK)
-		APPL_PRINT("FAILED to set HB tmo, stat=%d: period=%lu\n",
-			   stat, eo_ctx->hb_hz);
+		APPL_PRINT("FAILED to set HB tmo, stat=%d: period=%lu\n", stat, eo_ctx->hb_hz);
 	test_fatal_if(stat != EM_OK, "Can't activate heartbeat tmo!\n");
 
 	eo_ctx->test_hz = em_timer_get_freq(m_shm->test_tmr);
@@ -1667,9 +1799,10 @@ static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo)
 
 	APPL_PRINT("EO local start\n");
 	test_fatal_if(core >= MAX_CORES, "Too many cores!");
-	eo_ctx->cdat[core].trc = calloc(g_options.tracebuf, sizeof(tmo_trace));
-	test_fatal_if(eo_ctx->cdat[core].trc == NULL,
-		      "Failed to allocate trace buffer!");
+	/* TODO allocate trace buffer using huge page to avoid page faults runtime */
+	eo_ctx->cdat[core].trc = allocate_tracebuf(g_options.tracebuf, sizeof(tmo_trace),
+						   &eo_ctx->cdat[core].trc_size);
+	test_fatal_if(eo_ctx->cdat[core].trc == NULL, "Failed to allocate trace buffer!");
 	eo_ctx->cdat[core].count = 0;
 	eo_ctx->cdat[core].cancelled = 0;
 	eo_ctx->cdat[core].jobs_deleted = 0;
@@ -1706,17 +1839,27 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(ret != EM_OK,
-		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
-		      ret, eo);
+		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "", ret, eo);
 
-	ret = em_dispatch_unregister_enter_cb(enter_cb);
-	test_fatal_if(ret != EM_OK, "enter_cb() unregister:%" PRI_STAT, ret);
-	ret = em_dispatch_unregister_exit_cb(exit_cb);
-	test_fatal_if(ret != EM_OK, "exit_cb() unregister:%" PRI_STAT, ret);
+	if (!g_options.info_only) {
+		ret = em_dispatch_unregister_enter_cb(enter_cb);
+		test_fatal_if(ret != EM_OK, "enter_cb() unregister:%" PRI_STAT, ret);
+		ret = em_dispatch_unregister_exit_cb(exit_cb);
+		test_fatal_if(ret != EM_OK, "exit_cb() unregister:%" PRI_STAT, ret);
+	}
 
 	if (eo_ctx->bg_data != NULL)
 		free(eo_ctx->bg_data);
 	eo_ctx->bg_data = NULL;
+	if (eo_ctx->mz_data != NULL) {
+		if (g_options.mz_huge)
+			munmap(eo_ctx->mz_data, g_options.mz_mb * 1024UL * 1024UL);
+		else
+			free(eo_ctx->mz_data);
+
+		eo_ctx->mz_data = NULL;
+	}
+
 	return EM_OK;
 }
 
@@ -1733,8 +1876,7 @@ static em_status_t app_eo_stop_local(void *eo_context, em_eo_t eo)
 	(void)eo;
 
 	APPL_PRINT("EO local stop\n");
-
-	free(eo_ctx->cdat[core].trc);
+	free_tracebuf(eo_ctx->cdat[core].trc, eo_ctx->cdat[core].trc_size);
 	eo_ctx->cdat[core].trc = NULL;
 	return EM_OK;
 }
@@ -1773,11 +1915,9 @@ static void app_eo_receive(void *eo_context, em_event_t event,
 			break;
 
 		case CMD_DONE:	/* HB atomic queue */ {
-			e_state state = __atomic_load_n(&eo_ctx->state,
-							__ATOMIC_SEQ_CST);
+			e_state state = __atomic_load_n(&eo_ctx->state, __ATOMIC_SEQ_CST);
 
-				if (state == STATE_RUN &&
-				    queue == eo_ctx->hb_q) {
+				if (state == STATE_RUN && queue == eo_ctx->hb_q) {
 					__atomic_store_n(&eo_ctx->state,
 							 STATE_COOLOFF,
 							 __ATOMIC_SEQ_CST);
@@ -1792,30 +1932,16 @@ static void app_eo_receive(void *eo_context, em_event_t event,
 			break;
 
 		default:
-			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-				   "Invalid event!\n");
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Invalid event!\n");
 		}
 	} else {
-		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-			   "Invalid event type!\n");
+		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Invalid event type!\n");
 	}
 
 	if (!reuse)
 		em_free(event);
 }
 
-/**
- * Main function
- *
- * Call cm_setup() to perform test & EM setup common for all the
- * test applications.
- *
- * cm_setup() will call test_init() and test_start() and launch
- * the EM dispatch loop on every EM-core.
- *
- * We're using command line arguments and pick those up before cm_setup
- * since argv is not yet available in test_init().
- */
 int main(int argc, char *argv[])
 {
 	/* pick app-specific arguments after '--' */

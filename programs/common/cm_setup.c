@@ -159,9 +159,6 @@ static void
 verify_cpu_setup(const parse_args_t *parsed,
 		 cpu_conf_t *cpu_conf /* out */);
 
-static odp_platform_init_t *
-set_platform_params(odp_platform_init_t *params);
-
 static odp_instance_t
 init_odp(const parse_args_t *parsed, const cpu_conf_t *cpu_conf);
 
@@ -371,13 +368,8 @@ static odp_instance_t
 init_odp(const parse_args_t *parsed, const cpu_conf_t *cpu_conf)
 {
 	odp_init_t init_params;
-	odp_platform_init_t plat_params[PLAT_PARAM_SIZE];
-	odp_platform_init_t *plat_params_ptr;
 	odp_instance_t instance;
 	int ret;
-
-	memset(plat_params, 0, sizeof(plat_params));
-	plat_params_ptr = set_platform_params(&plat_params[0]);
 
 	/* Initialize the odp init params with 'default' values */
 	odp_init_param_init(&init_params);
@@ -431,7 +423,7 @@ init_odp(const parse_args_t *parsed, const cpu_conf_t *cpu_conf)
 	/* Set the memory model to use for odp: thread or process */
 	init_params.mem_model = helper_options.mem_model;
 
-	ret = odp_init_global(&instance, &init_params, plat_params_ptr);
+	ret = odp_init_global(&instance, &init_params, NULL);
 	if (ret != 0)
 		APPL_EXIT_FAILURE("ODP global init failed:%d", ret);
 
@@ -440,7 +432,14 @@ init_odp(const parse_args_t *parsed, const cpu_conf_t *cpu_conf)
 		APPL_EXIT_FAILURE("ODP local init failed:%d", ret);
 
 	/* Configure the scheduler */
-	ret = odp_schedule_config(NULL);
+	odp_schedule_config_t sched_config;
+
+	odp_schedule_config_init(&sched_config);
+	/* EM does not need the ODP predefined scheduling groups */
+	sched_config.sched_group.all = 0;
+	sched_config.sched_group.control = 0;
+	sched_config.sched_group.worker = 0;
+	ret = odp_schedule_config(&sched_config);
 	if (ret != 0)
 		APPL_EXIT_FAILURE("ODP schedule config failed:%d", ret);
 
@@ -482,7 +481,7 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 	 */
 	em_pool_cfg_t default_pool_cfg;
 
-	em_pool_cfg_init(&default_pool_cfg);
+	em_pool_cfg_init(&default_pool_cfg); /* mandatory */
 	default_pool_cfg.event_type = EM_EVENT_TYPE_SW;
 	default_pool_cfg.align_offset.in_use = 1;
 	default_pool_cfg.align_offset.value = 0;
@@ -495,7 +494,7 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 	default_pool_cfg.subpool[1].cache_size = 32;
 	default_pool_cfg.subpool[2].size = 1024;
 	default_pool_cfg.subpool[2].num =  1024;
-	default_pool_cfg.subpool[2] .cache_size = 16;
+	default_pool_cfg.subpool[2].cache_size = 16;
 	default_pool_cfg.subpool[3].size = 2048;
 	default_pool_cfg.subpool[3].num = 1024;
 	default_pool_cfg.subpool[3].cache_size = 8;
@@ -556,7 +555,7 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 	 */
 	em_pool_cfg_t appl_pool_1_cfg;
 
-	em_pool_cfg_init(&appl_pool_1_cfg);
+	em_pool_cfg_init(&appl_pool_1_cfg); /* mandatory */
 	appl_pool_1_cfg.event_type = EM_EVENT_TYPE_PACKET;
 	appl_pool_1_cfg.num_subpools = 4;
 
@@ -1210,26 +1209,6 @@ verify_cpu_setup(const parse_args_t *parsed,
 	cpu_conf->num_control = num_control;
 }
 
-/* Used for passing cmd line arguments for odp_init_global() */
-static odp_platform_init_t *
-set_platform_params(odp_platform_init_t *params)
-{
-	/* DPDK is used */
-	if (strstr(odp_version_impl_str(), "dpdk")) {
-		int ret;
-		int params_size = sizeof(odp_platform_init_t) * PLAT_PARAM_SIZE;
-
-		ret = snprintf((char *)params, params_size, "-n 4");
-
-		if (ret < 0 || ret > (params_size - 1))
-			APPL_EXIT_FAILURE("snprintf(): ret=%d, errno(%i)=%s",
-					  ret, errno, strerror(errno));
-		return params;
-	} else {
-		return NULL;
-	}
-}
-
 /**
  * Install a signal handler
  */
@@ -1332,6 +1311,11 @@ void delay_spin(const uint64_t spin_count)
 
 	env_atomic64_init(&dummy);
 
-	for (i = 0; i < spin_count; i++)
-		env_atomic64_inc(&dummy);
+	if (likely(appl_shm)) {
+		for (i = 0; i < spin_count && !appl_shm->exit_flag; i++)
+			env_atomic64_inc(&dummy);
+	} else {
+		for (i = 0; i < spin_count; i++)
+			env_atomic64_inc(&dummy);
+	}
 }

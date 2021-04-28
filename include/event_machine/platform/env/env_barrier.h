@@ -47,7 +47,7 @@ typedef odp_barrier_t env_barrier_t;
  * Functions
  */
 static inline void env_barrier_init(env_barrier_t *barrier,
-				    env_bitmask_t *core_mask)
+				    const env_bitmask_t *core_mask)
 {
 	int core_count = env_bitmask_count(core_mask);
 

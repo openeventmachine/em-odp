@@ -86,7 +86,7 @@ extern "C" {
  * @def EM_UNDEF_UINTPTR
  * EM invalid
  */
-#define EM_UNDEF_UINTPTR   ((uintptr_t)NULL)
+#define EM_UNDEF_UINTPTR  EM_STATIC_CAST(uintptr_t, NULL)
 
 /**
  * @def EM_QUEUE_PRIO_NUM
@@ -115,12 +115,12 @@ extern "C" {
  * @def EM_QUEUE_STATIC_MIN
  * Minimum static queue ID
  */
-#define EM_QUEUE_STATIC_MIN  ((uint16_t)_EM_QUEUE_STATIC_MIN)
+#define EM_QUEUE_STATIC_MIN  EM_STATIC_CAST(uint16_t, _EM_QUEUE_STATIC_MIN)
 /**
  * @def EM_QUEUE_STATIC_MAX
  * Maximum static queue ID
  */
-#define EM_QUEUE_STATIC_MAX  ((uint16_t)_EM_QUEUE_STATIC_MAX)
+#define EM_QUEUE_STATIC_MAX  EM_STATIC_CAST(uint16_t, _EM_QUEUE_STATIC_MAX)
 /**
  * @def EM_QUEUE_STATIC_NUM
  * Number of static queues
@@ -136,7 +136,7 @@ extern "C" {
  * @def EM_QUEUE_GROUP_DEFAULT
  * Default queue group for EM
  */
-#define EM_QUEUE_GROUP_DEFAULT  ((em_queue_group_t)EM_MAX_QUEUE_GROUPS)
+#define EM_QUEUE_GROUP_DEFAULT  EM_REINTERPRET_CAST(em_queue_group_t, EM_MAX_QUEUE_GROUPS)
 /**
  * @def EM_QUEUE_GROUP_NAME_LEN
  * Max queue group name length
@@ -151,9 +151,9 @@ extern "C" {
 
 /**
  * @def EM_POOL_DEFAULT
- * Define the EM default memory pool
+ * Define the EM default event pool
  */
-#define EM_POOL_DEFAULT  ((em_pool_t)1)
+#define EM_POOL_DEFAULT  EM_REINTERPRET_CAST(em_pool_t, 1)
 /**
  * @def EM_POOL_NAME_LEN
  * Max event pool name length
@@ -183,7 +183,7 @@ extern "C" {
  * @def EM_EO_MULTIRCV_MAX_EVENTS
  * The default maximum number of events passed to the EO's multi-event
  * receive function (when the EO has been created with em_eo_create_multircv()).
- * This value is used by EM as a default if the the user does not specify
+ * This value is used by EM as a default if the user does not specify
  * a value (i.e. gives '0') for 'em_eo_multircv_param_t::max_events' when
  * calling em_eo_create_multircv()
  */

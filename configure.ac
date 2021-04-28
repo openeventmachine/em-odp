@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_api_major_version], [2])
-m4_define([em_api_minor_version], [4])
+m4_define([em_api_minor_version], [5])
 m4_define([em_api_implementation_version], [0])
 m4_define([em_api_implementation_fix], [0])
 
@@ -155,6 +155,7 @@ EM_CHECK_CFLAG([-Wformat-nonliteral])
 EM_CHECK_CFLAG([-Wformat-security])
 EM_CHECK_CFLAG([-Wundef])
 EM_CHECK_CFLAG([-Wwrite-strings])
+EM_CHECK_CFLAG([-Wno-vla]) # Allow variable-length arrays (vla), for clang.
 
 EM_CFLAGS="$EM_CFLAGS -std=c99"
 
@@ -164,10 +165,15 @@ EM_CFLAGS="$EM_CFLAGS $EM_CFLAGS_EXTRA"
 EM_CPPFLAGS="$EM_CPPFLAGS -DENV_64_BIT -DEM_64_BIT"
 
 ##########################################################################
+# Support cmpxchng16 on x86-based architectures
+##########################################################################
+EM_CHECK_CFLAG([-mcx16])
+
+##########################################################################
 # EM (em-odp) version information (if available)
 ##########################################################################
 AS_IF([test -d $srcdir/.git],
-      [commit=$(git describe --long --always --dirty --tags)
+      [commit=$(git -C $srcdir describe --long --always --dirty --tags)
        date=$(date '+%F %H:%M')
        build_info="$commit $date"],
       [build_info="Unknown"])
@@ -194,11 +200,11 @@ AC_ARG_ENABLE([check-level],
 			       values are 0...3, yes(=3) or no value(=3)
 			       [default=disabled, value from source code]])],
 	      [AS_IF([test "$enableval" -ge 0 -a "$enableval" -le 3 2>/dev/null],
-		     [check_level_info="yes:$enableval (EM_CHECK_LEVEL)"
+		     [check_level_info="yes:$enableval (EM_CHECK_LEVEL=$enableval)"
 		      EM_CHECK_LEVEL="-DEM_CHECK_LEVEL=$enableval"],
 
 		     [test "x$enableval" = "xyes"],
-		     [check_level_info="yes:3 (EM_CHECK_LEVEL)"
+		     [check_level_info="yes:3 (EM_CHECK_LEVEL=$enableval)"
 		      EM_CHECK_LEVEL="-DEM_CHECK_LEVEL=3"],
 
 		     [test "x$enableval" != "xno"],
@@ -208,6 +214,38 @@ AC_ARG_ENABLE([check-level],
 	      ],[])
 # Substitute @EM_CHECK_LEVEL@ into the pkgconfig file libemodp.pc.in
 AC_SUBST([EM_CHECK_LEVEL])
+
+#
+# Enable 'EM Event State Verification' (ESV)
+#
+# --enable-esv         Set 'EM_ESV_ENABLE=1' - i.e.  enable ESV
+# --disable-esv        Set 'EM_ESV_ENABLE=0' - i.e. disable ESV
+#   no option given    Use '#define EM_ESV_ENABLE 0|1' from source code
+#
+# Note: Using the option --enable-esv OR --disable-esv will _override_ the
+#       source code define value for '#define EM_ESV_ENABLE 0|1'
+#
+esv_info="no (EM_ESV_ENABLE from source code)"
+EM_ESV_ENABLE=""
+AC_ARG_ENABLE([esv],
+	      [AS_HELP_STRING([--enable-esv],
+			      [Enable Event State Verification (ESV)
+			       [default=value from source code '#define EM_ESV_ENABLE 0|1']])],
+	      [AS_IF(dnl --enable-esv[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [esv_info="$enableval (EM_ESV_ENABLE=1)"
+		      EM_ESV_ENABLE="-DEM_ESV_ENABLE=1"],
+		     dnl --disable-esv OR --enable-esv=no:
+		     [test "x$enableval" = "xno"],
+		     [esv_info="$enableval (EM_ESV_ENABLE=0)"
+		      EM_ESV_ENABLE="-DEM_ESV_ENABLE=0"],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value --enable-esv=${enableval}, use yes/no])]
+		)
+		EM_CPPFLAGS="$EM_CPPFLAGS $EM_ESV_ENABLE"
+	      ],[])
+# Substitute @EM_ESV_ENABLE@ into the pkgconfig file libemodp.pc.in
+AC_SUBST([EM_ESV_ENABLE])
 
 ##########################################################################
 # Default include setup
@@ -461,4 +499,5 @@ AC_MSG_RESULT([
 	EM Compile Time Options
 	=======================
 	EM check level:		${check_level_info}
+	EM ESV:			${esv_info}
 	])

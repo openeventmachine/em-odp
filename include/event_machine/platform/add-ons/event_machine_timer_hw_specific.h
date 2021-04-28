@@ -101,12 +101,12 @@ typedef enum em_timer_clksrc_t {
 /**
  * EM_TIMER_UNDEF value must be defined here and should normally be 0
  */
-#define EM_TIMER_UNDEF ((em_timer_t)EM_HDL_UNDEF)
+#define EM_TIMER_UNDEF  EM_STATIC_CAST(em_timer_t, EM_HDL_UNDEF)
 
 /**
  * EM_TMO_UNDEF value must be defined here and should normally be 0
  */
-#define EM_TMO_UNDEF ((em_tmo_t)EM_UNDEF_UINTPTR)
+#define EM_TMO_UNDEF  EM_STATIC_CAST(em_tmo_t, EM_UNDEF_PTR)
 
 /*
  * EM_TIMER_NAME_LEN value should be defined here.

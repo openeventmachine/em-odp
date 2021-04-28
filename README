@@ -1,4 +1,4 @@
-Copyright (c) 2013-2020, Nokia Solutions and Networks
+Copyright (c) 2013-2021, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -51,26 +51,21 @@ compile and install odp (optionally with a user specified installation folder):
 If testing for performance, also give the --disable-abi-compat option to enable
 more inlining of code. Try also --disable-shared if a static lib is OK for you.
 (> ../configure --prefix=<odp install path> --disable-abi-compat \
-   --disable-shared)
+   [--disable-shared)
+Use the options -]-enable-check-level=3 --enable-esv to help catching bugs during
+development.
 See further configure options: ../configure --help
 > make && make install
 
 Tested against
 odp-linux - https://github.com/OpenDataPlane/odp
-    Commit: 5929f15fe8887bd8e0c2eef766dd6bf26d7d176c [5929f15]
-    Date: Wednesday, 14 October 2020 13:24.22
-    Commit Date: Tuesday, 20 October 2020 10:38.37
-    DEPENDENCIES: update dpdk instructions
+  Commit: edf40d0470a6dd911170775e8185a5458914a372 [edf40d0]
+  Date: Wednesday, 21 April 2021 17:02.09
+  linux-gen: ipsec: add event type assertion in odp_ipsec_packet_from_event()
 odp-dpdk - https://github.com/OpenDataPlane/odp-dpdk
-    Commit: 2e00d3740f1f5a1f3a4fdeeda6176b485e29466c [2e00d37]
-    Date: Tuesday, 13 October 2020 12:51.32
-    Commit Date: Wednesday, 14 October 2020 9:18.13
-    README.DPDK: add VFIO instructions
-
-Add instructions how to use VFIO Linux driver for PMDs.
-
-Trying to build static test applications without a static ODP library would
-fail.
+  Commit: c3e252739b6c5812d11ac07ec7df687d927de36e [c3e2527]
+  Date: Tuesday, 20 April 2021 9:39.16
+  github_ci: test process mode operation
 
 Clone EM-ODP code:
 > git clone <em-odp repo>
@@ -81,7 +76,8 @@ em-odp with different odp installations or configurations.
 > ./bootstrap
 > mkdir build && cd build
 > ../configure --prefix=<em-odp install path> \
-    --with-odp-path=<odp install path> [--with-odp-lib=libodp-linux]
+    --with-odp-path=<odp install path> [--with-odp-lib=libodp-linux] \
+    [--enable-esv --enable-check-level=3] ...
 See further configure options: ../configure --help
 > make && make install
 
@@ -102,10 +98,10 @@ of ODP and EM-ODP. The configuration script has to be run with different
 options, other commands as above.
 
 ODP debug configuration:
-> ../configure --prefix=<odp debug install path> CFLAGS='-O0 -g3'
+> ../configure --prefix=<odp debug install path> CFLAGS='-O0 -g3' ...
 EM-ODP debug configuration:
 > ../configure --prefix=<em-odp debug install path> \
-  --with-odp-path=<odp install path> CFLAGS='-O0 -g3' --enable-check-level=3
+  --with-odp-path=<o[dp install path> CFLAGS='-O0 -g3' --enable-check-level=3...
 
 ===============================================================================
 Packet-I/O (ODP-linux-generic + socket, dpdk or netmap based io)

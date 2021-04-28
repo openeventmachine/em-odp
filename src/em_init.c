@@ -40,21 +40,22 @@ output_drain_init(const em_core_mask_t *logic_mask, const em_conf_t *conf)
 }
 
 em_status_t
-poll_drain_mask_set_local(int *const result, int core_id,
-			  em_core_mask_t *const mask)
+poll_drain_mask_set_local(bool *const result /*out*/, int core_id,
+			  const em_core_mask_t *mask)
 {
 	if (em_core_mask_iszero(mask) || em_core_mask_isset(core_id, mask))
-		*result = EM_TRUE;
+		*result = true;
 	else
-		*result = EM_FALSE;
+		*result = false;
 	return EM_OK;
 }
 
 em_status_t
-input_poll_init_local(int *const result, int core_id, em_conf_t *const conf)
+input_poll_init_local(bool *const result /*out*/, int core_id,
+		      const em_conf_t *conf)
 {
 	if (conf->input.input_poll_fn == NULL) {
-		*result = EM_FALSE;
+		*result = false;
 		return EM_OK;
 	}
 	return poll_drain_mask_set_local(result, core_id,
@@ -62,10 +63,11 @@ input_poll_init_local(int *const result, int core_id, em_conf_t *const conf)
 }
 
 em_status_t
-output_drain_init_local(int *const result, int core_id, em_conf_t *const conf)
+output_drain_init_local(bool *const result /*out*/, int core_id,
+			const em_conf_t *conf)
 {
 	if (conf->output.output_drain_fn == NULL) {
-		*result = EM_FALSE;
+		*result = false;
 		return EM_OK;
 	}
 	return poll_drain_mask_set_local(result, core_id,
