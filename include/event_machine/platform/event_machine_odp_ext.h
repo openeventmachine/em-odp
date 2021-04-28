@@ -92,32 +92,42 @@ em_odp_event2odp(em_event_t event);
 /**
  * Convert EM event handles to ODP event handles
  *
- * @param events  Array of EM-events to convert to ODP-events
- *
- * @return ODP event handle array
+ * @param      events      Array of EM-events to convert to ODP-events.
+ *                         The 'events[]' array must contain 'num' valid
+ *                         event handles.
+ * @param[out] odp_events  Output array into which the ocrresponding ODP-event
+ *                         handles are written. Array must fit 'num' entries.
+ * @param      num         Number of entries in 'events[]' and 'odp_events[]'.
  */
-odp_event_t *
-em_odp_events2odp(const em_event_t events[]);
+void
+em_odp_events2odp(const em_event_t events[], odp_event_t odp_events[/*out*/],
+		  const int num);
 
 /**
  * Convert ODP event handle to EM event handle.
+ *
+ * The event must have been allocated by EM originally.
  *
  * @param event  ODP-event handle
  *
  * @return EM event handle.
  */
 em_event_t
-em_odp_event2em(odp_event_t event);
+em_odp_event2em(odp_event_t odp_event);
 
 /**
- * Convert ODP event handles to EM event handles.
+ * Convert EM event handles to ODP event handles
  *
- * @param odp_events  Array of ODP-events to convert to EM-events
- *
- * @return EM event handle array.
+ * @param      odp_events  Array of ODP-events to convert to EM-events.
+ *                         The 'odp_events[]' array must contain 'num' valid
+ *                         ODP-event handles.
+ * @param[out] events      Output array into which the ocrresponding EM-event
+ *                         handles are written. Array must fit 'num' entries.
+ * @param      num         Number of entries in 'odp_events[]' and 'events[]'.
  */
-em_event_t *
-em_odp_events2em(const odp_event_t odp_events[]);
+void
+em_odp_events2em(const odp_event_t odp_events[], em_event_t events[/*out*/],
+		 const int num);
 
 /**
  * Enqueue packets into EM (from outside of EM, not allocated by em_alloc())

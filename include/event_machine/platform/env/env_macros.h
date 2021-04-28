@@ -41,10 +41,13 @@
 /**
  * Branch Prediction macros
  */
-#undef likely
-#undef unlikely
+#ifndef likely
 #define likely(x)    odp_likely(!!(x))
+#endif
+
+#ifndef unlikely
 #define unlikely(x)  odp_unlikely(!!(x))
+#endif
 
 /**
  * Compile time assertion-macro - fail compilation if cond is false.

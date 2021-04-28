@@ -102,10 +102,13 @@ hooks_init(const em_api_hooks_t *api_hooks)
 em_status_t
 hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 {
-	int i, idx, next_idx;
 	hook_storage_t *hook_storage;
-	hook_tbl_t *hook_tbl, *next_tbl;
+	const hook_tbl_t *hook_tbl;
+	hook_tbl_t *next_tbl;
 	hook_tbl_t **active_tbl_ptr;
+	int idx;
+	int next_idx;
+	int i;
 
 	/* Get the em_shm hook table and hook storage to update */
 	active_tbl_ptr = get_hook_tbl(hook_type, &hook_storage/*out*/);
@@ -114,7 +117,7 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 
 	env_spinlock_lock(&hook_storage->lock);
 
-	/*TODO: Check that no thread is still using the new memory area. */
+	/* TODO: Check that no thread is still using the new memory area */
 
 	idx = hook_storage->idx;
 	next_idx = idx + 1;
@@ -127,8 +130,7 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 	 * Copy old callback functions and find the index
 	 * of the new function pointer.
 	 */
-	memset(next_tbl, 0, sizeof(hook_tbl_t));
-	memcpy(next_tbl, hook_tbl, sizeof(hook_tbl_t));
+	memcpy(next_tbl->tbl, hook_tbl->tbl, sizeof(next_tbl->tbl));
 
 	for (i = 0; i < EM_CALLBACKS_MAX; i++) {
 		if (next_tbl->tbl[i].void_hook == NULL)
@@ -154,11 +156,14 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 em_status_t
 hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 {
-	int i, idx, next_idx, ret;
-
 	hook_storage_t *hook_storage;
-	hook_tbl_t *hook_tbl, *next_tbl;
+	const hook_tbl_t *hook_tbl;
+	hook_tbl_t *next_tbl;
 	hook_tbl_t **active_tbl_ptr;
+	int idx;
+	int next_idx;
+	int ret;
+	int i;
 
 	active_tbl_ptr = get_hook_tbl(hook_type, &hook_storage/*out*/);
 	if (unlikely(active_tbl_ptr == NULL))
@@ -166,7 +171,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 
 	env_spinlock_lock(&hook_storage->lock);
 
-	/*TODO: Check that no thread is still using the new memory area. */
+	/* TODO: Check that no thread is still using the new memory area */
 
 	idx = hook_storage->idx;
 	next_idx = idx + 1;
@@ -179,8 +184,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 	 * Copy old callback functions and try to find matching
 	 * function pointer.
 	 */
-	memset(next_tbl, 0, sizeof(hook_tbl_t));
-	memcpy(next_tbl, hook_tbl, sizeof(hook_tbl_t));
+	memcpy(next_tbl->tbl, hook_tbl->tbl, sizeof(next_tbl->tbl));
 
 	for (i = 0; i < EM_CALLBACKS_MAX; i++)
 		if (next_tbl->tbl[i].void_hook == hook_fn.void_hook)
@@ -248,15 +252,16 @@ static inline int
 pack_hook_tbl(hook_tbl_t *const hook_tbl, unsigned int idx)
 {
 	hook_fn_t *const fn_tbl = hook_tbl->tbl;
+	unsigned int i;
 
 	if (unlikely(idx >= EM_CALLBACKS_MAX ||
 		     fn_tbl[idx].void_hook != NULL))
 		return -1;
 
-	for (; idx < EM_CALLBACKS_MAX - 1; idx++) {
-		if (fn_tbl[idx + 1].void_hook != NULL) {
-			fn_tbl[idx].void_hook = fn_tbl[idx + 1].void_hook;
-			fn_tbl[idx + 1].void_hook = NULL;
+	for (i = idx; i < EM_CALLBACKS_MAX - 1; i++) {
+		if (fn_tbl[i + 1].void_hook != NULL) {
+			fn_tbl[i].void_hook = fn_tbl[i + 1].void_hook;
+			fn_tbl[i + 1].void_hook = NULL;
 		} else {
 			break;
 		}

@@ -45,28 +45,20 @@ em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 		return EM_EVENT_UNDEF;
 	}
 
-	if (pool_elem->event_type == EM_EVENT_TYPE_PACKET) {
-		/*
-		 * EM event pools created with type=PKT can support SW events
-		 * as well as pkt events.
-		 */
-		event = event_alloc_pkt(pool_elem, size, type);
-	} else { /* pool_elem->event_type == EM_EVENT_TYPE_SW */
-		/*
-		 * EM event pools created with type=SW can not support
-		 * pkt events.
-		 */
-		if (unlikely(em_get_type_major(type) ==
-			     EM_EVENT_TYPE_PACKET)) {
-			INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_ALLOC,
-				       "EM-pool:%s(%" PRI_POOL "):\n"
-				       "Invalid event type:%u for buf",
-				       pool_elem->name, pool, type);
-			return EM_EVENT_UNDEF;
-		}
-
-		event = event_alloc_buf(pool_elem, size, type);
+	/*
+	 * EM event pools created with type=SW can not support
+	 * pkt events.
+	 */
+	if (unlikely(pool_elem->event_type == EM_EVENT_TYPE_SW &&
+		     em_get_type_major(type) == EM_EVENT_TYPE_PACKET)) {
+		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_ALLOC,
+			       "EM-pool:%s(%" PRI_POOL "):\n"
+			       "Invalid event type:%u for buf",
+			       pool_elem->name, pool_elem->em_pool, type);
+		return EM_EVENT_UNDEF;
 	}
+
+	event = event_alloc(pool_elem, size, type);
 
 	if (unlikely(event == EM_EVENT_UNDEF)) {
 		em_status_t err =
@@ -119,12 +111,9 @@ em_alloc_multi(em_event_t events[/*out*/], int num,
 		 * EM event pools created with type=SW can not support
 		 * pkt events.
 		 */
-		if (unlikely(em_get_type_major(type) ==
-			     EM_EVENT_TYPE_PACKET)) {
-			INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
-				       EM_ESCOPE_ALLOC_MULTI,
-				       "EM-pool:%s(%" PRI_POOL "):\n"
-				       "Invalid event type:%u for buf",
+		if (unlikely(em_get_type_major(type) == EM_EVENT_TYPE_PACKET)) {
+			INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_ALLOC_MULTI,
+				       "EM-pool:%s(%" PRI_POOL "): Invalid event type:%u for buf",
 				       pool_elem->name, pool, type);
 			return 0;
 		}
@@ -154,44 +143,26 @@ em_alloc_multi(em_event_t events[/*out*/], int num,
 void
 em_free(em_event_t event)
 {
+	bool esv_ena = esv_enabled();
 	odp_event_t odp_event;
 
 	if (unlikely(event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_FREE,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_FREE,
 			       "event undefined!");
 		return;
 	}
 
-	if (EM_CHECK_LEVEL > 1 || em_shm->opt.pool.statistics_enable) {
-		event_hdr_t *const ev_hdr = event_to_hdr(event);
-
-		if (EM_CHECK_LEVEL > 1) {
-			/* Simple double-free detection */
-			const uint32_t allocated =
-			env_atomic32_sub_return(&ev_hdr->allocated, 1);
-
-			if (unlikely(allocated != 0)) {
-				const char *const fmt =
-					"Double free:event:%" PRI_EVENT "";
-				INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
-					       EM_ESCOPE_FREE, fmt, event);
-			}
-		}
-		if (em_shm->opt.pool.statistics_enable) {
-			/* Update pool statistcs */
-			em_pool_t pool = ev_hdr->pool;
-			int subpool;
-
-			if (pool != EM_POOL_UNDEF) {
-				subpool = ev_hdr->subpool;
-				if (valid_pool(pool))
-					pool_stat_decrement(pool, subpool, 1);
-			}
-		}
-	}
-
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_free(&event, 1);
+
+	if (esv_ena || em_shm->opt.pool.statistics_enable) {
+		event_hdr_t *const ev_hdr = event_to_hdr(event);
+
+		if (esv_ena)
+			evstate_free(event, ev_hdr);
+		if (em_shm->opt.pool.statistics_enable)
+			poolstat_dec_evhdr(ev_hdr);
+	}
 
 	odp_event = event_em2odp(event);
 	odp_event_free(odp_event);
@@ -199,9 +170,6 @@ em_free(em_event_t event)
 
 void em_free_multi(const em_event_t events[], int num)
 {
-	odp_event_t *odp_events;
-	int i;
-
 	if (unlikely(num <= 0)) {
 		if (num < 0)
 			INTERNAL_ERROR(EM_ERR_TOO_SMALL, EM_ESCOPE_FREE_MULTI,
@@ -210,80 +178,41 @@ void em_free_multi(const em_event_t events[], int num)
 	}
 
 	if (EM_CHECK_LEVEL > 1) {
+		int i;
+
 		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
 			;
 		if (unlikely(i != num)) {
-			INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_FREE_MULTI,
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_FREE_MULTI,
 				       "events[%d] undefined!", i);
 			return;
-		}
-	}
-
-	if (EM_CHECK_LEVEL > 1 || em_shm->opt.pool.statistics_enable) {
-		event_hdr_t *ev_hdrs[num];
-
-		event_to_hdr_multi(events, ev_hdrs, num);
-
-		if (EM_CHECK_LEVEL > 1) {
-			uint32_t allocated;
-			em_status_t err;
-			em_escope_t escope;
-
-			/* Simple double-free detection */
-			for (i = 0; i < num; i++) {
-				allocated =
-				env_atomic32_sub_return(&ev_hdrs[i]->allocated,
-							1);
-				if (unlikely(allocated != 0)) {
-					const char *const fmt =
-					"Double free:events[%d]:%" PRI_EVENT "";
-					err = EM_FATAL(EM_ERR_BAD_POINTER);
-					escope = EM_ESCOPE_FREE_MULTI;
-					INTERNAL_ERROR(err, escope, fmt,
-						       i, events[i]);
-				}
-			}
-		}
-
-		if (em_shm->opt.pool.statistics_enable) {
-			/* Update pool statistcs */
-			int idx = 0; /* index into ev_hdrs[] */
-			int dec = 0;
-
-			do {
-				for (; idx < num &&
-				     ev_hdrs[idx]->pool == EM_POOL_UNDEF; idx++)
-					; /* skip events from external pools */
-				if (idx >= num)
-					break;
-
-				em_pool_t pool = ev_hdrs[idx]->pool;
-				int subpool = ev_hdrs[idx]->subpool;
-
-				for (i = idx + 1; i < num &&
-				     ev_hdrs[i]->pool == pool &&
-				     ev_hdrs[i]->subpool == subpool; i++)
-					; /* count events from same pool */
-				dec = i - idx;
-				idx = i;
-				if (likely(valid_pool(pool)))
-					pool_stat_decrement(pool, subpool, dec);
-			} while (idx < num);
 		}
 	}
 
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_free(events, num);
 
-	odp_events = events_em2odp(events);
+	bool esv_ena = esv_enabled();
+	odp_event_t odp_events[num];
 
+	if (esv_ena || em_shm->opt.pool.statistics_enable) {
+		event_hdr_t *ev_hdrs[num];
+
+		event_to_hdr_multi(events, ev_hdrs, num);
+		if (esv_ena)
+			evstate_free_multi(events, ev_hdrs, num);
+		if (em_shm->opt.pool.statistics_enable)
+			poolstat_dec_evhdr_multi(ev_hdrs, num);
+	}
+
+	events_em2odp(events, odp_events/*out*/, num);
 	odp_event_free_multi(odp_events, num);
 }
 
 em_status_t
 em_send(em_event_t event, em_queue_t queue)
 {
-	const int is_external = queue_external(queue);
+	const bool is_external = queue_external(queue);
 	queue_elem_t *q_elem = NULL;
 	event_hdr_t *ev_hdr;
 	int num_sent;
@@ -292,35 +221,26 @@ em_send(em_event_t event, em_queue_t queue)
 	/*
 	 * Check all args.
 	 */
-	if (EM_CHECK_LEVEL > 0)
-		RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
-				EM_ERR_BAD_ID, EM_ESCOPE_SEND,
-				"Invalid event");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && event == EM_EVENT_UNDEF,
+			EM_ERR_BAD_ID, EM_ESCOPE_SEND, "Invalid event");
 
 	ev_hdr = event_to_hdr(event);
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 
-	if (EM_CHECK_LEVEL > 2)
-		RETURN_ERROR_IF(env_atomic32_get(&ev_hdr->allocated) != 1,
-				EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_SEND,
-				"Event:%" PRI_EVENT " already freed!", event);
-
 	if (!is_external) {
 		/* queue belongs to this EM instance */
 		q_elem = queue_elem_get(queue);
-		if (EM_CHECK_LEVEL > 0)
-			RETURN_ERROR_IF(q_elem == NULL,
-					EM_ERR_BAD_ID, EM_ESCOPE_SEND,
-					"Invalid queue:%" PRI_QUEUE "", queue);
-		if (EM_CHECK_LEVEL > 1)
-			RETURN_ERROR_IF(!queue_allocated(q_elem),
-					EM_ERR_BAD_STATE, EM_ESCOPE_SEND,
-					"Invalid queue:%" PRI_QUEUE "", queue);
+		RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && !q_elem,
+				EM_ERR_BAD_ID, EM_ESCOPE_SEND,
+				"Invalid queue:%" PRI_QUEUE "", queue);
+		RETURN_ERROR_IF(EM_CHECK_LEVEL > 1 && !queue_allocated(q_elem),
+				EM_ERR_BAD_STATE, EM_ESCOPE_SEND,
+				"Invalid queue:%" PRI_QUEUE "", queue);
 	}
 
 	/* Buffer events from EO-start sent to scheduled queues */
-	if (unlikely(em_locm.start_eo_elem != NULL &&
-		     !is_external && q_elem->scheduled)) {
+	if (unlikely(!is_external &&
+		     q_elem->scheduled && em_locm.start_eo_elem)) {
 		/*
 		 * em_send() called from within an EO-start function:
 		 * all events sent to scheduled queues will be buffered
@@ -339,6 +259,9 @@ em_send(em_event_t event, em_queue_t queue)
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_send(&event, 1, queue, EM_EVENT_GROUP_UNDEF);
 
+	if (esv_enabled())
+		evstate_usr2em(event, ev_hdr, EVSTATE__SEND);
+
 	if (is_external) {
 		/*
 		 * Send out of EM to another device via event-chaining and a
@@ -347,9 +270,12 @@ em_send(em_event_t event, em_queue_t queue)
 		stat = send_chaining(event, ev_hdr, queue);
 		if (EM_CHECK_LEVEL == 0)
 			return stat;
-		RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND,
-				"send_chaining failed: Q:%" PRI_QUEUE "",
-				queue);
+		if (unlikely(stat != EM_OK)) {
+			stat = INTERNAL_ERROR(stat, EM_ESCOPE_SEND,
+					      "send_chaining failed: Q:%" PRI_QUEUE "",
+					      queue);
+			goto send_err;
+		}
 		return EM_OK;
 	}
 
@@ -369,7 +295,7 @@ em_send(em_event_t event, em_queue_t queue)
 		stat = send_local(event, ev_hdr, q_elem);
 		break;
 	case EM_QUEUE_TYPE_OUTPUT:
-		stat = send_output(event, q_elem);
+		stat = send_output(event, ev_hdr, q_elem);
 		break;
 	default:
 		stat = EM_ERR_NOT_FOUND;
@@ -378,87 +304,84 @@ em_send(em_event_t event, em_queue_t queue)
 
 	if (EM_CHECK_LEVEL == 0)
 		return stat;
-	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND,
-			"send failed: Q:%" PRI_QUEUE " type:%" PRI_QTYPE "",
-			queue, q_elem->type);
 
+	if (unlikely(stat != EM_OK)) {
+		stat =
+		INTERNAL_ERROR(stat, EM_ESCOPE_SEND,
+			       "send failed: Q:%" PRI_QUEUE " type:%" PRI_QTYPE "",
+			       queue, q_elem->type);
+		goto send_err;
+	}
+
+	return EM_OK;
+
+send_err:
+	if (esv_enabled())
+		evstate_usr2em_revert(event, ev_hdr, EVSTATE__SEND__FAIL);
+	return stat;
+}
+
+/*
+ * em_send_group_multi() helper: check function arguments
+ */
+static inline em_status_t
+send_multi_check_args(const em_event_t events[], int num, em_queue_t queue,
+		      bool *is_external__out /*out if EM_OK*/,
+		      queue_elem_t **q_elem__out /*out if EM_OK*/)
+{
+	const bool is_external = queue_external(queue);
+	queue_elem_t *q_elem = NULL;
+	int i;
+
+	if (EM_CHECK_LEVEL > 0 && unlikely(!events || num <= 0))
+		return EM_ERR_BAD_ARG;
+
+	if (EM_CHECK_LEVEL > 2) {
+		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
+			;
+		if (unlikely(i != num))
+			return EM_ERR_BAD_POINTER;
+	}
+
+	if (!is_external) {
+		/* queue belongs to this EM instance */
+		q_elem = queue_elem_get(queue);
+
+		if (EM_CHECK_LEVEL > 0 && unlikely(!q_elem))
+			return EM_ERR_BAD_ARG;
+		if (EM_CHECK_LEVEL > 1 && unlikely(!queue_allocated(q_elem)))
+			return EM_ERR_BAD_STATE;
+	}
+
+	*is_external__out = is_external;
+	*q_elem__out = q_elem; /* NULL if is_external */
 	return EM_OK;
 }
 
 int
 em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 {
-	event_hdr_t *ev_hdrs[num];
-	const int is_external = queue_external(queue);
-	queue_elem_t *q_elem = NULL;
+	bool is_external = false; /* set by check_args */
+	queue_elem_t *q_elem = NULL; /* set by check_args */
 	int num_sent;
 	int i;
 
 	/*
 	 * Check all args.
 	 */
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(events == NULL || num <= 0)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_SEND_MULTI,
-				       "Invalid events");
-			return 0;
-		}
-	}
-	if (EM_CHECK_LEVEL > 2) {
-		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
-			;
-		if (unlikely(i != num)) {
-			INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-				       EM_ESCOPE_SEND_MULTI,
-				       "Invalid events[%d]=%" PRI_EVENT "",
-				       i, events[i]);
-			return 0;
-		}
-	}
-
-	event_to_hdr_multi(events, ev_hdrs, num);
-	for (i = 0; i < num; i++)
-		ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
-
-	if (EM_CHECK_LEVEL > 2) {
-		for (i = 0; i < num &&
-		     env_atomic32_get(&ev_hdrs[i]->allocated) == 1; i++)
-			;
-		if (unlikely(i != num)) {
-			const char *const fmt =
-				"events[%d]:%" PRI_EVENT " already freed!";
-			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE),
-				       EM_ESCOPE_SEND_MULTI, fmt, i, events[i]);
-			return 0;
-		}
-	}
-
-	if (!is_external) {
-		/* queue belongs to this EM instance */
-		q_elem = queue_elem_get(queue);
-		if (EM_CHECK_LEVEL > 0) {
-			if (unlikely(q_elem == NULL)) {
-				INTERNAL_ERROR(EM_ERR_BAD_ID,
-					       EM_ESCOPE_SEND_MULTI,
-					       "Invalid queue:%" PRI_QUEUE "",
-					       queue);
-				return 0;
-			}
-		}
-		if (EM_CHECK_LEVEL > 1) {
-			if (unlikely(!queue_allocated(q_elem))) {
-				INTERNAL_ERROR(EM_ERR_BAD_STATE,
-					       EM_ESCOPE_SEND_MULTI,
-					       "Invalid queue:%" PRI_QUEUE "",
-					       queue);
-				return 0;
-			}
-		}
+	em_status_t err =
+	send_multi_check_args(events, num, queue,
+			      /*out if EM_OK:*/ &is_external, &q_elem);
+	if (unlikely(err != EM_OK)) {
+		INTERNAL_ERROR(err, EM_ESCOPE_SEND_MULTI,
+			       "Invalid args: events:%p num:%d Q:%" PRI_QUEUE "",
+			       events, num, queue);
+		return 0;
 	}
 
 	/* Buffer events from EO-start sent to scheduled queues */
-	if (unlikely(em_locm.start_eo_elem != NULL &&
-		     !is_external && q_elem->scheduled)) {
+	if (unlikely(!is_external &&
+		     q_elem->scheduled && em_locm.start_eo_elem)) {
 		/*
 		 * em_send_multi() called from within an EO-start function:
 		 * all events sent to scheduled queues will be buffered
@@ -473,8 +396,17 @@ em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 		return num_sent;
 	}
 
+	event_hdr_t *ev_hdrs[num];
+
+	event_to_hdr_multi(events, ev_hdrs, num);
+	for (i = 0; i < num; i++)
+		ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
+
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_send(events, num, queue, EM_EVENT_GROUP_UNDEF);
+
+	if (esv_enabled())
+		evstate_usr2em_multi(events, ev_hdrs, num, EVSTATE__SEND_MULTI);
 
 	if (is_external) {
 		/*
@@ -485,8 +417,9 @@ em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 		if (EM_CHECK_LEVEL > 0 && unlikely(num_sent != num)) {
 			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
 				       EM_ESCOPE_SEND_MULTI,
-				       "send-egrp-multi fails: req:%d, sent:%d",
+				       "send_chaining_multi: req:%d, sent:%d",
 				       num, num_sent);
+			goto send_multi_err;
 		}
 		return num_sent;
 	}
@@ -507,7 +440,7 @@ em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 		num_sent = send_local_multi(events, ev_hdrs, num, q_elem);
 		break;
 	case EM_QUEUE_TYPE_OUTPUT:
-		num_sent = send_output_multi(events, num, q_elem);
+		num_sent = send_output_multi(events, ev_hdrs, num, q_elem);
 		break;
 	default:
 		num_sent = 0;
@@ -518,8 +451,17 @@ em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_SEND_MULTI,
 			       "send-multi failed: req:%d, sent:%d",
 			       num, num_sent);
+		goto send_multi_err;
 	}
 
+	return num_sent;
+
+send_multi_err:
+	if (esv_enabled()) {
+		evstate_usr2em_revert_multi(&events[num_sent], &ev_hdrs[num_sent],
+					    num - num_sent,
+					    EVSTATE__SEND_MULTI__FAIL);
+	}
 	return num_sent;
 }
 
@@ -528,6 +470,9 @@ em_event_pointer(em_event_t event)
 {
 	odp_event_t odp_event;
 	odp_event_type_t odp_etype;
+	odp_packet_t odp_pkt;
+	odp_buffer_t odp_buf;
+	const event_hdr_t *ev_hdr;
 
 	if (unlikely(event == EM_EVENT_UNDEF)) {
 		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EVENT_POINTER,
@@ -539,20 +484,14 @@ em_event_pointer(em_event_t event)
 	odp_etype = odp_event_type(odp_event);
 
 	switch (odp_etype) {
-	case ODP_EVENT_PACKET: {
-		odp_packet_t odp_pkt = odp_packet_from_event(odp_event);
-
+	case ODP_EVENT_PACKET:
+		odp_pkt = odp_packet_from_event(odp_event);
 		return odp_packet_data(odp_pkt);
-	}
-	case ODP_EVENT_BUFFER: {
-		odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
-		event_hdr_t *const ev_hdr = odp_buffer_addr(odp_buf);
-
+	case ODP_EVENT_BUFFER:
+		odp_buf = odp_buffer_from_event(odp_event);
+		ev_hdr = odp_buffer_addr(odp_buf);
 		return (void *)((uintptr_t)ev_hdr + sizeof(event_hdr_t)
 				- ev_hdr->align_offset);
-	}
-	case ODP_EVENT_TIMEOUT: /* @TBD */
-	case ODP_EVENT_CRYPTO_COMPL: /* @TBD */
 	default:
 		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_EVENT_POINTER,
 			       "Unexpected odp event type:%u", odp_etype);
@@ -580,7 +519,7 @@ em_event_get_size(em_event_t event)
 
 		return odp_packet_seg_len(odp_pkt);
 	} else if (odp_etype == ODP_EVENT_BUFFER) {
-		event_hdr_t *const ev_hdr = event_to_hdr(event);
+		const event_hdr_t *ev_hdr = event_to_hdr(event);
 
 		return ev_hdr->event_size;
 	}
@@ -613,25 +552,20 @@ em_event_set_type(em_event_t event, em_event_type_t newtype)
 em_event_type_t
 em_event_get_type(em_event_t event)
 {
-	event_hdr_t *ev_hdr;
+	const event_hdr_t *ev_hdr;
 
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(event == EM_EVENT_UNDEF)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_GET_TYPE,
-				       "event undefined!");
-			return EM_EVENT_TYPE_UNDEF;
-		}
+	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_GET_TYPE,
+			       "event undefined!");
+		return EM_EVENT_TYPE_UNDEF;
 	}
 
 	ev_hdr = event_to_hdr(event);
 
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(ev_hdr == NULL)) {
-			INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-				       EM_ESCOPE_EVENT_GET_TYPE,
-				       "ev_hdr == NULL");
-			return EM_EVENT_TYPE_UNDEF;
-		}
+	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EVENT_GET_TYPE,
+			       "ev_hdr == NULL");
+		return EM_EVENT_TYPE_UNDEF;
 	}
 
 	return ev_hdr->event_type;
@@ -714,4 +648,47 @@ int em_event_same_type_multi(const em_event_t events[], int num,
 
 	*same_type = type;
 	return same;
+}
+
+em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
+{
+	const queue_elem_t *const q_elem = queue_elem_get(queue);
+	event_hdr_t *ev_hdr;
+
+	/* Check all args */
+	if (EM_CHECK_LEVEL >= 1)
+		RETURN_ERROR_IF(event == EM_EVENT_UNDEF || q_elem == NULL,
+				EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_SEND,
+				"Inv.args: event:%" PRI_EVENT " Q:%" PRI_QUEUE "",
+				event, queue);
+	if (EM_CHECK_LEVEL >= 1)
+		RETURN_ERROR_IF(!queue_allocated(q_elem) || !q_elem->scheduled,
+				EM_ERR_BAD_STATE, EM_ESCOPE_EVENT_MARK_SEND,
+				"Inv.queue:%" PRI_QUEUE " type:%" PRI_QTYPE "",
+				queue, q_elem->type);
+
+	ev_hdr = event_to_hdr(event);
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+
+	if (esv_enabled())
+		evstate_usr2em(event, ev_hdr, EVSTATE__MARK_SEND);
+
+	return EM_OK;
+}
+
+em_status_t em_event_unmark_send(em_event_t event)
+{
+	/* Check all args */
+	if (EM_CHECK_LEVEL >= 1)
+		RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
+				EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_SEND,
+				"Inv.args: event:%" PRI_EVENT "", event);
+
+	if (esv_enabled()) {
+		event_hdr_t *ev_hdr = event_to_hdr(event);
+
+		evstate_usr2em_revert(event, ev_hdr, EVSTATE__UNMARK_SEND);
+	}
+
+	return EM_OK;
 }

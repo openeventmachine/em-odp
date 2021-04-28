@@ -58,7 +58,7 @@ list_init(list_node_t *const head)
  * Check whether the list is empty
  */
 static inline int
-list_is_empty(list_node_t *const head)
+list_is_empty(const list_node_t *const head)
 {
 	return (head->next == head);
 }
@@ -83,7 +83,7 @@ list_add(list_node_t *const head, list_node_t *const node)
  * Double linked list remove node
  */
 static inline void
-list_rem(list_node_t *const head, list_node_t *const node)
+list_rem(const list_node_t *const head, list_node_t *const node)
 {
 	list_node_t *const next = node->next;
 	list_node_t *const prev = node->prev;
@@ -94,15 +94,15 @@ list_rem(list_node_t *const head, list_node_t *const node)
 	next->prev = prev;
 
 	/* just for safety */
-	node->next = NULL;
-	node->prev = NULL;
+	node->next = node;
+	node->prev = node;
 }
 
 /**
  * Double linked list remove first node (FIFO-mode)
  */
 static inline list_node_t *
-list_rem_first(list_node_t *const head)
+list_rem_first(const list_node_t *const head)
 {
 	list_node_t *node = NULL;
 
@@ -119,7 +119,7 @@ list_rem_first(list_node_t *const head)
  * Double linked list remove last node (LIFO-mode)
  */
 static inline list_node_t *
-list_rem_last(list_node_t *const head)
+list_rem_last(const list_node_t *const head)
 {
 	list_node_t *node = NULL;
 

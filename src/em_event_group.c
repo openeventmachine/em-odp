@@ -41,18 +41,20 @@ em_status_t
 event_group_init(event_group_tbl_t *const event_group_tbl,
 		 event_group_pool_t *const event_group_pool)
 {
-	int i, ret;
 	event_group_elem_t *egrp_elem;
 	const int cores = em_core_count();
+	int ret;
 
 	memset(event_group_tbl, 0, sizeof(event_group_tbl_t));
 	memset(event_group_pool, 0, sizeof(event_group_pool_t));
 	env_atomic32_init(&em_shm->event_group_count);
 
-	for (i = 0; i < EM_MAX_EVENT_GROUPS; i++) {
+	for (int i = 0; i < EM_MAX_EVENT_GROUPS; i++) {
 		em_event_group_t egrp = egrp_idx2hdl(i);
-		event_group_elem_t *const egrp_elem =
-			event_group_elem_get(egrp);
+
+		egrp_elem = event_group_elem_get(egrp);
+		if (unlikely(!egrp_elem))
+			return EM_ERR_BAD_POINTER;
 
 		egrp_elem->event_group = egrp; /* store handle */
 		egrp_elem->all = 0;
@@ -64,7 +66,7 @@ event_group_init(event_group_tbl_t *const event_group_tbl,
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (i = 0; i < EM_MAX_EVENT_GROUPS; i++) {
+	for (int i = 0; i < EM_MAX_EVENT_GROUPS; i++) {
 		egrp_elem = &event_group_tbl->egrp_elem[i];
 		objpool_add(&event_group_pool->objpool, i % cores,
 			    &egrp_elem->event_group_pool_elem);
@@ -76,7 +78,7 @@ event_group_init(event_group_tbl_t *const event_group_tbl,
 em_event_group_t
 event_group_alloc(void)
 {
-	event_group_elem_t *egrp_elem;
+	const event_group_elem_t *egrp_elem;
 	objpool_elem_t *egrp_pool_elem;
 
 	egrp_pool_elem = objpool_rem(&em_shm->event_group_pool.objpool,

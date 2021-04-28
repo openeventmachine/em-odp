@@ -118,7 +118,7 @@ em_queue_set_context(em_queue_t queue, const void *context)
 void *
 em_queue_get_context(em_queue_t queue)
 {
-	queue_elem_t *const queue_elem = queue_elem_get(queue);
+	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
 	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_CONTEXT,
@@ -132,9 +132,7 @@ em_queue_get_context(em_queue_t queue)
 size_t
 em_queue_get_name(em_queue_t queue, char *name, size_t maxlen)
 {
-	queue_elem_t *const queue_elem = queue_elem_get(queue);
-	char *queue_name;
-	size_t len;
+	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
 	if (unlikely(name == NULL || maxlen == 0)) {
 		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_GET_NAME,
@@ -151,16 +149,7 @@ em_queue_get_name(em_queue_t queue, char *name, size_t maxlen)
 		return 0;
 	}
 
-	queue_name = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
-
-	len = strnlen(queue_name, EM_QUEUE_NAME_LEN - 1);
-	if (maxlen - 1 < len)
-		len = maxlen - 1;
-
-	memcpy(name, queue_name, len);
-	name[len] = '\0';
-
-	return len;
+	return queue_get_name(queue_elem, name, maxlen);
 }
 
 em_queue_t
@@ -169,7 +158,8 @@ em_queue_find(const char *name)
 	if (name && *name) {
 		/* this might be worth optimizing if maaany queues */
 		for (int i = 0; i < EM_MAX_QUEUES; i++) {
-			queue_elem_t *q_elem = &em_shm->queue_tbl.queue_elem[i];
+			const queue_elem_t *q_elem =
+				&em_shm->queue_tbl.queue_elem[i];
 
 			if (queue_allocated(q_elem) &&
 			    !strncmp(name, em_shm->queue_tbl.name[i],
@@ -183,7 +173,7 @@ em_queue_find(const char *name)
 em_queue_prio_t
 em_queue_get_priority(em_queue_t queue)
 {
-	queue_elem_t *const queue_elem = queue_elem_get(queue);
+	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
 	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_PRIORITY,
@@ -197,7 +187,7 @@ em_queue_get_priority(em_queue_t queue)
 em_queue_type_t
 em_queue_get_type(em_queue_t queue)
 {
-	queue_elem_t *const queue_elem = queue_elem_get(queue);
+	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
 	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_TYPE,
@@ -211,7 +201,7 @@ em_queue_get_type(em_queue_t queue)
 em_queue_group_t
 em_queue_get_group(em_queue_t queue)
 {
-	queue_elem_t *const q_elem = queue_elem_get(queue);
+	const queue_elem_t *q_elem = queue_elem_get(queue);
 
 	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_GROUP,
@@ -228,7 +218,7 @@ em_queue_get_group(em_queue_t queue)
 em_event_t
 em_queue_dequeue(em_queue_t queue)
 {
-	queue_elem_t *const q_elem = queue_elem_get(queue);
+	const queue_elem_t *q_elem = queue_elem_get(queue);
 	odp_queue_t odp_queue;
 	odp_event_t odp_event;
 	em_event_t em_event;
@@ -252,14 +242,19 @@ em_queue_dequeue(em_queue_t queue)
 
 	em_event = event_odp2em(odp_event);
 
+	if (esv_enabled()) {
+		event_hdr_t *ev_hdr = event_to_hdr(em_event);
+
+		em_event = evstate_em2usr(em_event, ev_hdr, EVSTATE__DEQUEUE);
+	}
+
 	return em_event;
 }
 
 int
-em_queue_dequeue_multi(em_queue_t queue, em_event_t events[], int num)
+em_queue_dequeue_multi(em_queue_t queue, em_event_t events[/*out*/], int num)
 {
-	queue_elem_t *const q_elem = queue_elem_get(queue);
-	odp_event_t *const odp_events = events_em2odp(events); /* cast */
+	const queue_elem_t *q_elem = queue_elem_get(queue);
 	odp_queue_t odp_queue;
 	int ret;
 
@@ -281,9 +276,11 @@ em_queue_dequeue_multi(em_queue_t queue, em_event_t events[], int num)
 		return 0;
 	}
 
-	/* dequeue into odp_events[] == events[] */
+	/* use same output-array for dequeue: odp_events[] = events[] */
+	odp_event_t *const odp_events = (odp_event_t *)events;
+
 	odp_queue = q_elem->odp_queue;
-	ret = odp_queue_deq_multi(odp_queue, odp_events, num);
+	ret = odp_queue_deq_multi(odp_queue, odp_events /*out*/, num);
 	if (ret == 0)
 		return 0;
 
@@ -294,24 +291,28 @@ em_queue_dequeue_multi(em_queue_t queue, em_event_t events[], int num)
 		return 0;
 	}
 
+	/* now events[] = odp_events[], events[].evgen missing, set below: */
+	if (esv_enabled()) {
+		event_hdr_t *ev_hdrs[ret];
+
+		event_to_hdr_multi(events, ev_hdrs, ret);
+		evstate_em2usr_multi(events, ev_hdrs, ret,
+				     EVSTATE__DEQUEUE_MULTI);
+	}
+
 	return ret;
 }
 
 em_queue_t
 em_queue_current(void)
 {
-	queue_elem_t *const q_elem = em_locm.current.q_elem;
-
-	if (unlikely(q_elem == NULL))
-		return EM_QUEUE_UNDEF;
-
-	return q_elem->queue;
+	return queue_current();
 }
 
 em_queue_t
 em_queue_get_first(unsigned int *num)
 {
-	queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
+	const queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
 	const unsigned int queue_cnt = queue_count();
 
 	_queue_tbl_iter_idx = 0; /* reset iteration */
@@ -342,7 +343,7 @@ em_queue_get_next(void)
 
 	_queue_tbl_iter_idx++;
 
-	queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
+	const queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
 
 	/* find next */
 	while (!queue_allocated(&queue_tbl->queue_elem[_queue_tbl_iter_idx])) {
@@ -356,11 +357,29 @@ em_queue_get_next(void)
 
 int em_queue_get_index(em_queue_t queue)
 {
-	queue_elem_t *const q_elem = queue_elem_get(queue);
+	const internal_queue_t iq = {.queue = queue};
+	const int queue_idx = queue_id2idx(iq.queue_id); /* return value */
 
-	RETURN_ERROR_IF(q_elem == NULL || !queue_allocated(q_elem),
-			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_INDEX,
-			"Bad arg, invalid queue:%" PRI_QUEUE "", queue);
+	if (unlikely((unsigned int)queue_idx > EM_MAX_QUEUES - 1))
+		goto error;
 
-	return queue_hdl2idx(queue);
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(iq.device_id != em_shm->conf.device_id))
+		goto error;
+
+	if (EM_CHECK_LEVEL >= 3) {
+		const queue_elem_t *q_elem =
+			&em_shm->queue_tbl.queue_elem[queue_idx];
+		if (unlikely(q_elem == NULL || !queue_allocated(q_elem)))
+			goto error;
+	}
+
+	return queue_idx;
+
+error:
+	INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_INDEX,
+		       "Bad arg, invalid queue:%" PRI_QUEUE ":\n"
+		       "  Q.device-id:0x%" PRIx16 " Q.id:0x%" PRIx16 "",
+		       queue, iq.device_id, iq.queue_id);
+	return queue_idx % EM_MAX_QUEUES;
 }

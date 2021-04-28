@@ -304,6 +304,95 @@ int em_event_same_type_multi(const em_event_t events[], int num,
 			     em_event_type_t *same_type /*out*/);
 
 /**
+ * Mark the event as "sent".
+ *
+ * Indicates a user-given promise to EM that the event will later appear into
+ * 'queue' by some means other than an explicit user call to em_send...().
+ * Calling em_event_mark_send() transfers event ownership away from the user,
+ * and thus the event must not be used or touched by the user anymore (the only
+ * exception is (hw) error recovery where the "sent" state can be cancelled by
+ * using em_event_unmark_send() - dangerous!).
+ *
+ * Example use case:
+ * A user provided output-callback function associated with a queue of type
+ * 'EM_QUEUE_TYPE_OUTPUT' can use this API when configuring a HW-device to
+ * deliver the event back into EM. The HW will eventually "send" the event and
+ * it will "somehow" again appear into EM for the user to process.
+ *
+ * EM will, after this API-call, treat the event as "sent" and any further API
+ * operations or usage might lead to EM errors (depending on the error-check
+ * level), e.g. em_send/free/tmo_set/ack(event) etc. is forbidden after
+ * em_event_mark_send(event).
+ *
+ * @note Registered API-callback hooks for em_send...() (em_api_hook_send_t)
+ *       will NOT be called.
+ * @note Marking an event "sent" with an event group (corresponding to
+ *       em_send_group()) is currrently NOT supported.
+ *
+ * @param event    Event to be marked as "sent"
+ * @param queue    Destination queue (must be scheduled, i.e. atomic,
+ *                                    parallel or parallel-ordered)
+ *
+ * @return EM_OK if successful
+ *
+ * @see em_send(), em_event_unmark_send()
+ */
+em_status_t em_event_mark_send(em_event_t event, em_queue_t queue);
+
+/**
+ * Unmark an event previously marked as "sent" (i.e mark as "unsent")
+ *
+ * @note This is for recovery situations only and can potenially crash the
+ *       application if used incorrectly!
+ *
+ * Revert an event's "sent" state, as set by em_event_mark_send(), back to the
+ * state before that function call.
+ * Any further usage of the event after em_event_mark_send(), by EM or
+ * the user, will result in error when calling em_event_unmark_send() since the
+ * state has become unrecoverable.
+ * => the only allowed EM API call after em_event_mark_send() is
+ *    em_event_unmark_send() if it is certain that the event, due to some
+ *    external error, will never be sent into EM again otherwise.
+ * Calling em_event_unmark_send() transfers event ownership back to the user
+ * again.
+ *
+ * @note This is the only valid case of using an event that the user no
+ *       longer owns - all other such uses leads to fatal error.
+ *
+ * @code
+ *	em_status_t err;
+ *	hw_err_t hw_err;
+ *
+ *	// 'event' owned by the user
+ *	err = em_event_mark_send(event, queue);
+ *	if (err != EM_OK)
+ *		return err; // NOK
+ *	// 'event' no longer owned by the user - don't touch!
+ *
+ *	hw_err = config_hw_to_send_event(...hw-cfg..., event, queue);
+ *	if (hw_err) {
+ *		// hw config error - the event can be recovered if it is
+ *		// certain that the hw won't send that same event.
+ *		// note: the user doesn't own the event here and actually
+ *		//       uses an obsolete event handle to recover the event...
+ *		err = em_event_unmark_send(event);
+ *		if (err != EM_OK)
+ *			return err; // NOK
+ *		// 'event' recovered, again owned by the user
+ *		em_free(event);
+ *	}
+ * @endcode
+ *
+ * @param event    Event previously marked as "sent" with em_event_mark_send(),
+ *                 any other case will be invalid!
+ *
+ * @return EM_OK if successful
+ *
+ * @see em_send(), em_event_mark_send()
+ */
+em_status_t em_event_unmark_send(em_event_t event);
+
+/**
  * @}
  */
 #ifdef __cplusplus

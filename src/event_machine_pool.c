@@ -43,12 +43,16 @@ static ENV_LOCAL unsigned int _pool_tbl_iter_idx;
 void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
 {
 	odp_pool_param_t odp_pool_defaults;
-	uint32_t buf_cache_sz, pkt_cache_sz, cache_sz;
+	uint32_t buf_cache_sz;
+	uint32_t pkt_cache_sz;
+	uint32_t cache_sz;
 
-	if (unlikely(!pool_cfg))
+	if (unlikely(!pool_cfg)) {
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
 			       EM_ESCOPE_POOL_CFG_INIT,
 			       "pool_cfg pointer NULL!");
+		return;
+	}
 
 	odp_pool_param_init(&odp_pool_defaults);
 	memset(pool_cfg, 0, sizeof(*pool_cfg));
@@ -117,9 +121,9 @@ em_pool_find(const char *name)
 }
 
 size_t
-em_pool_get_name(em_pool_t pool, char *name, size_t maxlen)
+em_pool_get_name(em_pool_t pool, char *name /*out*/, size_t maxlen)
 {
-	mpool_elem_t *const mpool_elem = pool_elem_get(pool);
+	const mpool_elem_t *mpool_elem = pool_elem_get(pool);
 	size_t len = 0;
 
 	if (unlikely(name == NULL || maxlen == 0)) {
@@ -149,8 +153,8 @@ em_pool_get_name(em_pool_t pool, char *name, size_t maxlen)
 em_pool_t
 em_pool_get_first(unsigned int *num)
 {
-	mpool_elem_t *const mpool_elem_tbl = em_shm->mpool_tbl.pool;
-	mpool_elem_t *mpool_elem = &mpool_elem_tbl[0];
+	const mpool_elem_t *const mpool_elem_tbl = em_shm->mpool_tbl.pool;
+	const mpool_elem_t *mpool_elem = &mpool_elem_tbl[0];
 	const unsigned int pool_cnt = pool_count();
 
 	_pool_tbl_iter_idx = 0; /* reset iteration */
@@ -182,8 +186,8 @@ em_pool_get_next(void)
 
 	_pool_tbl_iter_idx++;
 
-	mpool_elem_t *const mpool_elem_tbl = em_shm->mpool_tbl.pool;
-	mpool_elem_t *mpool_elem = &mpool_elem_tbl[_pool_tbl_iter_idx];
+	const mpool_elem_t *const mpool_elem_tbl = em_shm->mpool_tbl.pool;
+	const mpool_elem_t *mpool_elem = &mpool_elem_tbl[_pool_tbl_iter_idx];
 
 	/* find next */
 	while (!pool_allocated(mpool_elem)) {
@@ -199,7 +203,7 @@ em_pool_get_next(void)
 em_status_t
 em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 {
-	mpool_elem_t *pool_elem;
+	const mpool_elem_t *pool_elem;
 
 	RETURN_ERROR_IF(pool_info == NULL,
 			EM_ERR_BAD_POINTER, EM_ESCOPE_POOL_INFO,
@@ -218,55 +222,62 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 	pool_info->event_type = pool_elem->event_type;
 	pool_info->align_offset = pool_elem->align_offset;
 	pool_info->num_subpools = pool_elem->num_subpools;
-	for (int i = 0; i < pool_elem->num_subpools; i++) {
-		const uint64_t num = pool_elem->pool_cfg.subpool[i].num;
 
+	for (int i = 0; i < pool_elem->num_subpools; i++) {
 		pool_info->subpool[i].size = pool_elem->size[i]; /*sorted sz*/
 		pool_info->subpool[i].num = pool_elem->pool_cfg.subpool[i].num;
 		pool_info->subpool[i].cache_size = pool_elem->pool_cfg.subpool[i].cache_size;
-		/*
-		 * EM pool usage statistics only collected if
-		 * EM config file: pool.statistics_enable=true.
-		 */
-		if (em_shm->opt.pool.statistics_enable) {
-			const int cores = em_core_count();
-			int pool_idx = pool_hdl2idx(pool);
-			mpool_statistics_t pool_stat[cores];
+	}
 
-			uint64_t used = 0, free = 0;
-			uint64_t alloc_sum = 0, free_sum = 0;
+	/*
+	 * EM pool usage statistics only collected if
+	 * EM config file: pool.statistics_enable=true.
+	 */
+	if (!em_shm->opt.pool.statistics_enable)
+		return EM_OK; /* no statistics, return */
 
-			/* copy all pool-statistics and work on a local copy */
-			memcpy(pool_stat, em_shm->mpool_tbl.pool_stat_core,
-			       cores * sizeof(mpool_statistics_t));
+	/* EM pool usage statistics _enabled_ - collect it: */
+	const int cores = em_core_count();
+	const int pool_idx = pool_hdl2idx(pool);
+	mpool_statistics_t pool_stat[cores];
 
-			for (int j = 0; j < cores; j++) {
-				free_sum += pool_stat[j].stat[pool_idx][i].free;
-				alloc_sum += pool_stat[j].stat[pool_idx][i].alloc;
-			}
+	/* copy pool-statistics from all cores and work on a local snapshot */
+	memcpy(pool_stat, em_shm->mpool_tbl.pool_stat_core,
+	       sizeof(pool_stat));
 
-			used = alloc_sum - free_sum;
-			if (unlikely(free_sum > alloc_sum)) {
-				/*
-				 * free-increments seen by this core before
-				 * alloc increments or unlikely wrap-around.
-				 */
-				uint64_t diff = free_sum - alloc_sum;
+	for (int i = 0; i < pool_elem->num_subpools; i++) {
+		const uint64_t num = pool_elem->pool_cfg.subpool[i].num;
+		uint64_t used = 0;
+		uint64_t free = 0;
+		uint64_t alloc_sum = 0;
+		uint64_t free_sum = 0;
 
-				if (diff <= num) /* counts close so set '0' */
-					used = 0;
-				else /* wrap, should not happen very soon... */
-					used = UINT64_MAX - diff + 1;
-			}
-			/* Sanity check */
-			if (used > num)
-				used = num;
-
-			free = num - used;
-
-			pool_info->subpool[i].used = used;
-			pool_info->subpool[i].free = free;
+		for (int j = 0; j < cores; j++) {
+			free_sum += pool_stat[j].stat[pool_idx][i].free;
+			alloc_sum += pool_stat[j].stat[pool_idx][i].alloc;
 		}
+
+		used = alloc_sum - free_sum;
+		if (unlikely(free_sum > alloc_sum)) {
+			/*
+			 * free-increments seen by this core before
+			 * alloc increments or unlikely wrap-around.
+			 */
+			uint64_t diff = free_sum - alloc_sum;
+
+			if (diff <= num) /* counts close so set '0' */
+				used = 0;
+			else /* wrap, should not happen very soon... */
+				used = UINT64_MAX - diff + 1;
+		}
+		/* Sanity check */
+		if (used > num)
+			used = num;
+
+		free = num - used;
+
+		pool_info->subpool[i].used = used;
+		pool_info->subpool[i].free = free;
 	}
 
 	return EM_OK;

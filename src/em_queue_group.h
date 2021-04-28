@@ -67,10 +67,10 @@ em_status_t
 queue_group_modify(queue_group_elem_t *const qgrp_elem,
 		   const em_core_mask_t *new_mask,
 		   int num_notif, const em_notif_t notif_tbl[],
-		   int is_delete);
+		   bool is_delete);
 em_status_t
 queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
-			const em_core_mask_t *new_mask, int is_delete);
+			const em_core_mask_t *new_mask, bool is_delete);
 
 void
 queue_group_add_queue_list(queue_group_elem_t *const queue_group_elem,
@@ -120,7 +120,7 @@ queue_group_elem_get(em_queue_group_t queue_group)
 }
 
 static inline int
-queue_group_allocated(queue_group_elem_t *const queue_group_elem)
+queue_group_allocated(const queue_group_elem_t *queue_group_elem)
 {
 	return !objpool_in_pool(&queue_group_elem->queue_group_pool_elem);
 }

@@ -71,6 +71,12 @@
 
 #define DELAY_SPIN_COUNT       50000000
 
+#define TEST_ERROR_FATAL  EM_ERROR_SET_FATAL(0xdead)
+#define TEST_ERROR_1      0x1111
+#define TEST_ERROR_2      0x2222
+#define TEST_ERROR_3      0x3333
+#define TEST_ERROR_4      0x4444
+
 /**
  * Error test event
  */
@@ -245,6 +251,7 @@ test_start(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO ", queue:%" PRI_QUEUE "",
 		      ret, eo, queue);
 
+	error_shm->eo_error_a.eo = eo;
 	error_shm->queue_a = queue;
 
 	/* Register an application 'EO A'-specific error handler */
@@ -270,6 +277,7 @@ test_start(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO ", queue:%" PRI_QUEUE "",
 		      ret, eo, queue);
 
+	error_shm->eo_error_b.eo = eo;
 	error_shm->queue_b = queue;
 
 	/*
@@ -294,6 +302,7 @@ test_start(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO ", queue:%" PRI_QUEUE "",
 		      ret, eo, queue);
 
+	error_shm->eo_error_c.eo = eo;
 	error_shm->queue_c = queue;
 
 	/*
@@ -328,7 +337,7 @@ test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(event == EM_EVENT_UNDEF, "Alloc failed");
 
 	error = em_event_pointer(event);
-	error->dest = 0; /* Don't care, never resent */
+	error->dest = EM_QUEUE_UNDEF; /* Don't care, never resent */
 	error->seq = 0;
 	error->fatal = 1; /* Generate a fatal error when received */
 
@@ -353,23 +362,30 @@ test_stop(appl_conf_t *const appl_conf)
 	stat = em_eo_stop_sync(eo_a);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("EO A stop failed!");
-	stat = em_eo_delete(eo_a);
-	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("EO A delete failed!");
-
 	stat = em_eo_stop_sync(eo_b);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("EO B stop failed!");
-	stat = em_eo_delete(eo_b);
-	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("EO B delete failed!");
-
 	stat = em_eo_stop_sync(eo_c);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("EO C stop failed!");
+
+	stat = em_eo_unregister_error_handler(eo_a);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("EO A unregister error handler failed!");
+
+	stat = em_eo_delete(eo_a);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("EO A delete failed!");
+	stat = em_eo_delete(eo_b);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("EO B delete failed!");
 	stat = em_eo_delete(eo_c);
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("EO C delete failed!");
+
+	stat = em_unregister_error_handler();
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("Unregister error handler failed!");
 }
 
 void
@@ -381,6 +397,8 @@ test_term(void)
 
 	if (core == 0)
 		env_shared_free(error_shm);
+
+	fflush(NULL);
 }
 
 /**
@@ -396,8 +414,8 @@ static em_status_t
 eo_specific_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 			  va_list args)
 {
-	return combined_error_handler("Appl EO specific error handler", eo,
-				      error, escope, args);
+	return combined_error_handler("Appl EO specific error handler",
+				      eo, error, escope, args);
 }
 
 /**
@@ -413,8 +431,8 @@ static em_status_t
 global_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 		     va_list args)
 {
-	return combined_error_handler("Appl Global error handler     ", eo,
-				      error, escope, args);
+	return combined_error_handler("Appl Global error handler     ",
+				      eo, error, escope, args);
 }
 
 /**
@@ -435,61 +453,86 @@ combined_error_handler(const char *handler_name, em_eo_t eo, em_status_t error,
 	const char *str;
 	unsigned int seq;
 
-	if (EM_ERROR_IS_FATAL(error)) {
-		/*
-		 * Application registered handling of FATAL errors.
-		 * Just print it and return since it's a fake fatal error.
-		 */
-		APPL_PRINT("THIS IS A FATAL ERROR!!\n"
-			   "%s: EO %" PRI_EO "  error 0x%" PRIxSTAT "  escope 0x%X\n"
-			   "Return from fatal.\n\n",
-			   handler_name, eo, error, escope);
-
-		return error;
-	}
-
+	/* First handle EM-internal errors */
 	if (EM_ESCOPE_API(escope)) {
 		/* EM API error: call em_error_format_string() */
-		char error_str[256];
+		char error_str[512];
 
 		em_error_format_string(error_str, sizeof(error_str), eo,
 				       error, escope, args);
 
 		APPL_PRINT("%s: EO %" PRI_EO "  error 0x%" PRIxSTAT "  escope 0x%X\n"
-			   "- EM info: %s", handler_name, eo, error,
-			   escope, error_str);
-	} else {
-		/* Application specific error handling. */
-		switch (escope) {
-		case APPL_ESCOPE_STR:
-			str = va_arg(args, const char*);
-			APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\t"
-				   "ARGS: %s\n", handler_name, eo, error,
-				   escope, str);
-			break;
+			   "- EM info: %s",
+			   handler_name, eo, error, escope, error_str);
 
-		case APPL_ESCOPE_STR_Q:
-			str = va_arg(args, const char*);
-			queue = va_arg(args, em_queue_t);
-			APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\t"
-				   "ARGS: %s %" PRI_QUEUE "\n", handler_name,
-				   eo, error, escope, str, queue);
-			break;
+		if (EM_ERROR_IS_FATAL(error))
+			abort();
 
-		case APPL_ESCOPE_STR_Q_SEQ:
-			str = va_arg(args, const char*);
-			queue = va_arg(args, em_queue_t);
-			seq = va_arg(args, unsigned int);
-			APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\t"
-				   "ARGS: %s %" PRI_QUEUE " %u\n", handler_name,
-				   eo, error, escope, str, queue, seq);
-			break;
-
-		default:
-			APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\n",
-				   handler_name, eo, error, escope);
-		};
+		return error;
 	}
+
+	/*
+	 * Application Errors:
+	 */
+
+	/* Application FATAL: */
+	if (EM_ERROR_IS_FATAL(error)) {
+		if (error == TEST_ERROR_FATAL) {
+			/*
+			 * Application handling of test FATAL error.
+			 * Print it and return since it's a fake fatal error.
+			 */
+			APPL_PRINT("THIS IS A FATAL ERROR!!\n"
+				   "%s: EO %" PRI_EO "  error 0x%" PRIxSTAT "  escope 0x%X\n"
+				   "Return from fatal.\n\n",
+				   handler_name, eo, error, escope);
+			return error;
+		}
+
+		/* Real application FATAL error - abort! */
+		APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\n",
+			   handler_name, eo, error, escope);
+		abort();
+	}
+
+	/* Application non-fatal: */
+	switch (escope) {
+	case APPL_ESCOPE_STR:
+		str = va_arg(args, const char*);
+		APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\t"
+			   "ARGS: %s\n", handler_name, eo, error,
+			   escope, str);
+		break;
+
+	case APPL_ESCOPE_STR_Q:
+		str = va_arg(args, const char*);
+		queue = va_arg(args, em_queue_t);
+		APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\t"
+			   "ARGS: %s %" PRI_QUEUE "\n", handler_name,
+			   eo, error, escope, str, queue);
+		break;
+
+	case APPL_ESCOPE_STR_Q_SEQ:
+		str = va_arg(args, const char*);
+		queue = va_arg(args, em_queue_t);
+		seq = va_arg(args, unsigned int);
+		APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\t"
+			   "ARGS: %s %" PRI_QUEUE " %u\n", handler_name,
+			   eo, error, escope, str, queue, seq);
+		break;
+
+	case APPL_ESCOPE_OTHER:
+		APPL_PRINT("%s: EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\n",
+			   handler_name, eo, error, escope);
+		break;
+
+	default: /* Unexpected application error - abort!*/
+		APPL_PRINT("%s: Unexpected Application Error:\n"
+			   "    EO %" PRI_EO " error 0x%" PRIxSTAT " escope 0x%X\n",
+			   handler_name, eo, error, escope);
+		abort();
+	};
+
 	return error;
 }
 
@@ -507,8 +550,9 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 {
 	em_queue_t dest;
 	eo_context_t *eo_ctx = eo_context;
-	error_event_t *error;
+	error_event_t *errev;
 	em_status_t ret;
+	unsigned int seq;
 
 	(void)type;
 	(void)q_ctx;
@@ -518,33 +562,35 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		return;
 	}
 
-	error = em_event_pointer(event);
-	dest = error->dest;
-	error->dest = queue;
+	errev = em_event_pointer(event);
+	dest = errev->dest;
+	errev->dest = queue;
 
-	if (error->fatal) {
+	if (errev->fatal) {
 		APPL_PRINT("\nError log from %s [%u] on core %i!\n",
-			   eo_ctx->name, error->seq, em_core_id());
+			   eo_ctx->name, errev->seq, em_core_id());
 		em_free(event);
 		/* Report a fatal error */
-		em_error(EM_ERROR_SET_FATAL(0xdead), 0);
+		em_error(TEST_ERROR_FATAL, APPL_ESCOPE_OTHER);
 		return;
 	}
 
 	APPL_PRINT("Error log from %s [%u] on core %i!\n", eo_ctx->name,
-		   error->seq, em_core_id());
+		   errev->seq, em_core_id());
 
 	/*       error   escope                 args  */
-	em_error(0x1111, APPL_ESCOPE_OTHER);
-	em_error(0x2222, APPL_ESCOPE_STR, "Second error");
-	em_error(0x3333, APPL_ESCOPE_STR_Q, "Third  error", queue);
-	em_error(0x4444, APPL_ESCOPE_STR_Q_SEQ, "Fourth error", queue,
-		 error->seq);
+	em_error(TEST_ERROR_1, APPL_ESCOPE_OTHER);
+	em_error(TEST_ERROR_2, APPL_ESCOPE_STR, "Second error");
+	em_error(TEST_ERROR_3, APPL_ESCOPE_STR_Q, "Third  error", queue);
+	em_error(TEST_ERROR_4, APPL_ESCOPE_STR_Q_SEQ, "Fourth error",
+		 queue, errev->seq);
 
 	/* Example of an API call error - generates an EM API error */
 	em_free(EM_EVENT_UNDEF);
 
-	error->seq++;
+	errev->seq++;
+	/* store 'seq' before sending event */
+	seq = errev->seq;
 
 	delay_spin(DELAY_SPIN_COUNT);
 
@@ -554,19 +600,20 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		test_fatal_if(!appl_shm->exit_flag,
 			      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
 			      ret, dest);
+		return;
 	}
 
 	/* Request a fatal error to be generated every 8th event by 'EO C' */
-	if ((error->seq & 0x7) == 0x7) {
+	if ((seq & 0x7) == 0x7) {
 		/* Send a new event to EO 'C' to cause a fatal error */
 		event = em_alloc(sizeof(error_event_t), EM_EVENT_TYPE_SW,
 				 error_shm->pool);
 		test_fatal_if(event == EM_EVENT_UNDEF, "Alloc failed");
 
-		error = em_event_pointer(event);
-		error->dest = 0; /* Don't care, never resent */
-		error->seq = 0;
-		error->fatal = 1;
+		errev = em_event_pointer(event);
+		errev->dest = EM_QUEUE_UNDEF; /* Don't care, never resent */
+		errev->seq = 0;
+		errev->fatal = 1;
 
 		ret = em_send(event, error_shm->queue_c);
 		if (unlikely(ret != EM_OK)) {
@@ -574,6 +621,7 @@ error_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			test_fatal_if(!appl_shm->exit_flag,
 				      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "",
 				      ret, error_shm->queue_c);
+			return;
 		}
 	}
 }
@@ -590,10 +638,6 @@ error_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	eo_context_t *eo_ctx = eo_context;
 
 	(void)conf;
-
-	memset(eo_ctx, 0, sizeof(eo_context_t));
-
-	eo_ctx->eo = eo;
 
 	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 

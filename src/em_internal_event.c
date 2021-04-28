@@ -38,7 +38,7 @@
 #include "em_include.h"
 
 static void
-i_event__internal_done(internal_event_t *const i_ev);
+i_event__internal_done(const internal_event_t *i_ev);
 
 /**
  * Sends an internal control event to each core set in 'mask'.
@@ -60,10 +60,12 @@ send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 {
 	em_status_t err;
 	em_event_group_t event_group = EM_EVENT_GROUP_UNDEF;
-	internal_event_t *const i_event  = em_event_pointer(ctrl_event);
+	const internal_event_t *i_event  = em_event_pointer(ctrl_event);
 	const int core_count = em_core_count(); /* All running EM cores */
 	const int mask_count = em_core_mask_count(mask); /* Subset of cores*/
-	int alloc_count = 0, sent_count = 0, unsent_count = mask_count;
+	int alloc_count = 0;
+	int sent_count = 0;
+	int unsent_count = mask_count;
 	int first_qidx;
 	int i;
 	em_event_t events[mask_count];
@@ -161,7 +163,7 @@ void
 internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 		       em_queue_t queue, void *q_ctx)
 {
-	internal_event_t *i_event;
+	const internal_event_t *i_event;
 
 	/* currently unused args */
 	(void)eo_ctx;
@@ -207,7 +209,7 @@ internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 			       "Internal ev-id:0x%" PRIx64 " Q:%" PRI_QUEUE "",
 			       i_event->id, queue);
 		break;
-	};
+	}
 
 	em_free(event);
 }
@@ -216,7 +218,7 @@ internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
  * Handle the internal 'done' event
  */
 static void
-i_event__internal_done(internal_event_t *const i_ev)
+i_event__internal_done(const internal_event_t *i_ev)
 {
 	int num_notif;
 	em_status_t ret;
@@ -334,17 +336,17 @@ check_notif(const em_notif_t *const notif)
 	if (unlikely(notif == NULL || notif->event == EM_EVENT_UNDEF))
 		return EM_ERR_BAD_POINTER;
 
-	const int is_external = queue_external(notif->queue);
+	const bool is_external = queue_external(notif->queue);
 
 	if (!is_external) {
-		queue_elem_t *const q_elem = queue_elem_get(notif->queue);
+		const queue_elem_t *q_elem = queue_elem_get(notif->queue);
 
 		if (unlikely(q_elem == NULL || !queue_allocated(q_elem)))
 			return EM_ERR_NOT_FOUND;
 	}
 
 	if (notif->egroup != EM_EVENT_GROUP_UNDEF) {
-		event_group_elem_t *const egrp_elem =
+		const event_group_elem_t *egrp_elem =
 			event_group_elem_get(notif->egroup);
 
 		if (unlikely(egrp_elem == NULL ||

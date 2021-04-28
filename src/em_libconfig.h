@@ -47,7 +47,7 @@ extern "C" {
  * @param libconfig	Pointer to shared libconfig data
  * @return int		0 on success, -1 on error
  */
-int _em_libconfig_init_global(libconfig_t *libconfig);
+int em_libconfig_init_global(libconfig_t *libconfig);
 
 /**
  * Destroys the configs.
@@ -55,57 +55,57 @@ int _em_libconfig_init_global(libconfig_t *libconfig);
  * @param libconfig	Pointer to shared libconfig data
  * @return int		0
  */
-int _em_libconfig_term_global(libconfig_t *libconfig);
+int em_libconfig_term_global(libconfig_t *libconfig);
 
 /**
  * Reads integer from runtime config if given, otherwise default config.
  *
- * @param libconfig	Pointer to shared libconfig data
- * @param path		Path to value
- * @param value		Pointer where read value will be stored
- * @return int		1 on success, 0 otherwise
+ * @param      libconfig	Pointer to shared libconfig data
+ * @param      path		Path to value
+ * @param[out] value		Pointer where read value will be stored
+ * @return int			1 on success, 0 otherwise
  */
-int _em_libconfig_lookup_int(libconfig_t *libconfig, const char *path,
-			     int *value);
+int em_libconfig_lookup_int(const libconfig_t *libconfig, const char *path,
+			    int *value /*out*/);
 
 /**
  * Reads a boolean from runtime config if given, otherwise default config.
  *
- * @param libconfig	Pointer to shared libconfig data
- * @param path		Path to value
- * @param value		Pointer where read value will be stored
- * @return int		1 on success, 0 otherwise
+ * @param      libconfig	Pointer to shared libconfig data
+ * @param      path		Path to value
+ * @param[out] value		Pointer where read value will be stored
+ * @return int			1 on success, 0 otherwise
  */
-int _em_libconfig_lookup_bool(libconfig_t *libconfig,
-			      const char *path, bool *value);
+int em_libconfig_lookup_bool(const libconfig_t *libconfig,
+			     const char *path, bool *value /*out*/);
 
 /**
  * Reads an arrays of integers from runtime config if given, otherwise from
  * default config.
  *
- * @param libconfig	Pointer to shared libconfig data
- * @param path		Path to value
- * @param value		Pointer where read array will be stored
- * @param max_num	Max number of elements in the array
- * @return int		Number of read elements
+ * @param      libconfig	Pointer to shared libconfig data
+ * @param      path		Path to value
+ * @param[out] value		Pointer where read array will be stored
+ * @param      max_num		Max number of elements in the array
+ * @return int			Number of read elements
  */
-int _em_libconfig_lookup_array(libconfig_t *libconfig, const char *path,
-			       int value[], int max_num);
+int em_libconfig_lookup_array(const libconfig_t *libconfig, const char *path,
+			      int value[/*out*/], int max_num);
 
 /**
  * Reads integer from runtime config if given, otherwise default config. Path
  * to config variable is assumed to be base_path.local_path.name.
  *
- * @param libconfig	Pointer to shared libconfig data
- * @param base_path	Basepath to value
- * @param local_path	Localpath to value
- * @param name		Value name
- * @param value		Pointer where read value will be stored
- * @return int		1 on success, 0 otherwise
+ * @param      libconfig	Pointer to shared libconfig data
+ * @param      base_path	Basepath to value
+ * @param      local_path	Localpath to value
+ * @param      name		Value name
+ * @param[out] value		Pointer where read value will be stored
+ * @return int			1 on success, 0 otherwise
  */
-int _em_libconfig_lookup_ext_int(libconfig_t *libconfig, const char *base_path,
-				 const char *local_path, const char *name,
-				 int *value);
+int em_libconfig_lookup_ext_int(const libconfig_t *libconfig,
+				const char *base_path, const char *local_path,
+				const char *name, int *value /*out*/);
 
 #ifdef __cplusplus
 }

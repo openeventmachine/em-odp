@@ -63,6 +63,11 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 
 	/* Initialize the atomic group */
 	ag_elem = atomic_group_elem_get(atomic_group);
+	if (unlikely(!ag_elem)) {
+		error = EM_ERR_BAD_POINTER;
+		err_str = "Atomic group allocation failed: ag_elem NULL!";
+		goto error;
+	}
 
 	env_atomic32_init(&ag_elem->num_queues);
 
@@ -106,6 +111,42 @@ error:
 	return EM_ATOMIC_GROUP_UNDEF;
 }
 
+/*
+ * Helper for em_atomic_group_delete()
+ * Flush the atomic group's internal queues and then destroy them.
+ */
+static int
+ag_internal_queue_destroy(odp_queue_t plain_q)
+{
+	odp_event_t odp_deq_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	em_event_t ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	int ev_cnt = 0;
+	bool esv_ena = esv_enabled();
+
+	if (plain_q == ODP_QUEUE_INVALID)
+		return -1;
+
+	do {
+		ev_cnt = odp_queue_deq_multi(plain_q, odp_deq_tbl,
+					     EM_SCHED_AG_MULTI_MAX_BURST);
+		if (ev_cnt <= 0)
+			break;
+
+		events_odp2em(odp_deq_tbl, ev_tbl/*out*/, ev_cnt);
+
+		if (esv_ena) {
+			event_to_hdr_multi(ev_tbl, ev_hdr_tbl/*out*/, ev_cnt);
+			evstate_em2usr_multi(ev_tbl/*in/out*/, ev_hdr_tbl,
+					     ev_cnt, EVSTATE__AG_DELETE);
+		}
+
+		em_free_multi(ev_tbl, ev_cnt);
+	} while (ev_cnt > 0);
+
+	return odp_queue_destroy(plain_q);
+}
+
 em_status_t
 em_atomic_group_delete(em_atomic_group_t atomic_group)
 {
@@ -127,47 +168,13 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 	if (unlikely(err)) {
 		env_spinlock_unlock(&ag_elem->lock);
 		return INTERNAL_ERROR(EM_ERR_BAD_STATE,
-				EM_ESCOPE_ATOMIC_GROUP_DELETE,
-				"Atomic group in bad state - cannot delete!");
+				      EM_ESCOPE_ATOMIC_GROUP_DELETE,
+				      "Atomic group in bad state - cannot delete!");
 	}
 
-	/*
-	 * Flush the atomic group's internal queues and then destroy them
-	 */
-	odp_event_t deq_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-	em_event_t *ev_tbl;
-	odp_queue_t plain_q;
-	int ev_cnt = 0;
-
-	plain_q = ag_elem->internal_queue.hi_prio;
-	if (plain_q != ODP_QUEUE_INVALID) {
-		do {
-			ev_cnt =
-			odp_queue_deq_multi(plain_q, deq_tbl,
-					    EM_SCHED_AG_MULTI_MAX_BURST);
-			if (ev_cnt > 0) {
-				ev_tbl = events_odp2em(deq_tbl);
-				for (int i = 0; i < ev_cnt; i++)
-					em_free(ev_tbl[i]);
-			}
-		} while (ev_cnt > 0);
-		err = odp_queue_destroy(plain_q);
-	}
-
-	plain_q = ag_elem->internal_queue.lo_prio;
-	if (plain_q != ODP_QUEUE_INVALID) {
-		do {
-			ev_cnt =
-			odp_queue_deq_multi(plain_q, deq_tbl,
-					    EM_SCHED_AG_MULTI_MAX_BURST);
-			if (ev_cnt > 0) {
-				ev_tbl = events_odp2em(deq_tbl);
-				for (int i = 0; i < ev_cnt; i++)
-					em_free(ev_tbl[i]);
-			}
-		} while (ev_cnt > 0);
-		err |= odp_queue_destroy(plain_q);
-	}
+	/* Flush the atomic group's internal queues and destroy them */
+	err  = ag_internal_queue_destroy(ag_elem->internal_queue.hi_prio);
+	err |= ag_internal_queue_destroy(ag_elem->internal_queue.lo_prio);
 
 	ag_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
 	ag_elem->name[0] = '\0';
@@ -258,7 +265,7 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 em_atomic_group_t
 em_atomic_group_get(em_queue_t queue)
 {
-	queue_elem_t *const q_elem = queue_elem_get(queue);
+	const queue_elem_t *q_elem = queue_elem_get(queue);
 
 	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_ATOMIC_GROUP_GET,
@@ -273,7 +280,7 @@ size_t
 em_atomic_group_get_name(em_atomic_group_t atomic_group,
 			 char *name, size_t maxlen)
 {
-	atomic_group_elem_t *const ag_elem =
+	const atomic_group_elem_t *ag_elem =
 		atomic_group_elem_get(atomic_group);
 	size_t len = 0;
 
@@ -308,7 +315,7 @@ em_atomic_group_find(const char *name)
 {
 	if (name && *name) {
 		for (int i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
-			atomic_group_elem_t *ag_elem =
+			const atomic_group_elem_t *ag_elem =
 				&em_shm->atomic_group_tbl.ag_elem[i];
 
 			if (atomic_group_allocated(ag_elem) &&
@@ -323,9 +330,9 @@ em_atomic_group_find(const char *name)
 em_atomic_group_t
 em_atomic_group_get_first(unsigned int *num)
 {
-	atomic_group_elem_t *const agrp_elem_tbl =
+	const atomic_group_elem_t *const agrp_elem_tbl =
 		em_shm->atomic_group_tbl.ag_elem;
-	atomic_group_elem_t *ag_elem = &agrp_elem_tbl[0];
+	const atomic_group_elem_t *ag_elem = &agrp_elem_tbl[0];
 	const unsigned int agrp_count = atomic_group_count();
 
 	_agrp_tbl_iter_idx = 0; /* reset iteration */
@@ -357,9 +364,9 @@ em_atomic_group_get_next(void)
 
 	_agrp_tbl_iter_idx++;
 
-	atomic_group_elem_t *const agrp_elem_tbl =
+	const atomic_group_elem_t *const agrp_elem_tbl =
 		em_shm->atomic_group_tbl.ag_elem;
-	atomic_group_elem_t *ag_elem = &agrp_elem_tbl[_agrp_tbl_iter_idx];
+	const atomic_group_elem_t *ag_elem = &agrp_elem_tbl[_agrp_tbl_iter_idx];
 
 	/* find next */
 	while (!atomic_group_allocated(ag_elem)) {
@@ -376,7 +383,7 @@ em_queue_t
 em_atomic_group_queue_get_first(unsigned int *num,
 				em_atomic_group_t atomic_group)
 {
-	atomic_group_elem_t *const agrp_elem =
+	const atomic_group_elem_t *const agrp_elem =
 		atomic_group_elem_get(atomic_group);
 
 	if (unlikely(agrp_elem == NULL || !atomic_group_allocated(agrp_elem))) {
@@ -407,8 +414,8 @@ em_atomic_group_queue_get_first(unsigned int *num,
 	 * This is potentially a slow implementation and perhaps worth
 	 * re-thinking?
 	 */
-	queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
-	queue_elem_t *q_elem = &q_elem_tbl[0];
+	const queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
+	const queue_elem_t *q_elem = &q_elem_tbl[0];
 
 	_agrp_q_iter_idx = 0; /* reset list */
 	_agrp_q_iter_agrp = atomic_group;
@@ -433,8 +440,8 @@ em_atomic_group_queue_get_next(void)
 
 	_agrp_q_iter_idx++;
 
-	queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
-	queue_elem_t *q_elem = &q_elem_tbl[_agrp_q_iter_idx];
+	const queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
+	const queue_elem_t *q_elem = &q_elem_tbl[_agrp_q_iter_idx];
 
 	/* find next */
 	while (!queue_allocated(q_elem) ||

@@ -6,3 +6,4 @@ queues
 queues_local
 queues_unscheduled
 send_multi
+timer_test_periodic

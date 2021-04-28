@@ -404,10 +404,15 @@ test_start(appl_conf_t *const appl_conf)
 	int i;
 	uint8_t eo_idx = 0, q_idx = 0, agrp_idx = 0;
 
-	queue_a = EM_QUEUE_UNDEF, queue_b = EM_QUEUE_UNDEF;
-	queue_ag_a1 = EM_QUEUE_UNDEF, queue_ag_a2 = EM_QUEUE_UNDEF;
+	queue_a = EM_QUEUE_UNDEF;
+	queue_b = EM_QUEUE_UNDEF;
+
+	queue_ag_a1 = EM_QUEUE_UNDEF;
+	queue_ag_a2 = EM_QUEUE_UNDEF;
 	queue_ag_a3 = EM_QUEUE_UNDEF;
-	queue_ag_b1 = EM_QUEUE_UNDEF, queue_ag_b2 = EM_QUEUE_UNDEF;
+
+	queue_ag_b1 = EM_QUEUE_UNDEF;
+	queue_ag_b2 = EM_QUEUE_UNDEF;
 	queue_ag_b3 = EM_QUEUE_UNDEF;
 
 	/*

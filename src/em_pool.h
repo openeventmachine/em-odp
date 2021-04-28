@@ -53,16 +53,19 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	  const em_pool_cfg_t *default_pool_cfg);
 
 em_status_t
-pool_term(mpool_tbl_t *const pool_tbl);
+pool_term(const mpool_tbl_t *pool_tbl);
 
 em_pool_t
-pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg);
+pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg);
 
 em_status_t
 pool_delete(em_pool_t pool);
 
 em_pool_t
 pool_find(const char *name);
+
+void pool_info_print_hdr(unsigned int num_pools);
+void pool_info_print(em_pool_t pool);
 
 /** Convert pool handle to pool index */
 static inline int
@@ -100,7 +103,7 @@ pool_allocated(const mpool_elem_t *const mpool_elem)
 }
 
 static inline int
-pool_find_subpool(mpool_elem_t *const pool_elem, size_t size)
+pool_find_subpool(const mpool_elem_t *const pool_elem, size_t size)
 {
 	int subpool = 0;
 
@@ -123,28 +126,154 @@ pool_find_subpool(mpool_elem_t *const pool_elem, size_t size)
 unsigned int
 pool_count(void);
 
+/**
+ * Increment event-pool statistics counter for 'subpool'.
+ *
+ * Increment the alloc-count.
+ */
 static inline void
-pool_stat_increment(em_pool_t pool, int subpool, uint64_t cnt)
+poolstat_inc(em_pool_t pool, int subpool, uint64_t cnt)
 {
 	const int pool_idx = pool_hdl2idx(pool);
 	mpool_statistics_t *const pstat =
-		&em_shm->mpool_tbl.pool_stat_core[em_core_id()];
+		&em_shm->mpool_tbl.pool_stat_core[em_locm.core_id];
 
 	pstat->stat[pool_idx][subpool].alloc += cnt;
 }
 
+/**
+ * Decrement event-pool statistics counter for 'subpool'
+ *
+ * Instead of decrementing the alloc-count, a separate free-count is maintained
+ * and incremented for each 'dec' operation.
+ */
 static inline void
-pool_stat_decrement(em_pool_t pool, int subpool, uint64_t cnt)
+poolstat_dec(em_pool_t pool, int subpool, uint64_t cnt)
 {
 	const int pool_idx = pool_hdl2idx(pool);
 	mpool_statistics_t *const pstat =
-		&em_shm->mpool_tbl.pool_stat_core[em_core_id()];
+		&em_shm->mpool_tbl.pool_stat_core[em_locm.core_id];
 
 	pstat->stat[pool_idx][subpool].free += cnt;
 }
 
-void pool_info_print_hdr(unsigned int num_pools);
-void pool_info_print(em_pool_t pool);
+/**
+ * Decrement pool-stats for the subpool the event is allocated from.
+ */
+static inline void
+poolstat_dec_evhdr(const event_hdr_t *ev_hdr)
+{
+	em_pool_t pool = ev_hdr->pool;
+	int subpool;
+
+	if (pool != EM_POOL_UNDEF) {
+		subpool = ev_hdr->subpool;
+		if (likely(valid_pool(pool)))
+			poolstat_dec(pool, subpool, 1);
+	}
+}
+
+/**
+ * Decrement pool-stats for the subpool the events are allocated from.
+ */
+static inline void
+poolstat_dec_evhdr_multi(event_hdr_t *ev_hdrs[], const int num)
+{
+	/* Update pool statistcs */
+	int idx = 0; /* index into ev_hdrs[] */
+	int dec;
+	int i;
+
+	do {
+		for (; idx < num &&
+		     ev_hdrs[idx]->pool == EM_POOL_UNDEF; idx++)
+			; /* skip events from external pools */
+		if (idx >= num)
+			break;
+
+		em_pool_t pool = ev_hdrs[idx]->pool;
+		int subpool = ev_hdrs[idx]->subpool;
+
+		for (i = idx + 1; i < num &&
+		     ev_hdrs[i]->pool == pool &&
+		     ev_hdrs[i]->subpool == subpool; i++)
+			; /* count events from same pool */
+		dec = i - idx;
+		idx = i;
+		if (likely(valid_pool(pool)))
+			poolstat_dec(pool, subpool, dec);
+	} while (idx < num);
+}
+
+/**
+ * Decrement pool-stats, on output from EM, for the subpool the event is
+ * allocated from.
+ *
+ * Mark ev_hdr->pool = EM_POOL_UNDEF to avoid further pool-stat decrements
+ * should the event be sent back into EM from 'output'.
+ *
+ * Here 'output' means sending to en external queue (event chaining) or
+ * sending out-of-EM to a queue of type EM_QUEUE_TYPE_OUTPUT.
+ */
+static inline void
+poolstat_dec_evhdr_output(event_hdr_t *const ev_hdr)
+{
+	em_pool_t pool = ev_hdr->pool;
+	int subpool;
+
+	if (pool != EM_POOL_UNDEF) {
+		subpool = ev_hdr->subpool;
+		if (likely(valid_pool(pool)))
+			poolstat_dec(pool, subpool, 1);
+		/* No further pool-statistics for this event */
+		ev_hdr->pool = EM_POOL_UNDEF;
+	}
+}
+
+/**
+ * Decrement pool-stats, on output from EM, for the subpool the events are
+ * allocated from.
+ *
+ * Mark ev_hdr->pool = EM_POOL_UNDEF for each event to avoid further pool-stat
+ * decrements should any event(s) be sent back into EM from 'output'.
+ *
+ * Here 'output' means sending to an external queue (event chaining) or
+ * sending out-of-EM to a queue of type EM_QUEUE_TYPE_OUTPUT.
+ */
+static inline void
+poolstat_dec_evhdr_multi_output(event_hdr_t *const ev_hdrs[], const int num)
+{
+	/* Update pool statistcs */
+	int idx = 0; /* index into ev_hdrs[] */
+	int dec;
+	int i;
+
+	do {
+		for (; idx < num &&
+		     ev_hdrs[idx]->pool == EM_POOL_UNDEF; idx++)
+			; /* skip events from external pools */
+		if (idx >= num)
+			break;
+
+		em_pool_t pool = ev_hdrs[idx]->pool;
+		int subpool = ev_hdrs[idx]->subpool;
+
+		/*
+		 * Count events from same pool and
+		 * mark no further pool-statistics for output events (=UNDEF)
+		 */
+		ev_hdrs[idx]->pool = EM_POOL_UNDEF;
+		for (i = idx + 1; i < num &&
+		     ev_hdrs[i]->pool == pool &&
+		     ev_hdrs[i]->subpool == subpool; i++)
+			ev_hdrs[i]->pool = EM_POOL_UNDEF;
+
+		dec = i - idx;
+		idx = i;
+		if (likely(valid_pool(pool)))
+			poolstat_dec(pool, subpool, dec);
+	} while (idx < num);
+}
 
 #ifdef __cplusplus
 }

@@ -30,70 +30,90 @@
 
 #include "em_include.h"
 
-uint64_t
-em_dispatch(uint64_t rounds)
+/*
+ * em_dispatch() helper: dispatch and call the user provided callback functions
+ *                       'input_poll' and 'output_drain'
+ */
+static inline uint64_t
+dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
 {
-	uint64_t i;
-	uint64_t events = 0;
-	int rx_events = 0;
-	int dispatched_events;
-	int num;
-
+	const bool do_forever = rounds == 0 ? true : false;
 	const em_input_poll_func_t input_poll =
 		em_shm->conf.input.input_poll_fn;
 	const em_output_drain_func_t output_drain =
 		em_shm->conf.output.output_drain_fn;
+	int rx_events = 0;
+	int dispatched_events;
+	int round_events;
+	uint64_t events = 0;
+	uint64_t i;
+
+	for (i = 0; do_forever || i < rounds;) {
+		dispatched_events = 0;
+		if (do_input_poll)
+			rx_events = input_poll();
+
+		do {
+			round_events = dispatch_round();
+			dispatched_events += round_events;
+			i++; /* inc rounds */
+		} while (dispatched_events < rx_events &&
+			 round_events > 0 && (do_forever || i < rounds));
+
+		events += dispatched_events; /* inc ret value*/
+		if (do_output_drain)
+			(void)output_drain();
+	}
+
+	return events;
+}
+
+/*
+ * em_dispatch() helper: dispatch without calling any user provided callbacks
+ */
+static inline uint64_t
+dispatch_no_userfn(uint64_t rounds)
+{
+	const bool do_forever = rounds == 0 ? true : false;
+	uint64_t events = 0;
+	uint64_t i;
+
+	if (do_forever) {
+		for (;/*ever*/;)
+			dispatch_round();
+	} else {
+		for (i = 0; i < rounds; i++)
+			events += dispatch_round();
+	}
+
+	return events;
+}
+
+uint64_t
+em_dispatch(uint64_t rounds /* 0 = forever */)
+{
+	uint64_t events = 0;
+	int round_events;
+
+	const em_locm_t *const locm = &em_locm;
+	const bool do_input_poll = locm->do_input_poll;
+	const bool do_output_drain = locm->do_output_drain;
 
 	odp_schedule_resume();
 
-	if (likely(rounds > 0)) {
-		if (em_locm.do_input_poll || em_locm.do_output_drain) {
-			for (i = 0; i < rounds;) {
-				dispatched_events = 0;
-				if (em_locm.do_input_poll)
-					rx_events = input_poll();
-				do {
-					num = dispatch_round();
-					dispatched_events += num;
-					i++; /* inc rounds */
-				} while (dispatched_events < rx_events &&
-					 num > 0 && i < rounds);
-				events += dispatched_events; /* inc ret value*/
-				if (em_locm.do_output_drain)
-					(void)output_drain();
-			}
-		} else {
-			for (i = 0; i < rounds; i++)
-				events += dispatch_round();
-		}
+	if (do_input_poll || do_output_drain)
+		events = dispatch_with_userfn(rounds, do_input_poll,
+					      do_output_drain);
+	else
+		events = dispatch_no_userfn(rounds);
 
-		/* pause scheduling before exiting the dispatch loop */
-		odp_schedule_pause();
-		/* empty the locally pre-scheduled events (if any) */
-		do {
-			num = dispatch_round();
-			events += num;
-		} while (num > 0);
-	} else {
-		/* rounds == 0 (== FOREVER) */
-		if (em_locm.do_input_poll || em_locm.do_output_drain) {
-			for (;/*ever*/;) {
-				dispatched_events = 0;
-				if (em_locm.do_input_poll)
-					rx_events = input_poll();
-				do {
-					num = dispatch_round();
-					dispatched_events += num;
-				} while (dispatched_events < rx_events &&
-					 num > 0);
-				if (em_locm.do_output_drain)
-					(void)output_drain();
-			}
-		} else {
-			for (;/*ever*/;)
-				dispatch_round();
-		}
-	}
+	/* pause scheduling before exiting the dispatch loop */
+	odp_schedule_pause();
+	/* empty the locally pre-scheduled events (if any) */
+	do {
+		round_events = dispatch_round();
+		events += round_events;
+	} while (round_events > 0);
 
 	return events;
 }

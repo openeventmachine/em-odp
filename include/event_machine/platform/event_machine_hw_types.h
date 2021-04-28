@@ -57,7 +57,7 @@ extern "C" {
  */
 EM_HANDLE_T(em_pool_t);
 /** Undefined EM pool */
-#define EM_POOL_UNDEF ((em_pool_t)EM_HDL_UNDEF)
+#define EM_POOL_UNDEF  EM_STATIC_CAST(em_pool_t, EM_HDL_UNDEF)
 /** em_pool_t printf format */
 #define PRI_POOL  PRI_HDL
 
@@ -265,6 +265,14 @@ typedef enum em_status_e {
 	EM_ERR_TIMEOUT          = 14,
 	/** Not properly initialiazed (e.g. not using provided initializer) */
 	EM_ERR_NOT_INITIALIZED  = 15,
+	/** ESV (reserved): Invalid event state detected, e.g. double-free */
+	EM_ERR_EVENT_STATE      = 16,
+	/** Operation is too near current time or in past */
+	EM_ERR_TOONEAR		= 17,
+	/** Time target too far, e.g. timeout exceeds maximum supported value */
+	EM_ERR_TOOFAR		= 18,
+	/** Timeout was canceled, e.g. periodic timer */
+	EM_ERR_CANCELED		= 19,
 
 	/** Other error. This is the last error code (for bounds checking) */
 	EM_ERR
@@ -558,6 +566,10 @@ typedef struct {
 #define EM_ESCOPE_EVENT_INTERNAL_DONE        (EM_ESCOPE_INTERNAL_MASK | 0x080C)
 #define EM_ESCOPE_EVENT_INTERNAL_LFUNC_CALL  (EM_ESCOPE_INTERNAL_MASK | 0x080D)
 #define EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ  (EM_ESCOPE_INTERNAL_MASK | 0x080E)
+#define EM_ESCOPE_EVENT_TO_HDR               (EM_ESCOPE_INTERNAL_MASK | 0x080F)
+#define EM_ESCOPE_EVENT_TO_HDR_MULTI         (EM_ESCOPE_INTERNAL_MASK | 0x0810)
+#define EM_ESCOPE_EVENT_INIT_ODP             (EM_ESCOPE_INTERNAL_MASK | 0x0811)
+#define EM_ESCOPE_EVENT_INIT_ODP_MULTI       (EM_ESCOPE_INTERNAL_MASK | 0x0812)
 
 /**
  * @def EM_ESCOPE_ODP_EXT

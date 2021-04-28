@@ -43,7 +43,7 @@
  * em_atomic_processing_end() with a low number of queues and long per-event
  * processing times will limit the throughput and the cycles/event result.
  * For comparison, both results with em_atomic_processing_end()-calling enabled
- * and and disabled is shown.
+ * and disabled is shown.
  * Note: Calling em_atomic_processing_end() will normally give worse
  * performance except in cases when atomic event processing becomes a
  * bottleneck by blocking other cores from doing their work (as this test

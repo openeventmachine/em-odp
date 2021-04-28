@@ -33,13 +33,15 @@
 void
 em_atomic_processing_end(void)
 {
-	if (em_locm.current.sched_context_type != EM_SCHED_CONTEXT_TYPE_ATOMIC)
+	em_locm_t *const locm = &em_locm;
+
+	if (locm->current.sched_context_type != EM_SCHED_CONTEXT_TYPE_ATOMIC)
 		return;
 
-	if (em_locm.event_burst_cnt != 0)
+	if (locm->event_burst_cnt != 0)
 		return;
 
-	queue_elem_t *const q_elem = em_locm.current.sched_q_elem;
+	const queue_elem_t *q_elem = locm->current.sched_q_elem;
 
 	/*
 	 * Do nothing for non-atomic queues or if the func has already
@@ -58,16 +60,18 @@ em_atomic_processing_end(void)
 	 * Mark that em_atomic_processing_end() has been called
 	 * for the current queue.
 	 */
-	em_locm.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
+	locm->current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
 }
 
 void
 em_ordered_processing_end(void)
 {
-	if (em_locm.event_burst_cnt != 0)
+	em_locm_t *const locm = &em_locm;
+
+	if (locm->event_burst_cnt != 0)
 		return;
 
-	queue_elem_t *const q_elem = em_locm.current.q_elem;
+	const queue_elem_t *q_elem = locm->current.q_elem;
 	em_queue_type_t qtype;
 
 	if (unlikely(q_elem == NULL))
@@ -83,7 +87,7 @@ em_ordered_processing_end(void)
 	 * point of view the context needs to be ended since the ODP result is
 	 * unknown.
 	 */
-	em_locm.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
+	locm->current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
 }
 
 void
@@ -95,14 +99,16 @@ em_preschedule(void)
 em_sched_context_type_t
 em_sched_context_type_current(em_queue_t *queue)
 {
-	if (em_locm.current.sched_q_elem == NULL) {
+	const em_locm_t *const locm = &em_locm;
+
+	if (locm->current.sched_q_elem == NULL) {
 		if (queue != NULL)
 			*queue = EM_QUEUE_UNDEF;
 		return EM_SCHED_CONTEXT_TYPE_NONE;
 	}
 
 	if (queue != NULL)
-		*queue = em_locm.current.sched_q_elem->queue;
+		*queue = locm->current.sched_q_elem->queue;
 
-	return em_locm.current.sched_context_type;
+	return locm->current.sched_context_type;
 }

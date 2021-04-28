@@ -94,10 +94,7 @@ typedef struct {
 	/** Error handler structure */
 	error_handler_t error_handler ENV_CACHE_LINE_ALIGNED;
 
-	/**
-	 * Dispatcher enter callback functions currently in use,
-	 * called for EO's using a single-event receive function.
-	 */
+	/** Dispatcher enter callback functions currently in use */
 	hook_tbl_t *dispatch_enter_cb_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Dispatcher exit callback functions currently in use */
 	hook_tbl_t *dispatch_exit_cb_tbl;
@@ -186,9 +183,9 @@ typedef struct {
 	uint64_t error_count;
 
 	/** Is input_poll_fn executed on this core */
-	int do_input_poll;
+	bool do_input_poll;
 	/** Is output_drain_fn executed on this core */
-	int do_output_drain;
+	bool do_output_drain;
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
@@ -197,8 +194,8 @@ typedef struct {
 COMPILE_TIME_ASSERT((sizeof(em_locm_t) % ENV_CACHE_LINE_SIZE) == 0,
 		    EM_LOCM_SIZE_ERROR);
 
-/** EM shared memory pointer (set per core) */
-extern ENV_LOCAL em_shm_t *em_shm;
+/** EM shared memory pointer */
+extern em_shm_t *em_shm;
 /** EM core local memory */
 extern ENV_LOCAL em_locm_t em_locm;
 

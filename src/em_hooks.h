@@ -67,7 +67,7 @@ call_api_hooks_alloc(const em_event_t events[], const int num_act,
 		     const int num_req, size_t size, em_event_type_t type,
 		     em_pool_t pool)
 {
-	hook_tbl_t *const alloc_hook_tbl = em_shm->alloc_hook_tbl;
+	const hook_tbl_t *alloc_hook_tbl = em_shm->alloc_hook_tbl;
 	em_api_hook_alloc_t alloc_hook_fn;
 
 	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
@@ -81,7 +81,7 @@ call_api_hooks_alloc(const em_event_t events[], const int num_act,
 static inline void
 call_api_hooks_free(const em_event_t events[], const int num)
 {
-	hook_tbl_t *const free_hook_tbl = em_shm->free_hook_tbl;
+	const hook_tbl_t *free_hook_tbl = em_shm->free_hook_tbl;
 	em_api_hook_free_t free_hook_fn;
 
 	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
@@ -96,7 +96,7 @@ static inline void
 call_api_hooks_send(const em_event_t events[], const int num,
 		    em_queue_t queue, em_event_group_t event_group)
 {
-	hook_tbl_t *const send_hook_tbl = em_shm->send_hook_tbl;
+	const hook_tbl_t *send_hook_tbl = em_shm->send_hook_tbl;
 	em_api_hook_send_t send_hook_fn;
 	int i;
 

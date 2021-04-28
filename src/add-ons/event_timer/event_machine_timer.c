@@ -56,21 +56,71 @@
 #define TMR_I2H(x) ((em_timer_t)(uintptr_t)((x) + 1))
 #define TMR_H2I(x) ((int)((uintptr_t)(x) - 1))
 
-static int is_timer_valid(em_timer_t tmr)
+static inline int is_timer_valid(em_timer_t tmr)
 {
 	unsigned int i;
-	timer_storage_t *const tmrs = &em_shm->timers;
+	const timer_storage_t *const tmrs = &em_shm->timers;
 
-	if (tmr == EM_TIMER_UNDEF)
+	if (unlikely(tmr == EM_TIMER_UNDEF))
 		return 0;
+
 	i = (unsigned int)TMR_H2I(tmr);
-	if (i >= EM_ODP_MAX_TIMERS)
+	if (unlikely(i >= EM_ODP_MAX_TIMERS))
 		return 0;
 
-	if (tmrs->timer[i].odp_tmr_pool == ODP_TIMER_POOL_INVALID ||
-	    tmrs->timer[i].tmo_pool == ODP_POOL_INVALID)
+	if (unlikely(tmrs->timer[i].odp_tmr_pool == ODP_TIMER_POOL_INVALID ||
+		     tmrs->timer[i].tmo_pool == ODP_POOL_INVALID))
 		return 0;
 	return 1;
+}
+
+static inline em_status_t handle_ack_noskip(em_event_t next_tmo_ev,
+					    event_hdr_t *ev_hdr,
+					    em_queue_t queue)
+{
+	if (esv_enabled())
+		evstate_usr2em_revert(next_tmo_ev, ev_hdr, EVSTATE__TMO_ACK__NOSKIP);
+
+	em_status_t err = em_send(next_tmo_ev, queue);
+
+	if (unlikely(err != EM_OK))
+		err = INTERNAL_ERROR(err, EM_ESCOPE_TMO_ACK, "Tmo ACK: noskip em_send fail");
+	return err; /* EM_OK or send-failure */
+}
+
+static inline void handle_ack_skip(em_tmo_t tmo)
+{
+	uint64_t odpt = odp_timer_current_tick(tmo->odp_timer_pool);
+	uint64_t skips;
+
+	if (odpt > tmo->last_tick) /* late, over next period */
+		skips = ((odpt - tmo->last_tick) / tmo->period) + 1;
+	else
+		skips = 1; /* not yet over next period, but late for setting */
+
+	tmo->last_tick += skips * tmo->period;
+	TMR_DBG_PRINT("%s(): %lu skips * %lu ticks => new tgt %lu (tries %d)\n",
+		      __func__, skips, tmo->period, tmo->last_tick, tries);
+	if (EM_TIMER_TMO_STATS)
+		tmo->stats.num_period_skips += skips;
+}
+
+static inline bool check_tmo_flags(em_tmo_flag_t flags)
+{
+	/* Check for valid tmo flags (oneshot OR periodic mainly) */
+	if (unlikely(!(flags & (EM_TMO_FLAG_ONESHOT | EM_TMO_FLAG_PERIODIC))))
+		return false;
+
+	if (unlikely((flags & EM_TMO_FLAG_ONESHOT) && (flags & EM_TMO_FLAG_PERIODIC)))
+		return false;
+
+	if (EM_CHECK_LEVEL > 1) {
+		em_tmo_flag_t inv_flags = ~(EM_TMO_FLAG_ONESHOT | EM_TMO_FLAG_PERIODIC |
+					  EM_TMO_FLAG_NOSKIP);
+		if (unlikely(flags & inv_flags))
+			return false;
+	}
+	return true;
 }
 
 void em_timer_attr_init(em_timer_attr_t *tmr_attr)
@@ -130,11 +180,9 @@ void em_timer_attr_init(em_timer_attr_t *tmr_attr)
 
 em_status_t em_timer_capability(em_timer_capability_t *capa, em_timer_clksrc_t clk_src)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(capa == NULL)) {
-			EM_LOG(EM_LOG_DBG, "%s: NULL capa ptr!\n", __func__);
-			return EM_ERR_BAD_POINTER;
-		}
+	if (EM_CHECK_LEVEL > 0 && unlikely(capa == NULL)) {
+		EM_LOG(EM_LOG_DBG, "%s: NULL capa ptr!\n", __func__);
+		return EM_ERR_BAD_POINTER;
 	}
 
 	odp_timer_clk_src_t odp_clksrc;
@@ -155,20 +203,18 @@ em_status_t em_timer_capability(em_timer_capability_t *capa, em_timer_clksrc_t c
 	capa->max_res.min_tmo = odp_capa.max_res.min_tmo;
 	capa->max_res.max_tmo = odp_capa.max_res.max_tmo;
 	capa->max_tmo.clk_src = clk_src;
-	capa->max_tmo.res_ns = odp_capa.max_res.res_ns;
-	capa->max_tmo.res_hz = odp_capa.max_res.res_hz;
-	capa->max_tmo.min_tmo = odp_capa.max_res.min_tmo;
-	capa->max_tmo.max_tmo = odp_capa.max_res.max_tmo;
+	capa->max_tmo.res_ns = odp_capa.max_tmo.res_ns;
+	capa->max_tmo.res_hz = odp_capa.max_tmo.res_hz;
+	capa->max_tmo.min_tmo = odp_capa.max_tmo.min_tmo;
+	capa->max_tmo.max_tmo = odp_capa.max_tmo.max_tmo;
 	return EM_OK;
 }
 
 em_status_t em_timer_res_capability(em_timer_res_param_t *res, em_timer_clksrc_t clk_src)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(res == NULL)) {
-			EM_LOG(EM_LOG_DBG, "%s: NULL ptr res\n", __func__);
-			return EM_ERR_BAD_POINTER;
-		}
+	if (EM_CHECK_LEVEL > 0 && unlikely(res == NULL)) {
+		EM_LOG(EM_LOG_DBG, "%s: NULL ptr res\n", __func__);
+		return EM_ERR_BAD_POINTER;
 	}
 
 	odp_timer_clk_src_t odp_clksrc;
@@ -356,13 +402,12 @@ em_status_t em_timer_delete(em_timer_t tmr)
 
 em_timer_tick_t em_timer_current_tick(em_timer_t tmr)
 {
-	timer_storage_t *const tmrs = &em_shm->timers;
+	const timer_storage_t *const tmrs = &em_shm->timers;
 	int i = TMR_H2I(tmr);
 
-	if (EM_CHECK_LEVEL > 0) {
-		if (!is_timer_valid(tmr))
-			return 0;
-	}
+	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr))
+		return 0;
+
 	return odp_timer_current_tick(tmrs->timer[i].odp_tmr_pool);
 }
 
@@ -370,51 +415,26 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 {
 	int i = TMR_H2I(tmr);
 	odp_timer_pool_t odptmr;
-	queue_elem_t *const q_elem = queue_elem_get(queue);
+	const queue_elem_t *const q_elem = queue_elem_get(queue);
 	odp_buffer_t tmo_buf;
 
 	if (EM_CHECK_LEVEL > 0) {
-		if (!is_timer_valid(tmr)) {
+		if (unlikely(!is_timer_valid(tmr))) {
 			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_CREATE,
 				       "Invalid timer:%" PRI_TMR "", tmr);
 			return EM_TMO_UNDEF;
 		}
-		if (q_elem == NULL || !queue_allocated(q_elem)) {
+		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
 			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_CREATE,
 				       "Tmr:%" PRI_TMR ": inv.Q:%" PRI_QUEUE "",
 				       tmr, queue);
 			return EM_TMO_UNDEF;
 		}
-		/* Check for valid flags */
-		if (!flags) {
+		if (unlikely(!check_tmo_flags(flags))) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CREATE,
-				       "Tmr:%" PRI_TMR ": no tmo-flags given",
+				       "Tmr:%" PRI_TMR ": inv. tmo-flags:0x%x",
 				       tmr, flags);
 			return EM_TMO_UNDEF;
-		}
-		if (EM_CHECK_LEVEL > 1) {
-			em_tmo_flag_t inv_flags = /* set all invalid flags: */
-				~(EM_TMO_FLAG_ONESHOT | EM_TMO_FLAG_PERIODIC |
-				EM_TMO_FLAG_NOSKIP | EM_TMO_FLAG_DEFAULT);
-			if (flags & EM_TMO_FLAG_ONESHOT) /*one: no periodic or noskip*/
-				inv_flags |= EM_TMO_FLAG_PERIODIC | EM_TMO_FLAG_NOSKIP;
-			else if (flags & EM_TMO_FLAG_PERIODIC) /*periodic: no oneshot */
-				inv_flags |= EM_TMO_FLAG_ONESHOT;
-			else if (flags & EM_TMO_FLAG_NOSKIP) /* noskip: no oneshot */
-				inv_flags |= EM_TMO_FLAG_ONESHOT;
-
-			if (flags & inv_flags) {
-				INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CREATE,
-					       "Tmr:%" PRI_TMR ": inv. tmo-flags:0x%x",
-					       tmr, flags);
-				return EM_TMO_UNDEF;
-			}
-			if (flags & EM_TMO_FLAG_NOSKIP && !(flags & EM_TMO_FLAG_PERIODIC)) {
-				INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CREATE,
-					       "Tmr:%" PRI_TMR ": inv. tmo-noskip use\n"
-					       "tmo-flags:0x%x", tmr, flags);
-				return EM_TMO_UNDEF;
-			}
 		}
 	}
 
@@ -437,7 +457,6 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 	}
 
 	/* OK, init state */
-	odp_atomic_init_u32(&tmo->state, EM_TMO_STATE_IDLE);
 	tmo->period = 0;
 	tmo->odp_timer_pool = odptmr;
 	tmo->odp_buffer = tmo_buf;
@@ -445,8 +464,8 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 	tmo->queue = queue;
 	if (EM_TIMER_TMO_STATS)
 		memset(&tmo->stats, 0, sizeof(em_tmo_stats_t));
-	TMR_DBG_PRINT("%s: ODP tmo %ld allocated\n", __func__,
-		      (unsigned long)tmo->odp_timer);
+	odp_atomic_init_u32(&tmo->state, EM_TMO_STATE_IDLE);
+	TMR_DBG_PRINT("%s: ODP tmo %ld allocated\n", __func__, (unsigned long)tmo->odp_timer);
 	return tmo;
 }
 
@@ -456,9 +475,8 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF, EM_ERR_BAD_ID,
 				EM_ESCOPE_TMO_DELETE, "Invalid tmo");
 		RETURN_ERROR_IF(cur_event == NULL, EM_ERR_BAD_POINTER,
-				EM_ESCOPE_TMO_DELETE, "NULL pointer");
+				EM_ESCOPE_TMO_DELETE, "NULL pointer given");
 	}
-
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
@@ -470,23 +488,26 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 				"Invalid tmo buffer");
 	}
 
-	TMR_DBG_PRINT("%s: ODP tmo %ld\n", __func__,
-		      (unsigned long)tmo->odp_timer);
+	TMR_DBG_PRINT("%s: ODP tmo %ld\n", __func__, (unsigned long)tmo->odp_timer);
+
+	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_UNKNOWN);
 
 	odp_event_t odp_evt = odp_timer_free(tmo->odp_timer);
+	em_event_t tmo_ev = EM_EVENT_UNDEF;
 
 	if (odp_evt != ODP_EVENT_INVALID)
-		*cur_event = event_odp2em(odp_evt);
-	else
-		*cur_event = EM_EVENT_UNDEF;
+		tmo_ev = event_odp2em(odp_evt);
 
 	odp_buffer_t tmp = tmo->odp_buffer;
 
 	tmo->odp_timer = ODP_TIMER_INVALID;
-	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_UNKNOWN);
 	tmo->odp_buffer = ODP_BUFFER_INVALID;
 	odp_buffer_free(tmp);
 
+	if (esv_enabled() && tmo_ev != EM_EVENT_UNDEF)
+		tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev), EVSTATE__TMO_DELETE);
+
+	*cur_event = tmo_ev;
 	return EM_OK;
 }
 
@@ -502,7 +523,6 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 				EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_SET_ABS,
 				"Cannot set periodic tmo, use _set_periodic()");
 	}
-
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
@@ -514,13 +534,27 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 				"Invalid tmo buffer");
 	}
 
+	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
+	bool esv_ena = esv_enabled();
+
+	if (esv_ena) {
+		ev_hdr = event_to_hdr(tmo_ev);
+		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_ABS);
+	}
+
 	/* set tmo active and arm with absolute time */
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_ACTIVE);
 	int ret = odp_timer_set_abs(tmo->odp_timer, ticks_abs, &odp_ev);
 
 	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
+		if (esv_ena)
+			evstate_usr2em_revert(tmo_ev, ev_hdr, EVSTATE__TMO_SET_ABS__FAIL);
+		if (ret == ODP_TIMER_TOOLATE)
+			return EM_ERR_TOOFAR;
+		else if (ret == ODP_TIMER_TOOEARLY)
+			return EM_ERR_TOONEAR;
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_ABS,
 				      "odp_timer_set_abs():%d", ret);
 	}
@@ -537,7 +571,6 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 				"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
 				tmo, tmo_ev);
 	}
-
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
@@ -549,7 +582,15 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 				"Invalid tmo buffer");
 	}
 
+	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
+	bool esv_ena = esv_enabled();
+
+	if (esv_ena) {
+		ev_hdr = event_to_hdr(tmo_ev);
+		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_REL);
+	}
+
 	/* set tmo active and arm with relative time */
 	tmo->period = ticks_rel;
 	if (unlikely(tmo->flags & EM_TMO_FLAG_PERIODIC)) {
@@ -562,6 +603,8 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 
 	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
+		if (esv_ena)
+			evstate_usr2em_revert(tmo_ev, ev_hdr, EVSTATE__TMO_SET_REL__FAIL);
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_REL,
 				      "odp_timer_set_rel():%d", ret);
 	}
@@ -594,7 +637,14 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 				"Invalid tmo buffer");
 	}
 
+	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
+	bool esv_ena = esv_enabled();
+
+	if (esv_ena) {
+		ev_hdr = event_to_hdr(tmo_ev);
+		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_PERIODIC);
+	}
 
 	TMR_DBG_PRINT("%s(): start %lu, period %lu\n", __func__, start_abs, period);
 
@@ -611,14 +661,19 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 
 	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
+		if (esv_ena)
+			evstate_usr2em_revert(tmo_ev, ev_hdr, EVSTATE__TMO_SET_PERIODIC__FAIL);
 		TMR_DBG_PRINT("%s: diff to tmo %ld\n", __func__,
 			      (int64_t)tmo->last_tick -
 			      (int64_t)odp_timer_current_tick(tmo->odp_timer_pool));
+		if (ret == ODP_TIMER_TOOLATE)
+			return EM_ERR_TOOFAR;
+		else if (ret == ODP_TIMER_TOOEARLY)
+			return EM_ERR_TOONEAR;
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 				      EM_ESCOPE_TMO_SET_PERIODIC,
 				      "odp_timer_set_abs():%d", ret);
 	}
-
 	return EM_OK;
 }
 
@@ -630,7 +685,6 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 		RETURN_ERROR_IF(cur_event == NULL, EM_ERR_BAD_POINTER,
 				EM_ESCOPE_TMO_CANCEL, "NULL pointer");
 	}
-
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
@@ -646,16 +700,28 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 
 	/* cancel and set tmo idle */
 	odp_event_t odp_ev = ODP_EVENT_INVALID;
+
+	/* this will stop periodic latest at next ack */
+	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
 	int ret = odp_timer_cancel(tmo->odp_timer, &odp_ev);
 
-	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
-	if (ret == 0) {
-		*cur_event = event_odp2em(odp_ev);
-		return EM_OK;
+	if (ret != 0) {
+		*cur_event = EM_EVENT_UNDEF;
+		if (EM_CHECK_LEVEL > 1) {
+			RETURN_ERROR_IF(odp_ev != ODP_EVENT_INVALID,
+					EM_ERR_BAD_STATE, EM_ESCOPE_TMO_CANCEL,
+					"Bug? ODP timer cancel fail but return event!");
+		}
+		return EM_ERR_BAD_STATE; /* too late to cancel or already canceled */
 	}
 
-	*cur_event = EM_EVENT_UNDEF;
-	return EM_ERR_BAD_STATE; /* too late to cancel */
+	em_event_t tmo_ev = event_odp2em(odp_ev);
+
+	if (esv_enabled())
+		tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev), EVSTATE__TMO_CANCEL);
+
+	*cur_event = tmo_ev;
+	return EM_OK;
 }
 
 em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
@@ -671,11 +737,17 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 				"Tmo ACK: Not a periodic tmo");
 	}
 
+	if (EM_TIMER_TMO_STATS)
+		tmo->stats.num_acks++;
+
 	em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 	/*
 	 * If tmo cancelled:
 	 * Return an error so the application can free the given event.
 	 */
+	if (tmo_state == EM_TMO_STATE_IDLE) /* canceled, no errorhandler */
+		return EM_ERR_CANCELED;
+
 	RETURN_ERROR_IF(tmo_state != EM_TMO_STATE_ACTIVE,
 			EM_ERR_BAD_STATE, EM_ESCOPE_TMO_ACK,
 			"Tmo ACK: invalid tmo state:%d", tmo_state);
@@ -686,8 +758,14 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 				"Tmo ACK: invalid tmo buffer");
 	}
 
-	if (EM_TIMER_TMO_STATS)
-		tmo->stats.num_acks++;
+	event_hdr_t *ev_hdr = NULL;
+	odp_event_t odp_ev = event_em2odp(next_tmo_ev);
+	bool esv_ena = esv_enabled();
+
+	if (esv_ena) {
+		ev_hdr = event_to_hdr(next_tmo_ev);
+		evstate_usr2em(next_tmo_ev, ev_hdr, EVSTATE__TMO_ACK);
+	}
 
 	/*
 	 * The periodic timer will silently stop if ack fails! Attempt to
@@ -695,10 +773,11 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 	 * the errorhandler so the application may recover.
 	 */
 	tmo->last_tick += tmo->period; /* maintain absolute time */
-	odp_event_t odp_ev = event_em2odp(next_tmo_ev);
 	int ret;
 	int tries = EM_TIMER_ACK_TRIES;
+	em_status_t err;
 
+	/* try to set tmo EM_TIMER_ACK_TRIES times */
 	do {
 		/* ask new timeout for next period */
 		ret = odp_timer_set_abs(tmo->odp_timer, tmo->last_tick, &odp_ev);
@@ -708,8 +787,12 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 		 * should not happen, fatal for this tmo
 		 */
 		if (likely(ret != ODP_TIMER_TOOEARLY)) {
-			if (ret != ODP_TIMER_SUCCESS)
+			if (ret != ODP_TIMER_SUCCESS) {
 				TMR_DBG_PRINT("%s(): ODP return %d\n", __func__, ret);
+				TMR_DBG_PRINT("%s(): tmo tgt/ tick now %lu/%lu\n", __func__,
+					      tmo->last_tick,
+					      odp_timer_current_tick(tmo->odp_timer_pool));
+			}
 			break;
 		}
 
@@ -720,46 +803,40 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 			      tmo->last_tick,
 			      odp_timer_current_tick(tmo->odp_timer_pool));
 
-		if (tmo->flags & EM_TMO_FLAG_NOSKIP) {
-			/* not allowed to skip, send next immediately */
-			em_status_t ret = em_send(next_tmo_ev, tmo->queue);
-
-			RETURN_ERROR_IF(ret != EM_OK, EM_ERR_OPERATION_FAILED,
-					EM_ESCOPE_TMO_ACK, "Tmo ACK:send fail");
-			return EM_OK;
-		}
+		if (tmo->flags & EM_TMO_FLAG_NOSKIP) /* not allowed to skip, next immediately */
+			return handle_ack_noskip(next_tmo_ev, ev_hdr, tmo->queue);
 
 		/* skip already passed periods */
-		uint64_t odpt = odp_timer_current_tick(tmo->odp_timer_pool);
-		uint64_t skips;
+		handle_ack_skip(tmo);
 
-		if (odpt > tmo->last_tick) /* late, over next period */
-			skips = ((odpt - tmo->last_tick) / tmo->period) + 1;
-		else
-			skips = 1; /* not yet over next period, but late for setting */
-
-		tmo->last_tick += skips * tmo->period;
-		TMR_DBG_PRINT("%s(): %lu skips * %lu ticks => new tgt %lu (tries %d)\n",
-			      __func__, skips, tmo->period, tmo->last_tick, tries);
-		if (EM_TIMER_TMO_STATS)
-			tmo->stats.num_period_skips += skips;
 		tries--;
-		RETURN_ERROR_IF(tries == 0, EM_ERR_OPERATION_FAILED,
-				EM_ESCOPE_TMO_ACK, "Tmo ACK: too many retries");
-
+		if (unlikely(tries < 1)) {
+			err = INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
+					     EM_ESCOPE_TMO_ACK,
+					     "Tmo ACK: too many retries:%u",
+					     EM_TIMER_ACK_TRIES);
+			goto ack_err;
+		}
 	} while (ret != ODP_TIMER_SUCCESS);
 
-	RETURN_ERROR_IF(ret != ODP_TIMER_SUCCESS, EM_ERR_LIB_FAILED,
-			EM_ESCOPE_TMO_ACK, "Tmo ACK: failed to renew");
+	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
+		err = INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_ACK,
+				     "Tmo ACK: failed to renew tmo (odp ret %d)",
+				     ret);
+		goto ack_err;
+	}
 	return EM_OK;
+
+ack_err:
+	if (esv_ena)
+		evstate_usr2em_revert(next_tmo_ev, ev_hdr, EVSTATE__TMO_ACK__FAIL);
+	return err;
 }
 
 int em_timer_get_all(em_timer_t *tmr_list, int max)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		if (tmr_list == NULL || max < 1)
-			return 0;
-	}
+	if (EM_CHECK_LEVEL > 0 && unlikely(tmr_list == NULL || max < 1))
+		return 0;
 
 	int num = 0;
 
@@ -810,37 +887,53 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)
 
 uint64_t em_timer_get_freq(em_timer_t tmr)
 {
-	timer_storage_t *const tmrs = &em_shm->timers;
+	const timer_storage_t *const tmrs = &em_shm->timers;
 
-	if (EM_CHECK_LEVEL > 0) {
-		if (!is_timer_valid(tmr)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_GET_FREQ,
-				       "Invalid timer:%" PRI_TMR "", tmr);
-			return 0;
-		}
+	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_GET_FREQ,
+			       "Invalid timer:%" PRI_TMR "", tmr);
+		return 0;
 	}
 
 	return odp_timer_ns_to_tick(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool,
-				    1000ULL * 1000ULL * 1000ULL);
+				    1000ULL * 1000ULL * 1000ULL); /* 1 sec */
+}
+
+uint64_t em_timer_tick_to_ns(em_timer_t tmr, em_timer_tick_t ticks)
+{
+	const timer_storage_t *const tmrs = &em_shm->timers;
+
+	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_TICK_TO_NS,
+			       "Invalid timer:%" PRI_TMR "", tmr);
+		return 0;
+	}
+	return odp_timer_tick_to_ns(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool, (uint64_t)ticks);
+}
+
+em_timer_tick_t em_timer_ns_to_tick(em_timer_t tmr, uint64_t ns)
+{
+	const timer_storage_t *const tmrs = &em_shm->timers;
+
+	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_NS_TO_TICK,
+			       "Invalid timer:%" PRI_TMR "", tmr);
+		return 0;
+	}
+	return (em_timer_tick_t)odp_timer_ns_to_tick(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool, ns);
 }
 
 em_tmo_state_t em_tmo_get_state(em_tmo_t tmo)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(tmo == EM_TMO_UNDEF)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATE, "Invalid tmo");
-			return EM_TMO_STATE_UNKNOWN;
-		}
+	if (EM_CHECK_LEVEL > 0 && unlikely(tmo == EM_TMO_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATE, "Invalid tmo");
+		return EM_TMO_STATE_UNKNOWN;
 	}
-
-	if (EM_CHECK_LEVEL > 1) {
-		if (!odp_buffer_is_valid(tmo->odp_buffer)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATE,
-				       "Invalid tmo buffer");
-			return EM_TMO_STATE_UNKNOWN;
-		}
+	if (EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATE, "Invalid tmo buffer");
+		return EM_TMO_STATE_UNKNOWN;
 	}
-	return odp_atomic_load_u32(&tmo->state);
+	return odp_atomic_load_acq_u32(&tmo->state);
 }
 
 em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat)

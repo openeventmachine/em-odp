@@ -279,8 +279,8 @@ em_term(const em_conf_t *conf);
 /**
  * Terminate an EM-core.
  *
- * Called by each EM-core (= process, thread or bare metal core) before
- * the one call call to em_term();
+ * Called by each EM-core (= process, thread or bare metal core)
+ * before one call to em_term().
  *
  * @return EM_OK if successful.
  *

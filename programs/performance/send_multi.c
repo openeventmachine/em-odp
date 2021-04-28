@@ -348,15 +348,23 @@ int main(int argc, char *argv[])
 static em_status_t
 error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 {
-	if (unlikely(escope == EM_ESCOPE_QUEUE_CREATE)) {
+	if (escope == EM_ESCOPE_QUEUE_CREATE && !EM_ERROR_IS_FATAL(error)) {
 		APPL_PRINT("\nUnable to create more queues\n\n"
 			   "Test finished\n");
 		raise(SIGINT);
-	} else {
-		error = test_error_handler(eo, error, escope, args);
+		return error;
 	}
 
-	return error;
+	if (appl_shm->exit_flag && EM_ESCOPE(escope) &&
+	    !EM_ERROR_IS_FATAL(error)) {
+		/* Suppress non-fatal EM-error logs during tear-down */
+		if (escope == EM_ESCOPE_EO_ADD_QUEUE_SYNC) {
+			APPL_PRINT("\nExit: suppress queue setup error\n\n");
+			return error;
+		}
+	}
+
+	return test_error_handler(eo, error, escope, args);
 }
 
 /**
@@ -583,10 +591,14 @@ queue_step(void)
 			q_ctx = &perf_shm->queue_context_tbl[i % queue_count];
 
 			ret = em_send(unsch_event, q_ctx->unsch_q.this_queue);
-			test_fatal_if(ret != EM_OK,
-				      "EM send:%" PRI_STAT "\n"
-				      "Unsched-Q:%" PRI_QUEUE "",
-				      ret, q_ctx->unsch_q.this_queue);
+			if (unlikely(ret != EM_OK)) {
+				test_fatal_if(!appl_shm->exit_flag,
+					      "EM send:%" PRI_STAT "\n"
+					      "Unsched-Q:%" PRI_QUEUE "",
+					      ret, q_ctx->unsch_q.this_queue);
+				em_free(unsch_event);
+				return;
+			}
 		}
 		for (i = 0; i < CONST_NUM_EVENTS / 2; i++) {
 			em_event_t event;
@@ -606,10 +618,14 @@ queue_step(void)
 			q_ctx = &perf_shm->queue_context_tbl[i % queue_count];
 
 			ret = em_send(event, q_ctx->sch_q.this_queue);
-			test_fatal_if(ret != EM_OK,
-				      "EM send:%" PRI_STAT "\n"
-				      "Queue:%" PRI_QUEUE "",
-				       ret, q_ctx->sch_q.this_queue);
+			if (unlikely(ret != EM_OK)) {
+				test_fatal_if(!appl_shm->exit_flag,
+					      "EM send:%" PRI_STAT "\n"
+					      "Queue:%" PRI_QUEUE "",
+					       ret, q_ctx->sch_q.this_queue);
+				em_free(event);
+				return;
+			}
 		}
 	} else {
 		for (i = first; i < queue_count; i++) {
@@ -627,10 +643,14 @@ queue_step(void)
 			}
 			num = em_send_multi(unsch_events, NUM_EVENTS,
 					    q_ctx->unsch_q.this_queue);
-			test_fatal_if(num != NUM_EVENTS,
-				      "EM send multi:%d\n"
-				      "Unsched-Q:%" PRI_QUEUE "",
-				      num, q_ctx->unsch_q.this_queue);
+			if (unlikely(num != NUM_EVENTS)) {
+				test_fatal_if(!appl_shm->exit_flag,
+					      "EM send multi:%d\n"
+					      "Unsched-Q:%" PRI_QUEUE "",
+					      num, q_ctx->unsch_q.this_queue);
+				em_free_multi(&unsch_events[num], NUM_EVENTS - num);
+				return;
+			}
 		}
 		for (i = first; i < queue_count; i++) {
 			em_event_t events[NUM_EVENTS];
@@ -653,10 +673,14 @@ queue_step(void)
 			}
 			num = em_send_multi(events, NUM_EVENTS,
 					    q_ctx->sch_q.this_queue);
-			test_fatal_if(num != NUM_EVENTS,
-				      "EM send multi:%d\n"
-				      "Queue:%" PRI_QUEUE "",
-				      num, q_ctx->sch_q.this_queue);
+			if (unlikely(num != NUM_EVENTS)) {
+				test_fatal_if(!appl_shm->exit_flag,
+					      "EM send multi:%d\n"
+					      "Queue:%" PRI_QUEUE "",
+					      num, q_ctx->sch_q.this_queue);
+				em_free_multi(&events[num], NUM_EVENTS - num);
+				return;
+			}
 		}
 	}
 
@@ -1074,10 +1098,14 @@ create_and_link_queues(int start_queue, int num_queues)
 				      ret, perf_shm->eo[j], queue);
 			/* Add the scheduled queue to an EO and enable it */
 			ret = em_eo_add_queue_sync(perf_shm->eo[j], queue);
-			test_fatal_if(ret != EM_OK,
-				      "EO add queue sync:%" PRI_STAT "\n"
-				      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
-				      ret, perf_shm->eo[j], queue);
+			if (unlikely(ret != EM_OK)) {
+				test_fatal_if(!appl_shm->exit_flag,
+					      "em_eo_add_queue_sync():%" PRI_STAT "\n"
+					      "EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+					      ret, perf_shm->eo[j], queue);
+				em_queue_delete(queue);
+				return;
+			}
 
 			/* Link scheduled queues */
 			q_ctx->sch_q.next_queue = next_queue;

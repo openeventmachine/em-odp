@@ -101,18 +101,18 @@ em_core_mask_count(const em_core_mask_t *mask)
 }
 
 void
-em_core_mask_set_bits(uint64_t bits[], int len, em_core_mask_t *mask)
+em_core_mask_set_bits(const uint64_t bits[], int len, em_core_mask_t *mask)
 {
-	int i, j, cpu;
 	const int maxlen = (ODP_CPUMASK_SIZE + 63) / 64;
 	const int maxcpu = ODP_CPUMASK_SIZE - 1;
+	int cpu;
 
 	len = len > maxlen ? maxlen : len;
 
-	for (i = 0; i < len; i++) {
+	for (int i = 0; i < len; i++) {
 		uint64_t mask64 = bits[i];
 
-		for (j = 0; mask64 && j < 64; j++) {
+		for (int j = 0; mask64 && j < 64; j++) {
 			cpu = i * 64 + j;
 			if (unlikely(cpu > maxcpu))
 				return;
@@ -125,11 +125,14 @@ em_core_mask_set_bits(uint64_t bits[], int len, em_core_mask_t *mask)
 }
 
 int
-em_core_mask_get_bits(uint64_t bits[], int len, const em_core_mask_t *mask)
+em_core_mask_get_bits(uint64_t bits[/*out*/], int len,
+		      const em_core_mask_t *mask)
 {
-	int i, j, cpu;
 	int u64s_set; /* return value */
 	int maxcpu = ODP_CPUMASK_SIZE - 1;
+	int i;
+	int j;
+	int cpu;
 
 	if (unlikely(len < 1))
 		return 0;
@@ -154,7 +157,7 @@ em_core_mask_get_bits(uint64_t bits[], int len, const em_core_mask_t *mask)
 }
 
 int
-em_core_mask_set_str(char *mask_str, em_core_mask_t *mask)
+em_core_mask_set_str(const char *mask_str, em_core_mask_t *mask)
 {
 	odp_cpumask_t str_mask;
 

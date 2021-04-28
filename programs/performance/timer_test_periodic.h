@@ -5,12 +5,12 @@
 #define MAX_TMO_BYTES	1000000000ULL /* sanity limit 1GB tracebuf per core */
 #define STOP_THRESHOLD	90 /* % of full buffer */
 #define MAX_CORES	64
-#define INIT_WAIT	5 /* startup wait, HBs */
+#define INIT_WAIT	5 /* startup wait, HBs (=secs) */
 #define MEAS_PERIOD	5 /* freq meas HBs */
 #define DEF_RES_NS	1000000ULL /* 1ms seems like a good generic default */
 #define DEF_PERIOD	20 /* default period, N * res */
 #define DEF_MIN_PERIOD	5 /* min period default, N * res */
-#define DEF_MAX_PERIOD	(2 * 1000 * 1000 * 1000ULL) /* 10sec */
+#define DEF_MAX_PERIOD	(2 * 1000 * 1000 * 1000ULL) /* 2 sec */
 #define EXTRA_PRINTS	0 /* dev option, normally 0 */
 
 const struct option longopts[] = {
@@ -27,16 +27,19 @@ const struct option longopts[] = {
 	{"tracebuf",		required_argument, NULL, 't'},
 	{"extra-work",		required_argument, NULL, 'e'},
 	{"background-job",	required_argument, NULL, 'j'},
-	{"noskip",		no_argument, NULL, 's'},
+	{"skip",		no_argument, NULL, 's'},
 	{"api-prof",		no_argument, NULL, 'a'},
 	{"dispatch-prof",	no_argument, NULL, 'd'},
 	{"job-prof",		no_argument, NULL, 'b'},
+	{"info",		no_argument, NULL, 'i'},
+	{"use-huge",		no_argument, NULL, 'u'},
 	{"use-cpu-cycle",	optional_argument, NULL, 'g'},
+	{"memzero",		required_argument, NULL, 'o'},
 	{"help",		no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbg::hz:";
+const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiug::hz:o:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
 	"Number of concurrent timers to create",
@@ -52,11 +55,14 @@ const char *descopts[] = {
 	"Trace buffer size (events per core). Optional stop threshold % e.g. -t100,80 to stop 80% before full",
 	"Extra work per tmo: -e1,20,50 e.g. min_us,max_us,propability % of work",
 	"Extra background job: -j2,20,500,10 e.g. num,time_us,total_kB,chunk_kB",
-	"Create timer with NOSKIP option",
+	"Create timer without NOSKIP option",
 	"Measure API calls",
 	"Include dispatcher trace (EO enter-exit)",
 	"Include bg job profile (note - can fill buffer quickly)",
+	"Only print timer capabilities and exit",
+	"Use huge page for trace buffer",
 	"Use CPU cycles instead of ODP time. Optionally give frequency (hz)",
+	"Allocate and clear memory: -o50,100[,1] to clear 50MB (,1 to use huge pg) every 100ms. Special HW test, must also use -j",
 	"Print usage and exit",
 	NULL
 };
@@ -64,18 +70,18 @@ const char *descopts[] = {
 const char *instructions =
 "Controlled by command line arguments. Purpose of this tool is to manually test\n"
 "periodic timer accuracy and behaviour optionally under (over)load.\n"
-"API overheads can also be measured\n"
+"Some API overheads can also be measured\n"
 "\nTwo EM timers are created. One for a heartbeat driving test states. Second\n"
 "timer is used for testing the periodic timeouts. It can be created with\n"
 "given attributes to also test limits.\n\n"
 "Test runs in states:\n"
-"	STATE_INIT	let some time pass before starting to settle down\n"
+"	STATE_INIT	let some time pass before starting (to settle down)\n"
 "	STATE_MEASURE	measure timer tick frequency against linux clock\n"
 "	STATE_STABILIZE finish all prints before starting run\n"
-"	STATE_RUN	timeouts creared and measured\n"
+"	STATE_RUN	timeouts created and measured\n"
 "	STATE_COOLOFF	first core hitting trace buffer limit sets cooling,\n"
-"			i.e. coming timeout(s) are cancelled but not analyzed\n"
-"	STATE_ANALYZE	Statistics and trace file generation, restart\n"
+"			i.e. coming timeout(s) are cancelled no more analyzed\n"
+"	STATE_ANALYZE	Statistics and trace file generation, restart (if -x)\n"
 "\nBy default there is no background load and the handling of incoming\n"
 "timeouts (to high priority parallel queue) is minimized. Extra work can be\n"
 "added in two ways:\n\n"
@@ -94,7 +100,7 @@ const char *instructions =
 "Test can write a file of measured timings (-w). It is in CSV format and can\n"
 "be imported e.g. to excel for plotting. -w without name prints to stdout\n"
 "\nSingle time values can be postfixed with n,u,m,s to indicate nano(default),\n"
-"micro, milli or seconds. e.g. -p1m for 1ms\n";
+"micro, milli or seconds. e.g. -p1m for 1ms. Integer only\n";
 
 typedef enum e_op {
 	OP_TMO,
@@ -104,6 +110,8 @@ typedef enum e_op {
 	OP_WORK,
 	OP_ACK,
 	OP_BGWORK,
+	OP_MEMZERO,
+	OP_MEMZERO_END,
 	OP_PROF_ACK,	/* linux time used as tick diff for each PROF */
 	OP_PROF_DELETE,
 	OP_PROF_CREATE,
@@ -119,6 +127,8 @@ const char *op_labels[] = {
 	"WORK",
 	"ACK",
 	"BG-WORK",
+	"MEMZERO-TST",
+	"MEMZERO-END",
 	"PROF-ACK",
 	"PROF-DEL",
 	"PROF-CREATE",
@@ -149,6 +159,7 @@ typedef struct rnd_state_t {
 typedef struct core_data {
 	int count ODP_ALIGNED_CACHE;
 	tmo_trace *trc;
+	size_t	trc_size;
 	int cancelled;
 	int jobs;
 	int jobs_deleted;

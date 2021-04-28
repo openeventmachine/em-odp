@@ -44,6 +44,7 @@ extern "C" {
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE /* for strnlen() */
 #endif
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <libconfig.h>
@@ -51,14 +52,6 @@ extern "C" {
 #include <event_machine.h>
 #include <event_machine/helper/event_machine_helper.h>
 #include <event_machine/platform/env/environment.h>
-
-/**
- * Branch Prediction macros
- */
-#undef likely
-#undef unlikely
-#define likely(x)    odp_likely(!!(x))
-#define unlikely(x)  odp_unlikely(!!(x))
 
 /**
  * @def EM_CHECK_INIT_CALLED
@@ -103,6 +96,7 @@ extern "C" {
 #include "em_internal_event.h"
 #include "em_info.h"
 #include "em_pool.h"
+#include "em_event_state.h"
 #include "em_event.h"
 #include "em_queue.h"
 #include "em_queue_group.h"

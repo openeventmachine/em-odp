@@ -77,10 +77,34 @@ extern "C" {
 	} *(type_t)
 
 /**
+ * @def EM_STATIC_CAST
+ * Support C++ static casts in EM API files
+ */
+#ifndef __cplusplus
+#define EM_STATIC_CAST(type, value)  ((type)(value))
+#else
+#define EM_STATIC_CAST(type, value)  (static_cast < type > (value))
+#endif
+
+/**
+ * @def EM_REINTERPRET_CAST
+ * Support C++ reinterpret casts in EM API files
+ */
+#ifndef __cplusplus
+#define EM_REINTERPRET_CAST(type, value)  ((type)(value))
+#else
+#define EM_REINTERPRET_CAST(type, value)  (reinterpret_cast < type > (value))
+#endif
+
+/**
  * @def EM_HDL_UNDEF
  * Undefined EM-handle
  */
-#define EM_HDL_UNDEF EM_UNDEF_UINTPTR
+#ifndef __cplusplus
+#define EM_HDL_UNDEF NULL
+#else
+#define EM_HDL_UNDEF nullptr
+#endif
 
 /**
  * @def PRI_HDL
@@ -186,6 +210,28 @@ extern "C" {
  */
 #ifndef EM_CHECK_LEVEL
 #define EM_CHECK_LEVEL  1
+#endif
+
+/**
+ * @def EM_ESV_ENABLE
+ * Event State Verification (ESV)
+ *
+ * '0': disabled
+ * '1': enabled - event state is verified when the event is passed from EM to
+ *                the user (e.g. dispatch) and from the user to EM (e.g. send)
+ *                to catch illegal usage patterns like double-send, double-free,
+ *                usage-after-send etc.
+ *
+ * Also see the config/em-odp.conf file for ESV runtime options!
+ *
+ * @note em-odp: the 'EM_ESV_ENABLE' value can be overridden by a command-line
+ *               option to the 'configure' script, e.g.:
+ *               $build> ../configure ... --enable-esv
+ *               The overridden value will be made available to the application
+ *               via a pkgconfig set define.
+ */
+#ifndef EM_ESV_ENABLE
+#define EM_ESV_ENABLE  0
 #endif
 
 /**

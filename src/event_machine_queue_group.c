@@ -100,7 +100,7 @@ em_queue_group_delete(em_queue_group_t queue_group,
 
 	/* Use modify and the notif mechanism to set the core mask to zero */
 	err = queue_group_modify(qgrp_elem, &zero_mask, num_notif, notif_tbl,
-				 1 /* is_delete=1 */);
+				 true /*is_delete*/);
 
 	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_GROUP_DELETE,
 			"Queue group:%" PRI_QGRP " modify for delete failed!",
@@ -126,7 +126,7 @@ em_queue_group_delete_sync(em_queue_group_t queue_group)
 
 	/* Use modify and the notif mechanism to set the core mask to zero */
 	err = queue_group_modify_sync(qgrp_elem, &zero_mask,
-				      1 /* is_delete=1 */);
+				      true /*is_delete*/);
 
 	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC,
 			"Queue group:%" PRI_QGRP " modify for delete failed!",
@@ -158,7 +158,7 @@ em_queue_group_modify(em_queue_group_t queue_group,
 			"Invalid notif cfg given!");
 
 	err = queue_group_modify(qgrp_elem, new_mask, num_notif, notif_tbl,
-				 0 /* is_delete=0 */);
+				 false /*!is_delete*/);
 	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_GROUP_MODIFY,
 			"Queue group:%" PRI_QGRP " modify failed!",
 			queue_group);
@@ -182,7 +182,7 @@ em_queue_group_modify_sync(em_queue_group_t queue_group,
 			"Queue group mask NULL! Queue group:%" PRI_QGRP "",
 			queue_group);
 
-	err = queue_group_modify_sync(qgrp_elem, new_mask, 0 /* is_delete=0 */);
+	err = queue_group_modify_sync(qgrp_elem, new_mask, false/*!is_delete*/);
 
 	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
 			"Queue group:%" PRI_QGRP " modify sync failed!",
@@ -203,7 +203,7 @@ em_queue_group_find(const char *name)
 		return EM_QUEUE_GROUP_UNDEF;
 
 	for (int i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
-		queue_group_elem_t *const qgrp_elem =
+		const queue_group_elem_t *qgrp_elem =
 			&em_shm->queue_group_tbl.queue_group_elem[i];
 
 		if (qgrp_elem->odp_sched_group == odp_group &&
@@ -217,7 +217,8 @@ em_queue_group_find(const char *name)
 em_status_t
 em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask)
 {
-	int allocated, pending_modify;
+	int allocated;
+	int pending_modify;
 	queue_group_elem_t *const qg_elem = queue_group_elem_get(queue_group);
 
 	RETURN_ERROR_IF(qg_elem == NULL,
@@ -245,7 +246,7 @@ size_t
 em_queue_group_get_name(em_queue_group_t queue_group,
 			char *name, size_t maxlen)
 {
-	queue_group_elem_t *const qg_elem = queue_group_elem_get(queue_group);
+	const queue_group_elem_t *qg_elem = queue_group_elem_get(queue_group);
 	odp_schedule_group_info_t info;
 	size_t len;
 	int ret;
@@ -292,9 +293,9 @@ em_queue_group_get_name(em_queue_group_t queue_group,
 em_queue_group_t
 em_queue_group_get_first(unsigned int *num)
 {
-	queue_group_elem_t *const qgrp_elem_tbl =
+	const queue_group_elem_t *const qgrp_elem_tbl =
 		em_shm->queue_group_tbl.queue_group_elem;
-	queue_group_elem_t *qgrp_elem = &qgrp_elem_tbl[0];
+	const queue_group_elem_t *qgrp_elem = &qgrp_elem_tbl[0];
 	const unsigned int max_qgrps = EM_MAX_QUEUE_GROUPS;
 	const unsigned int qgrp_cnt = queue_group_count();
 
@@ -329,9 +330,10 @@ em_queue_group_get_next(void)
 
 	_qgrp_tbl_iter_idx++;
 
-	queue_group_elem_t *const qgrp_elem_tbl =
+	const queue_group_elem_t *const qgrp_elem_tbl =
 		em_shm->queue_group_tbl.queue_group_elem;
-	queue_group_elem_t *qgrp_elem = &qgrp_elem_tbl[_qgrp_tbl_iter_idx];
+	const queue_group_elem_t *qgrp_elem =
+		&qgrp_elem_tbl[_qgrp_tbl_iter_idx];
 
 	/* find next */
 	while (!queue_group_allocated(qgrp_elem)) {
@@ -347,7 +349,7 @@ em_queue_group_get_next(void)
 em_queue_t
 em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 {
-	queue_group_elem_t *const qgrp_elem = queue_group_elem_get(queue_group);
+	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 
 	if (unlikely(qgrp_elem == NULL || !queue_group_allocated(qgrp_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID,
@@ -377,8 +379,8 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 	 * This is potentially a slow implementation and perhaps worth
 	 * re-thinking?
 	 */
-	queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
-	queue_elem_t *q_elem = &q_elem_tbl[0];
+	const queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
+	const queue_elem_t *q_elem = &q_elem_tbl[0];
 
 	_qgrp_q_iter_idx = 0; /* reset list */
 	_qgrp_q_iter_qgrp = queue_group;
@@ -403,8 +405,8 @@ em_queue_group_queue_get_next(void)
 
 	_qgrp_q_iter_idx++;
 
-	queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
-	queue_elem_t *q_elem = &q_elem_tbl[_qgrp_q_iter_idx];
+	const queue_elem_t *const q_elem_tbl = em_shm->queue_tbl.queue_elem;
+	const queue_elem_t *q_elem = &q_elem_tbl[_qgrp_q_iter_idx];
 
 	/* find next */
 	while (!queue_allocated(q_elem) ||

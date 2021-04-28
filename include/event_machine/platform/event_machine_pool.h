@@ -74,7 +74,7 @@ extern "C" {
  * @code
  *	em_pool_cfg_t pool_cfg;
  *
- *	em_pool_cfg_init(&pool_cfg); // init with default values
+ *	em_pool_cfg_init(&pool_cfg); // init with default values (mandatory)
  *	pool_cfg.event_type = EM_EVENT_TYPE_PACKET;
  *	...
  *	pool_cfg.num_subpools = 4;
@@ -117,7 +117,7 @@ typedef struct {
 		/**
 		 * Select: Use pool-specific align-offset 'value' from below or
 		 *         use the global default value from the config file.
-		 * false (0): Use default value from the config file.
+		 * false (0): Use value from the config file (default).
 		 * true (not 0): Use pool specific value set below.
 		 */
 		int in_use;
@@ -130,6 +130,32 @@ typedef struct {
 		 */
 		uint32_t value;
 	} align_offset;
+
+	/**
+	 * Parameters for an EM-pool with '.event_type = EM_EVENT_TYPE_PACKET'
+	 * Ignored for other pool types.
+	 */
+	struct {
+		struct {
+			/**
+			 * Select: Use pool-specific packet headroom value from
+			 *         below or use the global default value from
+			 *         the config file.
+			 * false (0): Use value from the config file (default).
+			 * true (not 0): Use pool specific value set below.
+			 */
+			int in_use;
+			/**
+			 * Pool-specific packet minimum headroom in bytes,
+			 * each packet must have at least this much headroom.
+			 * (only evaluated if 'in_use=true').
+			 * Overrides the config file value for this pool.
+			 * 0: Explicitly set 'No align offset' for the pool.
+			 */
+			uint32_t value;
+		} headroom;
+	} pkt;
+
 	/**
 	 * Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS
 	 */
@@ -278,7 +304,7 @@ em_pool_find(const char *name);
  * @return Number of characters written (excludes the terminating '0').
  */
 size_t
-em_pool_get_name(em_pool_t pool, char *name, size_t maxlen);
+em_pool_get_name(em_pool_t pool, char *name /*out*/, size_t maxlen);
 
 /**
  * Initialize event pool iteration and return the first event pool handle.

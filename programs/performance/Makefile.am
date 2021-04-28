@@ -8,7 +8,8 @@ noinst_PROGRAMS = atomic_processing_end \
 		  queues \
 		  queues_unscheduled \
 		  queues_local \
-		  send_multi
+		  send_multi \
+		  timer_test_periodic
 
 atomic_processing_end_LDFLAGS = $(AM_LDFLAGS)
 atomic_processing_end_CFLAGS = $(AM_CFLAGS)
@@ -37,6 +38,9 @@ queues_local_CFLAGS = $(AM_CFLAGS)
 send_multi_LDFLAGS = $(AM_LDFLAGS)
 send_multi_CFLAGS = $(AM_CFLAGS)
 
+timer_test_periodic_LDFLAGS = $(AM_LDFLAGS) -lm
+timer_test_periodic_CFLAGS = $(AM_CFLAGS)
+
 dist_atomic_processing_end_SOURCES = atomic_processing_end.c
 dist_pairs_SOURCES = pairs.c
 dist_loop_SOURCES = loop.c
@@ -46,3 +50,4 @@ dist_queues_SOURCES = queues.c
 dist_queues_unscheduled_SOURCES = queues_unscheduled.c
 dist_queues_local_SOURCES = queues_local.c
 dist_send_multi_SOURCES = send_multi.c
+dist_timer_test_periodic_SOURCES = timer_test_periodic.c timer_test_periodic.h

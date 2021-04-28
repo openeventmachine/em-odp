@@ -80,15 +80,15 @@ em_status_t
 queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 		 queue_group_pool_t *const queue_group_pool)
 {
-	int i, ret;
 	const int cores = em_core_count();
 	queue_group_elem_t *queue_group_elem;
+	int ret;
 
 	memset(queue_group_tbl, 0, sizeof(queue_group_tbl_t));
 	memset(queue_group_pool, 0, sizeof(queue_group_pool_t));
 	env_atomic32_init(&em_shm->queue_group_count);
 
-	for (i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
+	for (int i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
 		queue_group_elem = &queue_group_tbl->queue_group_elem[i];
 		queue_group_elem->queue_group = qgrp_idx2hdl(i);
 		/* Initialize empty queue list */
@@ -100,7 +100,7 @@ queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
+	for (int i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
 		queue_group_elem = &queue_group_tbl->queue_group_elem[i];
 		objpool_add(&queue_group_pool->objpool, i % cores,
 			    &queue_group_elem->queue_group_pool_elem);
@@ -356,6 +356,197 @@ queue_group_create_sync(const char *name, const em_core_mask_t *mask,
 					 EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC);
 }
 
+/*
+ * queue_group_modify/_sync() helper:
+ * Can only set core mask bits for running cores - verify this.
+ */
+static em_status_t
+check_qgrp_mask(em_queue_group_t queue_group, const em_core_mask_t *new_mask,
+		em_escope_t escope)
+{
+	const int core_count = em_core_count();
+	em_core_mask_t max_mask;
+	em_core_mask_t tmp_mask;
+
+	/*
+	 * 'new_mask' can contain set bits only for cores running EM,
+	 * 'max_mask' contains all allowed set bits. Check that new_mask
+	 * only contains set bits that are also found in max_mask.
+	 */
+	em_core_mask_zero(&max_mask);
+	em_core_mask_set_count(core_count, &max_mask);
+
+	em_core_mask_or(&tmp_mask, new_mask, &max_mask);
+	if (unlikely(!em_core_mask_equal(&tmp_mask, &max_mask))) {
+		char new_mstr[EM_CORE_MASK_STRLEN];
+		char max_mstr[EM_CORE_MASK_STRLEN];
+
+		em_core_mask_tostr(new_mstr, EM_CORE_MASK_STRLEN, new_mask);
+		em_core_mask_tostr(max_mstr, EM_CORE_MASK_STRLEN, &max_mask);
+		return INTERNAL_ERROR(EM_ERR_TOO_LARGE, escope,
+				      "Queue grp:%" PRI_QGRP "- Inv mask:%s, max valid:%s",
+				      queue_group, new_mstr, max_mstr);
+	}
+
+	return EM_OK;
+}
+
+/*
+ * queue_group_modify/_sync() helper: check Queue Group state
+ */
+static em_status_t
+check_qgrp_state(const queue_group_elem_t *qgrp_elem, bool is_delete,
+		 const char **err_str/*out*/)
+{
+	if (unlikely(!queue_group_allocated(qgrp_elem))) {
+		*err_str = "Queue group not allocated";
+		return EM_ERR_BAD_ID;
+	}
+	if (unlikely(qgrp_elem->pending_modify)) {
+		*err_str = "Contending queue group modify ongoing";
+		return EM_ERR_BAD_STATE;
+	}
+	if (unlikely(is_delete && !list_is_empty(&qgrp_elem->queue_list))) {
+		*err_str = "Queue group contains queues in delete";
+		return EM_ERR_NOT_FREE;
+	}
+
+	return EM_OK;
+}
+
+/*
+ * queue_group_modify/_sync() helper: modify the qgrp's odp schedule group
+ */
+static int
+modify_odp_schedgrp(odp_schedule_group_t odp_sched_group,
+		    const odp_thrmask_t *odp_new_mask, int adds, int rems)
+{
+	int ret = 0;
+
+	if (rems > 0) {
+		odp_thrmask_t odp_leave_mask;
+		odp_thrmask_t odp_all_mask;
+
+		odp_thrmask_setall(&odp_all_mask);
+		odp_thrmask_xor(&odp_leave_mask, &odp_all_mask, odp_new_mask);
+		ret = odp_schedule_group_leave(odp_sched_group,
+					       &odp_leave_mask);
+	}
+
+	if (adds > 0)
+		ret |= odp_schedule_group_join(odp_sched_group, odp_new_mask);
+
+	return ret;
+}
+
+/*
+ * queue_group_modify/_sync() helper: count cores to be added to the queue group
+ */
+static int count_qgrp_adds(const em_core_mask_t *old_mask,
+			   const em_core_mask_t *new_mask)
+{
+	int core_count = em_core_count();
+	int adds = 0;
+
+	/* Count added cores */
+	for (int i = 0; i < core_count; i++) {
+		if (!em_core_mask_isset(i, old_mask) &&
+		    em_core_mask_isset(i, new_mask))
+			adds++;
+	}
+
+	return adds;
+}
+
+/*
+ * queue_group_modify/_sync() helper: count cores to be removed from the queue group
+ */
+static int count_qgrp_rems(const em_core_mask_t *old_mask,
+			   const em_core_mask_t *new_mask,
+			   bool skip_this_core /* sync rem, skip caller core */,
+			   em_core_mask_t *rem_mask /*out*/)
+{
+	int core_count = em_core_count();
+	int core = em_core_id();
+	int rems = 0;
+
+	em_core_mask_zero(rem_mask);
+
+	/* Count removed cores */
+	for (int i = 0; i < core_count; i++) {
+		if (em_core_mask_isset(i, old_mask) &&
+		    !em_core_mask_isset(i, new_mask)) {
+			if (skip_this_core && core == i)
+				continue; /* sync rem for current core */
+			em_core_mask_set(i, rem_mask);
+			rems++;
+		}
+	}
+
+	return rems;
+}
+
+/*
+ * queue_group_modify/_sync() helper: send qgrp rem-req events to cores
+ */
+static em_status_t
+send_qgrp_rem_reqs(queue_group_elem_t *qgrp_elem,
+		   const em_core_mask_t *new_mask, const em_core_mask_t *rem_mask,
+		   int num_notif, const em_notif_t notif_tbl[],
+		   em_escope_t escope)
+{
+	em_event_t callback_args_event =
+		em_alloc(sizeof(q_grp_modify_done_callback_args_t),
+			 EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
+	em_event_t ctrl_event =
+		em_alloc(sizeof(internal_event_t),
+			 EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
+	if (unlikely(callback_args_event == EM_EVENT_UNDEF ||
+		     ctrl_event == EM_EVENT_UNDEF))
+		return EM_ERR_ALLOC_FAILED;
+
+	/* Init the 'done'-callback function arguments */
+	q_grp_modify_done_callback_args_t *callback_args =
+		em_event_pointer(callback_args_event);
+	callback_args->qgrp_elem = qgrp_elem;
+	em_core_mask_copy(&callback_args->new_mask, new_mask);
+
+	/* f_done_callback(f_done_arg_ptr): */
+	void (*f_done_callback)(void *arg_ptr);
+	void  *f_done_arg_ptr = callback_args_event;
+
+	switch (escope) {
+	case EM_ESCOPE_QUEUE_GROUP_MODIFY:
+		f_done_callback = q_grp_modify_done_callback;
+		break;
+	case EM_ESCOPE_QUEUE_GROUP_DELETE:
+		f_done_callback = q_grp_delete_done_callback;
+		break;
+	case EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC:
+		f_done_callback = q_grp_modify_sync_done_callback;
+		break;
+	case EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC:
+		f_done_callback = q_grp_delete_sync_done_callback;
+		break;
+	default:
+		return EM_ERR_NOT_FOUND;
+	}
+
+	/* Init the QUEUE_GROUP_REM_REQ internal ctrl event(s) */
+	internal_event_t *i_event = em_event_pointer(ctrl_event);
+
+	i_event->id = QUEUE_GROUP_REM_REQ;
+	i_event->q_grp.queue_group = qgrp_elem->queue_group;
+
+	int ret = send_core_ctrl_events(rem_mask, ctrl_event /*copied to all*/,
+					f_done_callback, f_done_arg_ptr,
+					num_notif, notif_tbl);
+	if (unlikely(ret))
+		return EM_ERR_OPERATION_FAILED;
+
+	return EM_OK;
+}
+
 /**
  * Called by em_queue_group_modify with flag is_delete=0 and by
  * em_queue_group_delete() with flag is_delete=1
@@ -366,64 +557,34 @@ em_status_t
 queue_group_modify(queue_group_elem_t *const qgrp_elem,
 		   const em_core_mask_t *new_mask,
 		   int num_notif, const em_notif_t notif_tbl[],
-		   int is_delete)
+		   bool is_delete)
 {
 	const em_queue_group_t queue_group = qgrp_elem->queue_group;
-	em_core_mask_t old_mask, max_mask, tmp_mask;
-	em_event_group_t event_group;
-	int adds, rems, i;
-	uint8_t rem_core[EM_MAX_CORES];
 	em_status_t err;
-	em_event_t event;
-	internal_event_t *i_event;
-	void (*f_done_callback)(void *arg_ptr);
-	q_grp_modify_done_callback_args_t *modify_callback_args;
-	const int core_count = em_core_count();
+	const char *err_str = "";
 	const em_escope_t escope = is_delete ? EM_ESCOPE_QUEUE_GROUP_DELETE :
 					       EM_ESCOPE_QUEUE_GROUP_MODIFY;
 
-	em_core_mask_zero(&max_mask);
-	em_core_mask_set_count(core_count, &max_mask);
-	/*
-	 * Can only set core mask bits for running cores - verify this.
-	 * 'new_mask' can contain set bits only for cores running EM,
-	 * 'max_mask' contains all allowed set bits. Check that new_mask
-	 * contains only set bits that are also found in max_mask.
-	 */
-	em_core_mask_or(&tmp_mask, new_mask, &max_mask);
-	if (unlikely(!em_core_mask_equal(&tmp_mask, &max_mask))) {
-		char new_mstr[EM_CORE_MASK_STRLEN];
-		char max_mstr[EM_CORE_MASK_STRLEN];
-
-		em_core_mask_tostr(new_mstr, EM_CORE_MASK_STRLEN, new_mask);
-		em_core_mask_tostr(max_mstr, EM_CORE_MASK_STRLEN, &max_mask);
-		return INTERNAL_ERROR(EM_ERR_TOO_LARGE, escope,
-			"Queue grp:%" PRI_QGRP "- Inv mask:%s, max valid:%s",
-			queue_group, new_mstr, max_mstr);
-	}
+	/* Can only set core mask bits for running cores - verify this */
+	err = check_qgrp_mask(queue_group, new_mask, escope);
+	if (unlikely(err != EM_OK))
+		return err;
 
 	env_spinlock_lock(&qgrp_elem->lock);
 
-	if (unlikely(!queue_group_allocated(qgrp_elem))) {
+	/* Check Queue Group state */
+	err = check_qgrp_state(qgrp_elem, is_delete, &err_str/*out*/);
+	if (unlikely(err != EM_OK)) {
 		env_spinlock_unlock(&qgrp_elem->lock);
-		return INTERNAL_ERROR(EM_ERR_BAD_ID, escope,
-				      "Queue group not allocated...");
-	}
-	if (unlikely(qgrp_elem->pending_modify)) {
-		env_spinlock_unlock(&qgrp_elem->lock);
-		return INTERNAL_ERROR(EM_ERROR, escope,
-				      "Contending queue group modify ongoing");
-	}
-	if (unlikely(is_delete && !list_is_empty(&qgrp_elem->queue_list))) {
-		env_spinlock_unlock(&qgrp_elem->lock);
-		return INTERNAL_ERROR(EM_ERR_NOT_FREE, escope,
-				      "Queue group contains queues in delete");
+		return INTERNAL_ERROR(err, escope, err_str);
 	}
 
 	/*
 	 * If the new mask is equal to the one in use:
 	 * send notifs immediately and return.
 	 */
+	em_core_mask_t old_mask;
+
 	em_core_mask_copy(&old_mask, &qgrp_elem->core_mask);
 
 	if (em_core_mask_equal(&old_mask, new_mask)) {
@@ -442,32 +603,22 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	/* Catch contending modifies */
 	qgrp_elem->pending_modify = 1;
 
-	adds = 0, rems = 0;
-	/* Count removed cores */
-	for (i = 0; i < core_count; i++) {
-		if (!em_core_mask_isset(i, &old_mask) &&
-		    em_core_mask_isset(i, new_mask))
-			adds++;
-		else if (em_core_mask_isset(i, &old_mask) &&
-			 !em_core_mask_isset(i, new_mask))
-			rem_core[rems++] = i;
-	}
+	/* Count added & removed cores */
+	em_core_mask_t rem_mask;
+	int adds = count_qgrp_adds(&old_mask, new_mask);
+	int rems = count_qgrp_rems(&old_mask, new_mask,
+				   false, &rem_mask/*out*/);
 
-	int ret = 0;
+	/*
+	 * Modify the EM queue group's corresponding ODP schedule group
+	 */
 	odp_thrmask_t odp_new_mask;
+	int ret;
 
 	mask_em2odp(new_mask, &odp_new_mask);
-	if (rems > 0) {
-		odp_thrmask_t odp_leave_mask, odp_all_mask;
 
-		odp_thrmask_setall(&odp_all_mask);
-		odp_thrmask_xor(&odp_leave_mask, &odp_all_mask, &odp_new_mask);
-		ret = odp_schedule_group_leave(qgrp_elem->odp_sched_group,
-					       &odp_leave_mask);
-	}
-	if (adds > 0)
-		ret |= odp_schedule_group_join(qgrp_elem->odp_sched_group,
-					       &odp_new_mask);
+	ret = modify_odp_schedgrp(qgrp_elem->odp_sched_group, &odp_new_mask,
+				  adds, rems);
 	if (unlikely(ret != 0)) {
 		env_spinlock_unlock(&qgrp_elem->lock);
 		return INTERNAL_ERROR(EM_FATAL(EM_ERR_LIB_FAILED), escope,
@@ -491,61 +642,15 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	env_spinlock_unlock(&qgrp_elem->lock);
 
 	/*
-	 * Note: .pending_modify = 1 from here onwards:
+	 * Note: .pending_modify = 1:
 	 *       Threat all errors as EM_FATAL because failures will leave
-	 *       .pending_modify = 1 until restart for the group.
-	 * Send queue group add/rem commands to relevant cores
+	 *       .pending_modify = 1 for the group until restart.
 	 */
-	event_group = em_event_group_create();
-	RETURN_ERROR_IF(event_group == EM_EVENT_GROUP_UNDEF,
-			EM_FATAL(EM_ERR_ALLOC_FAILED), escope,
-			"Event group alloc failed");
 
-	/*
-	 * Internal notification when all adds and rems are done.
-	 * Also save user requested notifs if given.
-	 */
-	event = em_alloc(sizeof(internal_event_t), EM_EVENT_TYPE_SW,
-			 EM_POOL_DEFAULT);
-	RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
-			EM_FATAL(EM_ERR_ALLOC_FAILED), escope,
-			"Internal QUEUE_GROUP_REM_REQ alloc failed!");
-
-	modify_callback_args = em_event_pointer(event);
-	/* Init the callback function arguments */
-	modify_callback_args->qgrp_elem = qgrp_elem;
-	em_core_mask_copy(&modify_callback_args->new_mask, new_mask);
-	if (is_delete)
-		f_done_callback = q_grp_delete_done_callback;
-	else
-		f_done_callback = q_grp_modify_done_callback;
-
-	err = internal_done_w_notif_req(event_group, rems,
-					f_done_callback, event/*f_args*/,
-					num_notif, notif_tbl);
+	err = send_qgrp_rem_reqs(qgrp_elem, new_mask, &rem_mask,
+				 num_notif, notif_tbl, escope);
 	RETURN_ERROR_IF(err != EM_OK, EM_FATAL(err), escope,
-			"internal_done_w_notif_req() failed.");
-
-	/* Send rems */
-	for (i = 0; i < rems; i++) {
-		event = em_alloc(sizeof(internal_event_t), EM_EVENT_TYPE_SW,
-				 EM_POOL_DEFAULT);
-		RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
-				EM_FATAL(EM_ERR_ALLOC_FAILED), escope,
-				"Internal QUEUE_GROUP_REM_REQ alloc failed!");
-
-		i_event = em_event_pointer(event);
-		i_event->id = QUEUE_GROUP_REM_REQ;
-		i_event->q_grp.queue_group = queue_group;
-
-		int qidx = queue_id2idx(FIRST_INTERNAL_QUEUE) + rem_core[i];
-
-		err = em_send_group(event, queue_idx2hdl(qidx), event_group);
-		/* FATAL error, abort execution */
-		RETURN_ERROR_IF(err != EM_OK, EM_FATAL(err), escope,
-				"Event group send failed (rem_core[%i]=%i)",
-				i, rem_core[i]);
-	}
+			"qgrp rem req(s) sending failed");
 
 	return EM_OK;
 }
@@ -558,44 +663,19 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
  */
 em_status_t
 queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
-			const em_core_mask_t *new_mask, int is_delete)
+			const em_core_mask_t *new_mask, bool is_delete)
 {
 	const em_queue_group_t queue_group = qgrp_elem->queue_group;
-	em_core_mask_t old_mask, max_mask, tmp_mask;
-	em_event_group_t event_group;
-	int adds, rems, i;
-	int modify_this_core = 0;
-	uint8_t rem_core[EM_MAX_CORES];
 	em_status_t err = EM_OK;
-	em_event_t event;
-	internal_event_t *i_event;
-	void (*f_done_callback)(void *arg_ptr);
-	q_grp_modify_done_callback_args_t *modify_callback_args;
-	const int core_count = em_core_count();
-	const int core = em_core_id();
+	const char *err_str = "";
 	int lock_taken;
 	const em_escope_t escope = is_delete ? EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC
 					: EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC;
 
-	em_core_mask_zero(&max_mask);
-	em_core_mask_set_count(core_count, &max_mask);
-	/*
-	 * Can only set core mask bits for running cores - verify this.
-	 * 'new_mask' can contain set bits only for cores running EM,
-	 * 'max_mask' contains all allowed set bits. Check that new_mask
-	 * contains only set bits that are also found in max_mask.
-	 */
-	em_core_mask_or(&tmp_mask, new_mask, &max_mask);
-	if (unlikely(!em_core_mask_equal(&tmp_mask, &max_mask))) {
-		char new_mstr[EM_CORE_MASK_STRLEN];
-		char max_mstr[EM_CORE_MASK_STRLEN];
-
-		em_core_mask_tostr(new_mstr, EM_CORE_MASK_STRLEN, new_mask);
-		em_core_mask_tostr(max_mstr, EM_CORE_MASK_STRLEN, &max_mask);
-		return INTERNAL_ERROR(EM_ERR_TOO_LARGE, escope,
-			"Queue grp:%" PRI_QGRP "- Inv mask:%s, max valid:%s",
-			queue_group, new_mstr, max_mstr);
-	}
+	/* Can only set core mask bits for running cores - verify this */
+	err = check_qgrp_mask(queue_group, new_mask, escope);
+	if (unlikely(err != EM_OK))
+		return err;
 
 	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_global);
 	RETURN_ERROR_IF(!lock_taken, EM_ERR_NOT_FREE, escope,
@@ -613,25 +693,18 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 
 	env_spinlock_lock(&qgrp_elem->lock);
 
-	if (unlikely(!queue_group_allocated(qgrp_elem))) {
+	/* Check Queue Group state */
+	err = check_qgrp_state(qgrp_elem, is_delete, &err_str/*out*/);
+	if (unlikely(err != EM_OK)) {
 		env_spinlock_unlock(&qgrp_elem->lock);
-		err = EM_ERR_BAD_ID;
-		goto queue_group_modify_sync_error;
-	}
-	if (unlikely(qgrp_elem->pending_modify)) {
-		env_spinlock_unlock(&qgrp_elem->lock);
-		err = EM_ERR_BAD_STATE;
-		goto queue_group_modify_sync_error;
-	}
-	if (unlikely(is_delete && !list_is_empty(&qgrp_elem->queue_list))) {
-		env_spinlock_unlock(&qgrp_elem->lock);
-		err = EM_ERR_NOT_FREE;
 		goto queue_group_modify_sync_error;
 	}
 
 	/*
 	 * If the new mask is equal to the one in use.
 	 */
+	em_core_mask_t old_mask;
+
 	em_core_mask_copy(&old_mask, &qgrp_elem->core_mask);
 
 	if (em_core_mask_equal(&old_mask, new_mask)) {
@@ -650,41 +723,26 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 
 	env_spinlock_unlock(&qgrp_elem->lock);
 
-	adds = 0, rems = 0;
-	/* Count added and removed cores */
-	for (i = 0; i < core_count; i++) {
-		if (!em_core_mask_isset(i, &old_mask) &&
-		    em_core_mask_isset(i, new_mask)) {
-			adds++;
-		} else if (em_core_mask_isset(i, &old_mask) &&
-			 !em_core_mask_isset(i, new_mask)) {
-			if (core == i) /* sync rem for current core */
-				modify_this_core = 1;
-			rem_core[rems++] = i;
-		}
-	}
+	/* Count added & removed cores */
+	em_core_mask_t rem_mask;
+	int adds = count_qgrp_adds(&old_mask, new_mask);
+	int rems = count_qgrp_rems(&old_mask, new_mask, true /*skip this core*/,
+				   &rem_mask /*out*/);
 
-	int ret = 0;
+	/* Modify the ODP schedule group */
 	odp_thrmask_t odp_new_mask;
+	int ret;
 
 	mask_em2odp(new_mask, &odp_new_mask);
-	if (rems > 0) {
-		odp_thrmask_t odp_leave_mask, odp_all_mask;
 
-		odp_thrmask_setall(&odp_all_mask);
-		odp_thrmask_xor(&odp_leave_mask, &odp_all_mask, &odp_new_mask);
-		ret = odp_schedule_group_leave(qgrp_elem->odp_sched_group,
-					       &odp_leave_mask);
-	}
-	if (adds > 0)
-		ret |= odp_schedule_group_join(qgrp_elem->odp_sched_group,
-					       &odp_new_mask);
+	ret = modify_odp_schedgrp(qgrp_elem->odp_sched_group, &odp_new_mask,
+				  adds, rems);
 	if (unlikely(ret != 0)) {
 		err = EM_FATAL(EM_ERR_LIB_FAILED);
 		goto queue_group_modify_sync_error;
 	}
 
-	if (rems == 0 || (rems == 1 && modify_this_core)) {
+	if (rems == 0) {
 		if (is_delete)
 			q_grp_delete_done(qgrp_elem, new_mask);
 		else
@@ -694,69 +752,16 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	}
 
 	/*
-	 * Note: .pending_modify = 1 from here onwards:
+	 * Note: .pending_modify = 1:
 	 *       Threat all errors as EM_FATAL because failures will leave
-	 *       .pending_modify = 1 until restart for the group.
-	 * Send queue group add/rem commands to relevant cores
+	 *       .pending_modify = 1 for the group until restart.
 	 */
-	event_group = em_event_group_create();
-	if (unlikely(event_group == EM_EVENT_GROUP_UNDEF)) {
-		err = EM_FATAL(EM_ERR_ALLOC_FAILED);
-		goto queue_group_modify_sync_error;
-	}
 
-	/*
-	 * Internal notification when all adds and rems are done.
-	 * Also save user requested notifs if given.
-	 */
-	event = em_alloc(sizeof(internal_event_t), EM_EVENT_TYPE_SW,
-			 EM_POOL_DEFAULT);
-	if (unlikely(event == EM_EVENT_UNDEF)) {
-		err = EM_FATAL(EM_ERR_ALLOC_FAILED);
-		goto queue_group_modify_sync_error;
-	}
-
-	modify_callback_args = em_event_pointer(event);
-	/* Init the callback function arguments */
-	modify_callback_args->qgrp_elem = qgrp_elem;
-	em_core_mask_copy(&modify_callback_args->new_mask, new_mask);
-	if (is_delete)
-		f_done_callback = q_grp_delete_sync_done_callback;
-	else
-		f_done_callback = q_grp_modify_sync_done_callback;
-
-	err = internal_done_w_notif_req(event_group, rems - modify_this_core,
-					f_done_callback, event/*f_args*/,
-					0, NULL);
+	err = send_qgrp_rem_reqs(qgrp_elem, new_mask, &rem_mask,
+				 0, NULL, escope);
 	if (unlikely(err != EM_OK)) {
 		err = EM_FATAL(err);
 		goto queue_group_modify_sync_error;
-	}
-
-	/* Send rems to all cores to be removed except to the calling core */
-	for (i = 0; i < rems; i++) {
-		/* skip sending to calling core */
-		if (rem_core[i] == core)
-			continue;
-		event = em_alloc(sizeof(internal_event_t), EM_EVENT_TYPE_SW,
-				 EM_POOL_DEFAULT);
-		if (unlikely(event == EM_EVENT_UNDEF)) {
-			err = EM_FATAL(EM_ERR_ALLOC_FAILED);
-			goto queue_group_modify_sync_error;
-		}
-
-		i_event = em_event_pointer(event);
-		i_event->id = QUEUE_GROUP_REM_SYNC_REQ;
-		i_event->q_grp.queue_group = queue_group;
-
-		int qidx = queue_id2idx(FIRST_INTERNAL_QUEUE) + rem_core[i];
-
-		err = em_send_group(event, queue_idx2hdl(qidx), event_group);
-		/* FATAL error, abort execution */
-		if (unlikely(err != EM_OK)) {
-			err = EM_FATAL(err);
-			goto queue_group_modify_sync_error;
-		}
 	}
 
 	/*
@@ -769,7 +774,8 @@ queue_group_modify_sync_error:
 	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
 	env_spinlock_unlock(&em_shm->sync_api.lock_global);
 	RETURN_ERROR_IF(err != EM_OK, err, escope,
-			"Failure: Modify sync QGrp:%" PRI_QGRP "", queue_group);
+			"Failure: Modify sync QGrp:%" PRI_QGRP ":%s",
+			queue_group, err_str);
 
 	return EM_OK;
 }
@@ -782,7 +788,7 @@ static void
 q_grp_modify_done_callback(void *arg_ptr)
 {
 	em_event_t event = (em_event_t)arg_ptr;
-	q_grp_modify_done_callback_args_t *args = em_event_pointer(event);
+	const q_grp_modify_done_callback_args_t *args = em_event_pointer(event);
 	queue_group_elem_t *const qgrp_elem = args->qgrp_elem;
 
 	env_spinlock_lock(&qgrp_elem->lock);
@@ -822,7 +828,7 @@ static void
 q_grp_delete_done_callback(void *arg_ptr)
 {
 	em_event_t event = (em_event_t)arg_ptr;
-	q_grp_modify_done_callback_args_t *args = em_event_pointer(event);
+	const q_grp_modify_done_callback_args_t *args = em_event_pointer(event);
 	queue_group_elem_t *const qgrp_elem = args->qgrp_elem;
 
 	env_spinlock_lock(&qgrp_elem->lock);

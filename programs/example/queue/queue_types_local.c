@@ -413,12 +413,19 @@ test_start(appl_conf_t *const appl_conf)
 	char ag_name[EM_ATOMIC_GROUP_NAME_LEN];
 	int i;
 
-	queue_a = EM_QUEUE_UNDEF, queue_b = EM_QUEUE_UNDEF;
-	queue_ag_a1 = EM_QUEUE_UNDEF, queue_ag_a2 = EM_QUEUE_UNDEF;
+	queue_a = EM_QUEUE_UNDEF;
+	queue_b = EM_QUEUE_UNDEF;
+
+	queue_ag_a1 = EM_QUEUE_UNDEF;
+	queue_ag_a2 = EM_QUEUE_UNDEF;
 	queue_ag_a3 = EM_QUEUE_UNDEF;
-	queue_ag_b1 = EM_QUEUE_UNDEF, queue_ag_b2 = EM_QUEUE_UNDEF;
+
+	queue_ag_b1 = EM_QUEUE_UNDEF;
+	queue_ag_b2 = EM_QUEUE_UNDEF;
 	queue_ag_b3 = EM_QUEUE_UNDEF;
-	queue_local_a = EM_QUEUE_UNDEF, queue_local_b = EM_QUEUE_UNDEF;
+
+	queue_local_a = EM_QUEUE_UNDEF;
+	queue_local_b = EM_QUEUE_UNDEF;
 
 	/*
 	 * Store the event pool to use, use the EM default pool if no other

@@ -156,6 +156,8 @@
  */
 #include <inttypes.h>
 #include <event_machine/add-ons/event_machine_add-on_error.h>
+/* Include system specific configuration and types */
+#include <event_machine/platform/add-ons/event_machine_timer_hw_specific.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -164,7 +166,7 @@ extern "C" {
 /** Major API version, marks possibly not backwards compatible changes */
 #define EM_TIMER_API_VERSION_MAJOR   2
 /** Minor version, backwards compatible changes or additions */
-#define EM_TIMER_API_VERSION_MINOR   0
+#define EM_TIMER_API_VERSION_MINOR   1
 
 /**
  * @typedef em_timer_t
@@ -217,12 +219,8 @@ typedef enum em_tmo_state_t {
  */
 typedef uint64_t em_timer_tick_t;
 
-/*
- * Include system specific configuration and types
- */
-#include <event_machine/platform/add-ons/event_machine_timer_hw_specific.h>
-
-/** Type for timer resolution parameters
+/**
+ * Type for timer resolution parameters
  *
  * This structure is used to group timer resolution parameters that may
  * affect each other.
@@ -460,8 +458,11 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue);
  * Free (destroy) a timeout.
  * The user provided timeout event for an active timeout will be returned via
  * cur_event and the timeout is cancelled. The timeout event for an expired, but
- * not yet received timeout, will not be returned. It is the responsibility of
- * the application to handle that case.
+ * not yet received timeout will not be returned. It is the responsibility of
+ * the application to handle that case (event will still be received).
+ *
+ * After and during this call the tmo handle is not valid anymore and must not be used.
+ * With periodic timeout means em_tmo_ack must also not be called when tmo is deleted.
  *
  * @param      tmo        Timeout handle
  * @param[out] cur_event  Current event for an active timeout
@@ -488,7 +489,11 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event);
  * can fail only in highly exceptional situations (em_tmo_create() should pre-
  * allocate needed resources).
  *
- * Setting 'ticks' to an already passed time value is considered an error.
+ * Setting 'ticks_abs' to an already passed or too near time returns EM_ERR_TOONEAR.
+ * Setting 'ticks_abs' to a time value too far ahead (beoynd maximum timeout)
+ * returns EM_ERR_TOOFAR. Both of these situations will not trigger calls to
+ * errorhandler and need to be handled using the return code (event not taken).
+ * Minimum and maximum timeout can be inquired with em_timer_res_capability.
  *
  * An active timeout can not be modified. The timeout needs to be canceled and
  * then set again (tmo handle can be re-used) with new arguments.
@@ -496,14 +501,19 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event);
  * An inactive timeout can be re-used by calling em_tmo_set_abs/rel() again
  * after the previous timeout has expired.
  *
- * This function is meant for activating oneshot timeouts only. To activate
- * a periodic timer, use em_tmo_set_periodic() instead.
+ * This function is for activating oneshot timeouts only. To activate
+ * a periodic timer use em_tmo_set_periodic() instead.
  *
  * @param tmo        Timeout handle
  * @param ticks_abs  Expiration time in absolute timer specific ticks
  * @param tmo_ev     Timeout event
  *
- * @return EM_OK on success
+ * @retval EM_OK		success (event taken)
+ * @retval EM_ERR_TOONEAR	failure, tick value is past or too close to current time
+ * @retval EM_ERR_TOOFAR	failure, tick value exceeds timer capability (too far ahead)
+ * @retval (other_codes)	other failure
+ *
+ * @see em_timer_res_capability
  */
 em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 			   em_event_t tmo_ev);
@@ -516,6 +526,9 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
  *
  * The timeout event will be sent to the queue given to em_tmo_create() when the
  * timeout expires.
+ *
+ * Using ticks value too small or too large is considered an error here
+ * (em_timer_res_capability can be used to check the limits).
  *
  * This function is primarily meant for activating oneshot timeouts but can
  * still, for backwards compatibility reasons, be used for activating periodic
@@ -540,7 +553,7 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
  *
  * Used to activate periodic timeouts. The first period can be different than
  * the repetitive period by providing an absolute start time 'start_abs' (the
- * first period starts from that moment on). Use 0 as start time if the period
+ * first period starts from that moment). Use 0 as start time if the period
  * can start from the moment of the call, i.e. the first period is relative and
  * same as the rest.
  * If a different relative time is needed for the first timeout then use
@@ -558,7 +571,10 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
  * @param period     Period in timer specific ticks
  * @param tmo_ev     Timeout event handle
  *
- * @return EM_OK on success
+ * @retval EM_OK		success
+ * @retval EM_ERR_TOONEAR	failure, start tick value is past or too close to current time
+ * @retval EM_ERR_TOOFAR	failure, start tick value exceeds timer capability (too far ahead)
+ * @retval (other_codes)	failure
  */
 em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 				em_timer_tick_t start_abs,
@@ -574,7 +590,11 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
  * A timeout that has already expired cannot be cancelled and the timeout event
  * will be delivered to the destination queue. In this case, cancel will return
  * an error as it was too late to cancel. Cancel also fails if attempted before
- * timeout activation.
+ * timeout activation (em_tmo_set_).
+ *
+ * With periodic timeout cancel may also fail, if done too late for the given
+ * period. This is considered normal and indicates that one more timeout will be
+ * received. The next call to em_tmo_ack will then return EM_ERR_CANCELED.
  *
  * @param      tmo        Timeout handle
  * @param[out] cur_event  Event handle pointer to return the pending
@@ -605,19 +625,24 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
  * timeout - here no past timeout is skipped and each acknowledgment will
  * immediately trigger the next timeout until the current time has been reached.
  * Note that using EM_TMO_FLAG_NOSKIP may result in an event storm if a large
- * number of timeouts have been unacknowledged for a longer time.
+ * number of timeouts have been unacknowledged for a longer time. Timing problems
+ * will not cause errorhandler calls.
+ *
+ * If the timer has been canceled, but the cancel happened too late for the
+ * current period the timeout will be delivered. If application then calls em_tmo_ack,
+ * it returns EM_ERR_CANCELED and does not call errorhandler.
  *
  * The application may re-use the same timeout event that was received or
  * provide a new one for the next timeout.
- * An error will be returned if the corresponding timeout has been cancelled.
  *
  * The given event should not be touched after calling this function until it
- * has been received again (or after the timeout is successfully cancelled).
+ * has been received again (or after the timeout is successfully cancelled)
  *
- * The given event must be handled by the application if an error is returned.
+ * The given event is not taken and must be handled by the application if an
+ * error is returned.
  * The periodic timeout will stop if em_tmo_ack() returns an error.
- * The implementation will always call errorhandler in this case, so the
- * exception can be handled also there.
+ * The implementation will call errorhandler in this case (unless timer was
+ * canceled), so the exception can be handled also there.
  *
  * em_tmo_ack() can only be used with periodic timeouts and will fail for
  * one-shot timeouts.
@@ -625,7 +650,9 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
  * @param tmo          Timeout handle
  * @param next_tmo_ev  Next timeout event handle (can be the current one)
  *
- * @return EM_OK on success
+ * @retval EM_OK		success
+ * @retval EM_ERR_CANCELED	timer has been cancelled
+ * @retval (other_codes)	failure
  */
 em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev);
 
@@ -667,6 +694,26 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr);
  * @return ticks per second (Hz), or 0 for non-existing timer
  */
 uint64_t em_timer_get_freq(em_timer_t tmr);
+
+/**
+ * Convert timer tick to ns
+ *
+ * @param tmr		Valid timer handle
+ * @param ticks		Timer specific ticks to convert
+ *
+ * @return converted amount in ns
+ */
+uint64_t em_timer_tick_to_ns(em_timer_t tmr, em_timer_tick_t ticks);
+
+/**
+ * Convert ns to timer tick
+ *
+ * @param tmr		Valid timer handle
+ * @param ns		ns value to convert
+ *
+ * @return converted amount in timer ticks
+ */
+em_timer_tick_t em_timer_ns_to_tick(em_timer_t tmr, uint64_t ns);
 
 /**
  * Returns the current state of the given timeout.

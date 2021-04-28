@@ -58,7 +58,7 @@ extern "C" {
  */
 EM_HANDLE_T(em_event_t);
 /** Undefined event */
-#define EM_EVENT_UNDEF  ((em_event_t)EM_HDL_UNDEF)
+#define EM_EVENT_UNDEF  EM_STATIC_CAST(em_event_t, EM_HDL_UNDEF)
 /** em_event_t printf format */
 #define PRI_EVENT  PRI_HDL
 
@@ -91,7 +91,7 @@ typedef uint32_t em_event_type_t;
  */
 EM_HANDLE_T(em_eo_t);
 /** Undefined EO */
-#define EM_EO_UNDEF  ((em_eo_t)EM_HDL_UNDEF)
+#define EM_EO_UNDEF  EM_STATIC_CAST(em_eo_t, EM_HDL_UNDEF)
 /** em_eo_t printf format */
 #define PRI_EO  PRI_HDL
 
@@ -103,7 +103,7 @@ EM_HANDLE_T(em_eo_t);
  */
 EM_HANDLE_T(em_queue_t);
 /** Undefined queue */
-#define EM_QUEUE_UNDEF  ((em_queue_t)EM_HDL_UNDEF)
+#define EM_QUEUE_UNDEF  EM_STATIC_CAST(em_queue_t, EM_HDL_UNDEF)
 /** em_queue_t printf format */
 #define PRI_QUEUE  PRI_HDL
 
@@ -123,7 +123,7 @@ EM_HANDLE_T(em_queue_t);
  */
 EM_HANDLE_T(em_queue_group_t);
 /** Undefined queue group */
-#define EM_QUEUE_GROUP_UNDEF  ((em_queue_group_t)EM_HDL_UNDEF)
+#define EM_QUEUE_GROUP_UNDEF  EM_STATIC_CAST(em_queue_group_t, EM_HDL_UNDEF)
 /** em_queue_group_t printf format */
 #define PRI_QGRP  PRI_HDL
 
@@ -137,7 +137,7 @@ EM_HANDLE_T(em_queue_group_t);
  */
 EM_HANDLE_T(em_event_group_t);
 /** Undefined event group */
-#define EM_EVENT_GROUP_UNDEF  ((em_event_group_t)EM_HDL_UNDEF)
+#define EM_EVENT_GROUP_UNDEF  EM_STATIC_CAST(em_event_group_t, EM_HDL_UNDEF)
 /** em_event_group_t printf format */
 #define PRI_EGRP  PRI_HDL
 
@@ -152,7 +152,7 @@ EM_HANDLE_T(em_event_group_t);
  */
 EM_HANDLE_T(em_atomic_group_t);
 /** Undefined atomic group */
-#define EM_ATOMIC_GROUP_UNDEF ((em_atomic_group_t)EM_HDL_UNDEF)
+#define EM_ATOMIC_GROUP_UNDEF  EM_STATIC_CAST(em_atomic_group_t, EM_HDL_UNDEF)
 /** em_atomic_group_t printf format */
 #define PRI_AGRP  PRI_HDL
 
@@ -475,6 +475,8 @@ typedef uint32_t em_escope_t;
 #define EM_ESCOPE_EVENT_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x060A)
 #define EM_ESCOPE_EVENT_GET_TYPE_MULTI            (EM_ESCOPE_API_MASK | 0x060B)
 #define EM_ESCOPE_EVENT_SAME_TYPE_MULTI           (EM_ESCOPE_API_MASK | 0x060C)
+#define EM_ESCOPE_EVENT_MARK_SEND                 (EM_ESCOPE_API_MASK | 0x060D)
+#define EM_ESCOPE_EVENT_UNMARK_SEND               (EM_ESCOPE_API_MASK | 0x060E)
 
 /* EM API escopes: Queue Group */
 #define EM_ESCOPE_QUEUE_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0701)

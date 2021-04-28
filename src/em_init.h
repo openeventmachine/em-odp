@@ -62,6 +62,7 @@ typedef struct {
 	struct {
 		int statistics_enable; /* true/false */
 		unsigned int align_offset; /* bytes */
+		unsigned int pkt_headroom; /* bytes */
 	} pool;
 
 	struct {
@@ -71,6 +72,12 @@ typedef struct {
 	struct {
 		unsigned int num_order_queues;
 	} event_chaining;
+
+	struct {
+		int enable;
+		int store_first_u32;
+		int prealloc_pools;
+	} esv;
 } opt_t;
 
 em_status_t
@@ -84,13 +91,16 @@ em_status_t
 output_drain_init(const em_core_mask_t *logic_mask, const em_conf_t *conf);
 
 em_status_t
-poll_drain_mask_set_local(int *result, int core_id, em_core_mask_t *const mask);
+poll_drain_mask_set_local(bool *const result /*out*/, int core_id,
+			  const em_core_mask_t *mask);
 
 em_status_t
-input_poll_init_local(int *result, int core_id, em_conf_t *const conf);
+input_poll_init_local(bool *const result /*out*/, int core_id,
+		      const em_conf_t *conf);
 
 em_status_t
-output_drain_init_local(int *result, int core_id, em_conf_t *const conf);
+output_drain_init_local(bool *const result /*out*/, int core_id,
+			const em_conf_t *conf);
 
 #ifdef __cplusplus
 }

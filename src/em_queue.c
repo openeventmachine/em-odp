@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -32,6 +32,21 @@
 
 #define EM_Q_BASENAME  "EM_Q_"
 
+/**
+ * Queue create-params passed to queue_setup...()
+ */
+typedef struct {
+	const char *name;
+	em_queue_type_t type;
+	em_queue_prio_t prio;
+	em_atomic_group_t atomic_group;
+	em_queue_group_t queue_group;
+	const em_queue_conf_t *conf;
+} queue_setup_t;
+
+/**
+ * Default queue create conf to use if not provided by the user
+ */
 static const em_queue_conf_t default_queue_conf = {
 	.flags = EM_QUEUE_FLAG_DEFAULT,
 	.min_events = 0, /* use EM default value */
@@ -46,8 +61,25 @@ static inline em_status_t
 queue_free(em_queue_t queue);
 
 static int
-queue_setup_output(queue_elem_t *const q_elem, em_queue_prio_t prio,
-		   const em_queue_conf_t *conf, const char **err_str);
+queue_setup(queue_elem_t *q_elem, const queue_setup_t *setup,
+	    const char **err_str);
+static void
+queue_setup_common(queue_elem_t *q_elem, const queue_setup_t *setup);
+static void
+queue_setup_odp_common(const queue_setup_t *setup,
+		       odp_queue_param_t *odp_queue_param);
+static int
+queue_setup_scheduled(queue_elem_t *q_elem, const queue_setup_t *setup,
+		      const char **err_str);
+static int
+queue_setup_unscheduled(queue_elem_t *q_elem, const queue_setup_t *setup,
+			const char **err_str);
+static int
+queue_setup_local(queue_elem_t *q_elem, const queue_setup_t *setup,
+		  const char **err_str);
+static int
+queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
+		   const char **err_str);
 
 static inline queue_elem_t *
 queue_poolelem2queue(objpool_elem_t *const queue_pool_elem)
@@ -69,7 +101,7 @@ read_config_file(void)
 	 * Option: queue.min_events_default
 	 */
 	conf_str = "queue.min_events_default";
-	ret = _em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
 		return -1;
@@ -98,7 +130,8 @@ queue_pool_init(queue_tbl_t *const queue_tbl,
 	const int qs_per_pool = (max_qidx - min_qidx + 1);
 	int qs_per_subpool = qs_per_pool / cores;
 	int qs_leftover = qs_per_pool % cores;
-	int subpool_idx = 0, add_cnt = 0;
+	int subpool_idx = 0;
+	int add_cnt = 0;
 	int i;
 
 	if (objpool_init(&queue_pool->objpool, cores) != 0)
@@ -126,11 +159,13 @@ queue_init(queue_tbl_t *const queue_tbl,
 	   queue_pool_t *const queue_pool,
 	   queue_pool_t *const queue_pool_static)
 {
-	int i, min, max, ret;
 	odp_queue_capability_t *const odp_queue_capa =
 		&queue_tbl->odp_queue_capability;
 	odp_schedule_capability_t *const odp_sched_capa =
 		&queue_tbl->odp_schedule_capability;
+	int min;
+	int max;
+	int ret;
 
 	memset(queue_tbl, 0, sizeof(queue_tbl_t));
 	memset(queue_pool, 0, sizeof(queue_pool_t));
@@ -156,7 +191,7 @@ queue_init(queue_tbl_t *const queue_tbl,
 			EM_MAX_QUEUES, odp_queue_capa->max_queues);
 
 	/* Initialize the queue element table */
-	for (i = 0; i < EM_MAX_QUEUES; i++)
+	for (int i = 0; i < EM_MAX_QUEUES; i++)
 		queue_tbl->queue_elem[i].queue = queue_idx2hdl(i);
 
 	/* Initialize the static queue pool */
@@ -186,6 +221,7 @@ queue_init_local(void)
 	int core;
 	char name[20];
 	odp_queue_param_t param;
+	em_locm_t *const locm = &em_locm;
 
 	core = em_core_id();
 
@@ -196,23 +232,23 @@ queue_init_local(void)
 	param.order = ODP_QUEUE_ORDER_IGNORE;
 	param.size = 512;
 
-	em_locm.local_queues.empty = 1;
+	locm->local_queues.empty = 1;
 
 	for (prio = 0; prio < EM_QUEUE_PRIO_NUM; prio++) {
 		snprintf(name, sizeof(name),
 			 "local-q:c%02d:prio%d", core, prio);
 		name[sizeof(name) - 1] = '\0';
 
-		em_locm.local_queues.prio[prio].empty_prio = 1;
-		em_locm.local_queues.prio[prio].queue =
+		locm->local_queues.prio[prio].empty_prio = 1;
+		locm->local_queues.prio[prio].queue =
 			odp_queue_create(name, &param);
-		if (unlikely(em_locm.local_queues.prio[prio].queue ==
+		if (unlikely(locm->local_queues.prio[prio].queue ==
 			     ODP_QUEUE_INVALID))
 			return EM_ERR_ALLOC_FAILED;
 	}
 
-	memset(&em_locm.output_queue_track, 0,
-	       sizeof(em_locm.output_queue_track));
+	memset(&locm->output_queue_track, 0,
+	       sizeof(locm->output_queue_track));
 
 	return EM_OK;
 }
@@ -225,15 +261,22 @@ queue_init_local(void)
 em_status_t
 queue_term_local(void)
 {
-	int prio, ret;
+	em_event_t event;
 	event_hdr_t *ev_hdr;
 	em_status_t stat = EM_OK;
+	int ret;
+	bool esv_ena = esv_enabled();
 
 	/* flush all events */
-	while ((ev_hdr = local_queue_dequeue()) != NULL)
-		em_free(event_hdr_to_event(ev_hdr));
+	while ((ev_hdr = local_queue_dequeue()) != NULL) {
+		event = event_hdr_to_event(ev_hdr);
+		if (esv_ena)
+			event = evstate_em2usr(event, ev_hdr,
+					       EVSTATE__TERM_CORE__QUEUE_LOCAL);
+		em_free(event);
+	}
 
-	for (prio = 0; prio < EM_QUEUE_PRIO_NUM; prio++) {
+	for (int prio = 0; prio < EM_QUEUE_PRIO_NUM; prio++) {
 		ret = odp_queue_destroy(em_locm.local_queues.prio[prio].queue);
 		if (unlikely(ret != 0))
 			stat = EM_ERR_LIB_FAILED;
@@ -332,6 +375,90 @@ queue_free(em_queue_t queue)
 	return EM_OK;
 }
 
+static int
+queue_create_check_args(const queue_setup_t *setup, const char **err_str)
+{
+	const queue_group_elem_t *queue_group_elem = NULL;
+	const atomic_group_elem_t *ag_elem = NULL;
+
+	/* Argument checks per queue type & set queue_group_elem if used */
+	switch (setup->type) {
+	case EM_QUEUE_TYPE_ATOMIC:
+	case EM_QUEUE_TYPE_PARALLEL:
+	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+		/* EM scheduled queue */
+		queue_group_elem = queue_group_elem_get(setup->queue_group);
+		/* scheduled queues are always associated with a queue group */
+		if (unlikely(queue_group_elem == NULL ||
+			     !queue_group_allocated(queue_group_elem))) {
+			*err_str = "Invalid queue group!";
+			return -1;
+		}
+
+		if (setup->atomic_group != EM_ATOMIC_GROUP_UNDEF) {
+			ag_elem = atomic_group_elem_get(setup->atomic_group);
+			if (unlikely(ag_elem == NULL ||
+				     !atomic_group_allocated(ag_elem))) {
+				*err_str = "Invalid atomic group!";
+				return -1;
+			}
+		}
+		break;
+
+	case EM_QUEUE_TYPE_UNSCHEDULED:
+		/* API arg checks for unscheduled queues */
+		if (unlikely(setup->prio != EM_QUEUE_PRIO_UNDEF)) {
+			*err_str = "Invalid priority for unsched queue!";
+			return -1;
+		}
+		if (unlikely(setup->queue_group != EM_QUEUE_GROUP_UNDEF)) {
+			*err_str = "Queue group not used with unsched queues!";
+			return -1;
+		}
+		if (unlikely(setup->atomic_group != EM_ATOMIC_GROUP_UNDEF)) {
+			*err_str = "Atomic group not used with unsched queues!";
+			return -1;
+		}
+		break;
+
+	case EM_QUEUE_TYPE_LOCAL:
+		/* API arg checks for local queues */
+		if (unlikely(setup->queue_group != EM_QUEUE_GROUP_UNDEF)) {
+			*err_str = "Queue group not used with local queues!";
+			return -1;
+		}
+		if (unlikely(setup->atomic_group != EM_ATOMIC_GROUP_UNDEF)) {
+			*err_str = "Atomic group not used with local queues!";
+			return -1;
+		}
+		break;
+
+	case EM_QUEUE_TYPE_OUTPUT:
+		/* API arg checks for output queues */
+		if (unlikely(setup->queue_group != EM_QUEUE_GROUP_UNDEF)) {
+			*err_str = "Queue group not used with output queues!";
+			return -1;
+		}
+		if (unlikely(setup->atomic_group != EM_ATOMIC_GROUP_UNDEF)) {
+			*err_str = "Atomic group not used with output queues!";
+			return -1;
+		}
+		if (unlikely(setup->conf == NULL ||
+			     setup->conf->conf_len < sizeof(em_output_queue_conf_t) ||
+			     setup->conf->conf == NULL)) {
+			*err_str = "Invalid output queue conf";
+			return -1;
+		}
+		break;
+
+	default:
+		*err_str = "Unknown queue type";
+		return -1;
+	}
+
+	return 0;
+}
+
 /**
  * Create an EM queue: alloc, setup and add to queue group list
  */
@@ -341,111 +468,56 @@ queue_create(const char *name, em_queue_type_t type, em_queue_prio_t prio,
 	     em_atomic_group_t atomic_group, const em_queue_conf_t *conf,
 	     const char **err_str)
 {
-	em_queue_t queue = EM_QUEUE_UNDEF;
-	queue_elem_t *queue_elem = NULL;
-	queue_group_elem_t *queue_group_elem = NULL;
-	atomic_group_elem_t *ag_elem = NULL;
 	int err;
 
 	/* Use default EM queue conf if none given */
 	if (conf == NULL)
 		conf = &default_queue_conf;
 
-	/* Argument checks per queue type & set queue_group_elem if used */
-	switch (type) {
-	case EM_QUEUE_TYPE_ATOMIC:
-	case EM_QUEUE_TYPE_PARALLEL:
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
-		/* EM scheduled queue */
-		queue_group_elem = queue_group_elem_get(queue_group);
-		/* scheduled queues are always associated with a queue group */
-		if (unlikely(queue_group_elem == NULL ||
-			     !queue_group_allocated(queue_group_elem))) {
-			*err_str = "Invalid queue group!";
-			return EM_QUEUE_UNDEF;
-		}
+	queue_setup_t setup = {.name = name, .type = type, .prio = prio,
+			       .atomic_group = atomic_group,
+			       .queue_group = queue_group, .conf = conf};
 
-		if (atomic_group != EM_ATOMIC_GROUP_UNDEF) {
-			ag_elem = atomic_group_elem_get(atomic_group);
-			if (unlikely(ag_elem == NULL ||
-				     !atomic_group_allocated(ag_elem))) {
-				*err_str = "Invalid atomic group!";
-				return EM_QUEUE_UNDEF;
-			}
-		}
-
-		break;
-
-	case EM_QUEUE_TYPE_UNSCHEDULED:
-		/* API arg checks for unscheduled queues */
-		if (unlikely(prio != EM_QUEUE_PRIO_UNDEF)) {
-			*err_str = "Invalid priority for unsched queue!";
-			return EM_QUEUE_UNDEF;
-		}
-		if (unlikely(queue_group != EM_QUEUE_GROUP_UNDEF)) {
-			*err_str = "Queue group not used with unsched queues!";
-			return EM_QUEUE_UNDEF;
-		}
-		if (unlikely(atomic_group != EM_ATOMIC_GROUP_UNDEF)) {
-			*err_str = "Atomic group not used with unsched queues!";
-			return EM_QUEUE_UNDEF;
-		}
-		break;
-
-	case EM_QUEUE_TYPE_LOCAL:
-		/* API arg checks for local queues */
-		if (unlikely(queue_group != EM_QUEUE_GROUP_UNDEF)) {
-			*err_str = "Invalid queue group for local queue!";
-			return EM_QUEUE_UNDEF;
-		}
-		break;
-
-	case EM_QUEUE_TYPE_OUTPUT:
-		/* API arg checks for output queues */
-		if (unlikely(queue_group != EM_QUEUE_GROUP_UNDEF)) {
-			*err_str = "Invalid queue group for local queue!";
-			return EM_QUEUE_UNDEF;
-		}
-		if (unlikely(conf == NULL ||
-			     conf->conf_len < sizeof(em_output_queue_conf_t) ||
-			     conf->conf == NULL)) {
-			*err_str = "Invalid output queue conf";
-			return EM_QUEUE_UNDEF;
-		}
-		break;
-
-	default:
-		*err_str = "Unknown queue type";
+	err = queue_create_check_args(&setup, err_str);
+	if (err) {
+		/* 'err_str' set by queue_create_check_args() */
 		return EM_QUEUE_UNDEF;
 	}
 
+	/*
+	 * Allocate the queue handle and obtain the corresponding queue-element
+	 */
 	const char *alloc_err_str = "";
 
-	queue = queue_alloc(queue_req, &alloc_err_str);
+	em_queue_t queue = queue_alloc(queue_req, &alloc_err_str);
+
 	if (unlikely(queue == EM_QUEUE_UNDEF)) {
 		*err_str = alloc_err_str;
 		return EM_QUEUE_UNDEF;
 	}
-
 	if (unlikely(queue_req != EM_QUEUE_UNDEF && queue_req != queue)) {
 		queue_free(queue);
-		*err_str = "Failed to allocate requested queue!";
+		*err_str = "Failed to allocate the requested queue!";
 		return EM_QUEUE_UNDEF;
 	}
 
-	queue_elem = queue_elem_get(queue);
+	queue_elem_t *queue_elem = queue_elem_get(queue);
 
-	err = queue_setup(queue_elem, name, type, prio,
-			  atomic_group, queue_group, conf, err_str);
+	if (unlikely(!queue_elem)) {
+		queue_free(queue);
+		*err_str = "Queue elem NULL!";
+		return EM_QUEUE_UNDEF;
+	}
+
+	/*
+	 * Setup/configure the queue
+	 */
+	err = queue_setup(queue_elem, &setup, err_str);
 	if (unlikely(err)) {
 		queue_free(queue);
 		/* 'err_str' set by queue_setup() */
 		return EM_QUEUE_UNDEF;
 	}
-
-	/* scheduled queues only: add queue to a queue group list */
-	if (queue_group_elem != NULL)
-		queue_group_add_queue_list(queue_group_elem, queue_elem);
 
 	return queue;
 }
@@ -453,7 +525,8 @@ queue_create(const char *name, em_queue_type_t type, em_queue_prio_t prio,
 em_status_t
 queue_delete(queue_elem_t *const queue_elem)
 {
-	queue_state_t old_state, new_state;
+	queue_state_t old_state;
+	queue_state_t new_state;
 	em_status_t ret;
 	em_queue_t queue = queue_elem->queue;
 	em_queue_type_t type = queue_elem->type;
@@ -507,8 +580,12 @@ queue_delete(queue_elem_t *const queue_elem)
 	}
 
 	if (queue_elem->odp_queue != ODP_QUEUE_INVALID) {
-		if (odp_queue_destroy(queue_elem->odp_queue) < 0)
-			return EM_ERROR;
+		int err = odp_queue_destroy(queue_elem->odp_queue);
+
+		RETURN_ERROR_IF(err, EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_DELETE,
+				"EM-Q:%" PRI_QUEUE ":odp_queue_destroy(" PRIu64 "):%d",
+				queue, odp_queue_to_u64(queue_elem->odp_queue),
+				err);
 	}
 
 	queue_elem->odp_queue = ODP_QUEUE_INVALID;
@@ -525,224 +602,368 @@ queue_delete(queue_elem_t *const queue_elem)
 /**
  * Setup an allocated/created queue before use.
  */
-int
-queue_setup(queue_elem_t *const q_elem, const char *name, em_queue_type_t type,
-	    em_queue_prio_t prio, em_atomic_group_t atomic_group,
-	    em_queue_group_t queue_group, const em_queue_conf_t *conf,
+static int
+queue_setup(queue_elem_t *q_elem, const queue_setup_t *setup,
 	    const char **err_str)
 {
-	const em_queue_t queue = q_elem->queue;
-	em_queue_flag_t flags;
-	char *const qname = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
-	odp_queue_t odp_queue;
-	odp_queue_param_t odp_queue_param;
-	odp_queue_capability_t *odp_queue_capa;
-	odp_schedule_capability_t *odp_sched_capa;
-	int create_odp_queue = 1;
 	int ret;
 
-	q_elem->odp_queue = ODP_QUEUE_INVALID;
-	q_elem->priority = prio;
-	q_elem->type = type;
-	q_elem->scheduled = EM_TRUE; /* override for local, output, unsched */
-	q_elem->state = EM_QUEUE_STATE_INIT; /* override for unscheduled */
-	q_elem->queue_group = queue_group;
-	q_elem->atomic_group = atomic_group;
-	q_elem->context = NULL;
-	q_elem->eo = EM_EO_UNDEF;
-	q_elem->eo_elem = NULL;
-	q_elem->eo_ctx = NULL;
-	q_elem->receive_func = NULL;
+	/* Set common queue-elem fields based on setup */
+	queue_setup_common(q_elem, setup);
 
-	if (name)
-		strncpy(qname, name, EM_QUEUE_NAME_LEN);
+	switch (setup->type) {
+	case EM_QUEUE_TYPE_ATOMIC: /* fallthrough */
+	case EM_QUEUE_TYPE_PARALLEL: /* fallthrough */
+	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+		ret = queue_setup_scheduled(q_elem, setup, err_str);
+		break;
+	case EM_QUEUE_TYPE_UNSCHEDULED:
+		ret = queue_setup_unscheduled(q_elem, setup, err_str);
+		break;
+	case EM_QUEUE_TYPE_LOCAL:
+		ret = queue_setup_local(q_elem, setup, err_str);
+		break;
+	case EM_QUEUE_TYPE_OUTPUT:
+		ret = queue_setup_output(q_elem, setup, err_str);
+		break;
+	default:
+		*err_str = "Queue setup: unknown queue type";
+		ret = -1;
+		break;
+	}
+
+	if (unlikely(ret))
+		return -1;
+
+	env_sync_mem();
+	return 0;
+}
+
+/**
+ * Helper function to queue_setup()
+ *
+ * Set EM queue params common to all EM queues based on EM config
+ */
+static void
+queue_setup_common(queue_elem_t *q_elem /*out*/, const queue_setup_t *setup)
+{
+	const em_queue_t queue = q_elem->queue;
+	char *const qname = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
+
+	/* Store queue name */
+	if (setup->name)
+		strncpy(qname, setup->name, EM_QUEUE_NAME_LEN);
 	else /* default unique name: "EM_Q_" + Q-id = e.g. EM_Q_1234 */
 		snprintf(qname, EM_QUEUE_NAME_LEN,
 			 "%s%" PRI_QUEUE "", EM_Q_BASENAME, queue);
 	qname[EM_QUEUE_NAME_LEN - 1] = '\0';
 
-	odp_queue_capa = &em_shm->queue_tbl.odp_queue_capability;
-	odp_sched_capa = &em_shm->queue_tbl.odp_schedule_capability;
-	/* Init odp queue params to default values */
-	odp_queue_param_init(&odp_queue_param);
+	/* Init q_elem fields based on setup params and clear the rest */
+	q_elem->type = setup->type;
+	q_elem->priority = setup->prio;
+	q_elem->queue_group = setup->queue_group;
+	q_elem->atomic_group = setup->atomic_group;
+	/* q_elem->conf = not stored, configured later */
 
-	flags = conf->flags & EM_QUEUE_FLAG_MASK;
-	if (unlikely(flags != EM_QUEUE_FLAG_DEFAULT)) {
+	/* Clear the rest */
+	q_elem->odp_queue = ODP_QUEUE_INVALID;
+	q_elem->scheduled = EM_FALSE;
+	q_elem->state = EM_QUEUE_STATE_INVALID;
+	q_elem->context = NULL;
+	q_elem->eo = EM_EO_UNDEF;
+	q_elem->eo_elem = NULL;
+	q_elem->eo_ctx = NULL;
+	q_elem->use_multi_rcv = 0;
+	q_elem->max_events = 0;
+	q_elem->receive_func = NULL;
+	q_elem->receive_multi_func = NULL;
+}
+
+/**
+ * Helper function to queue_setup_...()
+ *
+ * Set common ODP queue params based on EM config
+ */
+static void
+queue_setup_odp_common(const queue_setup_t *setup,
+		       odp_queue_param_t *odp_queue_param /*out*/)
+{
+	/*
+	 * Set ODP queue params according to EM queue conf flags
+	 */
+	const em_queue_conf_t *conf = setup->conf;
+	em_queue_flag_t flags = conf->flags & EM_QUEUE_FLAG_MASK;
+
+	if (flags != EM_QUEUE_FLAG_DEFAULT) {
 		if (flags & EM_QUEUE_FLAG_NONBLOCKING_WF)
-			odp_queue_param.nonblocking = ODP_NONBLOCKING_WF;
+			odp_queue_param->nonblocking = ODP_NONBLOCKING_WF;
 		else if (flags & EM_QUEUE_FLAG_NONBLOCKING_LF)
-			odp_queue_param.nonblocking = ODP_NONBLOCKING_LF;
+			odp_queue_param->nonblocking = ODP_NONBLOCKING_LF;
 
 		if (flags & EM_QUEUE_FLAG_ENQ_NOT_MTSAFE)
-			odp_queue_param.enq_mode = ODP_QUEUE_OP_MT_UNSAFE;
+			odp_queue_param->enq_mode = ODP_QUEUE_OP_MT_UNSAFE;
 		if (flags & EM_QUEUE_FLAG_DEQ_NOT_MTSAFE)
-			odp_queue_param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
+			odp_queue_param->deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
 	}
-	/* Set minimum queue size if other than 'default'(0) */
+
+	/*
+	 * Set minimum queue size if other than 'default'(0)
+	 */
 	if (conf->min_events == 0) {
 		/* use EM default value from config file: */
 		unsigned int size = em_shm->opt.queue.min_events_default;
 
 		if (size != 0)
-			odp_queue_param.size = size;
+			odp_queue_param->size = size;
 		/* else: use odp default as set by odp_queue_param_init() */
 	} else {
 		/* use user provided value: */
-		odp_queue_param.size = conf->min_events;
+		odp_queue_param->size = conf->min_events;
 	}
+}
 
-	if (type == EM_QUEUE_TYPE_ATOMIC ||
-	    type == EM_QUEUE_TYPE_PARALLEL ||
-	    type == EM_QUEUE_TYPE_PARALLEL_ORDERED) {
-		queue_group_elem_t *const qgrp_elem =
-			queue_group_elem_get(queue_group);
-		odp_schedule_sync_t odp_schedule_sync;
-		odp_schedule_prio_t odp_prio;
-		int err;
+/**
+ * Create an ODP queue for the newly created EM queue
+ */
+static int create_odp_queue(queue_elem_t *q_elem,
+			    const odp_queue_param_t *odp_queue_param)
+{
+	char odp_name[ODP_QUEUE_NAME_LEN];
+	odp_queue_t odp_queue;
 
-		if (unlikely(qgrp_elem == NULL)) {
-			*err_str = "Invalid queue group!";
-			return -1;
-		}
+	(void)queue_get_name(q_elem, odp_name/*out*/, sizeof(odp_name));
 
-		err = scheduled_queue_type_em2odp(type, &odp_schedule_sync);
-		if (unlikely(err != 0)) {
-			*err_str = "Invalid queue type!";
-			return -2;
-		}
+	odp_queue = odp_queue_create(odp_name, odp_queue_param);
+	if (unlikely(odp_queue == ODP_QUEUE_INVALID))
+		return -1;
 
-		err = prio_em2odp(prio, &odp_prio);
-		if (unlikely(err != 0)) {
-			*err_str = "Invalid queue priority!";
-			return -3;
-		}
+	/* Store the corresponding ODP Queue */
+	q_elem->odp_queue = odp_queue;
 
-		odp_queue_param.type = ODP_QUEUE_TYPE_SCHED;
-		odp_queue_param.sched.prio = odp_prio;
-		odp_queue_param.sched.sync = odp_schedule_sync;
-		odp_queue_param.sched.group = qgrp_elem->odp_sched_group;
-		/* set 'odp_queue_param.context = q_elem' after queue alloc */
-
-		/* check nonblocking level against sched queue capabilities */
-		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
-		    odp_sched_capa->lockfree_queues == ODP_SUPPORT_NO) {
-			*err_str =
-			"Non-blocking, lock-free sched queues unavailable";
-			return -4;
-		}
-		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
-		    odp_sched_capa->waitfree_queues == ODP_SUPPORT_NO) {
-			*err_str =
-			"Non-blocking, wait-free sched queues unavailable";
-			return -5;
-		}
-		if (odp_queue_param.enq_mode != ODP_QUEUE_OP_MT ||
-		    odp_queue_param.deq_mode != ODP_QUEUE_OP_MT) {
-			*err_str =
-			"Invalid flag: scheduled queues must be MT-safe";
-			return -6;
-		}
-	} else if (type == EM_QUEUE_TYPE_UNSCHEDULED) {
-		odp_queue_param.type = ODP_QUEUE_TYPE_PLAIN;
-		/* don't order events enqueued into unsched queues */
-		odp_queue_param.order = ODP_QUEUE_ORDER_IGNORE;
-
-		/* check nonblocking level against plain queue capabilities */
-		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
-		    odp_queue_capa->plain.lockfree.max_num == 0) {
-			*err_str =
-			"Non-blocking, lock-free unsched queues unavailable";
-			return -7;
-		}
-		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
-		    odp_queue_capa->plain.waitfree.max_num == 0) {
-			*err_str =
-			"Non-blocking, wait-free unsched queues unavailable";
-			return -8;
-		}
-		/* Override: an unscheduled queue is not scheduled */
-		q_elem->scheduled = EM_FALSE;
-		/* Override the queue state for unscheduled queues */
-		q_elem->state = EM_QUEUE_STATE_UNSCHEDULED;
-	} else if (type == EM_QUEUE_TYPE_LOCAL) {
-		/* odp queue NOT needed */
-		create_odp_queue = 0;
-		/* Override: a local queue is not scheduled */
-		q_elem->scheduled = EM_FALSE;
-	} else if (type == EM_QUEUE_TYPE_OUTPUT) {
-		odp_queue_param.type = ODP_QUEUE_TYPE_PLAIN;
-
-		/*
-		 * Output-queues need an odp-queue to ensure re-ordering if
-		 * events are sent into it from within an ordered context.
-		 * Note: ODP_QUEUE_ORDER_KEEP is default for an odp queue.
-		 */
-
-		/* check nonblocking level against plain queue capabilities */
-		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
-		    odp_queue_capa->plain.lockfree.max_num == 0) {
-			*err_str =
-			"Non-blocking, lock-free unsched queues unavailable";
-			return -9;
-		}
-		if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
-		    odp_queue_capa->plain.waitfree.max_num == 0) {
-			*err_str =
-			"Non-blocking, wait-free unsched queues unavailable";
-			return -10;
-		}
-
-		/* output-queue dequeue protected by q_elem->output.lock */
-		odp_queue_param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
-
-		ret = queue_setup_output(q_elem, prio, conf, err_str);
-		if (unlikely(ret != 0))
-			return -11;
-	} else {
-		*err_str = "Queue setup: unknown queue type";
-		return -12;
-	}
-
-	if (create_odp_queue) {
-		/*
-		 * Note: The ODP queue context points to the EM queue elem.
-		 * The EM queue context set by the user using the API function
-		 * em_queue_set_context() is accessed through the EM queue elem:
-		 * queue_elem->context.
-		 */
-		odp_queue_param.context = q_elem;
-
-		odp_queue = odp_queue_create(qname, &odp_queue_param);
-		if (unlikely(odp_queue == ODP_QUEUE_INVALID)) {
-			queue_free(queue);
-			*err_str = "odp queue creation failed!";
-			return -13;
-		}
-		/* Store the corresponding ODP Queue */
-		q_elem->odp_queue = odp_queue;
-	}
-
-	env_sync_mem();
-
-	/* q_elem->static_allocated already set (for static queues) */
 	return 0;
 }
 
+/**
+ * Helper function to queue_setup()
+ *
+ * Set EM and ODP queue params for scheduled queues
+ */
 static int
-queue_setup_output(queue_elem_t *const q_elem, em_queue_prio_t prio,
-		   const em_queue_conf_t *conf, const char **err_str)
+queue_setup_scheduled(queue_elem_t *q_elem /*in,out*/,
+		      const queue_setup_t *setup, const char **err_str)
 {
-	em_output_queue_conf_t *const output_conf = conf->conf;
+	/* validity checks done earlier for queue_group */
+	queue_group_elem_t *qgrp_elem = queue_group_elem_get(setup->queue_group);
+	int err;
 
-	/* Override: an output queue is not scheduled */
+	if (unlikely(qgrp_elem == NULL)) {
+		*err_str = "Q-setup-sched: invalid queue group!";
+		return -1;
+	}
+
+	q_elem->priority = setup->prio;
+	q_elem->type = setup->type;
+	q_elem->queue_group = setup->queue_group;
+	q_elem->atomic_group = setup->atomic_group;
+
+	q_elem->scheduled = EM_TRUE;
+	q_elem->state = EM_QUEUE_STATE_INIT;
+
+	/*
+	 * Set up a scheduled ODP queue for the EM scheduled queue
+	 */
+	odp_queue_param_t odp_queue_param;
+	odp_schedule_sync_t odp_schedule_sync;
+	odp_schedule_prio_t odp_prio;
+
+	/* Init odp queue params to default values */
+	odp_queue_param_init(&odp_queue_param);
+	/* Set common ODP queue params based on the EM Queue config */
+	queue_setup_odp_common(setup, &odp_queue_param /*out*/);
+
+	err = scheduled_queue_type_em2odp(setup->type,
+					  &odp_schedule_sync /*out*/);
+	if (unlikely(err)) {
+		*err_str = "Q-setup-sched: invalid queue type!";
+		return -2;
+	}
+
+	err = prio_em2odp(setup->prio, &odp_prio /*out*/);
+	if (unlikely(err)) {
+		*err_str = "Q-setup-sched: invalid queue priority!";
+		return -3;
+	}
+
+	odp_queue_param.type = ODP_QUEUE_TYPE_SCHED;
+	odp_queue_param.sched.prio = odp_prio;
+	odp_queue_param.sched.sync = odp_schedule_sync;
+	odp_queue_param.sched.group = qgrp_elem->odp_sched_group;
+
+	/* Retrieve previously stored ODP scheduler capabilities */
+	const odp_schedule_capability_t *odp_sched_capa =
+		&em_shm->queue_tbl.odp_schedule_capability;
+
+	/*
+	 * Check nonblocking level against sched queue capabilities.
+	 * Related ODP queue params set earlier in queue_setup_common().
+	 */
+	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
+	    odp_sched_capa->lockfree_queues == ODP_SUPPORT_NO) {
+		*err_str = "Q-setup-sched: non-blocking, lock-free sched queues unavailable";
+		return -4;
+	}
+	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
+	    odp_sched_capa->waitfree_queues == ODP_SUPPORT_NO) {
+		*err_str = "Q-setup-sched: non-blocking, wait-free sched queues unavailable";
+		return -5;
+	}
+	if (odp_queue_param.enq_mode != ODP_QUEUE_OP_MT ||
+	    odp_queue_param.deq_mode != ODP_QUEUE_OP_MT) {
+		*err_str = "Q-setup-sched: invalid flag: scheduled queues must be MT-safe";
+		return -6;
+	}
+
+	/*
+	 * Note: The ODP queue context points to the EM queue elem.
+	 * The EM queue context set by the user using the API function
+	 * em_queue_set_context() is accessed through the queue_elem_t::context
+	 * and retrieved with em_queue_get_context() or passed by EM to the
+	 * EO-receive function for scheduled queues.
+	 */
+	odp_queue_param.context = q_elem;
+	/*
+	 * Set the context data length (in bytes) for potential prefetching.
+	 * The ODP implementation may use this value as a hint for the number
+	 * of context data bytes to prefetch.
+	 */
+	odp_queue_param.context_len = sizeof(*q_elem);
+
+	err = create_odp_queue(q_elem, &odp_queue_param);
+	if (unlikely(err)) {
+		*err_str = "Q-setup-sched: scheduled odp queue creation failed!";
+		return -7;
+	}
+
+	/*
+	 * Add the scheduled queue to the queue group
+	 */
+	queue_group_add_queue_list(qgrp_elem, q_elem);
+
+	return 0;
+}
+
+/*
+ * Helper function to queue_setup()
+ *
+ * Set EM and ODP queue params for unscheduled queues
+ */
+static int
+queue_setup_unscheduled(queue_elem_t *q_elem /*in,out*/,
+			const queue_setup_t *setup, const char **err_str)
+{
+	q_elem->priority = EM_QUEUE_PRIO_UNDEF;
+	q_elem->type = EM_QUEUE_TYPE_UNSCHEDULED;
+	q_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
+	q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
+	/* unscheduled queues are not scheduled */
 	q_elem->scheduled = EM_FALSE;
-	/* Override the state for output queues, use unsched state */
 	q_elem->state = EM_QUEUE_STATE_UNSCHEDULED;
 
-	(void)prio; /* prio currently ignored for output */
+	/*
+	 * Set up a plain ODP queue for the EM unscheduled queue.
+	 */
+	odp_queue_param_t odp_queue_param;
+	/* Retrieve previously stored ODP queue capabilities */
+	const odp_queue_capability_t *odp_queue_capa =
+		&em_shm->queue_tbl.odp_queue_capability;
+
+	/* Init odp queue params to default values */
+	odp_queue_param_init(&odp_queue_param);
+	/* Set common ODP queue params based on the EM Queue config */
+	queue_setup_odp_common(setup, &odp_queue_param);
+
+	odp_queue_param.type = ODP_QUEUE_TYPE_PLAIN;
+	/* don't order events enqueued into unsched queues */
+	odp_queue_param.order = ODP_QUEUE_ORDER_IGNORE;
+
+	/*
+	 * Check nonblocking level against plain queue capabilities.
+	 * Related ODP queue params set earlier in queue_setup_common().
+	 */
+	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
+	    odp_queue_capa->plain.lockfree.max_num == 0) {
+		*err_str = "Q-setup-unsched: non-blocking, lock-free unsched queues unavailable";
+		return -1;
+	}
+	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
+	    odp_queue_capa->plain.waitfree.max_num == 0) {
+		*err_str = "Q-setup-unsched: non-blocking, wait-free unsched queues unavailable";
+		return -2;
+	}
+
+	/*
+	 * Note: The ODP queue context points to the EM queue elem.
+	 * The EM queue context set by the user using the API function
+	 * em_queue_set_context() is accessed through the queue_elem_t::context
+	 * and retrieved with em_queue_get_context().
+	 */
+	odp_queue_param.context = q_elem;
+
+	int err = create_odp_queue(q_elem, &odp_queue_param);
+
+	if (unlikely(err)) {
+		*err_str = "Q-setup-unsched: plain odp queue creation failed!";
+		return -3;
+	}
+
+	return 0;
+}
+
+/*
+ * Helper function to queue_setup()
+ *
+ * Set EM queue params for (core-)local queues
+ */
+static int
+queue_setup_local(queue_elem_t *q_elem, const queue_setup_t *setup,
+		  const char **err_str)
+{
+	(void)err_str;
+
+	q_elem->priority = setup->prio;
+	q_elem->type = EM_QUEUE_TYPE_LOCAL;
+	q_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
+	q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
+	/* local queues are not scheduled */
+	q_elem->scheduled = EM_FALSE;
+	q_elem->state = EM_QUEUE_STATE_INIT;
+
+	return 0;
+}
+
+/*
+ * Helper function to queue_setup()
+ *
+ * Set EM queue params for output queues
+ */
+static int
+queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
+		   const char **err_str)
+{
+	const em_queue_conf_t *qconf = setup->conf;
+	const em_output_queue_conf_t *output_conf = qconf->conf;
+
+	q_elem->priority = EM_QUEUE_PRIO_UNDEF;
+	q_elem->type = EM_QUEUE_TYPE_OUTPUT;
+	q_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
+	q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
+	/* output queues are not scheduled */
+	q_elem->scheduled = EM_FALSE;
+	/* use unsched state for output queues  */
+	q_elem->state = EM_QUEUE_STATE_UNSCHEDULED;
 
 	if (unlikely(output_conf->output_fn == NULL)) {
-		*err_str = "output queue - invalid output function";
+		*err_str = "Q-setup-output: invalid output function";
 		return -1;
 	}
 
@@ -760,7 +981,7 @@ queue_setup_output(queue_elem_t *const q_elem, em_queue_prio_t prio,
 		args_event = em_alloc(output_conf->args_len, EM_EVENT_TYPE_SW,
 				      EM_POOL_DEFAULT);
 		if (unlikely(args_event == EM_EVENT_UNDEF)) {
-			*err_str = "output queue - alloc output_fn_args fails";
+			*err_str = "Q-setup-output: alloc output_fn_args fails";
 			return -2;
 		}
 		/* store the event handle for em_free() later */
@@ -772,6 +993,50 @@ queue_setup_output(queue_elem_t *const q_elem, em_queue_prio_t prio,
 		q_elem->output.output_conf.output_fn_args = args_storage;
 	}
 	env_spinlock_init(&q_elem->output.lock);
+
+	/*
+	 * Set up a plain ODP queue for EM output queue (re-)ordering.
+	 *
+	 * EM output-queues need an odp-queue to ensure re-ordering if
+	 * events are sent into it from within an ordered context.
+	 */
+	odp_queue_param_t odp_queue_param;
+	/* Retrieve previously stored ODP queue capabilities */
+	const odp_queue_capability_t *odp_queue_capa =
+		&em_shm->queue_tbl.odp_queue_capability;
+
+	/* Init odp queue params to default values */
+	odp_queue_param_init(&odp_queue_param);
+	/* Set common ODP queue params based on the EM Queue config */
+	queue_setup_odp_common(setup, &odp_queue_param);
+
+	odp_queue_param.type = ODP_QUEUE_TYPE_PLAIN;
+	odp_queue_param.order = ODP_QUEUE_ORDER_KEEP;
+
+	/* check nonblocking level against plain queue capabilities */
+	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
+	    odp_queue_capa->plain.lockfree.max_num == 0) {
+		*err_str = "Q-setup-output: non-blocking, lock-free unsched queues unavailable";
+		return -3;
+	}
+	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
+	    odp_queue_capa->plain.waitfree.max_num == 0) {
+		*err_str = "Q-setup-output: non-blocking, wait-free unsched queues unavailable";
+		return -4;
+	}
+
+	/* output-queue dequeue protected by q_elem->output.lock */
+	odp_queue_param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
+
+	/* explicitly show here that output queues should not set odp-context */
+	odp_queue_param.context = NULL;
+
+	int err = create_odp_queue(q_elem, &odp_queue_param);
+
+	if (unlikely(err)) {
+		*err_str = "Q-setup-output: plain odp queue creation failed!";
+		return -5;
+	}
 
 	return 0;
 }
@@ -807,7 +1072,7 @@ queue_state_change__check(queue_state_t old_state, queue_state_t new_state,
 }
 
 static inline em_status_t
-_queue_state_change(queue_elem_t *const q_elem, queue_state_t new_state)
+queue_state_set(queue_elem_t *const q_elem, queue_state_t new_state)
 {
 	const queue_state_t old_state = q_elem->state;
 	const int is_setup = (new_state == EM_QUEUE_STATE_READY);
@@ -833,7 +1098,7 @@ _queue_state_change(queue_elem_t *const q_elem, queue_state_t new_state)
 em_status_t
 queue_state_change(queue_elem_t *const q_elem, queue_state_t new_state)
 {
-	em_status_t err = _queue_state_change(q_elem, new_state);
+	em_status_t err = queue_state_set(q_elem, new_state);
 
 	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_STATE_CHANGE,
 			"EM-Q:%" PRI_QUEUE " inv. state: %d=>%d",
@@ -850,7 +1115,7 @@ queue_state_change_all(eo_elem_t *const eo_elem, queue_state_t new_state)
 	em_status_t err = EM_OK;
 	queue_elem_t *q_elem;
 	list_node_t *pos;
-	list_node_t *list_node;
+	const list_node_t *list_node;
 
 	/*
 	 * Loop through all queues associated with the EO, no need for
@@ -861,7 +1126,7 @@ queue_state_change_all(eo_elem_t *const eo_elem, queue_state_t new_state)
 
 	list_for_each(&eo_elem->queue_list, pos, list_node) {
 		q_elem = list_node_to_queue_elem(list_node);
-		err = _queue_state_change(q_elem, new_state);
+		err = queue_state_set(q_elem, new_state);
 		if (unlikely(err != EM_OK))
 			break;
 	} /* end loop */
@@ -959,12 +1224,13 @@ queue_disable_all(eo_elem_t *const eo_elem)
 void
 print_queue_info(void)
 {
-	odp_queue_capability_t *const queue_capa =
+	const odp_queue_capability_t *queue_capa =
 		&em_shm->queue_tbl.odp_queue_capability;
-	odp_schedule_capability_t *const sched_capa =
+	const odp_schedule_capability_t *sched_capa =
 		&em_shm->queue_tbl.odp_schedule_capability;
 	char plain_sz[24] = "n/a";
-	char plain_lf_sz[24] = "n/a", plain_wf_sz[24] = "n/a";
+	char plain_lf_sz[24] = "n/a";
+	char plain_wf_sz[24] = "n/a";
 	char sched_sz[24] = "nolimit";
 
 	if (queue_capa->plain.max_size > 0)
@@ -1034,4 +1300,21 @@ unsigned int
 queue_count(void)
 {
 	return env_atomic32_get(&em_shm->queue_count);
+}
+
+size_t queue_get_name(const queue_elem_t *const q_elem,
+		      char name[/*out*/], const size_t maxlen)
+{
+	em_queue_t queue = q_elem->queue;
+	const char *queue_name = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
+	size_t len = strnlen(queue_name, EM_QUEUE_NAME_LEN - 1);
+
+	if (maxlen - 1 < len)
+		len = maxlen - 1;
+
+	if (len)
+		memcpy(name, queue_name, len);
+	name[len] = '\0';
+
+	return len;
 }

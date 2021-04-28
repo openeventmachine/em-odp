@@ -52,6 +52,16 @@ event_init(void)
 	return EM_OK;
 }
 
+void print_event_info(void)
+{
+	EM_PRINT("\n"
+		 "EM Events\n"
+		 "---------\n"
+		 "event-hdr size: %zu B\n"
+		 "\n",
+		 sizeof(event_hdr_t));
+}
+
 void
 output_queue_track(queue_elem_t *const output_q_elem)
 {
@@ -66,7 +76,7 @@ output_queue_track(queue_elem_t *const output_q_elem)
 }
 
 void
-output_queue_drain(queue_elem_t *const output_q_elem)
+output_queue_drain(const queue_elem_t *output_q_elem)
 {
 	const em_queue_t output_queue = output_q_elem->queue;
 	const em_output_func_t output_fn =
@@ -75,22 +85,46 @@ output_queue_drain(queue_elem_t *const output_q_elem)
 		output_q_elem->output.output_conf.output_fn_args;
 
 	const int deq_max = 32;
+
+	em_event_t output_ev_tbl[deq_max];
+	/* use same event-tbl, dequeue odp events into the EM event-tbl */
+	odp_event_t *const odp_deq_events = (odp_event_t *)output_ev_tbl;
+
 	const odp_queue_t odp_queue = output_q_elem->odp_queue;
-	odp_event_t odp_deq_events[deq_max];
-	em_event_t *output_ev_tbl;
 	unsigned int output_num;
-	int deq, ret;
+	int deq;
+	int ret;
+
+	const bool esv_ena = esv_enabled();
 
 	do {
-		deq = odp_queue_deq_multi(odp_queue, odp_deq_events, deq_max);
+		deq = odp_queue_deq_multi(odp_queue,
+					  odp_deq_events/*out=output_ev_tbl[]*/,
+					  deq_max);
 		if (unlikely(deq <= 0))
 			return;
 
 		output_num = (unsigned int)deq;
-		output_ev_tbl = events_odp2em(odp_deq_events);
+		/* odp_deq_events[] == output_ev_tbl[], .evgen still missing */
+
+		/* decrement pool statistics before passing events out-of-EM */
+		if (em_shm->opt.pool.statistics_enable || esv_ena) {
+			event_hdr_t *ev_hdrs[output_num];
+
+			event_to_hdr_multi(output_ev_tbl, ev_hdrs, output_num);
+			if (em_shm->opt.pool.statistics_enable) {
+				poolstat_dec_evhdr_multi_output(ev_hdrs,
+								output_num);
+			}
+			if (esv_ena)
+				evstate_em2usr_multi(output_ev_tbl/*in/out*/,
+						     ev_hdrs, output_num,
+						     EVSTATE__OUTPUT_MULTI);
+		}
 
 		ret = output_fn(output_ev_tbl, output_num,
 				output_queue, output_fn_args);
+
 		if (unlikely((unsigned int)ret != output_num))
 			em_free_multi(&output_ev_tbl[ret], output_num - ret);
 	} while (deq > 0);

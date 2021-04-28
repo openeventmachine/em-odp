@@ -181,6 +181,8 @@ typedef struct {
 	uint16_t x_len;
 	uint16_t pix_iter_array[IMAGE_BLOCK_SIZE];
 	uint32_t frame;
+	/** storage location index in fractal_shm->data_event_tbl[] */
+	uint32_t data_evtbl_idx;
 } imager_data_event_t;
 
 /** Notification event */
@@ -622,6 +624,8 @@ create_data_events(void)
 			image_data_event->x_len = x_len;
 			image_data_event->x_start = x_start;
 			image_data_event->frame = 0;
+			/* Store array storage index into the event */
+			image_data_event->data_evtbl_idx = index;
 			/* Add to array */
 			test_fatal_if(index >= ALLOC_EVENTS,
 				      "Event-tbl too small");
@@ -835,8 +839,16 @@ worker_receive_event(my_eo_context_t *eo_ctx, em_event_t event,
 	(void)queue;
 	(void)q_ctx;
 
-	if (unlikely(appl_shm->exit_flag))
+	if (unlikely(appl_shm->exit_flag)) {
+		/*
+		 * Store the event into the same fractal_shm->data_event_tbl[]
+		 * location it originally was allocated & stored in - this needs
+		 * to be done if the event-handle is updated as it passes
+		 * between the user and EM for event-state verification (debug).
+		 */
+		fractal_shm->data_event_tbl[block->data_evtbl_idx] = event;
 		return;
+	}
 
 	/*
 	 * Each iteration, it calculates: newz = oldz*oldz + p, where p is the
@@ -952,10 +964,19 @@ imager_receive_event(imager_eo_context_t *eo_ctx, em_event_t event,
 
 	switch (q_ctx->id) {
 	case DATA_QUEUE: {
+		imager_data_event_t *const block = em_event_pointer(event);
+
+		/*
+		 * Store the event into the same fractal_shm->data_event_tbl[]
+		 * location it originally was allocated & stored in - this needs
+		 * to be done if the event-handle is updated as it passes
+		 * between the user and EM for event-state verification (debug).
+		 */
+		fractal_shm->data_event_tbl[block->data_evtbl_idx] = event;
+
 		if (unlikely(appl_shm->exit_flag))
 			return;
 
-		imager_data_event_t *const block = em_event_pointer(event);
 		const unsigned int y = block->y;
 		const unsigned int x_start = block->x_start;
 		const unsigned int x_len = block->x_len;

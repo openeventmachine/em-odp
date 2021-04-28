@@ -68,7 +68,7 @@ env_atomic32_set(env_atomic32_t *atom, uint32_t new_val)
 }
 
 static inline uint32_t
-env_atomic32_get(env_atomic32_t *atom)
+env_atomic32_get(const env_atomic32_t *atom)
 {
 	return __atomic_load_n(&atom->a32, __ATOMIC_SEQ_CST);
 }
@@ -138,31 +138,33 @@ env_atomic32_exchange(env_atomic32_t *atom, uint32_t new_val)
 static inline void
 env_atomic32_set_bits(env_atomic32_t *atom, uint32_t bit_mask)
 {
-	uint32_t old, new_val;
+	uint32_t old_val;
+	uint32_t new_val;
 	int ret;
 
 	do {
-		old = env_atomic32_get(atom);
-		new_val = old | bit_mask;
-		ret = env_atomic32_cmpset(atom, old, new_val);
+		old_val = env_atomic32_get(atom);
+		new_val = old_val | bit_mask;
+		ret = env_atomic32_cmpset(atom, old_val, new_val);
 	} while (ret == 0);
 }
 
 static inline void
 env_atomic32_clr_bits(env_atomic32_t *atom, uint32_t bit_mask)
 {
-	uint32_t old, new_val;
+	uint32_t old_val;
+	uint32_t new_val;
 	int ret;
 
 	do {
-		old = env_atomic32_get(atom);
-		new_val = old & (~bit_mask);
-		ret = env_atomic32_cmpset(atom, old, new_val);
+		old_val = env_atomic32_get(atom);
+		new_val = old_val & (~bit_mask);
+		ret = env_atomic32_cmpset(atom, old_val, new_val);
 	} while (ret == 0);
 }
 
 static inline int
-env_atomic32_cnt_bits(env_atomic32_t *atom)
+env_atomic32_cnt_bits(const env_atomic32_t *atom)
 {
 	return __builtin_popcount(env_atomic32_get(atom));
 }
@@ -183,7 +185,7 @@ env_atomic64_set(env_atomic64_t *atom, uint64_t new_val)
 }
 
 static inline uint64_t
-env_atomic64_get(env_atomic64_t *atom)
+env_atomic64_get(const env_atomic64_t *atom)
 {
 	return __atomic_load_n(&atom->a64, __ATOMIC_SEQ_CST);
 }
@@ -253,31 +255,33 @@ env_atomic64_exchange(env_atomic64_t *atom, uint64_t new_val)
 static inline void
 env_atomic64_set_bits(env_atomic64_t *atom, uint64_t bit_mask)
 {
-	uint64_t old, new_val;
+	uint64_t old_val;
+	uint64_t new_val;
 	int ret;
 
 	do {
-		old = env_atomic64_get(atom);
-		new_val = old | bit_mask;
-		ret = env_atomic64_cmpset(atom, old, new_val);
+		old_val = env_atomic64_get(atom);
+		new_val = old_val | bit_mask;
+		ret = env_atomic64_cmpset(atom, old_val, new_val);
 	} while (ret == 0);
 }
 
 static inline void
 env_atomic64_clr_bits(env_atomic64_t *atom, uint64_t bit_mask)
 {
-	uint64_t old, new_val;
+	uint64_t old_val;
+	uint64_t new_val;
 	int ret;
 
 	do {
-		old = env_atomic64_get(atom);
-		new_val = old & (~bit_mask);
-		ret = env_atomic64_cmpset(atom, old, new_val);
+		old_val = env_atomic64_get(atom);
+		new_val = old_val & (~bit_mask);
+		ret = env_atomic64_cmpset(atom, old_val, new_val);
 	} while (ret == 0);
 }
 
 static inline int
-env_atomic64_cnt_bits(env_atomic64_t *atom)
+env_atomic64_cnt_bits(const env_atomic64_t *atom)
 {
 	return __builtin_popcountll(env_atomic64_get(atom));
 }

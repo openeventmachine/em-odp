@@ -187,7 +187,7 @@ em_core_mask_count(const em_core_mask_t *mask);
  * @note implementation currently limited to a single uint64_t, i.e. len = 1.
  */
 void
-em_core_mask_set_bits(uint64_t bits[], int len, em_core_mask_t *mask);
+em_core_mask_set_bits(const uint64_t bits[], int len, em_core_mask_t *mask);
 
 /**
  * Get core mask, stored in a uint64_t array for the user
@@ -200,14 +200,15 @@ em_core_mask_set_bits(uint64_t bits[], int len, em_core_mask_t *mask);
  * ...
  * cores 0-127: bits[0]=0xffffffffffffffff, bits[1]=0xffffffffffffffff (len=2)
  * ...
- * @param bits        Array of uint64_t:s that the core mask will be stored in.
- * @param len         Number of array elements in bits[].
- * @param mask        Core mask to get bits from.
+ * @param[out] bits  Array of uint64_t:s that the core mask will be stored in.
+ * @param      len   Number of array elements in bits[].
+ * @param      mask  Core mask to get bits from.
  *
  * @return The number of uint64_t:s written into bits[].
  */
 int
-em_core_mask_get_bits(uint64_t bits[], int len, const em_core_mask_t *mask);
+em_core_mask_get_bits(uint64_t bits[/*out*/], int len,
+		      const em_core_mask_t *mask);
 
 /**
  * Set bits in a mask according to a given string.
@@ -220,17 +221,17 @@ em_core_mask_get_bits(uint64_t bits[], int len, const em_core_mask_t *mask);
  * @note bits ar 'or'ed into mask, so any previously set bits will remain set.
  */
 int
-em_core_mask_set_str(char *mask_str, em_core_mask_t *mask);
+em_core_mask_set_str(const char *mask_str, em_core_mask_t *mask);
 
 /**
  * Get core mask in string format
  *
- * @param mask_str      String into which the core mask will be printed
- * @param len           Length of 'mask_str'
- * @param mask          Core mask to convert to string format
+ * @param[out] mask_str  String into which the core mask will be printed
+ * @param      len       Length of 'mask_str'
+ * @param      mask      Core mask to convert to string format
  */
 void
-em_core_mask_tostr(char *mask_str, int len, const em_core_mask_t *mask);
+em_core_mask_tostr(char *mask_str /*out*/, int len, const em_core_mask_t *mask);
 
 /**
  * Return the index (position) of the Nth set bit in the core mask

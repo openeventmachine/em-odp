@@ -41,7 +41,7 @@
  * Internal error reporting macro
  */
 #define INTERNAL_ERROR(error, escope, format, ...)		\
-	_internal_error((error), (escope), __FILE__, __func__,	\
+	internal_error((error), (escope), __FILE__, __func__,	\
 			__LINE__, (format), ## __VA_ARGS__)
 
 /**
@@ -65,7 +65,7 @@
  * Don't call directly, should _always_ be used from within the error-macros
  */
 em_status_t
-_internal_error(em_status_t error, em_escope_t escope, ...);
+internal_error(em_status_t error, em_escope_t escope, ...);
 
 em_status_t
 early_log_init(em_log_func_t user_log_fn, em_vlog_func_t user_vlog_fn);

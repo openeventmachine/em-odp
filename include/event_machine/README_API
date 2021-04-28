@@ -2,6 +2,77 @@
 OpenEM API Release Notes
 -------------------------------------------------------------------------------
 
+- See em-odp/README for usage and compilation instructions.
+- See em-odp/CHANGE_NOTES for changed and added features.
+
+-------------------------------------------------------------------------------
+API 2.5 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=5)
+-------------------------------------------------------------------------------
+Not backwards compatible with previous API version, API 2.5 contains modified
+types and functions requiring small changes to older code.
+
+1. EM Timer: timer version updated from v2.0 to v2.1,
+   see em-odp/include/event_machine/add-ons/event_machine_timer.h for details.
+   - New Timer APIs for tick<->ns conversions:
+     - em_timer_tick_to_ns()
+     - em_timer_ns_to_tick()
+
+   - New Error return codes for em_tmo_set_abs() and em_tmo_set_periodic()
+     related to timing errors:
+     EM_OK          success (event taken)
+     EM_ERR_TOONEAR failure, tick value is past or too close to current time
+     EM_ERR_TOOFAR  failure, tick value exceeds timer capability (too far ahead)
+     (other_codes)  other failure
+     New Error return codes for em_tmo_ack():
+     EM_OK            success
+     EM_ERR_CANCELED  timer has been cancelled
+     (other_codes)    failure
+
+2. Event: New APIs introduced together with EM feature
+          "Event State Verification" (ESV), see CHANGE_NOTES for EM v2.5.0.
+   - em_event_mark_send(event, queue): Mark the event as "sent" (without
+     calling em_send...()).
+     Indicates a user-given promise to EM that the event will later appear into
+     'queue' by some means other than an explicit user call to em_send...().
+     Calling em_event_mark_send() transfers event ownership away from the user,
+     and thus the event must not be used or touched by the user anymore (the
+     only exception is (hw) error recovery where the "sent" state can be
+     cancelled by using em_event_unmark_send() - dangerous!).
+
+   - em_event_unmark_send(event): Unmark an event previously marked as "sent"
+                                  (i.e mark as "unsent")
+     Note: This is for recovery situations only and can potenially crash the
+           application if used incorrectly!
+     Revert an event's "sent" state, as set by em_event_mark_send(), back to the
+     state before that function call.
+     Any further usage of the event after em_event_mark_send(), by EM or
+     the user, will result in error when calling em_event_unmark_send() since
+     the state has become unrecoverable.
+       => the only allowed EM API call after em_event_mark_send() is
+          em_event_unmark_send() if it is certain that the event, due to some
+          external error, will never be sent into EM again otherwise.
+     Calling em_event_unmark_send() transfers event ownership back to the user
+     again.
+     Note2: This is the only valid case of using an event that the user no
+            longer owns - all other such uses leads to fatal error.
+
+3. Pool:
+   - Possibility to set the event payload headroom of pkt-events during
+     EM event pool creation (em_pool_create()) with the new config params:
+     em_pool_cfg_t::pkt.headroom.in_use & .value
+
+4. Extension APIs for EM<->ODP conversions
+  - Conversion functions between EM events to/from ODP events changed:
+    - void em_odp_events2odp(const em_event_t events[],
+                             odp_event_t odp_events[/*out*/], const int num)
+    - void em_odp_events2em(const odp_event_t odp_events[],
+                            em_event_t events[/*out*/], const int num)
+
+5. Misc
+   - Improved C++ support: including EM API header files into a C++ project
+     now avoids errors related to C vs. C++ typecasting.
+   - API function pointer arguments should be "const" if object is not modified
+
 -------------------------------------------------------------------------------
 API 2.4 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=4)
 -------------------------------------------------------------------------------
