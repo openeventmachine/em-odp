@@ -23,7 +23,9 @@ pushd ${BUILD_DIR}/../..
 ./bootstrap
 ./configure \
 	--prefix=${BUILD_DIR}/em-odp_install \
-	--with-odp-path=${BUILD_DIR}/odp_install
+	--with-odp-path=${BUILD_DIR}/odp_install \
+	--enable-check-level=3 \
+	--enable-esv
 make -j $(nproc)
 make install
 popd
