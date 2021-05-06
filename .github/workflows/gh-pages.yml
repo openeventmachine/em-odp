@@ -1,0 +1,36 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  Documentation:
+    runs-on: ubuntu-18.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: |
+        sudo apt install asciidoctor cmake doxygen libconfig-dev libssl-dev mscgen  graphviz
+
+    - name: Build
+      run: |
+        ./scripts/build.sh
+        make doxygen-doc
+
+    - name: Before deploy
+      run: |
+        pushd doc
+        mkdir gh-pages
+        cp -r event_machine_api/html/* gh-pages/
+        popd
+
+    - name: Deploy
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: crazy-max/ghaction-github-pages@v2.3.0
+      with:
+        allow_empty_commit: false
+        build_dir: ./doc/gh-pages
+        target_branch: gh-pages
