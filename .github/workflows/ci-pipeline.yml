@@ -1,0 +1,69 @@
+name: CI
+
+on: [push, pull_request]
+env:
+  ARCH: x86_64
+  CC: gcc
+
+jobs:
+  Documentation:
+    runs-on: ubuntu-18.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: sudo apt install asciidoctor cmake doxygen libconfig-dev libssl-dev mscgen  graphviz
+    - name: Build
+      run: |
+        ./scripts/build.sh
+        make doxygen-doc
+
+  Build-bionic-gcc:
+    runs-on: ubuntu-18.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config hugepages
+    - name: Build
+      run: |
+        ./scripts/build.sh
+
+  Run-bionic_gcc:
+    runs-on: ubuntu-18.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config hugepages
+    - name: Build
+      run: |
+        sudo pip3 install robotframework
+        ./scripts/build.sh
+        git clone https://github.com/openeventmachine/ci.git
+        ./ci/env.sh
+        ./ci/test.sh
+
+  Build-focal_gcc:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config
+    - name: Build
+      run: |
+        git clone https://github.com/openeventmachine/ci.git
+        echo "./scripts/build.sh" >> ci/docker.sh
+        sudo docker run --privileged --name focal -i -v /dev/hugepages:/dev/hugepages -v ${PWD}:/root/em-odp -w /root/em-odp --shm-size 4g ubuntu:20.04 sh ci/docker.sh   
+
+  Build-focal_clang:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install dependencies
+      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config
+    - name: Build
+      run: |
+        git clone https://github.com/openeventmachine/ci.git
+        echo "apt remove gcc -y" >> ci/docker.sh
+        echo "apt install clang -y" >> ci/docker.sh
+        echo "./scripts/build.sh" >> ci/docker.sh
+        sudo docker run --privileged --name focal -i -v /dev/hugepages:/dev/hugepages -v ${PWD}:/root/em-odp -w /root/em-odp --shm-size 4g ubuntu:20.04 sh ci/docker.sh
+
