@@ -1,0 +1,13 @@
+<map id="internal_event_t" name="internal_event_t">
+<area shape="rect" id="node2" href="$dc/d6f/structqueue__elem__t.html" title="queue_elem_t" alt="" coords="376,293,490,320"/>
+<area shape="rect" id="node11" href="$d8/ddc/structloc__func__retval__t.html" title="loc_func_retval_t" alt="" coords="598,383,732,409"/>
+<area shape="rect" id="node3" href="$d6/dea/structlist__node__t.html" title="list_node_t" alt="" coords="289,7,382,33"/>
+<area shape="rect" id="node4" href="$dd/d85/structobjpool__elem__t.html" title="objpool_elem_t" alt="" coords="429,99,552,125"/>
+<area shape="rect" id="node5" href="$dd/d8f/structq__elem__atomic__group__.html" title="q_elem_atomic_group_" alt="" coords="114,152,288,179"/>
+<area shape="rect" id="node6" href="$d6/dfe/structeo__elem__t.html" title="eo_elem_t" alt="" coords="578,204,669,231"/>
+<area shape="rect" id="node7" href="$dd/d03/struct__env__atomic32.html" title="_env_atomic32" alt="" coords="848,99,970,125"/>
+<area shape="rect" id="node8" href="$de/dc0/structem__eo__conf__t.html" title="em_eo_conf_t" alt="" coords="711,99,824,125"/>
+<area shape="rect" id="node9" href="$dd/d88/structq__elem__output__.html" title="q_elem_output_" alt="" coords="259,204,386,231"/>
+<area shape="rect" id="node10" href="$de/d8d/structem__output__queue__conf__t.html" title="em_output_queue_conf_t" alt="" coords="218,99,405,125"/>
+<area shape="rect" id="node12" href="$d8/db3/structem__notif__t.html" title="em_notif_t" alt="" coords="756,383,848,409"/>
+</map>

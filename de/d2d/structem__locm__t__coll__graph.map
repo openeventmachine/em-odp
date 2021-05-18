@@ -1,0 +1,17 @@
+<map id="em_locm_t" name="em_locm_t">
+<area shape="rect" id="node2" href="$dc/d6f/structqueue__elem__t.html" title="queue_elem_t" alt="" coords="932,177,1047,204"/>
+<area shape="rect" id="node15" href="$d5/d4d/structoutput__queue__track__t.html" title="output_queue_track_t" alt="" coords="1192,239,1355,265"/>
+<area shape="rect" id="node3" href="$d6/dea/structlist__node__t.html" title="list_node_t" alt="" coords="19,149,113,176"/>
+<area shape="rect" id="node4" href="$dd/d85/structobjpool__elem__t.html" title="objpool_elem_t" alt="" coords="280,349,403,376"/>
+<area shape="rect" id="node5" href="$dd/d8f/structq__elem__atomic__group__.html" title="q_elem_atomic_group_" alt="" coords="465,116,638,143"/>
+<area shape="rect" id="node6" href="$d6/dfe/structeo__elem__t.html" title="eo_elem_t" alt="" coords="700,240,791,267"/>
+<area shape="rect" id="node11" href="$d7/d72/structevent__group__elem__t.html" title="event_group_elem_t" alt="" coords="668,423,823,449"/>
+<area shape="rect" id="node7" href="$dd/d03/struct__env__atomic32.html" title="_env_atomic32" alt="" coords="281,244,402,271"/>
+<area shape="rect" id="node8" href="$de/dc0/structem__eo__conf__t.html" title="em_eo_conf_t" alt="" coords="285,295,398,321"/>
+<area shape="rect" id="node9" href="$dd/d88/structq__elem__output__.html" title="q_elem_output_" alt="" coords="682,11,809,37"/>
+<area shape="rect" id="node10" href="$de/d8d/structem__output__queue__conf__t.html" title="em_output_queue_conf_t" alt="" coords="248,5,435,32"/>
+<area shape="rect" id="node12" href="$d8/db3/structem__notif__t.html" title="em_notif_t" alt="" coords="295,480,387,507"/>
+<area shape="rect" id="node13" href="$d4/d28/unionegrp__counter__t.html" title="egrp_counter_t" alt="" coords="282,429,401,456"/>
+<area shape="rect" id="node14" href="$d5/dcc/struct__env__atomic64.html" title="_env_atomic64" alt="" coords="5,429,127,456"/>
+<area shape="rect" id="node16" href="$df/d25/structlocal__queues__t.html" title="local_queues_t" alt="" coords="1214,436,1333,463"/>
+</map>

@@ -1,0 +1,17 @@
+var modules =
+[
+    [ "Event timer add-on", "de/dc2/group__em__timer.html", "de/dc2/group__em__timer" ],
+    [ "Atomic group", "d3/dc1/group__em__atomic__group.html", "d3/dc1/group__em__atomic__group" ],
+    [ "Core related", "d5/d69/group__em__core.html", "d5/d69/group__em__core" ],
+    [ "Dispatcher", "d3/db8/group__em__dispatcher.html", "d3/db8/group__em__dispatcher" ],
+    [ "Execution objects (EO)", "d8/d5f/group__em__eo.html", "d8/d5f/group__em__eo" ],
+    [ "Error management", "db/da0/group__em__error.html", "db/da0/group__em__error" ],
+    [ "Events", "d5/d33/group__em__event.html", "d5/d33/group__em__event" ],
+    [ "Event group", "d8/d4c/group__em__event__group.html", "d8/d4c/group__em__event__group" ],
+    [ "Queues", "de/d3c/group__em__queue.html", "de/d3c/group__em__queue" ],
+    [ "Queue group", "d9/d01/group__em__queue__group.html", "d9/d01/group__em__queue__group" ],
+    [ "Scheduler", "dd/d1b/group__em__scheduler.html", "dd/d1b/group__em__scheduler" ],
+    [ "API-hooks", "d9/d16/group__em__hooks.html", "d9/d16/group__em__hooks" ],
+    [ "Initialization and termination", "d9/d54/group__init.html", "d9/d54/group__init" ],
+    [ "Event Pool", "d1/d85/group__em__pool.html", "d1/d85/group__em__pool" ]
+];
