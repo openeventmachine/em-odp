@@ -3,3 +3,5 @@ loopback_ag
 loopback_local
 multi_stage
 multi_stage_local
+loopback_local_multircv
+loopback_multircv

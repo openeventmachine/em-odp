@@ -121,18 +121,21 @@ typedef enum em_queue_type_e {
 /**
  * Portable queue priorities.
  *
- * Never directly use the numerical values as they may change from
- * one platform to the next; always use the enum names instead.
- * @see EM_QUEUE_PRIO_NUM
+ * These are generic portable values to use for priority.
+ *
+ * Alternatively application may choose to use numeric values in the valid
+ * range (from 0 to em_queue_get_num_prio() - 1).
+ *
+ * @see em_queue_prio_t, em_queue_get_num_prio()
  */
 typedef enum em_queue_prio_e {
-	EM_QUEUE_PRIO_UNDEF   = 0xFF, /**< Undefined */
 	EM_QUEUE_PRIO_LOWEST  = 0,    /**< Lowest */
 	EM_QUEUE_PRIO_LOW     = 2,    /**< Low */
 	EM_QUEUE_PRIO_NORMAL  = 4,    /**< Normal */
 	EM_QUEUE_PRIO_HIGH    = 6,    /**< High */
 	EM_QUEUE_PRIO_HIGHEST = 7     /**< Highest */
 } em_queue_prio_e;
+#define EM_QUEUE_PRIO_UNDEF 0xFF      /**< Undefined */
 
 /**
  * em_queue_flag_t values (system specific):

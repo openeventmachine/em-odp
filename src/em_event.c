@@ -46,20 +46,104 @@ COMPILE_TIME_ASSERT(sizeof(_ev_hdr__size_check__arr_t) ==
 COMPILE_TIME_ASSERT(EM_CHECK_LEVEL >= 0 && EM_CHECK_LEVEL <= 3,
 		    EM_CHECK_LEVEL__BAD_VALUE);
 
-em_status_t
-event_init(void)
+em_status_t event_init(void)
 {
 	return EM_OK;
 }
 
 void print_event_info(void)
 {
+	/* for sizeof() only: */
+	event_hdr_t evhdr = {0};
+	queue_elem_t *q_elem = NULL;
+
 	EM_PRINT("\n"
 		 "EM Events\n"
 		 "---------\n"
-		 "event-hdr size: %zu B\n"
-		 "\n",
+		 "event-hdr size: %zu B\n",
 		 sizeof(event_hdr_t));
+
+	EM_DBG("\t\toffset\tsize\n"
+	       "\t\t------\t----\n"
+	       "esv.state_cnt:\t%3zu B\t%2zu B\n"
+	       "esv.state:\t%3zu B\t%2zu B\n"
+	       "start_node:\t%3zu B\t%2zu B\n"
+	       "q_elem:\t\t%3zu B\t%2zu B\n"
+	       "  <empty>\t ---\t%2zu B\n"
+	       "event:\t\t%3zu B\t%2zu B\n"
+	       "queue:\t\t%3zu B\t%2zu B\n"
+	       "egrp:\t\t%3zu B\t%2zu B\n"
+	       "egrp_gen:\t%3zu B\t%2zu B\n"
+	       "event_size:\t%3zu B\t%2zu B\n"
+	       "pool:\t\t%3zu B\t%2zu B\n"
+	       "subpool:\t%3zu B\t%2zu B\n"
+	       "align_offset:\t%3zu B\t%2zu B\n"
+	       "event_type:\t%3zu B\t%2zu B\n"
+	       "end_hdr_data:\t%3zu B\t%2zu B\n"
+	       "  <align adj.>\t---\t%2zu B\n"
+	       "end:\t\t%3zu B\t%2zu B\n",
+	       offsetof(event_hdr_t, state_cnt), sizeof(evhdr.state_cnt),
+	       offsetof(event_hdr_t, state), sizeof(evhdr.state),
+	       offsetof(event_hdr_t, start_node), sizeof(evhdr.start_node),
+	       offsetof(event_hdr_t, q_elem), sizeof(evhdr.q_elem),
+	       offsetof(event_hdr_t, event) - offsetof(event_hdr_t, q_elem) - sizeof(q_elem),
+	       offsetof(event_hdr_t, event), sizeof(evhdr.event),
+	       offsetof(event_hdr_t, queue), sizeof(evhdr.queue),
+	       offsetof(event_hdr_t, egrp), sizeof(evhdr.egrp),
+	       offsetof(event_hdr_t, egrp_gen), sizeof(evhdr.egrp_gen),
+	       offsetof(event_hdr_t, event_size), sizeof(evhdr.event_size),
+	       offsetof(event_hdr_t, pool), sizeof(evhdr.pool),
+	       offsetof(event_hdr_t, subpool), sizeof(evhdr.subpool),
+	       offsetof(event_hdr_t, align_offset), sizeof(evhdr.align_offset),
+	       offsetof(event_hdr_t, event_type), sizeof(evhdr.event_type),
+	       offsetof(event_hdr_t, end_hdr_data), sizeof(evhdr.end_hdr_data),
+	       offsetof(event_hdr_t, end) - offsetof(event_hdr_t, end_hdr_data),
+	       offsetof(event_hdr_t, end), sizeof(evhdr.end));
+
+	       EM_PRINT("\n");
+}
+
+/**
+ * Helper for em_event_clone().
+ *
+ * Clone an event originating from an external odp pkt-pool.
+ * Initialize the new cloned event as an EM event and return it.
+ */
+em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool)
+{
+	/*
+	 * Alloc and copy content via ODP.
+	 * Also the ev_hdr in the odp-pkt user_area is copied.
+	 */
+	odp_packet_t clone_pkt = odp_packet_copy(pkt, pkt_pool);
+
+	if (unlikely(clone_pkt == ODP_PACKET_INVALID))
+		return EM_EVENT_UNDEF;
+
+	odp_packet_user_ptr_set(clone_pkt, PKT_USERPTR_MAGIC_NBR);
+
+	odp_event_t odp_clone_event = odp_packet_to_event(clone_pkt);
+	event_hdr_t *clone_hdr = odp_packet_user_area(clone_pkt);
+	em_event_t clone_event = event_odp2em(odp_clone_event);
+
+	/*
+	 * Init hdr of event, also ESV init if needed.
+	 * The clone_hdr is a copy of parent's, update only relevant fields.
+	 */
+	if (esv_enabled())
+		clone_event = evstate_init(clone_event, clone_hdr, false);
+	else
+		clone_hdr->event = clone_event;
+
+	/* clone_hdr->event_type = use parent's type as is */
+	clone_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+
+	if (em_shm->opt.pool.statistics_enable) {
+		/* clone_hdr->subpool = 0; */
+		clone_hdr->pool = EM_POOL_UNDEF;
+	}
+
+	return clone_event;
 }
 
 void

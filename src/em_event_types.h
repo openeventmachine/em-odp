@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -48,7 +48,7 @@ COMPILE_TIME_ASSERT(sizeof(em_event_t) == sizeof(odp_event_t),
  * @def PKT_USERPTR_MAGIC_NBR
  *
  * Magic number used to detect whether the EM event-header has been initialized
- * in EM events based on odp-pkt-buffers.
+ * by EM in events based on odp-pkt-buffers.
  *
  * Set the odp-pkt user-ptr to this magic number to be able to recognize
  * pkt-events that EM has created vs. pkts from pkt-input that needs their
@@ -88,9 +88,9 @@ typedef union {
 COMPILE_TIME_ASSERT(sizeof(evhdl_t) == sizeof(em_event_t), EVHDL_T_SIZE_ERROR);
 
 /**
- * Event-state counters: 'free_cnt' and 'send_cnt'.
+ * Event-state counters: 'evgen', 'free_cnt' and 'send_cnt'.
  *
- * Updated as one single atomic var via 'evstate_cnt_t::atom64'.
+ * Updated as one single atomic var via 'evstate_cnt_t::u64'.
  */
 typedef union ODP_ALIGNED(sizeof(uint64_t)) {
 	uint64_t u64; /* updated atomically in the event-hdr */
@@ -112,7 +112,8 @@ COMPILE_TIME_ASSERT(sizeof(evstate_cnt_t) == sizeof(uint64_t),
 		    EVSTATE_CNT_T_SIZE_ERROR);
 
 /**
- * Event-state information (no atomic update)
+ * Event-state information.
+ * Not atomically updated (but evstate_cnt_t is updated atomically)
  */
 typedef struct {
 	/**
@@ -145,24 +146,20 @@ typedef struct {
  * SW & I/O originated events.
  */
 typedef struct {
-	/*
-	 * - Keep seldomly used data in the beginning of the ev-hdr.
-	 * - Keep data accessed every dispach round at the end, potentially in
-	 *   the same cache line as the event payload to reduce overall
-	 *   cache-misses.
+	/**
+	 * Event State Verification (ESV): event state data
 	 */
 	union {
 		uint8_t u8[32];
 		struct {
 			/**
-			 * Together, free_cnt and send_cnt, can be used to
-			 * detect invalid states and operations on the event,
-			 * e.g.:
+			 * Together the evstate_cnt_t counters (evgen, free_cnt
+			 * and send_cnt) can be used to  detect invalid states
+			 * and operations on the event, e.g.:
 			 * double-free, double-send, send-after-free,
 			 * free-after-send, usage-after-output,
 			 * usage-after-timer-tmo-set/ack/cancel/delete etc.
 			 */
-			/** Free count incremented when this event is freed */
 			evstate_cnt_t state_cnt;
 
 			/**
@@ -176,15 +173,39 @@ typedef struct {
 			ev_hdr_state_t state;
 		};
 	};
-
 	/**
 	 * EO-start send event buffering, event linked-list node
 	 */
-	list_node_t start_node ODP_ALIGNED(32);
+	list_node_t start_node;
+	/**
+	 * Queue element for the associated queue
+	 * @note only used for atomic-group- or local-queues
+	 */
+	queue_elem_t *q_elem;
+
+	/* --- CACHE LINE on systems with a 64B cache line size --- */
+
+	/**
+	 * Event handle (this event)
+	 */
+	em_event_t event ODP_ALIGNED(64);
+	/**
+	 * Queue handle
+	 * @note only used by EM chaining & EO-start send event buffering
+	 */
+	em_queue_t queue;
+	/**
+	 * Event Group handle
+	 */
+	em_event_group_t egrp;
+	/**
+	 * Event group generation
+	 */
+	int32_t egrp_gen;
 	/**
 	 * Event size
 	 */
-	size_t event_size;
+	uint32_t event_size;
 	/**
 	 * Handle of the EM pool the event was allocated from.
 	 * @note only used if EM config file: pool.statistics_enable=true
@@ -194,42 +215,18 @@ typedef struct {
 	 * Subpool index of the EM pool the event was allocated from.
 	 * @note only used if EM config file: pool.statistics_enable=true
 	 */
-	int32_t subpool;
+	int16_t subpool;
 	/**
 	 * Payload alloc alignment offset/push into free area of ev_hdr.
 	 * Only used by events based on ODP buffers that have the ev_hdr in the
 	 * beginning of the buf payload (pkts use 'user-area' for ev_hdr).
 	 * Value is copied from pool_elem->align_offset for easy access.
 	 */
-	uint32_t align_offset;
-	/**
-	 * Queue element for associated queue (for AG or local queue)
-	 */
-	queue_elem_t *q_elem;
-	/**
-	 * EO-start send event buffering, destination queue when sent
-	 */
-	em_queue_t queue;
-
-	/**
-	 * This event handle
-	 *  - aligned to 64B boundary without enlarging sizeof(event_hdr_t)
-	 *    (using 'ODP_ALIGNED(64)' would enlarge the size to 128B)
-	 */
-	em_event_t event ODP_ALIGNED(32);
+	uint16_t align_offset;
 	/**
 	 * Event type, contains major and major parts
 	 */
 	em_event_type_t event_type;
-
-	/**
-	 * Event group generation
-	 */
-	int32_t egrp_gen;
-	/**
-	 * Event Group handle
-	 */
-	em_event_group_t egrp;
 	/**
 	 * End of event header data,
 	 * for offsetof(event_hdr_t, end_hdr_data)
@@ -248,7 +245,7 @@ typedef struct {
 	 *     odp pkt user area and alignment is adjusted in the pkt headroom.
 	 */
 
-	void *end[0] ODP_ALIGNED(16); /* pad to next 16B boundary */
+	void *end[0] ODP_ALIGNED(64); /* pad to next 64B boundary */
 } event_hdr_t;
 
 COMPILE_TIME_ASSERT(sizeof(event_hdr_t) <= 128, EVENT_HDR_SIZE_ERROR);

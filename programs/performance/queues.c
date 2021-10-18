@@ -446,6 +446,9 @@ test_start(appl_conf_t *const appl_conf)
 	queue_step();
 }
 
+/**
+ * Stop the test, only run on one core
+ */
 void
 test_stop(appl_conf_t *const appl_conf)
 {
@@ -458,15 +461,22 @@ test_stop(appl_conf_t *const appl_conf)
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
 
-	/* Stop & delete EOs */
+	/* Stop EOs */
 	for (i = 0; i < NUM_EOS; i++) {
 		eo = perf_shm->eo[i];
-
 		ret = em_eo_stop_sync(eo);
 		test_fatal_if(ret != EM_OK,
 			      "EO:%" PRI_EO " stop:%" PRI_STAT "",
 			      eo, ret);
+	}
 
+	/* Remove and delete all of the EO's queues, then delete the EO */
+	for (i = 0; i < NUM_EOS; i++) {
+		eo = perf_shm->eo[i];
+		ret = em_eo_remove_queue_all_sync(eo, EM_TRUE/*delete Qs*/);
+		test_fatal_if(ret != EM_OK,
+			      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
+			      ret, eo);
 		ret = em_eo_delete(eo);
 		test_fatal_if(ret != EM_OK,
 			      "EO:%" PRI_EO " delete:%" PRI_STAT "",
@@ -474,6 +484,9 @@ test_stop(appl_conf_t *const appl_conf)
 	}
 }
 
+/**
+ * Terminate the test, only run on one core
+ */
 void
 test_term(void)
 {
@@ -481,10 +494,8 @@ test_term(void)
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
 
-	if (core == 0) {
-		env_shared_free(perf_shm);
-		em_unregister_error_handler();
-	}
+	env_shared_free(perf_shm);
+	em_unregister_error_handler();
 }
 
 /**
@@ -592,17 +603,9 @@ start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 static em_status_t
 stop(void *eo_context, em_eo_t eo)
 {
-	em_status_t ret;
-
 	(void)eo_context;
 
 	APPL_PRINT("EO %" PRI_EO " stopping.\n", eo);
-
-	/* remove and delete all of the EO's queues */
-	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
-	test_fatal_if(ret != EM_OK,
-		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
-		      ret, eo);
 
 	return EM_OK;
 }

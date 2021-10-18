@@ -73,10 +73,30 @@ typedef struct {
 } mpool_statistics_t ENV_CACHE_LINE_ALIGNED;
 
 /**
+ * @def POOL_ODP2EM_TBL_LEN
+ * Length of the mpool_tbl_t::pool_odp2em[] array
+ */
+#define POOL_ODP2EM_TBL_LEN  256
+/*
+ * Verify at compile time that the mpool_tbl_t::pool_odp2em[] mapping table
+ * is large enough.
+ * Verified also at runtime that: POOL_ODP2EM_TBL_LEN > odp_pool_max_index()
+ */
+COMPILE_TIME_ASSERT(EM_CONFIG_POOLS * EM_MAX_SUBPOOLS <= POOL_ODP2EM_TBL_LEN,
+		    "MPOOL_TBL_T__POOL_ODP2EM__LEN_ERR");
+
+/**
  * EM pool element table
  */
 typedef struct {
+	/** event/memory pool elem table */
 	mpool_elem_t pool[EM_CONFIG_POOLS];
+
+	/**
+	 * Mapping from odp_pool_index(odp_pool) to em-pool handle.
+	 * Verified at runtime that: POOL_ODP2EM_TBL_LEN > odp_pool_max_index()
+	 */
+	em_pool_t pool_odp2em[POOL_ODP2EM_TBL_LEN] ENV_CACHE_LINE_ALIGNED;
 
 	/** Pool usage statistics - updated per EM-core */
 	mpool_statistics_t pool_stat_core[EM_MAX_CORES] ENV_CACHE_LINE_ALIGNED;

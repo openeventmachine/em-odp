@@ -322,19 +322,57 @@ em_init_core(void)
 em_status_t
 em_term(const em_conf_t *conf)
 {
-	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
-	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	odp_queue_t odp_queue;
 	em_status_t stat;
-	int num_events;
 	int ret;
-	bool esv_ena = esv_enabled();
 
 	(void)conf;
 
 	if (em_shm->conf.event_timer)
 		timer_term();
+
+	stat = chaining_term(&em_shm->event_chaining);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"chaining_term() failed:%" PRI_STAT "", stat);
+
+	ret = em_libconfig_term_global(&em_shm->libconfig);
+	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"EM config term failed:%d");
+
+	stat = pool_term(&em_shm->mpool_tbl);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"pool_term() failed:%" PRI_STAT "", stat);
+
+	/*
+	 * Free the EM shared memory
+	 */
+	ret = odp_shm_free(em_shm->this_shm);
+	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"odp_shm_free() failed:%d", ret);
+	/* Set em_shm = NULL to allow a new call to em_init() */
+	em_shm = NULL;
+
+	return EM_OK;
+}
+
+em_status_t
+em_term_core(void)
+{
+	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	odp_queue_t odp_queue;
+	em_status_t stat = EM_OK;
+	bool esv_ena = esv_enabled();
+	int num_events;
+
+	if (em_core_id() == 0)
+		daemon_eo_shutdown();
+
+	/* Stop timer add-on. Just a NOP if timer was not enabled (config) */
+	stat |= timer_term_local();
+
+	/* Delete the local queues */
+	stat |= queue_term_local();
 
 	/*
 	 * Flush all events in the scheduler.
@@ -364,44 +402,6 @@ em_term(const em_conf_t *conf)
 
 		odp_schedule_pause();
 	}
-
-	stat = chaining_term(&em_shm->event_chaining);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"chaining_term() failed:%" PRI_STAT "", stat);
-
-	ret = em_libconfig_term_global(&em_shm->libconfig);
-	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"EM config term failed:%d");
-
-	stat = pool_term(&em_shm->mpool_tbl);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"pool_term() failed:%" PRI_STAT "", stat);
-
-	/*
-	 * Free the EM shared memory
-	 */
-	ret = odp_shm_free(em_shm->this_shm);
-	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"odp_shm_free() failed:%d", ret);
-	/* Set em_shm = NULL to allow a new call to em_init() */
-	em_shm = NULL;
-
-	return EM_OK;
-}
-
-em_status_t
-em_term_core(void)
-{
-	em_status_t stat = EM_OK;
-
-	if (em_core_id() == 0)
-		daemon_eo_shutdown();
-
-	/* Stop timer add-on. Just a NOP if timer was not enabled (config) */
-	stat |= timer_term_local();
-
-	/* Delete the local queues */
-	stat |= queue_term_local();
 
 	return stat == EM_OK ? EM_OK : EM_ERR;
 }

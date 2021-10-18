@@ -127,6 +127,29 @@ unsigned int
 pool_count(void);
 
 /**
+ * Get the EM event-pool that an odp-pool belongs to.
+ *
+ * An EM event-pool consists of up to EM_MAX_SUBPOOLS subpools (that are
+ * odp-pools) - a table (em_shm->mpool_tbl.pool_odp2em[]) contains the
+ * mapping and is populated during em_pool_create() calls.
+ */
+static inline em_pool_t
+pool_odp2em(odp_pool_t odp_pool)
+{
+	/*
+	 * 'idx' is in the range: 0 to odp_pool_max_index(), which is smaller
+	 * than the length of the em_shm->mpool_tbl.pool_odp2em[] array
+	 * (verified at startup in pool_init()).
+	 */
+	int idx = odp_pool_index(odp_pool);
+
+	if (unlikely(idx < 0))
+		return EM_POOL_UNDEF;
+
+	return em_shm->mpool_tbl.pool_odp2em[idx];
+}
+
+/**
  * Increment event-pool statistics counter for 'subpool'.
  *
  * Increment the alloc-count.
@@ -139,6 +162,22 @@ poolstat_inc(em_pool_t pool, int subpool, uint64_t cnt)
 		&em_shm->mpool_tbl.pool_stat_core[em_locm.core_id];
 
 	pstat->stat[pool_idx][subpool].alloc += cnt;
+}
+
+/**
+ * Increment pool-stats for the subpool the event is allocated from.
+ */
+static inline void
+poolstat_inc_evhdr(const event_hdr_t *ev_hdr)
+{
+	em_pool_t pool = ev_hdr->pool;
+	int subpool;
+
+	if (pool != EM_POOL_UNDEF) {
+		subpool = ev_hdr->subpool;
+		if (likely(valid_pool(pool)))
+			poolstat_inc(pool, subpool, 1);
+	}
 }
 
 /**
@@ -202,6 +241,38 @@ poolstat_dec_evhdr_multi(event_hdr_t *ev_hdrs[], const int num)
 		idx = i;
 		if (likely(valid_pool(pool)))
 			poolstat_dec(pool, subpool, dec);
+	} while (idx < num);
+}
+
+/**
+ * Increment pool-stats for the subpool the events are allocated from.
+ */
+static inline void
+poolstat_inc_evhdr_multi(event_hdr_t *ev_hdrs[], const int num)
+{
+	/* Update pool statistcs */
+	int idx = 0; /* index into ev_hdrs[] */
+	int inc;
+	int i;
+
+	do {
+		for (; idx < num &&
+		     ev_hdrs[idx]->pool == EM_POOL_UNDEF; idx++)
+			; /* skip events from external pools */
+		if (idx >= num)
+			break;
+
+		em_pool_t pool = ev_hdrs[idx]->pool;
+		int subpool = ev_hdrs[idx]->subpool;
+
+		for (i = idx + 1; i < num &&
+		     ev_hdrs[i]->pool == pool &&
+		     ev_hdrs[i]->subpool == subpool; i++)
+			; /* count events from same pool */
+		inc = i - idx;
+		idx = i;
+		if (likely(valid_pool(pool)))
+			poolstat_inc(pool, subpool, inc);
 	} while (idx < num);
 }
 

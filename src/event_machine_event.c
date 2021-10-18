@@ -34,7 +34,6 @@ em_event_t
 em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 {
 	mpool_elem_t *pool_elem;
-	em_event_t event;
 
 	pool_elem = pool_elem_get(pool);
 	if (unlikely(size == 0 ||
@@ -46,21 +45,20 @@ em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 	}
 
 	/*
-	 * EM event pools created with type=SW can not support
-	 * pkt events.
+	 * EM event pools created with type=SW can not support pkt events.
 	 */
 	if (unlikely(pool_elem->event_type == EM_EVENT_TYPE_SW &&
 		     em_get_type_major(type) == EM_EVENT_TYPE_PACKET)) {
 		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_ALLOC,
 			       "EM-pool:%s(%" PRI_POOL "):\n"
-			       "Invalid event type:%u for buf",
+			       "Invalid event type:0x%" PRIx32 " for buf",
 			       pool_elem->name, pool_elem->em_pool, type);
 		return EM_EVENT_UNDEF;
 	}
 
-	event = event_alloc(pool_elem, size, type);
+	event_hdr_t *ev_hdr = event_alloc(pool_elem, size, type);
 
-	if (unlikely(event == EM_EVENT_UNDEF)) {
+	if (unlikely(!ev_hdr)) {
 		em_status_t err =
 		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_ALLOC,
 			       "EM-pool:'%s': sz:%zu type:0x%x pool:%" PRI_POOL "",
@@ -71,6 +69,12 @@ em_alloc(size_t size, em_event_type_t type, em_pool_t pool)
 		}
 		return EM_EVENT_UNDEF;
 	}
+
+	em_event_t event = ev_hdr->event;
+
+	/* Update event ESV state for alloc */
+	if (esv_enabled())
+		event = evstate_alloc(event, ev_hdr);
 
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_alloc(&event, 1, 1, size, type, pool);
@@ -159,7 +163,7 @@ em_free(em_event_t event)
 		event_hdr_t *const ev_hdr = event_to_hdr(event);
 
 		if (esv_ena)
-			evstate_free(event, ev_hdr);
+			evstate_free(event, ev_hdr, EVSTATE__FREE);
 		if (em_shm->opt.pool.statistics_enable)
 			poolstat_dec_evhdr(ev_hdr);
 	}
@@ -170,12 +174,13 @@ em_free(em_event_t event)
 
 void em_free_multi(const em_event_t events[], int num)
 {
-	if (unlikely(num <= 0)) {
-		if (num < 0)
-			INTERNAL_ERROR(EM_ERR_TOO_SMALL, EM_ESCOPE_FREE_MULTI,
-				       "Invalid arg: num:%d", num);
+	if (unlikely(!events || num < 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_FREE_MULTI,
+			       "Inv.args: events[]:%p num:%d", events, num);
 		return;
 	}
+	if (unlikely(num == 0))
+		return;
 
 	if (EM_CHECK_LEVEL > 1) {
 		int i;
@@ -200,7 +205,8 @@ void em_free_multi(const em_event_t events[], int num)
 
 		event_to_hdr_multi(events, ev_hdrs, num);
 		if (esv_ena)
-			evstate_free_multi(events, ev_hdrs, num);
+			evstate_free_multi(events, ev_hdrs, num,
+					   EVSTATE__FREE_MULTI);
 		if (em_shm->opt.pool.statistics_enable)
 			poolstat_dec_evhdr_multi(ev_hdrs, num);
 	}
@@ -468,35 +474,19 @@ send_multi_err:
 void *
 em_event_pointer(em_event_t event)
 {
-	odp_event_t odp_event;
-	odp_event_type_t odp_etype;
-	odp_packet_t odp_pkt;
-	odp_buffer_t odp_buf;
-	const event_hdr_t *ev_hdr;
-
 	if (unlikely(event == EM_EVENT_UNDEF)) {
 		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EVENT_POINTER,
 			       "event undefined!");
 		return NULL;
 	}
 
-	odp_event = event_em2odp(event);
-	odp_etype = odp_event_type(odp_event);
+	void *ev_ptr = event_pointer(event);
 
-	switch (odp_etype) {
-	case ODP_EVENT_PACKET:
-		odp_pkt = odp_packet_from_event(odp_event);
-		return odp_packet_data(odp_pkt);
-	case ODP_EVENT_BUFFER:
-		odp_buf = odp_buffer_from_event(odp_event);
-		ev_hdr = odp_buffer_addr(odp_buf);
-		return (void *)((uintptr_t)ev_hdr + sizeof(event_hdr_t)
-				- ev_hdr->align_offset);
-	default:
-		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_EVENT_POINTER,
-			       "Unexpected odp event type:%u", odp_etype);
-		return NULL;
-	}
+	if (unlikely(!ev_ptr))
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EVENT_POINTER,
+			       "Event pointer NULL (unrecognized event type)");
+
+	return ev_ptr;
 }
 
 size_t
@@ -527,6 +517,41 @@ em_event_get_size(em_event_t event)
 	INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_GET_SIZE,
 		       "Unexpected odp event type:%u", odp_etype);
 	return 0;
+}
+
+em_pool_t em_event_get_pool(em_event_t event)
+{
+	if (unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_POOL,
+			       "event undefined!");
+		return EM_POOL_UNDEF;
+	}
+
+	odp_event_t odp_event = event_em2odp(event);
+	odp_event_type_t type = odp_event_type(odp_event);
+	odp_pool_t odp_pool = ODP_POOL_INVALID;
+
+	if (type == ODP_EVENT_PACKET) {
+		odp_packet_t pkt = odp_packet_from_event(odp_event);
+
+		odp_pool = odp_packet_pool(pkt);
+	} else if (type == ODP_EVENT_BUFFER) {
+		odp_buffer_t buf = odp_buffer_from_event(odp_event);
+
+		odp_pool = odp_buffer_pool(buf);
+	}
+
+	if (unlikely(odp_pool == ODP_POOL_INVALID))
+		return EM_POOL_UNDEF;
+
+	em_pool_t pool = pool_odp2em(odp_pool);
+
+	/*
+	 * Don't report an error if 'pool == EM_POOL_UNDEF' since that might
+	 * happen if the event is input from pktio that is using external
+	 * (to EM) odp pools.
+	 */
+	return pool;
 }
 
 em_status_t
@@ -652,8 +677,10 @@ int em_event_same_type_multi(const em_event_t events[], int num,
 
 em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
 {
+	if (!esv_enabled())
+		return EM_OK;
+
 	const queue_elem_t *const q_elem = queue_elem_get(queue);
-	event_hdr_t *ev_hdr;
 
 	/* Check all args */
 	if (EM_CHECK_LEVEL >= 1)
@@ -667,28 +694,256 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
 				"Inv.queue:%" PRI_QUEUE " type:%" PRI_QTYPE "",
 				queue, q_elem->type);
 
-	ev_hdr = event_to_hdr(event);
-	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	event_hdr_t *ev_hdr = event_to_hdr(event);
 
-	if (esv_enabled())
-		evstate_usr2em(event, ev_hdr, EVSTATE__MARK_SEND);
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	evstate_usr2em(event, ev_hdr, EVSTATE__MARK_SEND);
 
 	return EM_OK;
 }
 
 em_status_t em_event_unmark_send(em_event_t event)
 {
+	if (!esv_enabled())
+		return EM_OK;
+
 	/* Check all args */
 	if (EM_CHECK_LEVEL >= 1)
 		RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
 				EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_SEND,
 				"Inv.args: event:%" PRI_EVENT "", event);
 
-	if (esv_enabled()) {
-		event_hdr_t *ev_hdr = event_to_hdr(event);
+	event_hdr_t *ev_hdr = event_to_hdr(event);
 
-		evstate_usr2em_revert(event, ev_hdr, EVSTATE__UNMARK_SEND);
-	}
+	evstate_unmark_send(event, ev_hdr);
 
 	return EM_OK;
+}
+
+void em_event_mark_free(em_event_t event)
+{
+	if (!esv_enabled())
+		return;
+
+	if (unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_FREE,
+			       "Event undefined!");
+		return;
+	}
+
+	event_hdr_t *const ev_hdr = event_to_hdr(event);
+
+	evstate_free(event, ev_hdr, EVSTATE__MARK_FREE);
+
+	if (em_shm->opt.pool.statistics_enable)
+		poolstat_dec_evhdr(ev_hdr);
+}
+
+void em_event_unmark_free(em_event_t event)
+{
+	if (!esv_enabled())
+		return;
+
+	if (unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_FREE,
+			       "Event undefined!");
+		return;
+	}
+
+	event_hdr_t *const ev_hdr = event_to_hdr(event);
+
+	evstate_unmark_free(event, ev_hdr);
+
+	if (em_shm->opt.pool.statistics_enable)
+		poolstat_inc_evhdr(ev_hdr);
+}
+
+void em_event_mark_free_multi(const em_event_t events[], int num)
+{
+	if (!esv_enabled())
+		return;
+
+	if (unlikely(!events || num < 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_FREE_MULTI,
+			       "Inv.args: events[]:%p num:%d", events, num);
+		return;
+	}
+	if (unlikely(num == 0))
+		return;
+
+	if (EM_CHECK_LEVEL > 1) {
+		int i;
+
+		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG,
+				       EM_ESCOPE_EVENT_MARK_FREE_MULTI,
+				       "events[%d] undefined!", i);
+			return;
+		}
+	}
+
+	event_hdr_t *ev_hdrs[num];
+
+	event_to_hdr_multi(events, ev_hdrs, num);
+	evstate_free_multi(events, ev_hdrs, num, EVSTATE__MARK_FREE_MULTI);
+
+	if (em_shm->opt.pool.statistics_enable)
+		poolstat_dec_evhdr_multi(ev_hdrs, num);
+}
+
+void em_event_unmark_free_multi(const em_event_t events[], int num)
+{
+	if (!esv_enabled())
+		return;
+
+	if (unlikely(!events || num < 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_FREE_MULTI,
+			       "Inv.args: events[]:%p num:%d", events, num);
+		return;
+	}
+	if (unlikely(num == 0))
+		return;
+
+	if (EM_CHECK_LEVEL > 1) {
+		int i;
+
+		for (i = 0; i < num && events[i] != EM_EVENT_UNDEF; i++)
+			;
+		if (unlikely(i != num)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG,
+				       EM_ESCOPE_EVENT_UNMARK_FREE_MULTI,
+				       "events[%d] undefined!", i);
+			return;
+		}
+	}
+
+	event_hdr_t *ev_hdrs[num];
+
+	event_to_hdr_multi(events, ev_hdrs, num);
+	evstate_unmark_free_multi(events, ev_hdrs, num);
+
+	if (em_shm->opt.pool.statistics_enable)
+		poolstat_inc_evhdr_multi(ev_hdrs, num);
+}
+
+em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
+{
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	/* Check all args */
+	if (EM_CHECK_LEVEL >= 1 &&
+	    unlikely(event == EM_EVENT_UNDEF ||
+		     (pool != EM_POOL_UNDEF &&
+		      (pool_elem == NULL || !pool_allocated(pool_elem))))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_CLONE,
+			       "Inv.args: event:%" PRI_EVENT " pool:%" PRI_POOL "",
+			       event, pool);
+		return EM_EVENT_UNDEF;
+	}
+
+	odp_event_t odp_event = event_em2odp(event);
+	odp_event_type_t odp_evtype = odp_event_type(odp_event);
+	odp_pool_t odp_pool = ODP_POOL_INVALID;
+	odp_packet_t pkt;
+	odp_buffer_t buf;
+
+	if (unlikely(odp_evtype != ODP_EVENT_PACKET &&
+		     odp_evtype != ODP_EVENT_BUFFER)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_CLONE,
+			       "Inv. odp-event-type:%d", odp_evtype);
+		return EM_EVENT_UNDEF;
+	}
+
+	/* Obtain the event-hdr, event-size and the pool to use */
+	const event_hdr_t *ev_hdr;
+	size_t size;
+	em_event_type_t type;
+	em_pool_t em_pool = pool;
+	em_event_t clone_event; /* return value */
+
+	if (odp_evtype == ODP_EVENT_PACKET) {
+		pkt = odp_packet_from_event(odp_event);
+		ev_hdr = odp_packet_user_area(pkt);
+		size = odp_packet_seg_len(pkt);
+		if (pool == EM_POOL_UNDEF) {
+			odp_pool = odp_packet_pool(pkt);
+			em_pool = pool_odp2em(odp_pool);
+		}
+	} else /* ODP_EVENT_BUFFER */ {
+		buf = odp_buffer_from_event(odp_event);
+		ev_hdr = odp_buffer_addr(buf);
+		size = ev_hdr->event_size;
+		if (pool == EM_POOL_UNDEF) {
+			odp_pool = odp_buffer_pool(buf);
+			em_pool = pool_odp2em(odp_pool);
+		}
+	}
+
+	/* No EM-pool found */
+	if (em_pool == EM_POOL_UNDEF) {
+		if (unlikely(odp_evtype == ODP_EVENT_BUFFER)) {
+			INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_CLONE,
+				       "No suitable event-pool found");
+			return EM_EVENT_UNDEF;
+		}
+		/* odp_evtype == ODP_EVENT_PACKET:
+		 * Not an EM-pool, e.g. event from external pktio odp-pool.
+		 * Allocate and clone pkt via ODP directly.
+		 */
+		clone_event = pkt_clone_odp(pkt, odp_pool);
+		if (unlikely(clone_event == EM_EVENT_UNDEF)) {
+			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_EVENT_CLONE,
+				       "Cloning from ext odp-pool:%" PRIu64 " failed",
+				       odp_pool_to_u64(odp_pool));
+		}
+		return clone_event;
+	}
+
+	/*
+	 * Clone the event from an EM-pool:
+	 */
+	pool_elem = pool_elem_get(em_pool);
+	type = ev_hdr->event_type;
+
+	/* EM event pools created with type=SW can not support pkt events */
+	if (unlikely(pool_elem->event_type == EM_EVENT_TYPE_SW &&
+		     em_get_type_major(type) == EM_EVENT_TYPE_PACKET)) {
+		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_EVENT_CLONE,
+			       "EM-pool:%s(%" PRI_POOL "):\n"
+			       "Invalid event type:0x%" PRIx32 " for buf",
+			       pool_elem->name, em_pool, type);
+		return EM_EVENT_UNDEF;
+	}
+
+	event_hdr_t *clone_hdr = event_alloc(pool_elem, size, type);
+
+	if (unlikely(!clone_hdr)) {
+		em_status_t err =
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_EVENT_CLONE,
+			       "EM-pool:'%s': sz:%zu type:0x%x pool:%" PRI_POOL "",
+			       pool_elem->name, size, type, em_pool);
+		if (EM_CHECK_LEVEL > 1 && err != EM_OK &&
+		    em_shm->opt.pool.statistics_enable)
+			em_pool_info_print(em_pool);
+		return EM_EVENT_UNDEF;
+	}
+
+	clone_event = clone_hdr->event;
+	/* Update clone_event ESV state for the clone-alloc */
+	if (esv_enabled())
+		clone_event = evstate_clone(clone_event, clone_hdr);
+
+	/* Call the 'alloc' API hook function also for event-clone */
+	if (EM_API_HOOKS_ENABLE)
+		call_api_hooks_alloc(&clone_event, 1, 1, size, type, pool);
+
+	/* Copy event payload from the parent event into the clone event */
+	const void *src = event_pointer(event);
+	void *dst = event_pointer(clone_event);
+
+	memcpy(dst, src, size);
+
+	return clone_event;
 }

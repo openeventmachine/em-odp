@@ -32,7 +32,6 @@
  * @file
  *
  * Event Machine ODP API extensions
- *
  */
 
 #ifndef EVENT_MACHINE_ODP_EXT_H
@@ -128,6 +127,53 @@ em_odp_event2em(odp_event_t odp_event);
 void
 em_odp_events2em(const odp_event_t odp_events[], em_event_t events[/*out*/],
 		 const int num);
+
+/**
+ * @brief Get the ODP pools used as subpools in a given EM event pool.
+ *
+ * An EM event pool consists of 1 to 'EM_MAX_SUBPOOLS' subpools. Each subpool
+ * is an ODP pool. This function outputs the ODP pool handles of these subpools
+ * into a user-provided array and returns the number of handles written.
+ *
+ * The obtained ODP pools must not be deleted or alterede outside of EM,
+ * e.g. these ODP pools must only be deleted as part of an EM event pool
+ * using em_pool_delete().
+ *
+ * ODP pool handles obtained through this function can be used to
+ *  - configure ODP pktio to use an ODP pool created via EM (allows for
+ *    better ESV tracking)
+ *  - print ODP-level pool statistics with ODP APIs etc.
+ *
+ * Note that direct allocations and free:s via ODP APIs will bypass
+ * EM checks (e.g. ESV) and might cause errors unless properely handled:
+ *  - use em_odp_event2em() to initialize as an EM event
+ *  - use em_event_mark_free() before ODP-free operations (SW- or HW-free)
+ *
+ * @param      pool       EM event pool handle.
+ * @param[out] odp_pools  Output array to be filled with the ODP pools used as
+ *                        subpools in the given EM event pool. The array must
+ *                        fit 'num' entries.
+ * @param      num        Number of entries in the 'odp_pools[]' array.
+ *                        Using 'num=EM_MAX_SUBPOOLS' will always be large
+ *                        enough to fit all subpools in the EM event pool.
+ *
+ * @return The number of ODP pools filled into 'odp_pools[]'
+ */
+int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num);
+
+/**
+ * @brief Get the EM event pool that the given ODP pool belongs to
+ *
+ * An EM event pool consists of 1 to 'EM_MAX_SUBPOOLS' subpools. Each subpool
+ * is an ODP pool. This function returns the EM event pool that contains the
+ * given ODP pool as a subpool.
+ *
+ * @param odp_pool
+ *
+ * @return The EM event pool that contains the subpool 'odp_pool' or
+ *         EM_POOL_UNDEF if 'odp_pool' is not part of any EM event pool.
+ */
+em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
 
 /**
  * Enqueue packets into EM (from outside of EM, not allocated by em_alloc())

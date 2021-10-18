@@ -27,7 +27,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ===============================================================================
-CHANGE NOTES - Event Machine on ODP (em-odp)
+CHANGE NOTES - Event Machine (EM) on ODP (em-odp)
 ===============================================================================
 
 The version numbering scheme reflects the used EM API version:
@@ -42,6 +42,121 @@ The version numbering scheme reflects the used EM API version:
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v2.6.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.6 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * New APIs for Timer, Event, Queue, Extension-APIs *
+
+- New configure script option (see em-odp/configure.ac):
+  '--enable-debug-print' that enables EM debug printouts via the EM_DBG() macro:
+        em-odp/build $> ../configure --prefix=… --enable-debug-print
+  Currently if enabled, will print event header layout information at startup
+  as well as EM timer runtime debug info.
+
+- EM config file options - config/em-odp.conf:
+ - Config file version bumped to "0.0.9" (user config files need to be updated!)
+ - Options for setting EM Queue priority-levels:
+   a) Option 'queue.priority.map_mode':
+     Select the queue priority mapping mode, i.e how to map EM queue priorities
+     to ODP scheduled queue priorities.
+     0: legacy simple mode, map EM prios to ODP min/default/max prio-levels only
+        (0 is the default mode)
+     1: map according to the ODP runtime number of priorities
+        (linear fit to full range of ODP prio-levels)
+     2: custom mapping
+        (use 'custom_map' below)
+   b) Option 'queue.priority.custom_map':
+     Custom priority map (required when 'queue.priority.map_mode = 2')
+     This array needs to have EM_QUEUE_PRIO_NUM entries (typically 8).
+     The first entry is for the lowest priority (0). The value is ADDED to
+     odp_schedule_min_prio() and then passed to ODP, i.e. values are offsets
+     from odp_schedule_min_prio(). Values given here must be valid for ODP
+     runtime configuration, i.e. value plus odp_schedule_min_prio() must
+     not exceed odp_schedule_max_prio().
+     Example of a custom priority mapping:
+        queue: {
+                priority: {
+                        map_mode = 2
+                        custom_map = [0, 0, 1, 3 ,4 ,6 ,7, 7]
+                }
+        }
+
+- EM SW ISA printout added at start-up:
+    ...
+    ===========================================================
+    EM Info on target: em-odp
+    ===========================================================
+    EM API version:         v2.6, 64 bit (EM_CHECK_LEVEL:3, EM_ESV_ENABLE:1)
+    EM build info:          v2.6.0 2021-10-15 16:46
+    ODP API version:        1.32.0
+    ODP impl name:          odp-linux
+    ODP impl details:       odp-linux 1.32.0-0 (v1.32.0) 1.32.0.0
+    CPU model:              Intel(R) Xeon(R) CPU E5-2697 v3
+    CPU arch:               x86     // ARM etc.
+    CPU ISA version:        Unknown // ARMv8.2-A  # HW detected, reported by ODP
+     SW ISA version (ODP):  x86_64  // ARMv8.1-A  # ODP SW config (compile time)
+     SW ISA version (EM):   x86_64  // ARMv8.1-A  #  EM SW config (compile time)
+
+  Arch specific CFLAGS should be passed to EM and ODP via configure.
+  Example for a made up ARMv8 SoC called "soc-x":
+  odp-soc-x/build> ../configure … --with-platform=soc-x [default=linux-generic]
+     em-odp/build> ../configure … CFLAGS=”-march=armv8.2-a+… -mcpu=soc-x”
+  The whole chain of used SW libs/dependencies should preferably be compiled
+  with the same -march/-mcpu options for best results:
+    other-libs/build> ../configure … CFLAGS=”-march=armv8.2-a+… -mcpu=soc-x”
+
+- Program termination: flush the scheduler in em_term_core() on each EM-core.
+  Move the flushing of scheduled events from em_term() to em_term_core() so that
+  all participating EM-cores do it.
+  See example usage of in em-odp/programs/common/cm_setup.c:
+  ('thread' in the description below refers to odph_thread_t that can be either
+   linux processes or threads)
+  em_term() has been moved from each EM-core's run-function to the common thread
+  that created the EM-core threads. The common thread waits for the created
+  EM-core threads to return/join.
+  After each EM-core has paused and flushed the scheduler from core-local events
+  (by calling em_term_local()) they terminate by "joining" back into the common
+  thread, which calls em_term() once to terminate EM (and ODP) before exiting
+  the application.
+
+- Fixes:
+  - queue group: fix: em_queue_group_modify_sync() incorrectly removed the
+                      calling core
+  - ESV: fix: usr2em-revert transition to handle evgen wrap correctly
+    Event State Verification (ESV) incorrectly handled the revert of a usr-to-EM
+    transition when the counter wrapped.
+
+- Example programs (em-odp/programs)
+  - Common Setup (cm_setup.c&h):
+    - Move the flushing of scheduled events from em_term() to em_term_core().
+      Descibed above in "Program termination".
+  - Packet-IO setup (cm_pktio.c&h)
+    - Add command-line option to select whether to use an
+      1) ODP-packet-pool: -o, --pktpool-odp
+         or an
+      2) EM event-pool: -e, --pktpool-em (default if no option given)
+      as the main event pool to be used by packet-io for received packets.
+      Packet-IO is implemented via ODP so an EM event-pool needs to be converted
+      to the corresponding ODP packet-pools with the new extension API
+      'em_odp_pool2odp()'. Using an EM pool, instead of directly using an
+      ODP pool, allows for more thorough ESV-checking also for packet-IO when
+      em-odp.conf: esv.prealloc_pools = true.
+  - Timer
+  - Misc. performance and bug fixes in the example applications
+
+- Tested against
+  odp-linux - https://github.com/OpenDataPlane/odp
+    Commit: 69f27643ec2287875048314d7975f0de4bcbbfa4 [69f2764]
+    Date: Friday, 1 October 2021 18:12.09
+    Commit Date: Tuesday, 12 October 2021 17:06.16
+    configure.ac: move project to C standard revision 11
+  odp-dpdk - https://github.com/OpenDataPlane/odp-dpdk
+    Commit: 50c7b605b97474d26fcf600b4061968e3543b45b [50c7b60]
+    Date: Monday, 11 October 2021 16:37.51
+    Merge ODP v1.32.0.0
 
 --------------------------------------------------------------------------------
 Event Machine on ODP v2.5.0

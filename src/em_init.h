@@ -67,6 +67,10 @@ typedef struct {
 
 	struct {
 		unsigned int min_events_default; /* default min nbr of events */
+		struct {
+		int map_mode;
+		int custom_map[EM_QUEUE_PRIO_NUM];
+		} priority;
 	} queue;
 
 	struct {

@@ -59,10 +59,10 @@ extern "C" {
 #endif
 
 /**
- * API-callback hook for em_alloc() and em_alloc_multi().
+ * API-callback hook for em_alloc(), em_alloc_multi() and em_event_clone()
  *
- * The hook will only be called for successful allocs, passing also the newly
- * allocated 'events' to the hook.
+ * The hook will only be called for successful event allocations, passing also
+ * the newly allocated 'events' to the hook.
  * The state and ownership of the events must not be changed by the hook, e.g.
  * the events must not be freed or sent etc. Calling em_alloc/_multi() within
  * the alloc hook leads to hook recursion and must be avoided.

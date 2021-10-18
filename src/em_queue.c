@@ -54,6 +54,18 @@ static const em_queue_conf_t default_queue_conf = {
 	.conf = NULL
 };
 
+static int
+queue_init_prio_map(int minp, int maxp, int nump);
+static int
+queue_init_prio_legacy(int minp, int maxp);
+static void
+queue_init_prio_adaptive(int minp, int maxp, int nump);
+static int
+queue_init_prio_custom(int minp, int maxp);
+
+static inline int
+queue_create_check_sched(const queue_setup_t *setup, const char **err_str);
+
 static inline em_queue_t
 queue_alloc(em_queue_t queue, const char **err_str);
 
@@ -115,6 +127,39 @@ read_config_file(void)
 	em_shm->opt.queue.min_events_default = val;
 	EM_PRINT("  %s: %d\n", conf_str, val);
 
+	/*
+	 * Option: queue.prio_map_mode
+	 */
+	conf_str = "queue.priority.map_mode";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	if (val < 0 || val > 2) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n", conf_str, val);
+		return -1;
+	}
+	em_shm->opt.queue.priority.map_mode = val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	if (val == 2) { /* custom map */
+		conf_str = "queue.priority.custom_map";
+		ret = em_libconfig_lookup_array(&em_shm->libconfig, conf_str,
+						em_shm->opt.queue.priority.custom_map,
+						EM_QUEUE_PRIO_NUM);
+		if (unlikely(!ret)) {
+			EM_LOG(EM_LOG_ERR, "Config option '%s' not found or invalid\n", conf_str);
+			return -1;
+		}
+		EM_PRINT("  %s: [", conf_str);
+		for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
+			EM_PRINT("%d", em_shm->opt.queue.priority.custom_map[i]);
+			if (i < (EM_QUEUE_PRIO_NUM - 1))
+				EM_PRINT(",");
+		}
+		EM_PRINT("]\n");
+	}
 	return 0;
 }
 
@@ -206,6 +251,13 @@ queue_init(queue_tbl_t *const queue_tbl,
 	if (queue_pool_init(queue_tbl, queue_pool, min, max) != 0)
 		return EM_ERR_LIB_FAILED;
 
+	/* Initialize priority mapping, adapt to values from ODP */
+	min = odp_schedule_min_prio();
+	max = odp_schedule_max_prio();
+	em_shm->queue_prio.num_runtime = max - min + 1;
+	ret = queue_init_prio_map(min, max, em_shm->queue_prio.num_runtime);
+	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"mapping odp priorities failed: %d", ret);
 	return EM_OK;
 }
 
@@ -376,35 +428,44 @@ queue_free(em_queue_t queue)
 }
 
 static int
-queue_create_check_args(const queue_setup_t *setup, const char **err_str)
+queue_create_check_sched(const queue_setup_t *setup, const char **err_str)
 {
 	const queue_group_elem_t *queue_group_elem = NULL;
 	const atomic_group_elem_t *ag_elem = NULL;
 
-	/* Argument checks per queue type & set queue_group_elem if used */
-	switch (setup->type) {
-	case EM_QUEUE_TYPE_ATOMIC:
-	case EM_QUEUE_TYPE_PARALLEL:
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
-		/* EM scheduled queue */
-		queue_group_elem = queue_group_elem_get(setup->queue_group);
-		/* scheduled queues are always associated with a queue group */
-		if (unlikely(queue_group_elem == NULL ||
-			     !queue_group_allocated(queue_group_elem))) {
-			*err_str = "Invalid queue group!";
+	queue_group_elem = queue_group_elem_get(setup->queue_group);
+	/* scheduled queues are always associated with a queue group */
+	if (unlikely(queue_group_elem == NULL || !queue_group_allocated(queue_group_elem))) {
+		*err_str = "Invalid queue group!";
+		return -1;
+	}
+
+	if (setup->atomic_group != EM_ATOMIC_GROUP_UNDEF) {
+		ag_elem = atomic_group_elem_get(setup->atomic_group);
+		if (unlikely(ag_elem == NULL || !atomic_group_allocated(ag_elem))) {
+			*err_str = "Invalid atomic group!";
 			return -1;
 		}
+	}
 
-		if (setup->atomic_group != EM_ATOMIC_GROUP_UNDEF) {
-			ag_elem = atomic_group_elem_get(setup->atomic_group);
-			if (unlikely(ag_elem == NULL ||
-				     !atomic_group_allocated(ag_elem))) {
-				*err_str = "Invalid atomic group!";
-				return -1;
-			}
-		}
-		break;
+	if (unlikely(setup->prio >= EM_QUEUE_PRIO_NUM)) {
+		*err_str = "Invalid queue priority!";
+		return -1;
+	}
+	return 0;
+}
 
+static int
+queue_create_check_args(const queue_setup_t *setup, const char **err_str)
+{
+	/* scheduled queue */
+	if (setup->type == EM_QUEUE_TYPE_ATOMIC   ||
+	    setup->type == EM_QUEUE_TYPE_PARALLEL ||
+	    setup->type == EM_QUEUE_TYPE_PARALLEL_ORDERED)
+		return queue_create_check_sched(setup, err_str);
+
+	/* other queue types */
+	switch (setup->type) {
 	case EM_QUEUE_TYPE_UNSCHEDULED:
 		/* API arg checks for unscheduled queues */
 		if (unlikely(setup->prio != EM_QUEUE_PRIO_UNDEF)) {
@@ -429,6 +490,10 @@ queue_create_check_args(const queue_setup_t *setup, const char **err_str)
 		}
 		if (unlikely(setup->atomic_group != EM_ATOMIC_GROUP_UNDEF)) {
 			*err_str = "Atomic group not used with local queues!";
+			return -1;
+		}
+		if (unlikely(setup->prio >= EM_QUEUE_PRIO_NUM)) {
+			*err_str = "Invalid queue priority!";
 			return -1;
 		}
 		break;
@@ -1317,4 +1382,92 @@ size_t queue_get_name(const queue_elem_t *const q_elem,
 	name[len] = '\0';
 
 	return len;
+}
+
+static int queue_init_prio_legacy(int minp, int maxp)
+{
+	/* legacy mode - match the previous simple 3-level implementation */
+
+	int def = odp_schedule_default_prio();
+
+	/* needs to be synced with queue_prio_e values. Due to enum this can't be #if */
+	COMPILE_TIME_ASSERT(EM_QUEUE_PRIO_HIGHEST < EM_QUEUE_PRIO_NUM,
+			    "queue_prio_e values / EM_QUEUE_PRIO_NUM mismatch!\n");
+
+	/* init both ends first */
+	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++)
+		em_shm->queue_prio.map[i] = i < (EM_QUEUE_PRIO_NUM / 2) ? minp : maxp;
+
+	/* then add NORMAL in the middle */
+	em_shm->queue_prio.map[EM_QUEUE_PRIO_NORMAL] = def;
+	/* if room: widen the normal range a bit */
+	if (EM_QUEUE_PRIO_NORMAL - EM_QUEUE_PRIO_LOW > 1) /* legacy 4-2 */
+		em_shm->queue_prio.map[EM_QUEUE_PRIO_NORMAL - 1] = def;
+	if (EM_QUEUE_PRIO_HIGH - EM_QUEUE_PRIO_NORMAL > 1) /* legacy 6-4 */
+		em_shm->queue_prio.map[EM_QUEUE_PRIO_NORMAL + 1] = def;
+
+	return 0;
+}
+
+static void queue_init_prio_adaptive(int minp, int maxp, int nump)
+{
+	double step = (double)nump / EM_QUEUE_PRIO_NUM;
+	double cur = (double)minp;
+
+	/* simple linear fit to available levels */
+
+	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
+		em_shm->queue_prio.map[i] = (int)cur;
+		cur += step;
+	}
+
+	/* last EM prio always highest ODP level */
+	if (em_shm->queue_prio.map[EM_QUEUE_PRIO_NUM - 1] != maxp)
+		em_shm->queue_prio.map[EM_QUEUE_PRIO_NUM - 1] = maxp;
+}
+
+static int queue_init_prio_custom(int minp, int maxp)
+{
+	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
+		em_shm->queue_prio.map[i] = minp + em_shm->opt.queue.priority.custom_map[i];
+		if (em_shm->queue_prio.map[i] > maxp || em_shm->queue_prio.map[i] < minp) {
+			EM_PRINT("Invalid odp priority %d!\n", em_shm->queue_prio.map[i]);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static int queue_init_prio_map(int minp, int maxp, int nump)
+{
+	/* EM normally uses 8 priority levels (EM_QUEUE_PRIO_NUM).
+	 * These are mapped to ODP runtime values depending on selected map mode
+	 */
+
+	switch (em_shm->opt.queue.priority.map_mode) {
+	case 0: /* legacy mode, use only 3 levels */
+		if (queue_init_prio_legacy(minp, maxp) != 0)
+			return -1;
+		break;
+	case 1: /* adapt to runtime (full spread) */
+		queue_init_prio_adaptive(minp, maxp, nump);
+		break;
+	case 2: /** custom */
+		if (queue_init_prio_custom(minp, maxp) != 0)
+			return -1;
+		break;
+	default:
+		EM_PRINT("Unknown map_mode %d!\n", em_shm->opt.queue.priority.map_mode);
+		return -1;
+	}
+
+	EM_PRINT("  EM uses %d priorities, runtime %d (from %d)\n", EM_QUEUE_PRIO_NUM, nump, minp);
+	EM_PRINT("  =>Priority map: [");
+	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
+		EM_PRINT("%d", em_shm->queue_prio.map[i]);
+		if (i < EM_QUEUE_PRIO_NUM - 1)
+			EM_PRINT(",");
+	}
+	EM_PRINT("]\n");
+	return 0;
 }

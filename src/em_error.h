@@ -40,25 +40,33 @@
 /**
  * Internal error reporting macro
  */
-#define INTERNAL_ERROR(error, escope, format, ...)		\
+#define INTERNAL_ERROR(error, escope, fmt, ...)		\
 	internal_error((error), (escope), __FILE__, __func__,	\
-			__LINE__, (format), ## __VA_ARGS__)
+			__LINE__, fmt, ## __VA_ARGS__)
 
 /**
  * Internal macro for return on error
  */
-#define RETURN_ERROR_IF(cond, error, escope, format, ...) {	  \
+#define RETURN_ERROR_IF(cond, error, escope, fmt, ...) {	  \
 	if (unlikely((cond))) {					  \
 		return INTERNAL_ERROR((error), (escope),	  \
-				      (format), ## __VA_ARGS__);  \
+				      fmt, ## __VA_ARGS__);  \
 	}							  \
 }
 
-#define EM_LOG(level, ...) (em_shm->log_fn((level), ## __VA_ARGS__))
+#define EM_LOG(level, fmt, ...) (em_shm->log_fn((level), fmt, ## __VA_ARGS__))
 
-#define EM_VLOG(level, fmt, args) (em_shm->vlog_fn((level), (fmt), (args)))
+#define EM_VLOG(level, fmt, args) (em_shm->vlog_fn((level), fmt, (args)))
 
-#define EM_PRINT(...) EM_LOG(EM_LOG_PRINT, ## __VA_ARGS__)
+#define EM_PRINT(fmt, ...) EM_LOG(EM_LOG_PRINT, fmt, ## __VA_ARGS__)
+
+/*
+ * Print debug message to log (only if EM_DEBUG_PRINT is set)
+ */
+#define EM_DBG(fmt, ...) {				\
+	if (EM_DEBUG_PRINT == 1)			\
+		EM_LOG(EM_LOG_DBG, fmt, ##__VA_ARGS__); \
+}
 
 /**
  * EM internal error

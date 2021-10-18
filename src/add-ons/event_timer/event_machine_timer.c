@@ -99,8 +99,8 @@ static inline void handle_ack_skip(em_tmo_t tmo)
 		skips = 1; /* not yet over next period, but late for setting */
 
 	tmo->last_tick += skips * tmo->period;
-	TMR_DBG_PRINT("%s(): %lu skips * %lu ticks => new tgt %lu (tries %d)\n",
-		      __func__, skips, tmo->period, tmo->last_tick, tries);
+	TMR_DBG_PRINT("%lu skips * %lu ticks => new tgt %lu\n",
+		      skips, tmo->period, tmo->last_tick);
 	if (EM_TIMER_TMO_STATS)
 		tmo->stats.num_period_skips += skips;
 }
@@ -164,8 +164,8 @@ void em_timer_attr_init(em_timer_attr_t *tmr_attr)
 		return;
 	}
 
-	TMR_DBG_PRINT("%s(): res %lu -> ODP says min %lu, max %lu\n",
-		      __func__, tmr_attr->resparam.res_ns, odp_res_capa.min_tmo,
+	TMR_DBG_PRINT("res %lu -> ODP says min %lu, max %lu\n",
+		      tmr_attr->resparam.res_ns, odp_res_capa.min_tmo,
 		      odp_res_capa.max_tmo);
 
 	tmr_attr->num_tmo = EM_ODP_DEFAULT_TMOS;
@@ -181,7 +181,7 @@ void em_timer_attr_init(em_timer_attr_t *tmr_attr)
 em_status_t em_timer_capability(em_timer_capability_t *capa, em_timer_clksrc_t clk_src)
 {
 	if (EM_CHECK_LEVEL > 0 && unlikely(capa == NULL)) {
-		EM_LOG(EM_LOG_DBG, "%s: NULL capa ptr!\n", __func__);
+		EM_LOG(EM_LOG_DBG, "%s(): NULL capa ptr!\n", __func__);
 		return EM_ERR_BAD_POINTER;
 	}
 
@@ -290,7 +290,7 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	odp_pool_param.buf.align = ODP_CACHE_LINE_SIZE;
 	if (odp_pool_param.buf.cache_size > EM_ODP_TIMER_CACHE)
 		odp_pool_param.buf.cache_size = EM_ODP_TIMER_CACHE;
-	TMR_DBG_PRINT("%s(): local tmo pool cache %d\n", __func__, odp_pool_param.buf.cache_size);
+	TMR_DBG_PRINT("local tmo pool cache %d\n", odp_pool_param.buf.cache_size);
 
 	/* local pool caching may cause out of buffers situation on a core. Adjust,
 	 * but not waste too much memory
@@ -298,8 +298,8 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	uint32_t num = tmr_attr->num_tmo + ((em_core_count() - 1) * odp_pool_param.buf.cache_size);
 
 	if (tmr_attr->num_tmo < num) {
-		TMR_DBG_PRINT("%s(): Adjusted pool size %d->%d due to local caching (%d)\n",
-			      __func__, tmr_attr->num_tmo, num, odp_pool_param.buf.cache_size);
+		TMR_DBG_PRINT("Adjusted pool size %d->%d due to local caching (%d)\n",
+			      tmr_attr->num_tmo, num, odp_pool_param.buf.cache_size);
 	}
 	odp_pool_param.buf.num = num;
 
@@ -328,21 +328,20 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 			name = timer_pool_name;
 		}
 
-		TMR_DBG_PRINT("%s(): Creating ODP tmr pool: clk %d, res_ns %lu, res_hz %lu\n",
-			      __func__, odp_tpool_param.clk_src,
-			      odp_tpool_param.res_ns, odp_tpool_param.res_hz);
+		TMR_DBG_PRINT("Creating ODP tmr pool: clk %d, res_ns %lu, res_hz %lu\n",
+			      odp_tpool_param.clk_src, odp_tpool_param.res_ns,
+			      odp_tpool_param.res_hz);
 		timer->odp_tmr_pool = odp_timer_pool_create(name, &odp_tpool_param);
 		if (unlikely(timer->odp_tmr_pool == ODP_TIMER_POOL_INVALID))
 			goto error_locked;
-		TMR_DBG_PRINT("%s(): Created timer: %s with idx: %d\n",
-			      __func__, name, timer->idx);
+		TMR_DBG_PRINT("Created timer: %s with idx: %d\n", name, timer->idx);
 
 		snprintf(tmo_pool_name, ODP_POOL_NAME_LEN, "Tmo-pool-%d", timer->idx);
 		timer->tmo_pool = odp_pool_create(tmo_pool_name, &odp_pool_param);
 		if (unlikely(timer->tmo_pool == ODP_POOL_INVALID))
 			goto error_locked;
-		TMR_DBG_PRINT("%s(): Created ODP-pool: %s for %d timeouts\n",
-			      __func__, tmo_pool_name, odp_pool_param.buf.num);
+		TMR_DBG_PRINT("Created ODP-pool: %s for %d timeouts\n",
+			      tmo_pool_name, odp_pool_param.buf.num);
 
 		timer->flags = tmr_attr->flags;
 		odp_timer_pool_start();
@@ -356,7 +355,7 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 			       "No more timers available");
 		return EM_TIMER_UNDEF;
 	}
-	TMR_DBG_PRINT("%s(): ret %" PRI_TMR "\n", __func__, TMR_I2H(i));
+	TMR_DBG_PRINT("ret %" PRI_TMR "\n", TMR_I2H(i));
 	return TMR_I2H(i);
 
 error_locked:
@@ -371,8 +370,8 @@ error_locked:
 	timer->odp_tmr_pool = ODP_TIMER_POOL_INVALID;
 	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
-	TMR_DBG_PRINT("%s(): ERR odp tmr pool in: clk %u, res %lu, min %lu, max %lu, num %u\n",
-		      __func__, odp_tpool_param.clk_src, odp_tpool_param.res_ns,
+	TMR_DBG_PRINT("ERR odp tmr pool in: clk %u, res %lu, min %lu, max %lu, num %u\n",
+		      odp_tpool_param.clk_src, odp_tpool_param.res_ns,
 		      odp_tpool_param.min_tmo, odp_tpool_param.max_tmo, odp_tpool_param.num_timers);
 	INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TIMER_CREATE, "Timer pool create failed");
 	return EM_TIMER_UNDEF;
@@ -465,7 +464,7 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 	if (EM_TIMER_TMO_STATS)
 		memset(&tmo->stats, 0, sizeof(em_tmo_stats_t));
 	odp_atomic_init_u32(&tmo->state, EM_TMO_STATE_IDLE);
-	TMR_DBG_PRINT("%s: ODP tmo %ld allocated\n", __func__, (unsigned long)tmo->odp_timer);
+	TMR_DBG_PRINT("ODP tmo %ld allocated\n", (unsigned long)tmo->odp_timer);
 	return tmo;
 }
 
@@ -488,7 +487,7 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 				"Invalid tmo buffer");
 	}
 
-	TMR_DBG_PRINT("%s: ODP tmo %ld\n", __func__, (unsigned long)tmo->odp_timer);
+	TMR_DBG_PRINT("ODP tmo %ld\n", (unsigned long)tmo->odp_timer);
 
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_UNKNOWN);
 
@@ -558,7 +557,7 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_ABS,
 				      "odp_timer_set_abs():%d", ret);
 	}
-	TMR_DBG_PRINT("%s(): OK\n", __func__);
+	TMR_DBG_PRINT("OK\n");
 	return EM_OK;
 }
 
@@ -597,7 +596,7 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 		tmo->last_tick = odp_timer_current_tick(tmo->odp_timer_pool) +
 				 ticks_rel;
 	}
-	TMR_DBG_PRINT("%s: last_tick %lu\n", __func__, tmo->last_tick);
+	TMR_DBG_PRINT("last_tick %lu\n", tmo->last_tick);
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_ACTIVE);
 	int ret = odp_timer_set_rel(tmo->odp_timer, ticks_rel, &odp_ev);
 
@@ -608,7 +607,7 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_REL,
 				      "odp_timer_set_rel():%d", ret);
 	}
-	TMR_DBG_PRINT("%s(): OK\n", __func__);
+	TMR_DBG_PRINT("OK\n");
 	return EM_OK;
 }
 
@@ -646,13 +645,13 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_PERIODIC);
 	}
 
-	TMR_DBG_PRINT("%s(): start %lu, period %lu\n", __func__, start_abs, period);
+	TMR_DBG_PRINT("start %lu, period %lu\n", start_abs, period);
 
 	tmo->period = period;
 	if (start_abs == 0)
 		start_abs = odp_timer_current_tick(tmo->odp_timer_pool) + period;
 	tmo->last_tick = start_abs;
-	TMR_DBG_PRINT("%s: last_tick %lu, now %lu\n", __func__, tmo->last_tick,
+	TMR_DBG_PRINT("last_tick %lu, now %lu\n", tmo->last_tick,
 		      odp_timer_current_tick(tmo->odp_timer_pool));
 
 	/* set tmo active and arm with absolute time */
@@ -663,7 +662,7 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
 		if (esv_ena)
 			evstate_usr2em_revert(tmo_ev, ev_hdr, EVSTATE__TMO_SET_PERIODIC__FAIL);
-		TMR_DBG_PRINT("%s: diff to tmo %ld\n", __func__,
+		TMR_DBG_PRINT("diff to tmo %ld\n",
 			      (int64_t)tmo->last_tick -
 			      (int64_t)odp_timer_current_tick(tmo->odp_timer_pool));
 		if (ret == ODP_TIMER_TOOLATE)
@@ -696,7 +695,7 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 				"Invalid tmo buffer");
 	}
 
-	TMR_DBG_PRINT("%s: ODP tmo %ld\n", __func__, (unsigned long)tmo->odp_timer);
+	TMR_DBG_PRINT("ODP tmo %ld\n", (unsigned long)tmo->odp_timer);
 
 	/* cancel and set tmo idle */
 	odp_event_t odp_ev = ODP_EVENT_INVALID;
@@ -788,9 +787,9 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 		 */
 		if (likely(ret != ODP_TIMER_TOOEARLY)) {
 			if (ret != ODP_TIMER_SUCCESS) {
-				TMR_DBG_PRINT("%s(): ODP return %d\n", __func__, ret);
-				TMR_DBG_PRINT("%s(): tmo tgt/ tick now %lu/%lu\n", __func__,
-					      tmo->last_tick,
+				TMR_DBG_PRINT("ODP return %d\n"
+					      "tmo tgt/tick now %lu/%lu\n",
+					      ret, tmo->last_tick,
 					      odp_timer_current_tick(tmo->odp_timer_pool));
 			}
 			break;
@@ -799,8 +798,7 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 		/* ODP_TIMER_TOOEARLY: ack() delayed beyond next time slot */
 		if (EM_TIMER_TMO_STATS)
 			tmo->stats.num_late_ack++;
-		TMR_DBG_PRINT("%s(): late, tgt/now %lu/%lu\n", __func__,
-			      tmo->last_tick,
+		TMR_DBG_PRINT("late, tgt/now %lu/%lu\n", tmo->last_tick,
 			      odp_timer_current_tick(tmo->odp_timer_pool));
 
 		if (tmo->flags & EM_TMO_FLAG_NOSKIP) /* not allowed to skip, next immediately */

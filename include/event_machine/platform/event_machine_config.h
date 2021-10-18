@@ -235,6 +235,23 @@ extern "C" {
 #endif
 
 /**
+ * @def EM_DEBUG_PRINT
+ * Event Machine Debug Printouts
+ *
+ * '0': disabled
+ * '1': enabled
+ *
+ * @note em-odp: the 'EM_DEBUG_PRINT' value can be overridden by a command-line
+ *               option to the 'configure' script, e.g.:
+ *               $build> ../configure ... --enable-debug-print
+ *               The overridden value will be made available to the application
+ *               via a pkgconfig set define.
+ */
+#ifndef EM_DEBUG_PRINT
+#define EM_DEBUG_PRINT  0
+#endif
+
+/**
  * @def EM_EVENT_GROUP_SAFE_MODE
  * Guards event groups in undefined and error situations
  *

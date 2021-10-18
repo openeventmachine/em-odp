@@ -6,12 +6,133 @@ OpenEM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 -------------------------------------------------------------------------------
+API 2.6 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=6)
+-------------------------------------------------------------------------------
+Backwards compatible with EM 2.5 API
+
+1. Timer:
+   (see em-odp/include/event_machine/add-ons/event_machine_timer.h for details)
+  - Add new timer clock source choices (em_timer_clksrc_t) to select the
+    timer clock source in case multiple are supported:
+    EM_TIMER_CLKSRC_0, EM_TIMER_CLKSRC_1, ...(up to)..., EM_TIMER_CLKSRC_5.
+    Backwards compatible macros (EM_TIMER_CLKSRC_CPU, EM_TIMER_CLKSRC_EXT) are
+    provided for full compatibility with older code.
+    EM_TIMER_CLKSRC_DEFAULT is always available and is a fully portable
+    definition.
+
+2. Event:
+   (see em-odp/include/event_machine/api/event_machine_event.h for details)
+  - Event cloning:
+    - em_event_t em_event_clone(em_event_t event, em_pool_t pool);
+      Allocate a new event with identical payload to the given event.
+      The event metadata and internal headers will _not_ be cloned.
+      The optional 'pool' argument is used to specify the event pool to allocate
+      the cloned event from. Use 'EM_POOL_UNDEF' to clone from the same pool as
+      'event' was allocated from.
+      The event-type of 'event' must be suitable for allocation from 'pool'
+      (e.g. EM_EVENT_TYPE_PACKET can not be allocated from a pool supporting
+      only EM_EVENT_TYPE_SW)
+      The function returns the cloned event or EM_EVENT_UNDEF on error.
+
+  - Event/Pool: Get the handle of the pool the event was allocated from.
+    - em_pool_t em_event_get_pool(em_event_t event);
+      Returns the EM event-pool the event was allocated from or EM_POOL_UNDEF if
+      no EM pool is found. EM_POOL_UNDEF is returned also for a valid event that
+      has been allocated from a pool external to EM (no error is reported).
+      The EM event-pool for the given event can only be obtained if the event
+      has been allocated from a pool created with em_pool_create(). For other
+      pools, e.g. external (to EM) pktio pools, EM_POOL_UNDEF is returned.
+
+  - Marking event(s) as "free"
+    - void em_event_mark_free(em_event_t event);
+    - void em_event_mark_free_multi(const em_event_t events[], int num);
+    Mark the event state as "free" and then rely on HW / mechanisms external
+    to EM to actually free the event(s) back into the event pool.
+    - em_event_mark_free(): Indicates a user-given promise to EM that the event
+      will be freed back into the pool it was allocated from e.g. by HW or
+      device drivers (external to EM). Calling em_event_mark_free() transfers
+      event ownership away from the user, and thus the event must not be used or
+      touched by the user anymore.
+      EM will, after this API-call, treat the event as "freed" and any further
+      API operations or usage might lead to EM errors (depending on the
+      error-check level), e.g. em_send/free/tmo_set/ack(event) etc. is forbidden
+      after em_event_mark_free(event).
+    - em_event_mark_free_multi(): Similar to em_event_mark_free(), but allows
+      the marking of multiple events as "free" with one function call.
+    Note: Registered API-callback hooks for em_free/_multi()
+          (em_api_hook_free_t) will NOT be called.
+
+ - Unmarking event(s) previously marked "free"
+    - void em_event_unmark_free(em_event_t event);
+    - void em_event_unmark_free_multi(const em_event_t events[], int num);
+    Unmark event(s) previously marked as "free" (i.e mark as "allocated" again).
+    Note: This is for recovery situations only and can potenially crash the
+          application if used incorrectly! Unmarking the free-state of an event
+          that has already been freed will lead to fatal error.
+    - em_event_unmark_free(): Revert an event's "free" state, as set by
+      em_event_mark_free() back to the state before the mark-free function call.
+      Any further usage of the event after em_event_mark_free(), by EM or the
+      user, will result in error when calling em_event_unmark_free() since the
+      state has become unrecoverable.
+      => the only allowed EM API call after em_event_mark_free() (for a certain
+         event) is em_event_unmark_free() when it is certain that the event, due
+         to some external error, will not be freed otherwise and must be
+         recovered back into the EM-domain so that calling em_free() by the user
+         is possible.
+      Calling em_event_unmark_free() transfers event ownership back to the user
+      again.
+      Note: Unmark-send and unmark-free are the only valid cases of using an
+            event that the user no longer owns, all other such uses leads to
+	    fatal error.
+    - em_event_unmark_free_multi(): Unmark multiple events previously marked as
+      "free". Similar to em_event_unmark_free(), but allows to do the
+      "free"-unmarking of multiple events with one function call.
+
+3. Queue:
+  (see em-odp/include/event_machine/api/event_machine_queue.h)
+  - Number of queue priorities:
+    - int em_queue_get_num_prio(int *num_runtime);
+      The function returns the number of queue priorities available.
+      Optionally, the amount of actual runtime priorities can be inquired.
+      The valid queue priority range is from 0 (lowest priority) to
+      em_queue_get_num_prio() - 1.
+      The runtime environment may provide a different amount of priority levels.
+      EM priorities are in that case mapped to the runtime values depending on
+      "priority map-mode" selected in the runtime configuration file
+      (config/em-odp.conf).
+
+4. Extension APIs for EM<->ODP conversions:
+   (see include/event_machine/platform/event_machine_odp_ext.h)
+  - Convert between EM and ODP pools:
+    - int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/out/], int num);
+    - em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
+
+    - em_odp_pool2odp(): Get the ODP pools used as subpools in a given EM event
+      pool. An EM event pool consists of 1 to 'EM_MAX_SUBPOOLS' subpools. Each
+      subpool is an ODP pool. This function outputs the ODP pool handles of
+      these subpools into a user-provided array and returns the number of
+      handles written. The obtained ODP pools must not be deleted or altered
+      outside of EM, e.g. these ODP pools must only be deleted as part of an
+      EM event pool using em_pool_delete().
+      ODP pool handles obtained through this function can be used to
+        - configure ODP pktio to use an ODP pool created via EM (allows for
+          better ESV tracking)
+        - print ODP-level pool statistics with ODP APIs etc.
+      The function returns the number of ODP pools filled into 'odp_pools[]'.
+
+    - em_odp_pool2em(): Get the EM event pool that a given ODP pool belongs to.
+      An EM event pool consists of 1 to 'EM_MAX_SUBPOOLS' subpools. Each subpool
+      is an ODP pool. This function returns the EM event pool that contains the
+      given ODP pool as a subpool or EM_POOL_UNDEF if the ODP pool is not part
+      of any EM event pool.
+
+-------------------------------------------------------------------------------
 API 2.5 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=5)
 -------------------------------------------------------------------------------
 Not backwards compatible with previous API version, API 2.5 contains modified
 types and functions requiring small changes to older code.
 
-1. EM Timer: timer version updated from v2.0 to v2.1,
+1. Timer: timer version updated from v2.0 to v2.1,
    see em-odp/include/event_machine/add-ons/event_machine_timer.h for details.
    - New Timer APIs for tick<->ns conversions:
      - em_timer_tick_to_ns()
@@ -79,7 +200,7 @@ API 2.4 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=4)
 Not backwards compatible with previous API version, API 2.4 contains modified
 types requiring small changes to older code.
 
-1. EM Timer: timer version updated from v1.1 to v2.0,
+1. Timer: timer version updated from v1.1 to v2.0,
    see em-odp/include/event_machine/add-ons/event_machine_timer.h for details.
    New or updated timer types and APIs:
    - em_timer_attr_t: *updated* type that MUST be initialized with

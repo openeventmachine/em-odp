@@ -35,11 +35,12 @@ const struct option longopts[] = {
 	{"use-huge",		no_argument, NULL, 'u'},
 	{"use-cpu-cycle",	optional_argument, NULL, 'g'},
 	{"memzero",		required_argument, NULL, 'o'},
+	{"abort",		required_argument, NULL, 'k'},
 	{"help",		no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiug::hz:o:";
+const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiug::hz:o:k:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
 	"Number of concurrent timers to create",
@@ -63,12 +64,13 @@ const char *descopts[] = {
 	"Use huge page for trace buffer",
 	"Use CPU cycles instead of ODP time. Optionally give frequency (hz)",
 	"Allocate and clear memory: -o50,100[,1] to clear 50MB (,1 to use huge pg) every 100ms. Special HW test, must also use -j",
+	"Abort application after given tmos (test abnormal exit). Use negative count to do segfault instead",
 	"Print usage and exit",
 	NULL
 };
 
 const char *instructions =
-"Controlled by command line arguments. Purpose of this tool is to manually test\n"
+"\nTest is controlled by command line arguments. Purpose of this tool is to manually test\n"
 "periodic timer accuracy and behaviour optionally under (over)load.\n"
 "Some API overheads can also be measured\n"
 "\nTwo EM timers are created. One for a heartbeat driving test states. Second\n"
@@ -117,7 +119,9 @@ typedef enum e_op {
 	OP_PROF_CREATE,
 	OP_PROF_SET,
 	OP_PROF_ENTER_CB,
-	OP_PROF_EXIT_CB
+	OP_PROF_EXIT_CB,
+
+	OP_LAST
 } e_op;
 const char *op_labels[] = {
 	"TMO",
@@ -172,7 +176,9 @@ typedef enum e_cmd {
 	CMD_HEARTBEAT,
 	CMD_TMO,
 	CMD_DONE,
-	CMD_BGWORK
+	CMD_BGWORK,
+
+	CMD_LAST
 } e_cmd;
 
 typedef struct app_msg_t {
@@ -190,11 +196,23 @@ typedef enum e_state {
 	STATE_STABILIZE,/* finish all printing before tmo setup */
 	STATE_RUN,	/* timers running */
 	STATE_COOLOFF,	/* cores cancel timers */
-	STATE_ANALYZE	/* timestamps analyzed */
+	STATE_ANALYZE,	/* timestamps analyzed */
+
+	STATE_LAST
 } e_state;
+
+const char *state_labels[] = {
+	"INIT",
+	"MEASURE",
+	"STABILIZE",
+	"RUN",
+	"COOLOFF",
+	"ANALYZE"
+};
 
 typedef struct tmo_setup {
 	time_stamp start_ts;
+	em_tmo_t handle;
 	uint64_t start;
 	uint64_t period_ns;
 	uint64_t first_ns;

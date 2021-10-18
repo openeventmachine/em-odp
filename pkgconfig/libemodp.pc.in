@@ -9,4 +9,4 @@ Version: @EMODP_PKGCONFIG_VERSION@
 Requires: @libodp_name@
 Requires.private: libconfig
 Libs: -L${libdir} -lemodp
-Cflags: -I${includedir} @EM_CHECK_LEVEL@ @EM_ESV_ENABLE@
+Cflags: -I${includedir} @EM_CHECK_LEVEL@ @EM_ESV_ENABLE@ @EM_DEBUG_PRINT@

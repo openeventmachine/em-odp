@@ -169,17 +169,18 @@ typedef uint32_t em_queue_type_t;
 
 /**
  * @typedef em_queue_prio_t
- * Queue priority class
+ * Queue priority
  *
- * Queue priority defines a system dependent QoS class, not just an absolute
- * priority. EM gives freedom to implement the actual scheduling disciplines
- * and the corresponding numeric values as needed, i.e. the actual values are
- * system dependent and thus not portable, but the 5 predefined enums
- * (em_queue_prio_e) are always valid.
- * Application platform or middleware needs to define and distribute the
- * other available values.
+ * Queue priority defines implementation specific QoS class for event
+ * scheduling. Priority is an integer in range 0 (lowest) to num priorities - 1.
+ * Note, that the exact scheduling rules are not defined by EM and all available
+ * priorities may not be relative to the adjacent one (e.g. using dynamic
+ * priority, rate limiting or other more complex scheduling discipline).
+ * There are 5 generic predefined values (em_queue_prio_e) mapped to available
+ * runtime priorities for portability.
  *
- * @see em_queue_create(), event_machine_hw_config.h
+ * @see em_queue_create(), em_queue_get_num_prio(), event_machine_hw_config.h,
+ *      em_queue_prio_e
  */
 typedef uint32_t em_queue_prio_t;
 #define PRI_QPRIO  PRIu32
@@ -471,12 +472,18 @@ typedef uint32_t em_escope_t;
 #define EM_ESCOPE_SEND_MULTI                      (EM_ESCOPE_API_MASK | 0x0606)
 #define EM_ESCOPE_EVENT_POINTER                   (EM_ESCOPE_API_MASK | 0x0607)
 #define EM_ESCOPE_EVENT_GET_SIZE                  (EM_ESCOPE_API_MASK | 0x0608)
-#define EM_ESCOPE_EVENT_SET_TYPE                  (EM_ESCOPE_API_MASK | 0x0609)
-#define EM_ESCOPE_EVENT_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x060A)
-#define EM_ESCOPE_EVENT_GET_TYPE_MULTI            (EM_ESCOPE_API_MASK | 0x060B)
-#define EM_ESCOPE_EVENT_SAME_TYPE_MULTI           (EM_ESCOPE_API_MASK | 0x060C)
-#define EM_ESCOPE_EVENT_MARK_SEND                 (EM_ESCOPE_API_MASK | 0x060D)
-#define EM_ESCOPE_EVENT_UNMARK_SEND               (EM_ESCOPE_API_MASK | 0x060E)
+#define EM_ESCOPE_EVENT_GET_POOL                  (EM_ESCOPE_API_MASK | 0x0609)
+#define EM_ESCOPE_EVENT_SET_TYPE                  (EM_ESCOPE_API_MASK | 0x060A)
+#define EM_ESCOPE_EVENT_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x060B)
+#define EM_ESCOPE_EVENT_GET_TYPE_MULTI            (EM_ESCOPE_API_MASK | 0x060C)
+#define EM_ESCOPE_EVENT_SAME_TYPE_MULTI           (EM_ESCOPE_API_MASK | 0x060D)
+#define EM_ESCOPE_EVENT_MARK_SEND                 (EM_ESCOPE_API_MASK | 0x060E)
+#define EM_ESCOPE_EVENT_UNMARK_SEND               (EM_ESCOPE_API_MASK | 0x060F)
+#define EM_ESCOPE_EVENT_MARK_FREE                 (EM_ESCOPE_API_MASK | 0x0610)
+#define EM_ESCOPE_EVENT_UNMARK_FREE               (EM_ESCOPE_API_MASK | 0x0611)
+#define EM_ESCOPE_EVENT_MARK_FREE_MULTI           (EM_ESCOPE_API_MASK | 0x0612)
+#define EM_ESCOPE_EVENT_UNMARK_FREE_MULTI         (EM_ESCOPE_API_MASK | 0x0613)
+#define EM_ESCOPE_EVENT_CLONE                     (EM_ESCOPE_API_MASK | 0x0614)
 
 /* EM API escopes: Queue Group */
 #define EM_ESCOPE_QUEUE_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0701)
@@ -510,6 +517,7 @@ typedef uint32_t em_escope_t;
 #define EM_ESCOPE_QUEUE_GET_FIRST                 (EM_ESCOPE_API_MASK | 0x080E)
 #define EM_ESCOPE_QUEUE_GET_NEXT                  (EM_ESCOPE_API_MASK | 0x080F)
 #define EM_ESCOPE_QUEUE_GET_INDEX                 (EM_ESCOPE_API_MASK | 0x0810)
+#define EM_ESCOPE_QUEUE_GET_NUM_PRIO		  (EM_ESCOPE_API_MASK | 0x0811)
 
 /* EM API escopes: Scheduler */
 #define EM_ESCOPE_ATOMIC_PROCESSING_END           (EM_ESCOPE_API_MASK | 0x0901)

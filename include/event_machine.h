@@ -36,7 +36,7 @@
 
 /**
  * @file
- * Event Machine API v2.5
+ * Event Machine API v2.6
  *
  * This file includes all other needed EM headers
  */
@@ -54,7 +54,7 @@ extern "C" {
  * Minor API version number.
  * Updates and additions
  */
-#define EM_API_VERSION_MINOR 5
+#define EM_API_VERSION_MINOR 6
 
 /** @mainpage
  *

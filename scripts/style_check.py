@@ -33,7 +33,7 @@ def run_checks():
         # if file.endswith(('.c', '.h')):
         cmd = C_CHECK + file
 
-        if os.system(cmd) is not 0:
+        if os.system(cmd) != 0:
             rc = 1
 
 rc = 0

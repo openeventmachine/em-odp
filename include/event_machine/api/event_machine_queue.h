@@ -472,6 +472,27 @@ em_queue_get_next(void);
 int em_queue_get_index(em_queue_t queue);
 
 /**
+ * Returns the number of queue priorities available.
+ *
+ * Optionally the amount of actual runtime priorities can be inquired.
+ * Valid queue priority range is from 0 (lowest priority) to
+ * em_queue_get_num_prio() - 1.
+ *
+ * Runtime environment may provide different amount of levels. In that case EM
+ * priorities are mapped to the runtime values depending on mapping mode
+ * selected in the runtime configuration file.
+ *
+ * @param[out] num_runtime	Pointer to an int to receive the number of
+ *				actual runtime priorities. Set to NULL if
+ *				not needed.
+ *
+ * @return	number of queue priorities
+ *
+ * @see em-odp.conf
+ */
+int em_queue_get_num_prio(int *num_runtime);
+
+/**
  * @}
  */
 #ifdef __cplusplus

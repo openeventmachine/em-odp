@@ -46,51 +46,57 @@ extern "C" {
 #define EVSTATE__PREALLOC                      1
 #define EVSTATE__ALLOC                         2
 #define EVSTATE__ALLOC_MULTI                   3
-#define EVSTATE__FREE                          4
-#define EVSTATE__FREE_MULTI                    5
-#define EVSTATE__INIT                          6
-#define EVSTATE__INIT_MULTI                    7
-#define EVSTATE__INIT_EXTEV                    8
-#define EVSTATE__INIT_EXTEV_MULTI              9
-#define EVSTATE__SEND                         10
-#define EVSTATE__SEND__FAIL                   11
-#define EVSTATE__SEND_EGRP                    12
-#define EVSTATE__SEND_EGRP__FAIL              13
-#define EVSTATE__SEND_MULTI                   14
-#define EVSTATE__SEND_MULTI__FAIL             15
-#define EVSTATE__SEND_EGRP_MULTI              16
-#define EVSTATE__SEND_EGRP_MULTI__FAIL        17
-#define EVSTATE__MARK_SEND                    18
-#define EVSTATE__UNMARK_SEND                  19
-#define EVSTATE__DISPATCH                     20
-#define EVSTATE__DISPATCH_MULTI               21
-#define EVSTATE__DISPATCH_SCHED__FAIL         22
-#define EVSTATE__DISPATCH_LOCAL__FAIL         23
-#define EVSTATE__DEQUEUE                      24
-#define EVSTATE__DEQUEUE_MULTI                25
-#define EVSTATE__OUTPUT                       26 /* before output-queue callback-fn */
-#define EVSTATE__OUTPUT__FAIL                 27
-#define EVSTATE__OUTPUT_MULTI                 28 /* before output-queue callback-fn */
-#define EVSTATE__OUTPUT_MULTI__FAIL           29
-#define EVSTATE__OUTPUT_CHAINING              30 /* before event_send_device() */
-#define EVSTATE__OUTPUT_CHAINING__FAIL        31
-#define EVSTATE__OUTPUT_CHAINING_MULTI        32 /* before event_send_device_multi()*/
-#define EVSTATE__OUTPUT_CHAINING_MULTI__FAIL  33 /* before event_send_device_multi()*/
-#define EVSTATE__TMO_SET_ABS                  34
-#define EVSTATE__TMO_SET_ABS__FAIL            35
-#define EVSTATE__TMO_SET_REL                  36
-#define EVSTATE__TMO_SET_REL__FAIL            37
-#define EVSTATE__TMO_SET_PERIODIC             38
-#define EVSTATE__TMO_SET_PERIODIC__FAIL       39
-#define EVSTATE__TMO_CANCEL                   40
-#define EVSTATE__TMO_ACK                      41
-#define EVSTATE__TMO_ACK__NOSKIP              42
-#define EVSTATE__TMO_ACK__FAIL                43
-#define EVSTATE__TMO_DELETE                   44
-#define EVSTATE__AG_DELETE                    45
-#define EVSTATE__TERM_CORE__QUEUE_LOCAL       46
-#define EVSTATE__TERM                         47
-#define EVSTATE__LAST                         48 /* Must be largest number! */
+#define EVSTATE__EVENT_CLONE                   4
+#define EVSTATE__FREE                          5
+#define EVSTATE__FREE_MULTI                    6
+#define EVSTATE__INIT                          7
+#define EVSTATE__INIT_MULTI                    8
+#define EVSTATE__INIT_EXTEV                    9
+#define EVSTATE__INIT_EXTEV_MULTI             10
+#define EVSTATE__UPDATE_EXTEV                 11
+#define EVSTATE__SEND                         12
+#define EVSTATE__SEND__FAIL                   13
+#define EVSTATE__SEND_EGRP                    14
+#define EVSTATE__SEND_EGRP__FAIL              15
+#define EVSTATE__SEND_MULTI                   16
+#define EVSTATE__SEND_MULTI__FAIL             17
+#define EVSTATE__SEND_EGRP_MULTI              18
+#define EVSTATE__SEND_EGRP_MULTI__FAIL        19
+#define EVSTATE__MARK_SEND                    20
+#define EVSTATE__UNMARK_SEND                  21
+#define EVSTATE__MARK_FREE                    22
+#define EVSTATE__UNMARK_FREE                  23
+#define EVSTATE__MARK_FREE_MULTI              24
+#define EVSTATE__UNMARK_FREE_MULTI            25
+#define EVSTATE__DISPATCH                     26
+#define EVSTATE__DISPATCH_MULTI               27
+#define EVSTATE__DISPATCH_SCHED__FAIL         28
+#define EVSTATE__DISPATCH_LOCAL__FAIL         29
+#define EVSTATE__DEQUEUE                      30
+#define EVSTATE__DEQUEUE_MULTI                31
+#define EVSTATE__OUTPUT                       32 /* before output-queue callback-fn */
+#define EVSTATE__OUTPUT__FAIL                 33
+#define EVSTATE__OUTPUT_MULTI                 34 /* before output-queue callback-fn */
+#define EVSTATE__OUTPUT_MULTI__FAIL           35
+#define EVSTATE__OUTPUT_CHAINING              36 /* before event_send_device() */
+#define EVSTATE__OUTPUT_CHAINING__FAIL        37
+#define EVSTATE__OUTPUT_CHAINING_MULTI        38 /* before event_send_device_multi()*/
+#define EVSTATE__OUTPUT_CHAINING_MULTI__FAIL  39 /* before event_send_device_multi()*/
+#define EVSTATE__TMO_SET_ABS                  40
+#define EVSTATE__TMO_SET_ABS__FAIL            41
+#define EVSTATE__TMO_SET_REL                  42
+#define EVSTATE__TMO_SET_REL__FAIL            43
+#define EVSTATE__TMO_SET_PERIODIC             44
+#define EVSTATE__TMO_SET_PERIODIC__FAIL       45
+#define EVSTATE__TMO_CANCEL                   46
+#define EVSTATE__TMO_ACK                      47
+#define EVSTATE__TMO_ACK__NOSKIP              48
+#define EVSTATE__TMO_ACK__FAIL                49
+#define EVSTATE__TMO_DELETE                   50
+#define EVSTATE__AG_DELETE                    51
+#define EVSTATE__TERM_CORE__QUEUE_LOCAL       52
+#define EVSTATE__TERM                         53
+#define EVSTATE__LAST                         54 /* Must be largest number! */
 
 /**
  * Init values for the event-state counters 'free_cnt' and 'send_cnt'.
@@ -121,7 +127,6 @@ static inline bool esv_enabled(void)
  * Init ESV (if enabled at compile time), read config options
  */
 em_status_t esv_init(void);
-
 /**
  * Set the initial event state during em_pool_create() when preallocating events
  */
@@ -135,40 +140,57 @@ em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr);
  */
 void evstate_alloc_multi(em_event_t ev_tbl[/*in/out*/],
 			 event_hdr_t *const ev_hdr_tbl[], const int num);
+/**
+ * Check & update event state during em_event_clone()
+ */
+em_event_t evstate_clone(const em_event_t event, event_hdr_t *const ev_hdr);
 
 /**
  * Set the initial state for an event
  * (e.g. an new odp-event converted into an EM-event)
  */
-em_event_t evstate_init(const em_event_t event, event_hdr_t *const ev_hdr);
+em_event_t evstate_init(const em_event_t event, event_hdr_t *const ev_hdr,
+			bool is_extev);
 /**
  * Set the initial state for events
  * (e.g. new odp-events converted into EM-events)
  */
 void evstate_init_multi(em_event_t ev_tbl[/*in/out*/],
-			event_hdr_t *const ev_hdr_tbl[], const int num);
-/**
- * Set the initial state for an external event input into EM
- * (e.g. an external odp pktio event input into EM and seen in the dispatcher)
- */
-em_event_t evstate_init_extev(em_event_t event, event_hdr_t *const ev_hdr);
-/**
- * Set the initial state for external events input into EM
- * (e.g. external odp pktio events input into EM and seen in the dispatcher)
- */
-void evstate_init_extev_multi(em_event_t ev_tbl[/*in/out*/],
-			      event_hdr_t *const ev_hdr_tbl[], const int num);
+			event_hdr_t *const ev_hdr_tbl[], const int num,
+			bool is_extev);
 
 /**
- * Check & update event state during em_free()
+ * Update the state for external events input into EM.
+ * Used when esv.prealloc_pools = true and the input event was allocated
+ * externally to EM (e.g. by ODP) but from an EM event-pool.
  */
-void evstate_free(em_event_t event, event_hdr_t *const ev_hdr);
+em_event_t evstate_update(const em_event_t event,
+			  event_hdr_t *const ev_hdr, bool is_extev);
+
 /**
- * Check & update the state of multiple events during em_free_multi()
+ * Check & update event state during em_free() or em_event_mark_free()
+ */
+void evstate_free(em_event_t event, event_hdr_t *const ev_hdr,
+		  const uint16_t api_op);
+/**
+ * Check & update event state during em_event_unmark_free()
+ */
+void evstate_free_revert(em_event_t event, event_hdr_t *const ev_hdr,
+			 const uint16_t api_op);
+
+/**
+ * Check & update the state of multiple events during em_free_multi() or
+ * em_event_mark_free_multi()
  */
 void evstate_free_multi(const em_event_t ev_tbl[],
-			event_hdr_t *const ev_hdr_tbl[], const int num);
-
+			event_hdr_t *const ev_hdr_tbl[], const int num,
+			const uint16_t api_op);
+/**
+ * Check & update event state during em_event_unmark_free_multi()
+ */
+void evstate_free_revert_multi(const em_event_t ev_tbl[],
+			       event_hdr_t *const ev_hdr_tbl[], const int num,
+			       const uint16_t api_op);
 /**
  * Check & update event state - event passed from EM to user.
  *
@@ -195,7 +217,6 @@ void evstate_em2usr_multi(em_event_t ev_tbl[/*in/out*/],
 void evstate_em2usr_revert_multi(em_event_t ev_tbl[/*in/out*/],
 				 event_hdr_t *const ev_hdr_tbl[], const int num,
 				 const uint16_t api_op);
-
 /**
  * Check & update event state - event passed from the user to EM.
  *
@@ -208,7 +229,6 @@ void evstate_usr2em(em_event_t event, event_hdr_t *const ev_hdr,
  */
 void evstate_usr2em_revert(em_event_t event, event_hdr_t *const ev_hdr,
 			   const uint16_t api_op);
-
 /**
  * Check & update the state of multiple events - events passed from user to EM
  *
@@ -223,6 +243,33 @@ void evstate_usr2em_multi(const em_event_t ev_tbl[],
 void evstate_usr2em_revert_multi(const em_event_t ev_tbl[],
 				 event_hdr_t *const ev_hdr_tbl[], const int num,
 				 const uint16_t api_op);
+/**
+ * Check & update event state during em_event_unmark_send()
+ *
+ * Wrapper function for evstate_usr2em_revert(..., EVSTATE__UNMARK_SEND) with
+ * extra error checks.
+ */
+void evstate_unmark_send(const em_event_t event, event_hdr_t *const ev_hdr);
+
+/**
+ * Check & update event state during em_event_unmark_free()
+ *
+ * Wrapper function for evstate_free_revert(..., EVSTATE__UNMARK_FREE) with
+ * extra error checks.
+ */
+void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr);
+
+/**
+ * Check & update event state for multiple events during
+ * em_event_unmark_free_multi()
+ *
+ * Wrapper function for
+ * evstate_free_revert_multi(..., EVSTATE__UNMARK_FREE_MULTI)
+ * with extra error checks.
+ */
+void evstate_unmark_free_multi(const em_event_t ev_tbl[],
+			       event_hdr_t *const ev_hdr_tbl[], const int num);
+
 #ifdef __cplusplus
 }
 #endif

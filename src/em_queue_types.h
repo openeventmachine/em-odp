@@ -246,10 +246,6 @@ typedef struct local_queues_t {
 	} prio[EM_QUEUE_PRIO_NUM];
 } local_queues_t;
 
-/* Assert that local queue prio[x] accesses from hi -> lo are ok */
-COMPILE_TIME_ASSERT(EM_QUEUE_PRIO_HIGHEST - EM_QUEUE_PRIO_NUM + 1 ==
-		    EM_QUEUE_PRIO_LOWEST, LOCAL_QUEUE_PRIO_ARRAY_ERROR);
-
 /**
  * Track output-queues used during a dispatch round (burst)
  */

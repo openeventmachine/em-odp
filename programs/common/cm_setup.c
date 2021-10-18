@@ -67,18 +67,23 @@
 "Usage: %s APPL&EM-OPTIONS\n"						\
 "  E.g. %s -c 0xfe -p\n"						\
 "\n"									\
-"Open Event Machine example application.\n"				\
+"Event Machine (EM) example application.\n"				\
 "\n"									\
 "Mandatory EM-OPTIONS:\n"						\
 "  -c, --coremask          Select the cores to use, hexadecimal\n"	\
-"  -p, --process-per-core  Running OpenEM with one process per core.\n"	\
-"  -t, --thread-per-core   Running OpenEM with one thread per core.\n"	\
+"  -p, --process-per-core  Running EM with one process per core.\n"	\
+"  -t, --thread-per-core   Running EM with one thread per core.\n"	\
 "    Select EITHER -p OR -t, but not both!\n"				\
 "\n"									\
 "Optional [APPL&EM-OPTIONS]\n"						\
 "  -d, --device-id         Set the device-id, hexadecimal (defaults to 0)\n" \
-"  -i, --eth-interface     Select the ethernet interface(s) to use\n"      \
 "  -r, --dispatch-rounds   Set number of dispatch rounds (testing mostly)\n" \
+"Packet-IO\n"								\
+"  -i, --eth-interface     Select the ethernet interface(s) to use\n"		\
+"  -e, --pktpool-em        Create and use an EM-pool with packet-io (default)\n"\
+"  -o, --pktpool-odp       Create and use an ODP-pool with packet-io\n"		\
+"    Select EITHER -e OR -o, but not both!\n"					\
+"Help\n"								\
 "  -h, --help              Display help and exit.\n" \
 "\n"
 
@@ -92,9 +97,9 @@ typedef struct {
 	struct {
 		/** EM device id */
 		uint16_t device_id;
-		/** RunMode: EM run with one thread per core */
+		/** RunMode: EM run with a thread per core */
 		int thread_per_core;
-		/** RunMode: EM run with one process per core */
+		/** RunMode: EM run with a process per core */
 		int process_per_core;
 		/** Number of EM-cores (== nbr of EM-threads or EM-processes) */
 		int core_count;
@@ -116,9 +121,12 @@ typedef struct {
 			char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
 			/** Interface identifiers corresponding to 'if_name[]' */
 			int if_ids[IF_MAX_NUM];
+			/** Pktio is setup with an EM event-pool */
+			bool pktpool_em;
+			/** Pktio is setup with an ODP pkt-pool */
+			bool pktpool_odp;
 		} pktio;
 	} args_appl;
-
 } parse_args_t;
 
 /**
@@ -341,6 +349,16 @@ int cm_setup(int argc, char *argv[])
 	 */
 	if (appl_conf->pktio.if_count > 0)
 		term_pktio(appl_conf);
+
+	/*
+	 * Terminate EM
+	 *
+	 * All EM-cores have already run em_term_core()
+	 */
+	em_status_t stat = em_term(em_conf);
+
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("em_term():%" PRI_STAT "", stat);
 
 	/*
 	 * Free shared memory
@@ -589,13 +607,16 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 		       parsed->args_appl.pktio.if_name[i], IF_NAME_LEN + 1);
 		appl_conf->pktio.if_ids[i] = parsed->args_appl.pktio.if_ids[i];
 	}
+
+	appl_conf->pktio.pktpool_em = parsed->args_appl.pktio.pktpool_em;
 }
 
 static void
 create_pktio(appl_conf_t *appl_conf/*in/out*/, const cpu_conf_t *cpu_conf)
 {
 	pktio_mem_reserve();
-	pktio_pool_create(appl_conf->pktio.if_count);
+	pktio_pool_create(appl_conf->pktio.if_count,
+			  appl_conf->pktio.pktpool_em);
 	pktio_init(appl_conf);
 	/* Create a pktio instance for each interface */
 	for (int i = 0; i < appl_conf->pktio.if_count; i++) {
@@ -616,7 +637,7 @@ term_pktio(const appl_conf_t *appl_conf)
 	pktio_stop();
 	pktio_close();
 	pktio_deinit(appl_conf);
-	pktio_pool_destroy();
+	pktio_pool_destroy(appl_conf->pktio.pktpool_em);
 	pktio_mem_free();
 }
 
@@ -703,7 +724,6 @@ run_core_fn(void *arg)
 	odp_shm_t shm;
 	appl_shm_t *appl_shm;
 	void *shm_addr;
-	em_conf_t *em_conf;
 	appl_conf_t *appl_conf;
 	sync_t *sync;
 	em_status_t stat;
@@ -725,7 +745,6 @@ run_core_fn(void *arg)
 				  "shm_addr:%p appl_shm:%p",
 				  shm_addr, appl_shm);
 
-	em_conf = &appl_shm->em_conf;
 	appl_conf = &appl_shm->appl_conf;
 	sync = &appl_shm->sync;
 
@@ -917,15 +936,6 @@ run_core_fn(void *arg)
 
 	odp_barrier_wait(&sync->exit_barrier);
 
-	if (core_id == 0) {
-		stat = em_term(em_conf);
-		if (stat != EM_OK)
-			APPL_EXIT_FAILURE("em_term(%d):%" PRI_STAT "",
-					  core_id, stat);
-	}
-
-	odp_barrier_wait(&sync->exit_barrier);
-
 	/* depend on the odp helper to call odp_term_local */
 
 	return 0;
@@ -956,19 +966,23 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		{"device-id",        required_argument, NULL, 'd'},
 		{"dispatch-rounds",  required_argument, NULL, 'r'},
 		{"eth-interface",    required_argument, NULL, 'i'},
+		{"pktpool-em",       no_argument,       NULL, 'e'},
+		{"pktpool-odp",      no_argument,       NULL, 'o'},
 		{"help",             no_argument,       NULL, 'h'},
 		{NULL, 0, NULL, 0}
 	};
-	static const char *shortopts = "+c:ptd:r:i:h";
+	static const char *shortopts = "+c:ptd:r:i:oeh";
 	long device_id = -1;
 
 	opterr = 0; /* don't complain about unknown options here */
 
+	APPL_PRINT("EM application options:\n");
+
 	/*
 	 * Parse the application & EM arguments and save core mask.
-	 * Note:   Use '+' at the beginning of optstring - don't permute the
-	 *	 contents of argv[].
-	 * Note 2: Stops at "--"
+	 * Note: Use '+' at the beginning of optstring:
+	 *       - don't permute the contents of argv[].
+	 * Note: Stops at "--"
 	 */
 	while (1) {
 		int opt;
@@ -1001,8 +1015,8 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 
 			em_core_mask_tostr(tmp_str, sizeof(tmp_str),
 					   &parsed->args_em.phys_mask);
-			APPL_PRINT("Coremask:   %s\n"
-				   "Core Count: %i\n",
+			APPL_PRINT("  Coremask:   %s\n"
+				   "  Core Count: %i\n",
 				   tmp_str, parsed->args_em.core_count);
 		}
 		break;
@@ -1061,6 +1075,14 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		}
 		break;
 
+		case 'e':
+			parsed->args_appl.pktio.pktpool_em = true;
+			break;
+
+		case 'o':
+			parsed->args_appl.pktio.pktpool_odp = true;
+			break;
+
 		case 'h':
 			usage(argv[0]);
 			exit(EXIT_SUCCESS);
@@ -1084,12 +1106,33 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 	/* Check if a device-id was given, if not use the default '0' */
 	if (device_id == -1) /* not set */
 		parsed->args_em.device_id = 0;
-	APPL_PRINT("Device-id:  0x%" PRIX16 "\n", parsed->args_em.device_id);
+	APPL_PRINT("  Device-id:  0x%" PRIX16 "\n", parsed->args_em.device_id);
 
-	/* Sanity check: */
+	/* Sanity checks: */
 	if (!(parsed->args_em.process_per_core ^ parsed->args_em.thread_per_core)) {
 		usage(argv[0]);
-		APPL_EXIT_FAILURE("Select EITHER process-per-core OR thread-per-core!");
+		APPL_EXIT_FAILURE("Select EITHER process-per-core(-p) OR thread-per-core(-t)!");
+	}
+	if (parsed->args_em.thread_per_core)
+		APPL_PRINT("  EM mode:    Thread-per-core\n");
+	else
+		APPL_PRINT("  EM mode:    Process-per-core\n");
+
+	if (parsed->args_appl.pktio.if_count > 0) {
+		if (parsed->args_appl.pktio.pktpool_em && parsed->args_appl.pktio.pktpool_odp) {
+			usage(argv[0]);
+			APPL_EXIT_FAILURE("Select EITHER pktpool-em(-e) OR pktpool-odp(-o)!");
+		}
+		if (!parsed->args_appl.pktio.pktpool_em && !parsed->args_appl.pktio.pktpool_odp)
+			parsed->args_appl.pktio.pktpool_em = true; /* default if none given */
+
+		if (parsed->args_appl.pktio.pktpool_em)
+			APPL_PRINT("  Pktio pool: EM event-pool\n");
+		else
+			APPL_PRINT("  Pktio pool: ODP pkt-pool\n");
+	} else {
+		parsed->args_appl.pktio.pktpool_em = false;
+		parsed->args_appl.pktio.pktpool_odp = false;
 	}
 
 	/* Store the application name */
@@ -1097,11 +1140,6 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 
 	strncpy(parsed->args_appl.name, NO_PATH(argv[0]), len);
 	parsed->args_appl.name[len - 1] = '\0';
-
-	if (parsed->args_em.thread_per_core)
-		APPL_PRINT("Thread-per-core mode selected!\n");
-	else
-		APPL_PRINT("Process-per-core mode selected!\n");
 }
 
 /**

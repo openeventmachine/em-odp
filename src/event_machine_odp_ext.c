@@ -104,6 +104,39 @@ em_odp_events2em(const odp_event_t odp_events[], em_event_t events[/*out*/],
 			     false/*!is_extev*/);
 }
 
+int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
+{
+	mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (unlikely(!pool_elem || !pool_allocated(pool_elem) ||
+		     !odp_pools || num <= 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
+			       "Inv.args: pool:%" PRI_POOL " odp_pools:%p num:%d",
+			       pool, odp_pools, num);
+		return 0;
+	}
+
+	int num_subpools = MIN(num, pool_elem->num_subpools);
+	int i;
+
+	for (i = 0; i < num_subpools; i++)
+		odp_pools[i] = pool_elem->odp_pool[i];
+
+	/* return the number of odp-pools filled into 'odp_pools[]' */
+	return num_subpools;
+}
+
+em_pool_t em_odp_pool2em(odp_pool_t odp_pool)
+{
+	if (unlikely(odp_pool == ODP_POOL_INVALID)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
+			       "Inv.arg: odp_pool invalid");
+		return EM_POOL_UNDEF;
+	}
+
+	return pool_odp2em(odp_pool);
+}
+
 int pkt_enqueue(const odp_packet_t pkt_tbl[], const int num,
 		const em_queue_t queue)
 {
@@ -129,9 +162,9 @@ int pkt_enqueue(const odp_packet_t pkt_tbl[], const int num,
 
 		events_odp2em(odp_event_tbl, event_tbl/*out*/, num);
 
-		/* Init the event-hdrs for incoming pkts */
-		pkt_evhdr_init_multi(pkt_tbl, event_tbl/*in/out*/,
-				     evhdr_tbl/*out*/, num);
+		/* Init the event-hdrs for incoming non-scheduled pkts */
+		event_init_pkt_multi(pkt_tbl, event_tbl/*in/out*/,
+				     evhdr_tbl/*out*/, num, true /*is_extev*/);
 
 		if (q_elem == NULL) {
 			/* Send directly out via event chaining */
