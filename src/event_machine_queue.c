@@ -383,3 +383,17 @@ error:
 		       queue, iq.device_id, iq.queue_id);
 	return queue_idx % EM_MAX_QUEUES;
 }
+
+int em_queue_get_num_prio(int *num_runtime)
+{
+	if (EM_CHECK_LEVEL > 1 && unlikely(em_shm == NULL)) {
+		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED,
+			       EM_ESCOPE_QUEUE_GET_NUM_PRIO,
+			       "EM not initialized!");
+		return 0;
+	}
+	if (num_runtime != NULL)
+		*num_runtime = em_shm->queue_prio.num_runtime;
+
+	return EM_QUEUE_PRIO_NUM;
+}

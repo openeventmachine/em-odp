@@ -158,6 +158,12 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 			    &mpool_elem->objpool_elem);
 	}
 
+	/* Init the mapping tbl from odp-pool(=subpool) index to em-pool */
+	if (odp_pool_max_index() >= POOL_ODP2EM_TBL_LEN)
+		return EM_ERR_TOO_LARGE;
+	for (int i = 0; i < POOL_ODP2EM_TBL_LEN; i++)
+		mpool_tbl->pool_odp2em[i] = EM_POOL_UNDEF;
+
 	/* Store common ODP pool capabilities in the mpool_tbl for easy access*/
 	if (odp_pool_capability(&mpool_tbl->odp_pool_capability) != 0)
 		return EM_ERR_LIB_FAILED;
@@ -488,6 +494,7 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 		mpool_elem_t *mpool_elem /*out*/)
 {
 	const int num_subpools = pool_cfg->num_subpools;
+	mpool_tbl_t *const mpool_tbl = &em_shm->mpool_tbl;
 
 	for (int i = 0; i < num_subpools; i++) {
 		char pool_name[ODP_POOL_NAME_LEN];
@@ -514,9 +521,10 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 			pool_params.pkt.align = odp_align;
 			/*
 			 * Reserve space for the event header in each packet's
-			 * user area:
+			 * user area (discard padding/empty space in the end):
 			 */
-			pool_params.pkt.uarea_size = sizeof(event_hdr_t);
+			pool_params.pkt.uarea_size = offsetof(event_hdr_t,
+							      end_hdr_data);
 			/*
 			 * Set the pkt headroom.
 			 * Make sure the alloc-alignment fits into the headroom.
@@ -544,11 +552,19 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 		if (unlikely(odp_pool == ODP_POOL_INVALID))
 			return -1;
 
-		/*odp_pool_print(odp_pool);*/
+		int odp_pool_idx = odp_pool_index(odp_pool);
+
+		if (unlikely(odp_pool_idx < 0))
+			return -2;
+
+		/* Store mapping from odp-pool (idx) to em-pool */
+		mpool_tbl->pool_odp2em[odp_pool_idx] = mpool_elem->em_pool;
 
 		mpool_elem->odp_pool[i] = odp_pool;
 		mpool_elem->size[i] = pool_cfg->subpool[i].size;
 		mpool_elem->num_subpools++; /* created subpools for delete */
+
+		/*odp_pool_print(odp_pool);*/
 	}
 
 	return 0;
@@ -651,9 +667,9 @@ pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
 	if (unlikely(err)) {
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_ALLOC_FAILED),
 			       EM_ESCOPE_POOL_CREATE,
-			       "EM-pool:\"%s\" create fails:\n"
+			       "EM-pool:\"%s\" create fails:%d\n"
 			       "subpools req:%d vs. subpools created:%d",
-			       name, sorted_cfg.num_subpools,
+			       name, err, sorted_cfg.num_subpools,
 			       mpool_elem->num_subpools);
 			goto error;
 	}
@@ -675,22 +691,31 @@ error:
 em_status_t
 pool_delete(em_pool_t pool)
 {
+	mpool_tbl_t *const mpool_tbl = &em_shm->mpool_tbl;
 	mpool_elem_t *const mpool_elem = pool_elem_get(pool);
 	int i;
 
 	if (unlikely(mpool_elem == NULL || !pool_allocated(mpool_elem)))
-		return EM_ERR_BAD_ID;
+		return EM_ERR_BAD_STATE;
 
 	for (i = 0; i < mpool_elem->num_subpools; i++) {
 		odp_pool_t odp_pool = mpool_elem->odp_pool[i];
+		int odp_pool_idx;
 		int ret;
 
 		if (odp_pool == ODP_POOL_INVALID)
 			return EM_ERR_NOT_FOUND;
 
+		odp_pool_idx = odp_pool_index(odp_pool);
+		if (unlikely(odp_pool_idx < 0))
+			return EM_ERR_BAD_ID;
+
 		ret = odp_pool_destroy(odp_pool);
 		if (unlikely(ret))
 			return EM_ERR_LIB_FAILED;
+
+		/* Clear mapping from odp-pool (idx) to em-pool */
+		mpool_tbl->pool_odp2em[odp_pool_idx] = EM_POOL_UNDEF;
 
 		mpool_elem->odp_pool[i] = ODP_POOL_INVALID;
 		mpool_elem->size[i] = 0;

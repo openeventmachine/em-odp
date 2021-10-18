@@ -184,8 +184,15 @@ typedef struct {
 typedef struct {
 	/** The number of pktio interfaces used */
 	int if_count;
-	/** Memory pool for pktio*/
-	odp_pool_t pool;
+	struct {
+		/** EM pool for pktio */
+		em_pool_t em_pool;
+		/** Corresponding ODP pool for pktio (subpool of 'em_pool') */
+		odp_pool_t odp_pool;
+	} pktpool;
+
+	odp_pool_t odp_bufpool;
+
 	/** Default queue to use for incoming pkts without a dedicated queue */
 	em_queue_t default_queue;
 	/** flag set after pktio_start() - prevent pkio rx&tx before started */
@@ -248,8 +255,8 @@ void pktio_mem_reserve(void);
 void pktio_mem_lookup(void);
 void pktio_mem_free(void);
 
-void pktio_pool_create(int if_count);
-void pktio_pool_destroy(void);
+void pktio_pool_create(int if_count, bool pktpool_em);
+void pktio_pool_destroy(bool pktpool_em);
 
 void pktio_init(const appl_conf_t *appl_conf);
 void pktio_deinit(const appl_conf_t *appl_conf);
@@ -502,26 +509,7 @@ pktio_swap_addrs(em_event_t event)
 static inline em_event_t
 pktio_copy_event(em_event_t event)
 {
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-	odp_pool_t pool = pktio_pool_get();
-	odp_packet_t new_pkt = odp_packet_copy(pkt, pool);
-
-	if (unlikely(new_pkt == ODP_PACKET_INVALID)) {
-		APPL_EXIT_FAILURE("odp packet copy failed!\n");
-		return EM_EVENT_UNDEF;
-	}
-
-	/*
-	 * Reset the user ptr - EM uses the user ptr to determine whether the
-	 * event (ev_hdr) has been initialized or not. Clear the user ptr here
-	 * to indicate "not initialized" - the odp_packet_copy() above has
-	 * copied also the pkt user area into the new odp-event and that needs
-	 * to be changed for EM to work (otherwise e.g. ev_hdr->event would
-	 * point to the same event etc).
-	 */
-	odp_packet_user_ptr_set(new_pkt, NULL);
-
-	return pktio_em_event_get(new_pkt);
+	return em_event_clone(event, EM_POOL_UNDEF);
 }
 
 /**

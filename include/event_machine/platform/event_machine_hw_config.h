@@ -100,7 +100,8 @@ extern "C" {
 
 /**
  * @def EM_QUEUE_PRIO_NUM
- * Number of queue scheduling priorities
+ * Number of queue scheduling priorities, normal default is 8.
+ * @see em_queue_prio_e
  */
 #define EM_QUEUE_PRIO_NUM  8
 

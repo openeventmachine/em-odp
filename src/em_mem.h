@@ -136,6 +136,13 @@ typedef struct {
 	env_atomic32_t pool_count;
 	/** libconfig setting, default (compiled) and runtime (from file) */
 	libconfig_t libconfig;
+	/** priority mapping */
+	struct {
+		/** mapping table */
+		int map[EM_QUEUE_PRIO_NUM];
+		int num_runtime;
+	} queue_prio;
+
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } em_shm_t;

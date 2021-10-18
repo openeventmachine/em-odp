@@ -57,16 +57,6 @@ development.
 See further configure options: ../configure --help
 > make && make install
 
-Tested against
-odp-linux - https://github.com/OpenDataPlane/odp
-  Commit: edf40d0470a6dd911170775e8185a5458914a372 [edf40d0]
-  Date: Wednesday, 21 April 2021 17:02.09
-  linux-gen: ipsec: add event type assertion in odp_ipsec_packet_from_event()
-odp-dpdk - https://github.com/OpenDataPlane/odp-dpdk
-  Commit: c3e252739b6c5812d11ac07ec7df687d927de36e [c3e2527]
-  Date: Tuesday, 20 April 2021 9:39.16
-  github_ci: test process mode operation
-
 Clone EM-ODP code:
 > git clone <em-odp repo>
 Here <em-odp repo> can be e.g. https://github.com/openeventmachine/em-odp.git.

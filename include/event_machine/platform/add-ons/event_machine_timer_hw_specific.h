@@ -82,21 +82,33 @@ typedef enum em_tmo_flag_t {
 } em_tmo_flag_t;
 
 /*
- * em_timer_clksrc_t is used to select the timer clock source.
+ * em_timer_clksrc_t is used to select the timer clock source in case multiple
+ * are supported.
  *
- * EM_TIMER_CLKSRC_DEFAULT is a standard definition, but more can be declared.
- * The default clock source could e.g. use the CPU internal timer and another
- * value for a separate timer running out of an external clock/trigger with
- * different resolution.
+ * EM_TIMER_CLKSRC_DEFAULT is always available portable definition. More
+ * can be defined (implementation specific).
  */
 typedef enum em_timer_clksrc_t {
-	/** Portable default clock source */
-	EM_TIMER_CLKSRC_DEFAULT = 0,
-	/** CPU clock as clock source */
-	EM_TIMER_CLKSRC_CPU  = 1,
-	/** External clock source */
-	EM_TIMER_CLKSRC_EXT = 2
+	EM_TIMER_CLKSRC_0,
+	EM_TIMER_CLKSRC_1,
+	EM_TIMER_CLKSRC_2,
+	EM_TIMER_CLKSRC_3,
+	EM_TIMER_CLKSRC_4,
+	EM_TIMER_CLKSRC_5,
+	EM_TIMER_NUM_CLKSRC
 } em_timer_clksrc_t;
+
+/** portable default clock */
+#define EM_TIMER_CLKSRC_DEFAULT EM_TIMER_CLKSRC_0
+
+/** Backwards compatible macro.
+ * @deprecated Temporary backwards compatibility, will be removed later
+ */
+#define EM_TIMER_CLKSRC_CPU	EM_TIMER_CLKSRC_0
+/** Backwards compatible macro.
+ * @deprecated Temporary backwards compatibility, will be removed later
+ */
+#define EM_TIMER_CLKSRC_EXT	EM_TIMER_CLKSRC_2
 
 /**
  * EM_TIMER_UNDEF value must be defined here and should normally be 0

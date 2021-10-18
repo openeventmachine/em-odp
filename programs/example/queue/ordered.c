@@ -99,9 +99,9 @@ typedef struct {
  */
 typedef struct {
 	/** Expected sequence number */
-	int seq;
+	uint32_t seq;
 	/** Expected sub-sequence number */
-	int sub_seq;
+	uint32_t sub_seq;
 	/** Next destination queue */
 	em_queue_t dest_queue;
 } q_atomic_context_t;
@@ -159,9 +159,9 @@ typedef struct {
 	/** Event ID */
 	int ev_id;
 	/** Sequence number */
-	int seq;
+	uint32_t seq;
 	/** Sub-sequence number */
-	int sub_seq;
+	uint32_t sub_seq;
 	/** Indication from sender that event might be received out of order */
 	int out_of_order;
 	/** Indication from sender that event is last in order using 'seq' */
@@ -560,7 +560,7 @@ eo_ordered_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	em_status_t ret;
 	int interleave;
 	int out_of_order = 0;
-	int sub_seq;
+	uint32_t sub_seq;
 	int i;
 
 	(void)eo_context;
@@ -668,7 +668,7 @@ eo_atomic_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	ordered_event_t *ordered;
 	em_status_t ret;
 	uint64_t num_events;
-	int seq, sub_seq;
+	uint32_t seq, sub_seq;
 	int out_of_order, last_in_order;
 
 	(void)type;
@@ -709,19 +709,22 @@ eo_atomic_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		em_free(ordered->original);
 
 	/* Check the sequence number for events that should be in order */
+	uint32_t q_ctx_seq = q_ctx->seq;
+	uint32_t q_ctx_sub_seq = q_ctx->sub_seq;
+
 	if (!out_of_order &&
-	    unlikely(seq != q_ctx->seq || sub_seq != q_ctx->sub_seq))
+	    unlikely(seq != q_ctx_seq || sub_seq != q_ctx_sub_seq))
 		APPL_EXIT_FAILURE("Bad seqnbr EO:%" PRI_EO " Q:%" PRI_QUEUE "\t"
-				  "expected:%i-%i event-seq:%i-%i core:%d\n",
-				  eo_ctx->hdl, queue, q_ctx->seq,
-				  q_ctx->sub_seq, seq, sub_seq, core);
+				  "expected:%u-%u event-seq:%u-%u core:%d\n",
+				  eo_ctx->hdl, queue, q_ctx_seq,
+				  q_ctx_sub_seq, seq, sub_seq, core);
 
 	if (out_of_order) {
 		em_free(event);
 	} else if (last_in_order) {
-		ordered->seq = q_ctx->seq + NUM_EVENT;
+		ordered->seq = q_ctx_seq + NUM_EVENT;
 		ordered->sub_seq = 0;
-		q_ctx->seq++;
+		q_ctx->seq = q_ctx_seq + 1;
 		q_ctx->sub_seq = 0;
 		ret = em_send(event, q_ctx->dest_queue);
 		if (unlikely(ret != EM_OK)) {
@@ -730,7 +733,7 @@ eo_atomic_receive(void *eo_context, em_event_t event, em_event_type_t type,
 				      "event send:%" PRI_STAT "");
 		}
 	} else if (!out_of_order) {
-		q_ctx->sub_seq++;
+		q_ctx->sub_seq = q_ctx_sub_seq + 1;
 		em_free(event);
 	}
 

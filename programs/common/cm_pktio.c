@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -45,11 +45,7 @@
 #define PKTIO_PKT_POOL_NUM_BUFS  (10 * 1024)
 #define PKTIO_PKT_POOL_BUF_SIZE  1856
 
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
-
 static __thread pktio_shm_t *pktio_shm;
-
 static __thread pktio_locm_t pktio_locm ODP_ALIGNED_CACHE;
 
 static inline int
@@ -58,19 +54,15 @@ tx_drain_burst_acquire(tx_burst_t **const tx_drain_burst);
 static inline int
 pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue);
 
-static inline int
-pktio_rx(void);
-
-static inline int
-pktio_tx_drain(void);
+static inline int pktio_rx(void);
+static inline int pktio_tx_drain(void);
 
 /*
  * User provided input poll function,
  * given to EM via 'em_conf.input.input_poll_fn = input_poll;'
  * The function is of type 'em_input_poll_func_t'
  */
-int
-input_poll(void)
+int input_poll(void)
 {
 	int ev_rcv_enq;
 
@@ -86,8 +78,7 @@ input_poll(void)
  * given to EM via 'em_conf.output.output_drain_fn = output_drain;'
  * The function is of type 'em_output_drain_func_t'
  */
-int
-output_drain(void)
+int output_drain(void)
 {
 	int ev_drain;
 
@@ -98,8 +89,7 @@ output_drain(void)
 	return ev_drain;
 }
 
-void
-pktio_mem_reserve(void)
+void pktio_mem_reserve(void)
 {
 	odp_shm_t shm;
 
@@ -116,8 +106,7 @@ pktio_mem_reserve(void)
 	memset(pktio_shm, 0, sizeof(pktio_shm_t));
 }
 
-void
-pktio_mem_lookup(void)
+void pktio_mem_lookup(void)
 {
 	odp_shm_t shm;
 
@@ -128,8 +117,7 @@ pktio_mem_lookup(void)
 		APPL_EXIT_FAILURE("pktio shared mem addr lookup failed.");
 }
 
-void
-pktio_mem_free(void)
+void pktio_mem_free(void)
 {
 	odp_shm_t shm;
 
@@ -142,10 +130,52 @@ pktio_mem_free(void)
 }
 
 /**
- * Create the memory pool used by pkt-io
+ * Helper to pktio_pool_create(): create the pktio pool as an EM event-pool
  */
-void
-pktio_pool_create(int if_count)
+static void pktio_pool_create_em(int if_count)
+{
+	/*
+	 * Create the pktio pkt pool used for actual input pkts.
+	 * Create the pool as an EM-pool (and convert into an ODP-pool where
+	 * needed) to be able to utilize EM's Event State Verification (ESV)
+	 * in the 'esv.prealloc_pools = true' mode (see config/em-odp.conf).
+	 */
+	odp_pool_capability_t pool_capa;
+	em_pool_cfg_t pool_cfg;
+	em_pool_t pool;
+
+	if (odp_pool_capability(&pool_capa) != 0)
+		APPL_EXIT_FAILURE("can't get odp-pool capability");
+
+	em_pool_cfg_init(&pool_cfg);
+	pool_cfg.event_type = EM_EVENT_TYPE_PACKET;
+	pool_cfg.num_subpools = 1;
+	pool_cfg.subpool[0].size = PKTIO_PKT_POOL_BUF_SIZE;
+	pool_cfg.subpool[0].num = if_count * PKTIO_PKT_POOL_NUM_BUFS;
+	/* Use max thread-local pkt-cache size to speed up pktio allocs */
+	pool_cfg.subpool[0].cache_size = pool_capa.pkt.max_cache_size;
+	pool = em_pool_create("pktio-pkt-pool", EM_POOL_UNDEF, &pool_cfg);
+	if (pool == EM_POOL_UNDEF)
+		APPL_EXIT_FAILURE("pktio pool creation failed");
+
+	/* Convert: EM-pool to ODP-pool */
+	odp_pool_t odp_pool = ODP_POOL_INVALID;
+	int ret = em_odp_pool2odp(pool, &odp_pool, 1);
+
+	if (unlikely(ret != 1))
+		APPL_EXIT_FAILURE("EM pktio pool creation failed:%d", ret);
+
+	/* Store the EM pktio pool and the corresponding ODP subpool */
+	pktio_shm->pktpool.em_pool = pool;
+	pktio_shm->pktpool.odp_pool = odp_pool;
+
+	odp_pool_print(pktio_shm->pktpool.odp_pool);
+}
+
+/**
+ * Helper to pktio_pool_create(): create the pktio pool as an ODP pkt-pool
+ */
+static void pktio_pool_create_odp(int if_count)
 {
 	odp_pool_param_t pool_params;
 
@@ -159,24 +189,102 @@ pktio_pool_create(int if_count)
 	pool_params.type = ODP_POOL_PACKET;
 	pool_params.pkt.uarea_size = em_odp_event_hdr_size();
 
-	pktio_shm->pool = odp_pool_create("packet_io_pool", &pool_params);
-	if (pktio_shm->pool == ODP_POOL_INVALID)
-		APPL_EXIT_FAILURE("pktio pool creation failed.\n");
+	odp_pool_t odp_pool = odp_pool_create("pktio-pkt-pool", &pool_params);
 
-	odp_pool_print(pktio_shm->pool);
+	if (odp_pool == ODP_POOL_INVALID)
+		APPL_EXIT_FAILURE("pktio pool creation failed");
+
+	/* Store the ODP pktio pool */
+	pktio_shm->pktpool.odp_pool = odp_pool;
+	pktio_shm->pktpool.em_pool = EM_POOL_UNDEF;
+
+	odp_pool_print(pktio_shm->pktpool.odp_pool);
 }
 
-void
-pktio_pool_destroy(void)
+/**
+ * Create the memory pool used by pkt-io
+ */
+void pktio_pool_create(int if_count, bool pktpool_em)
 {
-	if (odp_pool_destroy(pktio_shm->pool) != 0)
-		APPL_EXIT_FAILURE("pktio pool destroy failed.");
+	/*
+	 * Create a ctrl pool for pktio - used for allocation of ctrl data like
+	 * Tx-burst structures (tx_burst_t) and queue handles.
+	 */
+	odp_pool_capability_t pool_capa;
+	odp_pool_param_t pool_params;
 
-	pktio_shm->pool = ODP_POOL_INVALID;
+	if (odp_pool_capability(&pool_capa) != 0)
+		APPL_EXIT_FAILURE("can't get odp-pool capability");
+
+	odp_pool_param_init(&pool_params);
+	pool_params.type = ODP_POOL_BUFFER;
+	pool_params.buf.num = if_count * (PKTIO_MAX_IN_QUEUES +
+					  MAX_TX_BURST_BUFS);
+	pool_params.buf.size = MAX(sizeof(odp_queue_t), sizeof(tx_burst_t *));
+	/* no cache needed, all allocated at startup */
+	pool_params.buf.cache_size = 0;
+	pool_params.stats.all = pool_capa.buf.stats.all;
+
+	pktio_shm->odp_bufpool = odp_pool_create("pktio-ctrl-pool",
+						 &pool_params);
+	if (pktio_shm->odp_bufpool == ODP_POOL_INVALID)
+		APPL_EXIT_FAILURE("pktio-ctrl-pool creation failed");
+
+	odp_pool_print(pktio_shm->odp_bufpool);
+
+	/*
+	 * Create the pktio pkt pool used for actual input pkts.
+	 * Create the pool either as an EM- or ODP-pool.
+	 */
+	if (pktpool_em)
+		pktio_pool_create_em(if_count);
+	else
+		pktio_pool_create_odp(if_count);
 }
 
-void
-pktio_init(const appl_conf_t *appl_conf)
+/**
+ * Helper to pktio_pool_destroy(): destroy the EM event-pool used for pktio
+ */
+static void pktio_pool_destroy_em(void)
+{
+	APPL_PRINT("%s(): deleting the EM pktio-pool:\n", __func__);
+	em_pool_info_print(pktio_shm->pktpool.em_pool);
+
+	if (em_pool_delete(pktio_shm->pktpool.em_pool) != EM_OK)
+		APPL_EXIT_FAILURE("EM pktio-pool delete failed.");
+
+	pktio_shm->pktpool.em_pool = EM_POOL_UNDEF;
+	pktio_shm->pktpool.odp_pool = ODP_POOL_INVALID;
+}
+
+/**
+ * Helper to pktio_pool_destroy(): destroy the ODP pkt-pool used for pktio
+ */
+static void pktio_pool_destroy_odp(void)
+{
+	APPL_PRINT("%s(): destroying the ODP pktio-pool\n", __func__);
+	if (odp_pool_destroy(pktio_shm->pktpool.odp_pool) != 0)
+		APPL_EXIT_FAILURE("ODP pktio-pool destroy failed.");
+
+	pktio_shm->pktpool.odp_pool = ODP_POOL_INVALID;
+}
+
+/**
+ * Destroy the memory pool used by pkt-io
+ */
+void pktio_pool_destroy(bool pktpool_em)
+{
+	if (pktpool_em)
+		pktio_pool_destroy_em();
+	else
+		pktio_pool_destroy_odp();
+
+	if (odp_pool_destroy(pktio_shm->odp_bufpool) != 0)
+		APPL_EXIT_FAILURE("pktio-ctrl-pool destroy failed.");
+	pktio_shm->odp_bufpool = ODP_POOL_INVALID;
+}
+
+void pktio_init(const appl_conf_t *appl_conf)
 {
 	odp_queue_param_t queue_param;
 	odp_queue_t odp_queue;
@@ -233,8 +341,7 @@ pktio_init(const appl_conf_t *appl_conf)
 		APPL_EXIT_FAILURE("rx pkt lookup table creation fails");
 }
 
-void
-pktio_deinit(const appl_conf_t *appl_conf)
+void pktio_deinit(const appl_conf_t *appl_conf)
 {
 	(void)appl_conf;
 
@@ -244,8 +351,7 @@ pktio_deinit(const appl_conf_t *appl_conf)
 	pktio_shm->tbl_lookup.ops.f_des(pktio_shm->tbl_lookup.tbl);
 }
 
-static void
-pktio_tx_buffering_create(int if_num)
+static void pktio_tx_buffering_create(int if_num)
 {
 	tx_burst_t *tx_burst;
 	odp_queue_param_t queue_param;
@@ -287,14 +393,24 @@ pktio_tx_buffering_create(int if_num)
 
 		odp_event_t event;
 		tx_burst_t **tx_burst_ptr;
-		odp_packet_t pkt = odp_packet_alloc(pktio_shm->pool,
-						    sizeof(tx_burst_t *));
+		odp_buffer_t buf = odp_buffer_alloc(pktio_shm->odp_bufpool);
 
-		if (unlikely(pkt == ODP_PACKET_INVALID))
-			APPL_EXIT_FAILURE("pkt alloc fails");
+		if (unlikely(buf == ODP_BUFFER_INVALID)) {
+			odp_pool_stats_t stats;
+			int ret = odp_pool_stats(pktio_shm->odp_bufpool, &stats);
 
-		event = odp_packet_to_event(pkt);
-		tx_burst_ptr = odp_packet_data(pkt);
+			if (!ret) {
+				APPL_PRINT("bufpool stats{avail=%lu allocs=%lu fails=%lu}\n",
+					   stats.available, stats.alloc_ops, stats.alloc_fails);
+			}
+			APPL_EXIT_FAILURE("buf alloc fails: if_num:%d, i:%d",
+					  if_num, i);
+		}
+		if (unlikely(odp_buffer_size(buf) < sizeof(tx_burst/*ptr*/)))
+			APPL_EXIT_FAILURE("buf too small");
+
+		event = odp_buffer_to_event(buf);
+		tx_burst_ptr = odp_buffer_addr(buf);
 		*tx_burst_ptr = tx_burst;
 
 		ret = odp_queue_enq(pktio_shm->tx_bursts_queue, event);
@@ -303,8 +419,7 @@ pktio_tx_buffering_create(int if_num)
 	}
 }
 
-static void
-pktio_tx_buffering_destroy(void)
+static void pktio_tx_buffering_destroy(void)
 {
 	tx_burst_t *tx_burst;
 	int num;
@@ -330,20 +445,21 @@ pktin_queue_queueing_create(int if_num)
 {
 	odp_event_t event;
 	odp_pktin_queue_t *pktin_queue;
-	odp_packet_t pkt;
+	odp_buffer_t buf;
 	int num_rx;
 	int ret, i;
 
 	num_rx = pktio_shm->pktin_num_queues[if_num];
 
 	for (i = 0; i < num_rx; i++) {
-		pkt = odp_packet_alloc(pktio_shm->pool, sizeof(odp_queue_t));
-
-		if (unlikely(pkt == ODP_PACKET_INVALID))
-			APPL_EXIT_FAILURE("pkt alloc fails");
-
-		event = odp_packet_to_event(pkt);
-		pktin_queue = odp_packet_data(pkt);
+		buf = odp_buffer_alloc(pktio_shm->odp_bufpool);
+		if (unlikely(buf == ODP_BUFFER_INVALID))
+			APPL_EXIT_FAILURE("buf alloc fails");
+		if (unlikely(odp_buffer_size(buf) < sizeof(odp_queue_t)))
+			APPL_EXIT_FAILURE("buf too small");
+		event = odp_buffer_to_event(buf);
+		pktin_queue = odp_buffer_addr(buf);
+		/* store the pktin-queue handle into the event payload */
 		*pktin_queue = pktio_shm->pktin_queues[if_num][i];
 
 		ret = odp_queue_enq(pktio_shm->pktin_queues_queue, event);
@@ -386,7 +502,7 @@ pktio_create(const char *dev, int num_workers)
 	/* QUEUE mode for Tx to preserve packet order if needed */
 	pktio_param.out_mode = ODP_PKTOUT_MODE_QUEUE;
 
-	pktio = odp_pktio_open(dev, pktio_shm->pool, &pktio_param);
+	pktio = odp_pktio_open(dev, pktio_shm->pktpool.odp_pool, &pktio_param);
 	if (pktio == ODP_PKTIO_INVALID)
 		APPL_EXIT_FAILURE("pktio create failed for %s\n", dev);
 
@@ -509,10 +625,10 @@ pktio_start(void)
 }
 
 static inline int
-pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue)
+pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue /*out*/)
 {
 	odp_event_t pktin_queue_event;
-	odp_packet_t pkt;
+	odp_buffer_t buf;
 	odp_pktin_queue_t *pktin_qptr;
 
 	pktin_queue_event = odp_queue_deq(pktio_shm->pktin_queues_queue);
@@ -522,8 +638,8 @@ pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue)
 	/* store event locally for resuse, i.e. enqueue it back later */
 	pktio_locm.pktin_queue_event = pktin_queue_event;
 
-	pkt = odp_packet_from_event(pktin_queue_event);
-	pktin_qptr = odp_packet_data(pkt);
+	buf = odp_buffer_from_event(pktin_queue_event);
+	pktin_qptr = odp_buffer_addr(buf);
 	*pktin_queue = *pktin_qptr;
 
 	return 0;
@@ -532,10 +648,8 @@ pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue)
 static inline void
 pktin_queue_release(void)
 {
-	const int ret =
-	odp_queue_enq(pktio_shm->pktin_queues_queue,
-		      pktio_locm.pktin_queue_event);
-
+	const int ret = odp_queue_enq(pktio_shm->pktin_queues_queue,
+				      pktio_locm.pktin_queue_event);
 	if (unlikely(ret != 0))
 		APPL_EXIT_FAILURE("enqueue fails");
 }
@@ -594,7 +708,7 @@ pktio_rx(void)
 				((uintptr_t)ip + sizeof(odph_ipv4hdr_t));
 			/*
 			 * NOTE! network-to-CPU conversion not needed here.
-			 * Setup stores netowrk-order in hash to avoid
+			 * Setup stores network-order in hash to avoid
 			 * conversion for every packet.
 			 */
 			pktio_locm.keys[i].ip_dst = ip->dst_addr;
@@ -694,13 +808,14 @@ pktio_tx_burst(tx_burst_t *const tx_burst)
 }
 
 /**
- * User provided output-queue callback function of type 'em_output_func_t'
+ * @brief User provided output-queue callback function (em_output_func_t).
  *
  * Transmit events(pkts) via Eth Tx queues.
+ *
+ * @return The number of events actually transmitted (<= num)
  */
-int
-pktio_tx(const em_event_t events[], const unsigned int num,
-	 const em_queue_t output_queue, void *output_fn_args)
+int pktio_tx(const em_event_t events[], const unsigned int num,
+	     const em_queue_t output_queue, void *output_fn_args)
 {
 	/* Create idx to select tx-burst, always same idx for same em queue */
 	const int burst_idx = (int)((uintptr_t)output_queue %
@@ -721,6 +836,12 @@ pktio_tx(const em_event_t events[], const unsigned int num,
 	em_odp_events2odp(events, odp_events, num);
 
 	/*
+	 * Mark all events as "free" from EM point of view - ODP will transmit
+	 * and free the events (=odp-pkts).
+	 */
+	em_event_mark_free_multi(events, num);
+
+	/*
 	 * 'sched_ctx_type = em_sched_context_type_current(&src_sched_queue)'
 	 * could be used to determine the need for maintaining event order for
 	 * output. Also em_queue_get_type(src_sched_queue) could further be used
@@ -731,12 +852,17 @@ pktio_tx(const em_event_t events[], const unsigned int num,
 	 */
 
 	ret = odp_queue_enq_multi(tx_burst->queue, odp_events, num);
-	if (unlikely(ret < 0))
+	if (unlikely(ret < 0)) {
+		/* failure: don't return, see if a burst can be Tx anyway */
 		ret = 0;
+	}
 
 	prev_cnt = env_atomic64_return_add(&tx_burst->cnt, ret);
 	if (prev_cnt >= MAX_PKT_BURST_TX - 1)
 		(void)pktio_tx_burst(tx_burst);
+
+	if (unlikely(ret < (int)num))
+		em_event_unmark_free_multi(&events[ret], num - ret);
 
 	return ret;
 }
@@ -745,7 +871,7 @@ static inline int
 tx_drain_burst_acquire(tx_burst_t **const tx_drain_burst)
 {
 	odp_event_t tx_burst_timed_event;
-	odp_packet_t pkt;
+	odp_buffer_t buf;
 	tx_burst_t **tx_burst_ptr;
 
 	tx_burst_timed_event = odp_queue_deq(pktio_shm->tx_bursts_queue);
@@ -755,8 +881,8 @@ tx_drain_burst_acquire(tx_burst_t **const tx_drain_burst)
 	/* store event locally for reuse, i.e. enqueue it back later */
 	pktio_locm.tx_burst_timed_event = tx_burst_timed_event;
 
-	pkt = odp_packet_from_event(tx_burst_timed_event);
-	tx_burst_ptr = odp_packet_data(pkt);
+	buf = odp_buffer_from_event(tx_burst_timed_event);
+	tx_burst_ptr = odp_buffer_addr(buf);
 	*tx_drain_burst = *tx_burst_ptr;
 
 	return 0;
@@ -772,8 +898,7 @@ tx_drain_burst_release(void) {
 		APPL_EXIT_FAILURE("enqueue fails");
 }
 
-static inline int
-pktio_tx_drain(void)
+static inline int pktio_tx_drain(void)
 {
 	const uint64_t curr = odp_cpu_cycles(); /* core-local timestamp */
 	const uint64_t prev = pktio_locm.tx_prev_cycles;
@@ -796,16 +921,14 @@ pktio_tx_drain(void)
 	return ret;
 }
 
-void
-pktio_halt(void)
+void pktio_halt(void)
 {
 	pktio_shm->pktio_started = 0;
 	odp_mb_full();
 	APPL_PRINT("\n%s() on EM-core %d\n", __func__, em_core_id());
 }
 
-void
-pktio_stop(void)
+void pktio_stop(void)
 {
 	int if_num;
 	int ret;
@@ -818,8 +941,7 @@ pktio_stop(void)
 	}
 }
 
-void
-pktio_close(void)
+void pktio_close(void)
 {
 	int if_num;
 	int ret;
@@ -836,9 +958,8 @@ pktio_close(void)
 	pktio_tx_buffering_destroy();
 }
 
-void
-pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst,
-		em_queue_t queue)
+void pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst,
+		     em_queue_t queue)
 {
 	pkt_q_hash_key_t key;
 	int ret, idx;
@@ -877,8 +998,7 @@ pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst,
 		APPL_EXIT_FAILURE("tbl insertion failed");
 }
 
-int
-pktio_default_queue(em_queue_t queue)
+int pktio_default_queue(em_queue_t queue)
 {
 	if (unlikely(em_queue_get_type(queue) == EM_QUEUE_TYPE_UNDEF)) {
 		APPL_EXIT_FAILURE("Invalid queue:%" PRI_QUEUE "", queue);
@@ -890,8 +1010,7 @@ pktio_default_queue(em_queue_t queue)
 	return 0;
 }
 
-em_queue_t
-pktio_lookup_sw(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst)
+em_queue_t pktio_lookup_sw(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst)
 {
 	em_queue_t queue;
 	rx_pkt_queue_t rx_pkt_queue;
@@ -923,8 +1042,7 @@ pktio_lookup_sw(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst)
 	return queue;
 }
 
-odp_pool_t
-pktio_pool_get(void)
+odp_pool_t pktio_pool_get(void)
 {
-	return pktio_shm->pool;
+	return pktio_shm->pktpool.odp_pool;
 }

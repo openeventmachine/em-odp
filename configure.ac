@@ -3,30 +3,37 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_api_major_version], [2])
-m4_define([em_api_minor_version], [5])
+m4_define([em_api_minor_version], [6])
 m4_define([em_api_implementation_version], [0])
 m4_define([em_api_implementation_fix], [0])
 
 m4_define([em_api_version], [em_api_major_version.em_api_minor_version])
 m4_define([em_version], [m4_if(m4_eval(em_api_implementation_fix), [0],
 	  [em_api_major_version.em_api_minor_version.em_api_implementation_version],
-	  [em_api_major_version.em_api_minor_version.em_api_implementation_version-em_api_implementation_fix])])
+	  [em_api_major_version.em_api_minor_version.\
+em_api_implementation_version-em_api_implementation_fix])])
 
-m4_define([em_lib_version], m4_join([], em_api_major_version, em_api_minor_version))
+m4_define([em_lib_version],
+	  m4_join([], em_api_major_version, em_api_minor_version))
+
 m4_if(em_api_implementation_fix, [0],
       [m4_append([em_lib_version],
 		 m4_combine([], [[]], [:], em_api_implementation_version, [0]))],
       [m4_append([em_lib_version],
-		 m4_combine([], [[]], [:], em_api_implementation_version, em_api_implementation_fix))])
+		 m4_combine([], [[]], [:], em_api_implementation_version,
+		 em_api_implementation_fix))])
 
-m4_define([em_pkgconfig_version], m4_join([], em_api_major_version, em_api_minor_version))
+m4_define([em_pkgconfig_version],
+	  m4_join([], em_api_major_version, em_api_minor_version))
+
 m4_if(em_api_implementation_fix, [0],
       [m4_append([em_pkgconfig_version],
 		 m4_combine([], [[]], [.], em_api_implementation_version, [0]))],
       [m4_append([em_pkgconfig_version],
-		 m4_combine([], [[]], [.], em_api_implementation_version, em_api_implementation_fix))])
+		 m4_combine([], [[]], [.], em_api_implementation_version,
+		 em_api_implementation_fix))])
 
-AC_INIT([EM-ODP],[em_version],[foo at nokia.com])
+AC_INIT([EM-ODP],[em_version],[EM at nokia.com])
 
 EM_API_MAJOR_VERSION=em_api_major_version
 AC_SUBST([EM_API_MAJOR_VERSION])
@@ -246,6 +253,29 @@ AC_ARG_ENABLE([esv],
 	      ],[])
 # Substitute @EM_ESV_ENABLE@ into the pkgconfig file libemodp.pc.in
 AC_SUBST([EM_ESV_ENABLE])
+
+##########################################################################
+# Enable/disable EM_DEBUG_PRINT
+##########################################################################
+debug_print_info="no (EM_DEBUG_PRINT from source code)"
+AC_ARG_ENABLE([debug-print],
+	      [AS_HELP_STRING([--enable-debug-print],
+			      [Display debugging information [default=disabled]])],
+	      [AS_IF(dnl --enable-debug-print[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [debug_print_info="$enableval (EM_DEBUG_PRINT=1)"
+		      EM_DEBUG_PRINT="-DEM_DEBUG_PRINT=1"],
+		     dnl --disable-debug OR --enable-debug-print=no:
+		     [test "x$enableval" = "xno"],
+		     [debug_print_info="$enableval (EM_DEBUG_PRINT=0)"
+		      EM_DEBUG_PRINT="-DEM_DEBUG_PRINT=0"],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value --enable-debug-print=${enableval}, use yes/no])]
+		)
+		EM_CPPFLAGS="$EM_CPPFLAGS $EM_DEBUG_PRINT"
+	      ],[])
+# Substitute @EM_DEBUG_PRINT@ into the pkgconfig file libemodp.pc.in
+AC_SUBST([EM_DEBUG_PRINT])
 
 ##########################################################################
 # Default include setup
@@ -500,4 +530,5 @@ AC_MSG_RESULT([
 	=======================
 	EM check level:		${check_level_info}
 	EM ESV:			${esv_info}
+	EM debug print:		${debug_print_info}
 	])

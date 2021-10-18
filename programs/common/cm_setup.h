@@ -121,6 +121,11 @@ typedef struct {
 		char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
 		/** Interface identifiers corresponding to 'if_name[]' */
 		int if_ids[IF_MAX_NUM];
+		/**
+		 * Pktio is setup with an EM event-pool: 'true'
+		 * Pktio is setup with an ODP pkt-pool:  'false'
+		 */
+		bool pktpool_em;
 	} pktio;
 } appl_conf_t;
 

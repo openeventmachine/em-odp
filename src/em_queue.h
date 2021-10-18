@@ -257,23 +257,11 @@ list_node_to_queue_elem(const list_node_t *const list_node)
 static inline int
 prio_em2odp(em_queue_prio_t em_prio, odp_schedule_prio_t *odp_prio /*out*/)
 {
-	switch (em_prio) {
-	case EM_QUEUE_PRIO_LOWEST:
-		/* fallthrough */
-	case EM_QUEUE_PRIO_LOW:
-		*odp_prio = odp_schedule_min_prio();
+	if (em_prio < EM_QUEUE_PRIO_NUM) {
+		*odp_prio = em_shm->queue_prio.map[em_prio];
 		return 0;
-	case EM_QUEUE_PRIO_NORMAL:
-		*odp_prio = odp_schedule_default_prio();
-		return 0;
-	case EM_QUEUE_PRIO_HIGH:
-		/* fallthrough */
-	case EM_QUEUE_PRIO_HIGHEST:
-		*odp_prio = odp_schedule_max_prio();
-		return 0;
-	default:
-		return -1;
 	}
+	return -1;
 }
 
 static inline int
@@ -329,7 +317,7 @@ local_queue_dequeue(void)
 	if (locm->local_queues.empty)
 		return NULL;
 
-	prio = EM_QUEUE_PRIO_HIGHEST;
+	prio = EM_QUEUE_PRIO_NUM - 1;
 	for (i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
 		/* from hi to lo prio: next prio if local queue is empty */
 		if (locm->local_queues.prio[prio].empty_prio) {
@@ -369,7 +357,7 @@ next_local_queue_events(em_event_t ev_tbl[/*out*/], int num_events)
 	odp_queue_t local_queue;
 	int num;
 
-	prio = EM_QUEUE_PRIO_HIGHEST;
+	prio = EM_QUEUE_PRIO_NUM - 1;
 	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
 		/* from hi to lo prio: next prio if local queue is empty */
 		if (locm->local_queues.prio[prio].empty_prio) {

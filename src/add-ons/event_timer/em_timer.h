@@ -32,15 +32,8 @@
 
 #include "em_timer_types.h"
 
-/*#define TIMER_DEBUG*/
-
-#ifdef TIMER_DEBUG
-#include <stdio.h>
-#define TMR_DBG_PRINT(format, ...) \
-	EM_LOG(EM_LOG_DBG, "TMRDBG: " format, __VA_ARGS__)
-#else
-#define TMR_DBG_PRINT(format, ...) do {} while (0)
-#endif
+#define TMR_DBG_PRINT(fmt, ...) \
+	EM_DBG("TMRDBG: %s(): " fmt, __func__, ## __VA_ARGS__)
 
 em_status_t timer_init(timer_storage_t *const tmrs);
 em_status_t timer_init_local(void);
@@ -52,16 +45,28 @@ timer_clksrc_em2odp(em_timer_clksrc_t clksrc_em,
 		    odp_timer_clk_src_t *clksrc_odp /* out */)
 {
 	switch (clksrc_em) {
-	case EM_TIMER_CLKSRC_DEFAULT: /* fallthrough */
-	case EM_TIMER_CLKSRC_CPU:
-		*clksrc_odp = ODP_CLOCK_CPU;
-		return 0;
-	case EM_TIMER_CLKSRC_EXT:
-		*clksrc_odp = ODP_CLOCK_EXT;
-		return 0;
+	case EM_TIMER_CLKSRC_0:
+		*clksrc_odp = ODP_CLOCK_SRC_0;
+		break;
+	case EM_TIMER_CLKSRC_1:
+		*clksrc_odp = ODP_CLOCK_SRC_1;
+		break;
+	case EM_TIMER_CLKSRC_2:
+		*clksrc_odp = ODP_CLOCK_SRC_2;
+		break;
+	case EM_TIMER_CLKSRC_3:
+		*clksrc_odp = ODP_CLOCK_SRC_3;
+		break;
+	case EM_TIMER_CLKSRC_4:
+		*clksrc_odp = ODP_CLOCK_SRC_4;
+		break;
+	case EM_TIMER_CLKSRC_5:
+		*clksrc_odp = ODP_CLOCK_SRC_5;
+		break;
 	default:
 		return -1;
 	}
+	return 0;
 }
 
 static inline int
@@ -69,15 +74,28 @@ timer_clksrc_odp2em(odp_timer_clk_src_t clksrc_odp,
 		    em_timer_clksrc_t *clksrc_em /* out */)
 {
 	switch (clksrc_odp) {
-	case ODP_CLOCK_CPU:
-		*clksrc_em = EM_TIMER_CLKSRC_CPU;
-		return 0;
-	case ODP_CLOCK_EXT:
-		*clksrc_em = EM_TIMER_CLKSRC_EXT;
-		return 0;
+	case ODP_CLOCK_SRC_0:
+		*clksrc_em = EM_TIMER_CLKSRC_0;
+		break;
+	case ODP_CLOCK_SRC_1:
+		*clksrc_em = EM_TIMER_CLKSRC_1;
+		break;
+	case ODP_CLOCK_SRC_2:
+		*clksrc_em = EM_TIMER_CLKSRC_2;
+		break;
+	case ODP_CLOCK_SRC_3:
+		*clksrc_em = EM_TIMER_CLKSRC_3;
+		break;
+	case ODP_CLOCK_SRC_4:
+		*clksrc_em = EM_TIMER_CLKSRC_4;
+		break;
+	case ODP_CLOCK_SRC_5:
+		*clksrc_em = EM_TIMER_CLKSRC_5;
+		break;
 	default:
 		return -1;
 	}
+	return 0;
 }
 
 #endif /* EM_TIMER_H_ */

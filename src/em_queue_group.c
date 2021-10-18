@@ -463,11 +463,9 @@ static int count_qgrp_adds(const em_core_mask_t *old_mask,
  */
 static int count_qgrp_rems(const em_core_mask_t *old_mask,
 			   const em_core_mask_t *new_mask,
-			   bool skip_this_core /* sync rem, skip caller core */,
 			   em_core_mask_t *rem_mask /*out*/)
 {
 	int core_count = em_core_count();
-	int core = em_core_id();
 	int rems = 0;
 
 	em_core_mask_zero(rem_mask);
@@ -476,8 +474,6 @@ static int count_qgrp_rems(const em_core_mask_t *old_mask,
 	for (int i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, old_mask) &&
 		    !em_core_mask_isset(i, new_mask)) {
-			if (skip_this_core && core == i)
-				continue; /* sync rem for current core */
 			em_core_mask_set(i, rem_mask);
 			rems++;
 		}
@@ -606,8 +602,7 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	/* Count added & removed cores */
 	em_core_mask_t rem_mask;
 	int adds = count_qgrp_adds(&old_mask, new_mask);
-	int rems = count_qgrp_rems(&old_mask, new_mask,
-				   false, &rem_mask/*out*/);
+	int rems = count_qgrp_rems(&old_mask, new_mask, &rem_mask /*out*/);
 
 	/*
 	 * Modify the EM queue group's corresponding ODP schedule group
@@ -726,15 +721,13 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	/* Count added & removed cores */
 	em_core_mask_t rem_mask;
 	int adds = count_qgrp_adds(&old_mask, new_mask);
-	int rems = count_qgrp_rems(&old_mask, new_mask, true /*skip this core*/,
-				   &rem_mask /*out*/);
+	int rems = count_qgrp_rems(&old_mask, new_mask, &rem_mask /*out*/);
 
 	/* Modify the ODP schedule group */
 	odp_thrmask_t odp_new_mask;
 	int ret;
 
 	mask_em2odp(new_mask, &odp_new_mask);
-
 	ret = modify_odp_schedgrp(qgrp_elem->odp_sched_group, &odp_new_mask,
 				  adds, rems);
 	if (unlikely(ret != 0)) {
@@ -742,6 +735,18 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 		goto queue_group_modify_sync_error;
 	}
 
+	/*
+	 * Remove the calling core from the remove-mask and -count since no
+	 * rem-req event should be sent to it during this _sync operation.
+	 */
+	int core = em_core_id();
+
+	if (rems > 0 && em_core_mask_isset(core, &rem_mask)) {
+		em_core_mask_clr(core, &rem_mask);
+		rems--;
+	}
+
+	/* No cores to send rem-reqs to, mark operation done and return */
 	if (rems == 0) {
 		if (is_delete)
 			q_grp_delete_done(qgrp_elem, new_mask);
@@ -752,6 +757,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	}
 
 	/*
+	 * Send rem-req events to all other conserned cores.
 	 * Note: .pending_modify = 1:
 	 *       Threat all errors as EM_FATAL because failures will leave
 	 *       .pending_modify = 1 for the group until restart.

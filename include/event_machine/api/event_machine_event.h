@@ -98,7 +98,8 @@ extern "C" {
  *
  * @return The allocated event or EM_EVENT_UNDEF on error.
  *
- * @see em_free(), em_send(), em_event_pointer(), em_receive_func_t()
+ * @see em_free(), em_send(), em_event_pointer(), em_receive_func_t(),
+ *      em_event_clone()
  */
 em_event_t em_alloc(size_t size, em_event_type_t type, em_pool_t pool);
 
@@ -229,6 +230,21 @@ em_event_pointer(em_event_t event);
 size_t em_event_get_size(em_event_t event);
 
 /**
+ * @brief Returns the EM event-pool the event was allocated from.
+ *
+ * The EM event-pool for the given event can only be obtained if the event has
+ * been allocated from a pool created with em_pool_create(). For other pools,
+ * e.g. external (to EM) pktio pools, EM_POOL_UNDEF is returned.
+ *
+ * @param event         Event handle
+ *
+ * @return The EM event-pool handle or EM_POOL_UNDEF if no EM pool is found.
+ *         EM_POOL_UNDEF is returned also for a valid event that has been
+ *         allocated from a pool external to EM (no error is reported).
+ */
+em_pool_t em_event_get_pool(em_event_t event);
+
+/**
  * Set the event type of an event
  *
  * This will not create a new event but the existing event might be modified.
@@ -346,7 +362,7 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue);
  *       application if used incorrectly!
  *
  * Revert an event's "sent" state, as set by em_event_mark_send(), back to the
- * state before that function call.
+ * state before the mark-send function call.
  * Any further usage of the event after em_event_mark_send(), by EM or
  * the user, will result in error when calling em_event_unmark_send() since the
  * state has become unrecoverable.
@@ -356,8 +372,8 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue);
  * Calling em_event_unmark_send() transfers event ownership back to the user
  * again.
  *
- * @note This is the only valid case of using an event that the user no
- *       longer owns - all other such uses leads to fatal error.
+ * @note Unmark-send and unmark-free are the only valid cases of using an event
+ *       that the user no longer owns - all other such uses leads to fatal error
  *
  * @code
  *	em_status_t err;
@@ -374,7 +390,7 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue);
  *		// hw config error - the event can be recovered if it is
  *		// certain that the hw won't send that same event.
  *		// note: the user doesn't own the event here and actually
- *		//       uses an obsolete event handle to recover the event...
+ *		//       uses an obsolete event handle to recover the event.
  *		err = em_event_unmark_send(event);
  *		if (err != EM_OK)
  *			return err; // NOK
@@ -391,6 +407,134 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue);
  * @see em_send(), em_event_mark_send()
  */
 em_status_t em_event_unmark_send(em_event_t event);
+
+/**
+ * @brief Mark the event as "free".
+ *
+ * Indicates a user-given promise to EM that the event will be freed back into
+ * the pool it was allocated from e.g. by HW or device drivers (external to EM).
+ * Calling em_event_mark_free() transfers event ownership away from the user,
+ * and thus the event must not be used or touched by the user anymore.
+ *
+ * Example use case:
+ * A user provided output-callback function associated with a queue of type
+ * 'EM_QUEUE_TYPE_OUTPUT' can use this API when configuring a HW-device or
+ * device-driver to free the event (outside of EM) after transmission.
+ *
+ * EM will, after this API-call, treat the event as "freed" and any further API
+ * operations or usage might lead to EM errors (depending on the error-check
+ * level), e.g. em_send/free/tmo_set/ack(event) etc. is forbidden after
+ * em_event_mark_free(event).
+ *
+ * @note Registered API-callback hooks for em_free/_multi() (em_api_hook_free_t)
+ *       will NOT be called.
+ *
+ * @param event    Event to be marked as "free"
+ *
+ * @see em_free(), em_event_unmark_free()
+ */
+void em_event_mark_free(em_event_t event);
+
+/**
+ * @brief Unmark an event previously marked as "free"
+ *        (i.e mark as "allocated" again).
+ *
+ * @note This is for recovery situations only and can potenially crash the
+ *       application if used incorrectly! Unmarking the free-state of an event
+ *       that has already been freed will lead to fatal error.
+ *
+ * Revert an event's "free" state, as set by em_event_mark_free(), back to the
+ * state before the mark-free function call.
+ * Any further usage of the event after em_event_mark_free(), by EM or the user,
+ * will result in error when calling em_event_unmark_free() since the state has
+ * become unrecoverable.
+ * => the only allowed EM API call after em_event_mark_free() (for a certain
+ *    event) is em_event_unmark_free() when it is certain that the event, due to
+ *    some external error, will not be freed otherwise and must be recovered
+ *    back into the EM-domain so that calling em_free() by the user is possible.
+ * Calling em_event_unmark_free() transfers event ownership back to the user
+ * again.
+ *
+ * @note Unmark-send and unmark-free are the only valid cases of using an event
+ *       that the user no longer owns - all other such uses leads to fatal error
+ *
+ * @code
+ *	em_status_t err;
+ *	hw_err_t hw_err;
+ *
+ *	// 'event' owned by the user
+ *	em_event_mark_free(event);
+ *	// 'event' no longer owned by the user - don't touch!
+ *
+ *	hw_err = config_hw_to_transmit_event(...hw-cfg..., event);
+ *	if (hw_err) {
+ *		// hw config error - the event can be recovered if it is
+ *		// certain that the hw won't free that same event.
+ *		// note: the user doesn't own the event here and actually
+ *		//       uses an obsolete event handle to recover the event.
+ *		em_event_unmark_free(event);
+ *		// 'event' recovered, again owned by the user
+ *		em_free(event);
+ *	}
+ * @endcode
+ *
+ * @param event    Event previously marked as "free" with
+ *                 em_event_mark_free/_multi(), any other usecase is invalid!
+ *
+ * @see em_free(), em_event_mark_free()
+ */
+void em_event_unmark_free(em_event_t event);
+
+/**
+ * @brief Mark multiple events as "free".
+ *
+ * Similar to em_event_mark_free(), but allows the marking of multiple events
+ * as "free" with one function call.
+ *
+ * @note Registered API-callback hooks for em_free/_multi() (em_api_hook_free_t)
+ *       will NOT be called.
+ *
+ * @param[in] events  Array of events to be marked as "free"
+ * @param     num     The number of events in the array 'events[]'
+ */
+void em_event_mark_free_multi(const em_event_t events[], int num);
+
+/**
+ * @brief Unmark multiple events previously marked as "free".
+ *
+ * @note This is for recovery situations only and can potenially crash the
+ *       application if used incorrectly!
+ *
+ * Similar to em_event_unmark_free(), but allows to do the "free"-unmarking of
+ * multiple events with one function call.
+ *
+ * @param[in] events  Events previously marked as "free" with
+ *                    em_event_mark_free/_multi(), any other usecase is invalid!
+ * @param     num     The number of events in the array 'events[]'
+ */
+void em_event_unmark_free_multi(const em_event_t events[], int num);
+
+/**
+ * @brief Clone an event.
+ *
+ * Allocate a new event with identical payload to the given event.
+ *
+ * @note Event metadata, internal headers and state are _NOT_ cloned
+ *       (e.g. the event-group of a cloned event is EM_EVENT_GROUP_UNDEF etc).
+ *
+ * @param    event  Event to be cloned, must be a valid event.
+ * @param    pool   Optional event pool to allocate the cloned event from.
+ *                  Use 'EM_POOL_UNDEF' to clone from the same pool as 'event'
+ *                  was allocated from.
+ *                  The event-type of 'event' must be suitable for allocation
+ *                  from 'pool' (e.g. EM_EVENT_TYPE_PACKET can not be
+ *                  allocated from a pool supporting only EM_EVENT_TYPE_SW)
+ *
+ * @return The cloned event or EM_EVENT_UNDEF on error.
+ *
+ * @see em_alloc(), em_free()
+ */
+em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/);
 
 /**
  * @}
