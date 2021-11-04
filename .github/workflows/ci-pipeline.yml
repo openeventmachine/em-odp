@@ -4,6 +4,8 @@ on: [push, pull_request, workflow_dispatch]
 
 env:
   CC: gcc
+  # Default target architecture for native compilation
+  TARGET_ARCH: ""
 
 jobs:
   # Perform lint check on shell scripts and YAML files
@@ -67,3 +69,20 @@ jobs:
         sudo sysctl -w vm.nr_hugepages=512
         grep Huge /proc/meminfo
         sudo /bin/bash ./scripts/robot_test.sh
+
+  Cross-Compile-for-arm64:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+    - name: Cross-compile EM-ODP for arm64
+      run: >
+          sudo docker run
+          --privileged
+          -i
+          -v "${PWD}:/root/em-odp"
+          --workdir="/root/em-odp"
+          --shm-size 8g
+          -e CC="aarch64-linux-gnu-gcc"
+          -e TARGET_ARCH=aarch64-linux-gnu
+          ghcr.io/opendataplane/odp-docker-images/odp-ci-ubuntu_18.04-arm64
+          /root/em-odp/scripts/build.sh

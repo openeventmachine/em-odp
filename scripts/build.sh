@@ -33,6 +33,7 @@ cd odp
 
 ./configure \
   --prefix="${install_dir}/odp_install" \
+  --host="${TARGET_ARCH}" \
   --without-examples \
   --without-tests
 
@@ -46,6 +47,7 @@ cd ..
 
 ./configure \
   --prefix="${install_dir}/em-odp_install" \
+  --host="${TARGET_ARCH}" \
   --with-odp-path="${install_dir}/odp_install" \
   --enable-check-level=3 \
   --enable-esv \
