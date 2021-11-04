@@ -7,25 +7,22 @@ on:
 
 jobs:
   Documentation:
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
       run: |
-        sudo apt install asciidoctor cmake doxygen libconfig-dev libssl-dev mscgen  graphviz
-
+        sudo apt-get update
+        sudo apt-get install asciidoctor mscgen graphviz doxygen
+        sudo apt-get install libconfig-dev
     - name: Build
-      run: |
-        ./scripts/build.sh
-        make doxygen-doc
-
+      run: ./scripts/build.sh -d
     - name: Before deploy
       run: |
         pushd doc
         mkdir gh-pages
         cp -r event_machine_api/html/* gh-pages/
         popd
-
     - name: Deploy
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

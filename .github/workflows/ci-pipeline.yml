@@ -1,69 +1,69 @@
 name: CI
 
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
+
 env:
-  ARCH: x86_64
   CC: gcc
 
 jobs:
-  Documentation:
-    runs-on: ubuntu-18.04
+  # Perform lint check on shell scripts and YAML files
+  Lint-Code-Base:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Install dependencies
-      run: sudo apt install asciidoctor cmake doxygen libconfig-dev libssl-dev mscgen  graphviz
-    - name: Build
-      run: |
-        ./scripts/build.sh
-        make doxygen-doc
+      - name: Checkout EM-ODP
+        uses: actions/checkout@v2
+        with:
+          # Full git history is needed to get a proper list of changed files
+          # within `super-linter`
+          fetch-depth: 0
+      - name: Lint check
+        uses: github/super-linter@v4
+        env:
+          VALIDATE_ALL_CODEBASE: false
+          DEFAULT_BRANCH: master
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  Build-bionic-gcc:
-    runs-on: ubuntu-18.04
+  # Build doxygen documentation
+  Build-Doxygen:
+    runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
     - name: Install dependencies
-      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config hugepages
-    - name: Build
       run: |
-        ./scripts/build.sh
+        sudo apt-get update
+        sudo apt-get install asciidoctor mscgen graphviz doxygen
+        sudo apt-get install libconfig-dev
+    - name: Build
+      run: ./scripts/build.sh -d
 
-  Run-bionic_gcc:
-    runs-on: ubuntu-18.04
+  # Build EM-ODP and run robot tests on github hosted ubuntu runner
+  Build-Run-on-Ubuntu-Runner:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        cc: [gcc, clang]
+    env:
+      CC: "${{matrix.cc}}"
     steps:
-    - uses: actions/checkout@v2
     - name: Install dependencies
-      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config hugepages
-    - name: Build
       run: |
+        sudo apt-get update
+        sudo apt-get install libconfig-dev
         sudo pip3 install robotframework
-        ./scripts/build.sh
-        git clone https://github.com/openeventmachine/ci.git
-        ./ci/env.sh
-        ./ci/test.sh
-
-  Build-focal_gcc:
-    runs-on: ubuntu-20.04
-    steps:
-    - uses: actions/checkout@v2
-    - name: Install dependencies
-      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config
-    - name: Build
+    - name: Checkout EM-ODP
+      uses: actions/checkout@v2
+    # Checkout ci for robot files
+    - name: Checkout ci
+      uses: actions/checkout@v2
+      with:
+        repository: ${{ github.repository_owner }}/ci
+        clean: false
+        path: ci
+        ref: master
+    - name: Build EM-ODP
+      run: ./scripts/build.sh
+    - name: Run Robot Tests
       run: |
-        git clone https://github.com/openeventmachine/ci.git
-        echo "./scripts/build.sh" >> ci/docker.sh
-        sudo docker run --privileged --name focal -i -v /dev/hugepages:/dev/hugepages -v ${PWD}:/root/em-odp -w /root/em-odp --shm-size 4g ubuntu:20.04 sh ci/docker.sh   
-
-  Build-focal_clang:
-    runs-on: ubuntu-20.04
-    steps:
-    - uses: actions/checkout@v2
-    - name: Install dependencies
-      run: sudo apt install automake autoconf libconfig-dev libssl-dev libtool pkg-config
-    - name: Build
-      run: |
-        git clone https://github.com/openeventmachine/ci.git
-        echo "apt remove gcc -y" >> ci/docker.sh
-        echo "apt install clang -y" >> ci/docker.sh
-        echo "./scripts/build.sh" >> ci/docker.sh
-        sudo docker run --privileged --name focal -i -v /dev/hugepages:/dev/hugepages -v ${PWD}:/root/em-odp -w /root/em-odp --shm-size 4g ubuntu:20.04 sh ci/docker.sh
-
+        sudo sysctl -w vm.nr_hugepages=512
+        grep Huge /proc/meminfo
+        sudo /bin/bash ./scripts/robot_test.sh
