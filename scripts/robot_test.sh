@@ -42,7 +42,22 @@ apps["send_multi"]=programs/performance/send_multi
 
 # Set up conf files for robot tests
 odp_conf="odp/config/odp-linux-generic.conf"
+# - set system.cpu_mhz = 2800
+sed -i 's/cpu_mhz\s*=.*/cpu_mhz = 2800/' "${odp_conf}"
+# - set system.cpu_mhz_max = 2800
+sed -i 's/cpu_mhz_max\s*=.*/cpu_mhz_max = 2800/' "${odp_conf}"
+# - set timer.inline = 1
+sed -i 's/inline\s*=.*/inline = 1/' "${odp_conf}"
+#  - set inline_thread_type = 1
+sed -i 's/inline_thread_type\s*=.*/inline_thread_type = 1/' "${odp_conf}"
+
 em_conf="config/em-odp.conf"
+#  - set pool.statistics_enable = true
+sed -i 's/statistics_enable.*/statistics_enable = true/' "${em_conf}"
+#  - set queue.priority.map_mode = 1
+sed -i 's/\(^[[:space:]]*map_mode.*=[[:space:]]\).*/\11/' "${em_conf}"
+#  - set esv.prealloc_pools = false
+sed -i 's/prealloc_pools.*/prealloc_pools = false/' "${em_conf}"
 
 # Robot Tests
 for app in "${!apps[@]}"; do
