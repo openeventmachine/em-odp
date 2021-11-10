@@ -5,6 +5,11 @@ on:
     branches:
       - master
 
+env:
+  CC: gcc
+  # Default target architecture for native compilation
+  TARGET_ARCH: ""
+
 jobs:
   Documentation:
     runs-on: ubuntu-20.04
