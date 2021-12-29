@@ -29,21 +29,21 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ===============================================================================
 Event Machine on Open Data Plane - em-odp
 ===============================================================================
-em-odp is an implementation of the Event Machine (EM) on top of the Open Data
-Plane (ODP) framework. Many ODP implementations exist, both generic and HW or
+em-odp is an implementation of the Event Machine (EM) framework on top of
+Open Data Plane (ODP). Many ODP implementations exist, both generic and HW or
 SoC optimized, and all should be suitable for em-odp to utilize and run upon.
 For development, e.g. odp for linux-generic could be most suitable, while a SoC
 optimized version would provide the best performance on a specific target.
 em-odp provides the EM API for the applications while ODP acts as a portability
 layer as well as providing APIs and services outside the scope of EM, e.g.
-pkt-io or crypto APIs.
+odp pkt-io or crypto APIs.
 
 ===============================================================================
 Compilation
 ===============================================================================
 First clone the ODP code (here using the ODP linux-generic version):
 > git clone https://github.com/OpenDataPlane/odp.git
-Go to odp folder, create a build folder (optional) and configure,
+Go to the odp folder, create a build folder (optional) and configure,
 compile and install odp (optionally with a user specified installation folder):
 > ./bootstrap
 > mkdir build && cd build
@@ -51,9 +51,9 @@ compile and install odp (optionally with a user specified installation folder):
 If testing for performance, also give the --disable-abi-compat option to enable
 more inlining of code. Try also --disable-shared if a static lib is OK for you.
 (> ../configure --prefix=<odp install path> --disable-abi-compat \
-   [--disable-shared)
-Use the options -]-enable-check-level=3 --enable-esv to help catching bugs during
-development.
+      --disable-shared ...)
+Enabling Link Time Optimization (LTO) for EM, ODP and the application might
+give further performance benefits (--enable-lto).
 See further configure options: ../configure --help
 > make && make install
 
@@ -68,6 +68,11 @@ em-odp with different odp installations or configurations.
 > ../configure --prefix=<em-odp install path> \
     --with-odp-path=<odp install path> [--with-odp-lib=libodp-linux] \
     [--enable-esv --enable-check-level=3] ...
+Use the options --enable-check-level=3 --enable-esv to help catch bugs
+during development.
+Try --disable-shared also for EM if a static lib is OK for you.
+Enabling Link Time Optimization for EM, ODP and the application might give
+further performance benefits (--enable-lto).
 See further configure options: ../configure --help
 > make && make install
 
@@ -91,7 +96,7 @@ ODP debug configuration:
 > ../configure --prefix=<odp debug install path> CFLAGS='-O0 -g3' ...
 EM-ODP debug configuration:
 > ../configure --prefix=<em-odp debug install path> \
-  --with-odp-path=<o[dp install path> CFLAGS='-O0 -g3' --enable-check-level=3...
+  --with-odp-path=<odp install path> CFLAGS='-O0 -g3' --enable-check-level=3...
 
 ===============================================================================
 Packet-I/O (ODP-linux-generic + socket, dpdk or netmap based io)

@@ -60,9 +60,23 @@ shared_reserve(const char *name, size_t size)
 {
 	env_shm_buf_t *env_shm_buf;
 	odp_shm_t shm;
+	uint32_t flags = 0;
+
+#if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
+	flags |= ODP_SHM_SINGLE_VA;
+#else
+	odp_shm_capability_t shm_capa;
+	int ret = odp_shm_capability(&shm_capa);
+
+	if (unlikely(ret))
+		return NULL;
+
+	if (shm_capa.flags & ODP_SHM_SINGLE_VA)
+		flags |= ODP_SHM_SINGLE_VA;
+#endif
 
 	shm = odp_shm_reserve(name, offsetof(env_shm_buf_t, data) + size,
-			      ODP_CACHE_LINE_SIZE, ODP_SHM_SINGLE_VA);
+			      ODP_CACHE_LINE_SIZE, flags);
 
 	if (unlikely(shm == ODP_SHM_INVALID))
 		return NULL;

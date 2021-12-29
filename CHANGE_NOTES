@@ -30,18 +30,64 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 CHANGE NOTES - Event Machine (EM) on ODP (em-odp)
 ===============================================================================
 
-The version numbering scheme reflects the used EM API version:
-  a.b.c(-d)
-      a.b = OpenEM API version supported
-       .c = implementation number supporting OpenEM API version a.b
-       -d = fix number, added if needed
-  So this means that e.g. version 2.4.1-1 stands for
-      a.b = 2.4: supports OpenEM API v2.4
-       .c =  .1: second implementation supporting API 2.4 (starts at .0)
-       -d =  -1: first bugfix for 2.4.1
+The EM version numbering scheme reflects the used EM API version:
+maj.min.impl(-fix)
+    maj.min = EM API version supported
+              maj = major API version number, reserved for big changes
+             .min = minor API version, incremented when the API changes
+      .impl = Implementation number supporting EM API version maj.min
+              Updated for implementations with no API changes, starts at .0
+       -fix = Fix number, added for bugfixes on a certain implementation
+              version maj.min.impl (-0 is not added, first fix is -1)
+Examples:
+ 1) EM version 2.7.0
+    maj.min = 2.7: supports EM API v2.7
+      .impl =  .0: first implementation supporting API 2.7 (starts at .0)
+       -fix = n/a, no fix
+ 2) EM version 2.7.1-3
+    maj.min = 2.7: supports EM API v2.7
+      .impl =  .1: second implementation supporting API 2.7 (starts at .0)
+       -fix =  -3: third bugfix for 2.7.1
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v2.7.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.7 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * New APIs for Version, Event User Area, Event User Area ID *
+
+- EM config file options - config/em-odp.conf:
+ - Config file version number bumped up to "0.0.10"
+ - Change the default Queue priority mode:
+   queue.priority.map_mode = 1
+     1: map according to ODP runtime number of priorities
+        (linear fit to full range of ODP priorities available)
+ - The Event User Area default size can be set via the 'user_area_size' option:
+   config/em-odp.conf:
+     pool: {
+        ...
+        # Default event user area size in bytes for all events from all pools.
+        #
+        # This is a global setting that can be overridden per pool using
+        # 'em_pool_cfg_t::user_area{}' with em_pool_create().
+        #
+        user_area_size = 0
+        ...
+     }
+
+- Tested against
+  odp-linux - https://github.com/OpenDataPlane/odp
+    Commit: 795d576fb46db723d0b5e11a20111bab574a5d0a [795d576]
+    Date: Tuesday, 21 December 2021 11:42.06
+    Commit Date: Monday, 27 December 2021 14:47.34
+    linux-gen: sched: update random data table
+  odp-dpdk - https://github.com/OpenDataPlane/odp-dpdk
+    Commit: c3789c8e6ec34faee0b59080c1ab187cff1dc356 [c3789c8]
+    Date: Friday, 17 December 2021 14:00.35
+    Merge ODP v1.33.0.0
 
 --------------------------------------------------------------------------------
 Event Machine (EM) on ODP v2.6.0

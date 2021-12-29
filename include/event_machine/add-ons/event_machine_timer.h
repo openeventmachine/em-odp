@@ -437,6 +437,10 @@ em_timer_tick_t em_timer_current_tick(em_timer_t tmr);
  * Create a new timeout. Allocates the necessary internal resources from the
  * given timer and prepares for em_tmo_set_abs/rel/periodic().
  *
+ * Scheduled queues are always supported. LOCAL or OUTPUT queues can not be
+ * used as timeout targets. Support for unscheduled queues is implementation
+ * specific.
+ *
  * Flags are used to select functionality:
  *   - EM_TMO_FLAG_ONESHOT creates a one-shot timeout and
  *   - EM_TMO_FLAG_PERIODIC creates a periodic timeout.

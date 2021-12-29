@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,8 +37,7 @@
 #include <em_include.h>
 #include <event_machine/platform/event_machine_odp_ext.h>
 
-odp_queue_t
-em_odp_queue_odp(const em_queue_t queue)
+odp_queue_t em_odp_queue_odp(em_queue_t queue)
 {
 	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
@@ -51,8 +50,7 @@ em_odp_queue_odp(const em_queue_t queue)
 	return queue_elem->odp_queue;
 }
 
-em_queue_t
-em_odp_queue_em(const odp_queue_t queue)
+em_queue_t em_odp_queue_em(odp_queue_t queue)
 {
 	const queue_elem_t *queue_elem = odp_queue_context(queue);
 
@@ -62,21 +60,18 @@ em_odp_queue_em(const odp_queue_t queue)
 	return queue_elem->queue;
 }
 
-uint32_t
-em_odp_event_hdr_size(void)
+uint32_t em_odp_event_hdr_size(void)
 {
 	return sizeof(event_hdr_t);
 }
 
-odp_event_t
-em_odp_event2odp(em_event_t event)
+odp_event_t em_odp_event2odp(em_event_t event)
 {
 	return event_em2odp(event);
 }
 
-void
-em_odp_events2odp(const em_event_t events[], odp_event_t odp_events[/*out*/],
-		  const int num)
+void em_odp_events2odp(const em_event_t events[/*num*/],
+		       odp_event_t odp_events[/*out:num*/], int num)
 {
 	if (unlikely(num <= 0))
 		return;
@@ -91,9 +86,8 @@ em_event_t em_odp_event2em(odp_event_t odp_event)
 	return event;
 }
 
-void
-em_odp_events2em(const odp_event_t odp_events[], em_event_t events[/*out*/],
-		 const int num)
+void em_odp_events2em(const odp_event_t odp_events[/*num*/],
+		      em_event_t events[/*out:num*/], int num)
 {
 	if (unlikely(num <= 0))
 		return;
@@ -137,8 +131,7 @@ em_pool_t em_odp_pool2em(odp_pool_t odp_pool)
 	return pool_odp2em(odp_pool);
 }
 
-int pkt_enqueue(const odp_packet_t pkt_tbl[], const int num,
-		const em_queue_t queue)
+int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue)
 {
 	if (unlikely(!pkt_tbl || num <= 0))
 		return 0;

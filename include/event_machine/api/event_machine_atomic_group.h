@@ -266,9 +266,9 @@ em_atomic_group_get_next(void);
  *	}
  * @endcode
  *
- * @param[out] num     Pointer to an unsigned int to store the amount of queues
- *                     into.
- * @param queue_group  Atomic group handle
+ * @param[out] num      Pointer to unsigned int to store the amount of queues
+ *                      into.
+ * @param atomic_group  Atomic group handle
  *
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist or the
  *         atomic group is invalid.

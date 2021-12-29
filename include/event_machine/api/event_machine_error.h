@@ -98,14 +98,17 @@ typedef em_status_t (*em_error_handler_t)(em_eo_t eo, em_status_t error,
 					  em_escope_t escope, va_list args);
 
 /**
- * Register the global error handler.
+ * Register a global error handler.
  *
- * The global error handler is called on errors (or em_error() calls)
- * outside of any EO context or if there's no EO specific error
- * handler registered. Note, the function will override any previously
- * registered global error handler.
+ * The global error handler is called on EM errors or by em_error() calls,
+ * except when running in an EO context with an EO specific error handler
+ * registered (in which case the EO specific error handler takes precedence).
+ * Note, the provided function will override any previously registered
+ * global error handler.
+ * The EM default global error handler is used when no user provided global
+ * error handler is registered.
  *
- * @param handler       Error handler.
+ * @param handler  Error handler.
  *
  * @return EM_OK if successful.
  *
@@ -115,9 +118,10 @@ typedef em_status_t (*em_error_handler_t)(em_eo_t eo, em_status_t error,
 em_status_t em_register_error_handler(em_error_handler_t handler);
 
 /**
- * Unregister the global error handler.
+ * Unregister a global error handler.
  *
- * Removes previously registered global error handler.
+ * Unregisters any previously registered global error handler and
+ * restores the EM default global error handler into use.
  *
  * @return EM_OK if successful.
  *

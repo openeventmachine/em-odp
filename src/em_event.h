@@ -41,8 +41,10 @@
 extern "C" {
 #endif
 
+#ifndef __clang__
 COMPILE_TIME_ASSERT((uintptr_t)EM_EVENT_UNDEF == (uintptr_t)ODP_EVENT_INVALID,
 		    EM_EVENT_NOT_EQUAL_TO_ODP_EVENT);
+#endif
 
 em_status_t event_init(void);
 void print_event_info(void);
@@ -138,6 +140,7 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
 	 * ODP pkt from outside of EM - not allocated by EM & needs init
 	 */
 	odp_packet_user_ptr_set(odp_pkt, PKT_USERPTR_MAGIC_NBR);
+	ev_hdr->user_area.all = 0; /* uarea fields init when used */
 	ev_hdr->event_type = EM_EVENT_TYPE_PACKET;
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 
@@ -443,6 +446,11 @@ event_alloc_buf(const mpool_elem_t *const pool_elem,
 	odp_event_t odp_event = odp_buffer_to_event(odp_buf);
 	em_event_t event = event_odp2em(odp_event);
 
+	ev_hdr->user_area.all = 0;
+	ev_hdr->user_area.req_size = pool_elem->user_area.req_size;
+	ev_hdr->user_area.pad_size = pool_elem->user_area.pad_size;
+	ev_hdr->user_area.isinit = 1;
+
 	ev_hdr->event = event;  /* store this event handle */
 	/* For optimization, no initialization for feature variables */
 	ev_hdr->event_size = size; /* store requested size */
@@ -519,6 +527,12 @@ event_alloc_buf_multi(em_event_t events[/*out*/], const int num,
 			/* For optimization, no init for feature vars */
 			if (!esv_ena)
 				ev_hdrs[i]->event = events[i];
+
+			ev_hdrs[i]->user_area.all = 0;
+			ev_hdrs[i]->user_area.req_size = pool_elem->user_area.req_size;
+			ev_hdrs[i]->user_area.pad_size = pool_elem->user_area.pad_size;
+			ev_hdrs[i]->user_area.isinit = 1;
+
 			ev_hdrs[i]->event_size = size;
 			ev_hdrs[i]->align_offset = pool_elem->align_offset;
 			ev_hdrs[i]->event_type = type;
@@ -618,6 +632,12 @@ event_alloc_pkt(const mpool_elem_t *pool_elem,
 
 	if (unlikely(ev_hdr == NULL))
 		goto err_pktalloc;
+
+	ev_hdr->user_area.all = 0;
+	ev_hdr->user_area.req_size = pool_elem->user_area.req_size;
+	ev_hdr->user_area.pad_size = pool_elem->user_area.pad_size;
+	ev_hdr->user_area.isinit = 1;
+
 	ev_hdr->event = event;  /* store this event handle */
 	ev_hdr->event_size = size; /* store requested size */
 	/* ev_hdr->align_offset = needed by odp bufs only */
@@ -762,6 +782,12 @@ event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
 			/* For optimization, no init for feature vars */
 			if (!esv_ena)
 				ev_hdrs[i]->event = events[i];
+
+			ev_hdrs[i]->user_area.all = 0;
+			ev_hdrs[i]->user_area.req_size = pool_elem->user_area.req_size;
+			ev_hdrs[i]->user_area.pad_size = pool_elem->user_area.pad_size;
+			ev_hdrs[i]->user_area.isinit = 1;
+
 			ev_hdrs[i]->event_size = size;
 			/* ev_hdr->align_offset = needed by odp bufs only */
 			ev_hdrs[i]->event_type = type;
@@ -1156,9 +1182,13 @@ event_pointer(em_event_t event)
 	} else if (odp_etype == ODP_EVENT_BUFFER) {
 		odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
 		const event_hdr_t *ev_hdr = odp_buffer_addr(odp_buf);
+		size_t uarea_pad_sz = 0;
+
+		if (ev_hdr->user_area.isinit)
+			uarea_pad_sz = ev_hdr->user_area.pad_size;
 
 		ev_ptr = (void *)((uintptr_t)ev_hdr + sizeof(event_hdr_t)
-				  - ev_hdr->align_offset);
+				  + uarea_pad_sz - ev_hdr->align_offset);
 	}
 
 	return ev_ptr; /* NULL for unrecognized odp_etype */

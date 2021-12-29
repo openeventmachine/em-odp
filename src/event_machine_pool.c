@@ -73,15 +73,15 @@ em_pool_t
 em_pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
 {
 	em_pool_t pool_created;
+	const char *err_str = "";
 
 	/* Verify config */
-	int err = invalid_pool_cfg(pool_cfg);
+	int err = invalid_pool_cfg(pool_cfg, &err_str);
 
 	if (unlikely(err)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_CREATE,
-			       "Pool create: invalid pool-config:%d\n"
-			       "Use em_pool_cfg_init() before pool-create",
-			       err);
+			       "Pool create: invalid pool-config:%d:\n"
+			       "%s", err, err_str);
 		return EM_POOL_UNDEF;
 	}
 
@@ -221,6 +221,7 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 	pool_info->em_pool = pool_elem->em_pool;
 	pool_info->event_type = pool_elem->event_type;
 	pool_info->align_offset = pool_elem->align_offset;
+	pool_info->user_area_size = pool_elem->user_area.req_size;
 	pool_info->num_subpools = pool_elem->num_subpools;
 
 	for (int i = 0; i < pool_elem->num_subpools; i++) {

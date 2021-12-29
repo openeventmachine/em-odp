@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -40,10 +40,10 @@
  * @{
  *
  * All application processing is driven by events in the Event Machine. An event
- * describes a piece of work. The structure of an event is implementation and
- * event type specific: it may be a directly accessible buffer of memory, a
- * descriptor containing a list of buffer pointers, a descriptor of a packet
- * buffer etc.
+ * describes a piece of work or data to be processed. The structure of an event
+ * is implementation and event type specific: it may be a directly accessible
+ * buffer of memory, a descriptor containing a list of buffer pointers,
+ * a descriptor of a packet buffer etc.
  *
  * Applications use the event type to interpret the event structure.
  *
@@ -56,6 +56,24 @@
  * Since em_event_t may not carry a direct pointer value to the event structure,
  * em_event_pointer() must be used to translate an event to an event structure
  * pointer (for maintaining portability).
+ *
+ * Additionally, an event may contain a user area separate from the event
+ * payload. The size of the event user area is set when creating the event pool
+ * from which the event is allocated. The user area is a fixed size (per pool)
+ * data area into which event related state data can be stored without having
+ * to access and change the payload. Note that the size of the event user area
+ * can be zero(0), depending on event pool configuration.
+ * Note that the user area content is not initialized by EM, neither em_alloc()
+ * nor em_free() will touch it and thus it might contain old user data set the
+ * last time the area was used during a previous allocation of the same event.
+ * Since the user area is not part of the event payload, it will not be
+ * transmitted as part of a packet etc.
+ * A user area ID can further be used to identify the user area contents.
+ * The event user area ID is stored outside of the user area itself and is thus
+ * always available, even if the size of the user area data is set to zero(0).
+ * See em_pool_create(), em_event_uarea_get(), em_event_uarea_id_get/set() and
+ * em_event_uarea_info() for more information on the event user area and its
+ * associated ID.
  *
  * em_event_t is defined in event_machine_types.h
  *
@@ -77,8 +95,8 @@ extern "C" {
  * to a memory buffer or a HW specific descriptor, i.e. the event structure is
  * system specific.
  *
- * Use em_event_pointer() to convert an event (handle) to a pointer to an event
- * structure.
+ * Use em_event_pointer() to convert an event (handle) to a pointer to the
+ * event payload. EM does not initialize the payload data.
  *
  * EM_EVENT_TYPE_SW with minor type '0' is reserved for direct portability -
  * it is always guaranteed to produce an event with contiguous payload that can
@@ -535,6 +553,168 @@ void em_event_unmark_free_multi(const em_event_t events[], int num);
  * @see em_alloc(), em_free()
  */
 em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/);
+
+/**
+ * @brief Get a pointer to the event user area, optionally along with its size.
+ *
+ * The event user area is a fixed sized area located within the event metadata
+ * (i.e. outside of the event payload) that can be used to store application
+ * specific event related data without the need to adjust the payload.
+ * The event user area is configured during EM event pool creation and thus the
+ * size of the user area is set per pool.
+ *
+ * Note that the user area content is not initialized by EM, neither em_alloc()
+ * nor em_free() will touch it and thus it might contain old user data set the
+ * last time the area was used during a previous allocation of the same event.
+ * Since the user area is not part of the event payload, it will not be
+ * transmitted as part of a packet etc.
+ *
+ * @param       event  Event handle to get the user area of
+ * @param[out]  size   Optional output arg into which the user area size is
+ *                     stored. Use 'size=NULL' if no size information is needed.
+ *
+ * @return a pointer to the event user area
+ * @retval NULL on error or if the event contains no user area
+ *
+ * @see em_pool_create() for pool specific configuration and
+ *      the EM runtime config file em-odp.conf for the default value:
+ *      'pool.user_area_size'.
+ * @see em_event_uarea_info() if both user area ptr and ID is needed
+ */
+void *em_event_uarea_get(em_event_t event, size_t *size/*out*/);
+
+/**
+ * @brief Get the event user area ID along with information if it has been set
+ *
+ * The event user area can be associated with an optional ID that e.g. can be
+ * used to identify the contents of the actual user area data. The ID is stored
+ * outside of the actual user area data and is available for use even if the
+ * user area size has been set to zero(0) for the pool the event was allocated
+ * from.
+ *
+ * This function is used to determine whether the user area ID has been set
+ * earlier and to retrieve the ID in the case it has been set.
+ * EM will initialize 'ID isset = false' when allocating a new event (indicating
+ * that the ID is not set). Use em_event_uarea_id_set() to set the ID.
+ *
+ * @param       event  Event handle to get the user area ID and "set"-status of
+ * @param[out]  isset  Optional output arg: has the ID been set previously?
+ *                     At least one of 'isset' and 'id' must be given (or both).
+ * @param[out]  id     Optional output arg into which the user area ID is
+ *                     stored if it has been set before. The output arg 'isset'
+ *                     should be used to determine whether 'id' has been set.
+ *                     Note: 'id' will not be touched if the ID has not been set
+ *                     earlier (i.e. when 'isset' is 'false').
+ *                     At least one of 'isset' and 'id' must be given (or both).
+ *
+ * @return EM_OK if successful
+ *
+ * @see em_event_uarea_id_set(), em_event_uarea_get()
+ * @see em_event_uarea_info() if both user area ptr and ID is needed
+ */
+em_status_t em_event_uarea_id_get(em_event_t event, bool *isset /*out*/,
+				  uint16_t *id /*out*/);
+
+/**
+ * @brief Set the event user area ID
+ *
+ * The event user area can be associated with an optional ID that e.g. can be
+ * used to identify the contents of the actual user area data. The ID is stored
+ * outside of the actual user area data and is available for use even if the
+ * user area size has been set to 0 for the pool the event was allocated from.
+ *
+ * This function is used to set the event user area ID for the given event.
+ * The 'set' operation overwrites any ID stored earlier.
+ * Use em_event_uarea_id_get() to check whether an ID has been set earlier and
+ * to retrieve the ID.
+ *
+ * @param event  Event handle for which to set the user area ID
+ * @param id     The user area ID to set
+ *
+ * @return EM_OK if successful
+ *
+ * @see em_event_uarea_id_get(), em_event_uarea_get(), em_event_uarea_info()
+ */
+em_status_t em_event_uarea_id_set(em_event_t event, uint16_t id);
+
+/**
+ * @brief Event user area information filled by em_event_uarea_info()
+ *
+ * Output structure for obtaining information about an event's user area.
+ * Information related to the user area will be filled into this struct by
+ * the em_event_uarea_info() API function.
+ *
+ * A user area is only present if the EM pool the event was allocated from
+ * was created with user area size > 0, see em_pool_cfg_t and em_pool_create().
+ * The user area ID can always be used (set/get), even when the size of the
+ * user area is zero(0).
+ *
+ * @see em_event_uarea_info(), em_event_uarea_id_set()
+ */
+typedef struct {
+	/** Pointer to the event user area, NULL if event has no user area */
+	void *uarea;
+	/** Size of the event user area, zero(0) if event has no user area */
+	size_t size;
+
+	/** Event user area ID (ID can be set/get even when no uarea present) */
+	struct {
+		/** Boolean: has the ID been set previously? true/false */
+		bool isset;
+		/** Value of the user area ID, if (and only if) set before.
+		 *  Only inspect '.id.value' when '.id.isset=true' indicating
+		 *  that ID has been set earlier by em_event_uarea_id_set().
+		 */
+		uint16_t value;
+	} id;
+} em_event_uarea_info_t;
+
+/**
+ * @brief Get the event user area information for a given event.
+ *
+ * Obtain information about the event user area for a certain given event.
+ * Information containing the user area pointer, size, as well as the ID is
+ * output via the 'uarea_info' struct.
+ * This API function combines the functionality of em_event_uarea_get() and
+ * em_event_uarea_id_get() for use cases where both the user area pointer as
+ * well as the ID is needed. Calling one API function instead of two might be
+ * faster due to a fewer checks and internal conversions.
+ *
+ * The event user area is a fixed sized area located within the event metadata
+ * (i.e. outside of the event payload) that can be used to store application
+ * specific event related data without the need to adjust the payload.
+ * The event user area is configured during EM event pool creation and thus the
+ * size of the user area is set per pool.
+ *
+ * Note that the user area content is not initialized by EM, neither em_alloc()
+ * nor em_free() will touch it and thus it might contain old user data set the
+ * last time the area was used during a previous allocation of the same event.
+ * Since the user area is not part of the event payload, it will not be
+ * transmitted as part of a packet etc.
+ *
+ * The event user area can be associated with an optional ID that can be used to
+ * identify the contents of the actual user area data. The ID is stored
+ * outside of the actual user area data and is available for use even if the
+ * user area size has been set to zero(0) for the pool the event was allocated
+ * from. EM will initialize 'uarea_info.id.isset = false' when allocating
+ * a new event (indicating that the ID is not set).
+ *
+ * @param       event       Event handle to get the user area information of.
+ * @param[out]  uarea_info  Output struct into which the user area information
+ *                          is stored.
+ *
+ * @return EM status code incidating success or failure of the operation.
+ * @retval EM_OK  Operation successful.
+ * @retval Other  Operation FAILED and no valid user area info could
+ *                be obtained, 'uarea_info' is all NULL/zero(0) in this case.
+ *
+ * @see em_pool_create() for pool specific configuration and
+ *      the EM runtime config file em-odp.conf for the default value:
+ *      'pool.user_area_size'.
+ * @see em_event_uarea_get(), em_event_uarea_id_get()
+ */
+em_status_t em_event_uarea_info(em_event_t event,
+				em_event_uarea_info_t *uarea_info /*out*/);
 
 /**
  * @}

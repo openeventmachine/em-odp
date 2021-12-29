@@ -2,51 +2,66 @@ AC_PREREQ([2.69])
 ############################
 # Version
 ############################
-m4_define([em_api_major_version], [2])
-m4_define([em_api_minor_version], [6])
-m4_define([em_api_implementation_version], [0])
-m4_define([em_api_implementation_fix], [0])
+m4_define([em_version_api_major], [2])
+m4_define([em_version_api_minor], [7])
+m4_define([em_version_implementation], [0])
+m4_define([em_version_fix], [0])
 
-m4_define([em_api_version], [em_api_major_version.em_api_minor_version])
-m4_define([em_version], [m4_if(m4_eval(em_api_implementation_fix), [0],
-	  [em_api_major_version.em_api_minor_version.em_api_implementation_version],
-	  [em_api_major_version.em_api_minor_version.\
-em_api_implementation_version-em_api_implementation_fix])])
+m4_define([em_version_api], [em_version_api_major.em_version_api_minor])
+m4_define([em_version], [m4_if(m4_eval(em_version_fix), [0],
+	  [em_version_api_major.em_version_api_minor.em_version_implementation],
+	  [em_version_api_major.em_version_api_minor.em_version_implementation-em_version_fix])])
 
-m4_define([em_lib_version],
-	  m4_join([], em_api_major_version, em_api_minor_version))
+m4_define([em_version_lib],
+	  m4_join([], em_version_api_major, em_version_api_minor))
 
-m4_if(em_api_implementation_fix, [0],
-      [m4_append([em_lib_version],
-		 m4_combine([], [[]], [:], em_api_implementation_version, [0]))],
-      [m4_append([em_lib_version],
-		 m4_combine([], [[]], [:], em_api_implementation_version,
-		 em_api_implementation_fix))])
+m4_if(em_version_fix, [0],
+      [m4_append([em_version_lib],
+		 m4_combine([], [[]], [:], em_version_implementation, [0]))],
+      [m4_append([em_version_lib],
+		 m4_combine([], [[]], [:], em_version_implementation,
+		 em_version_fix))])
 
-m4_define([em_pkgconfig_version],
-	  m4_join([], em_api_major_version, em_api_minor_version))
+m4_define([em_version_pkgconfig],
+	  m4_join([], em_version_api_major, em_version_api_minor))
 
-m4_if(em_api_implementation_fix, [0],
-      [m4_append([em_pkgconfig_version],
-		 m4_combine([], [[]], [.], em_api_implementation_version, [0]))],
-      [m4_append([em_pkgconfig_version],
-		 m4_combine([], [[]], [.], em_api_implementation_version,
-		 em_api_implementation_fix))])
+m4_if(em_version_fix, [0],
+      [m4_append([em_version_pkgconfig],
+		 m4_combine([], [[]], [.], em_version_implementation, [0]))],
+      [m4_append([em_version_pkgconfig],
+		 m4_combine([], [[]], [.], em_version_implementation,
+		 em_version_fix))])
 
+m4_define([em_version_package],
+	  m4_join([.], [em_version_api_major], [em_version_api_minor],
+		  [em_version_implementation],[em_version_fix]))
+
+#AC_INIT([EM-ODP],[em_version_package],[EM at nokia.com])
 AC_INIT([EM-ODP],[em_version],[EM at nokia.com])
 
-EM_API_MAJOR_VERSION=em_api_major_version
-AC_SUBST([EM_API_MAJOR_VERSION])
-EM_API_MINOR_VERSION=em_api_minor_version
-AC_SUBST([EM_API_MINOR_VERSION])
-EM_API_IMPLEMENTATION_VERSION=em_api_implementation_version
-AC_SUBST([EM_API_IMPLEMENTATION_VERSION])
+# EM version numbers
+EM_VERSION_API_MAJOR=em_version_api_major
+AC_SUBST([EM_VERSION_API_MAJOR])
+EM_VERSION_API_MINOR=em_version_api_minor
+AC_SUBST([EM_VERSION_API_MINOR])
+EM_VERSION_IMPLEMENTATION=em_version_implementation
+AC_SUBST([EM_VERSION_IMPLEMENTATION])
+EM_VERSION_FIX=em_version_fix
+AC_SUBST([EM_VERSION_FIX])
 
-EM_API_VERSION=em_api_version
-AC_SUBST([EM_API_VERSION])
-
+# EM version strings
+EM_VERSION_PACKAGE=em_version_package
+AC_SUBST([EM_VERSION_PACKAGE])
+EM_VERSION_API=em_version_api
+AC_SUBST([EM_VERSION_API])
 EM_VERSION=em_version
 AC_SUBST([EM_VERSION])
+
+# EM library and package versions
+EM_VERSION_LIBSO=em_version_lib
+AC_SUBST([EM_VERSION_LIBSO])
+EM_VERSION_PKGCONFIG=em_version_pkgconfig
+AC_SUBST([EM_VERSION_PKGCONFIG])
 
 ##########################################################################
 # Test if user has set CFLAGS. Automake initializes CFLAGS to "-g -O2"
@@ -62,15 +77,6 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
 AC_CONFIG_MACRO_DIR([m4])
 AM_SILENT_RULES([yes])
-
-############################
-# Set em-odp library version
-############################
-EMODP_LIBSO_VERSION=em_lib_version
-AC_SUBST([EMODP_LIBSO_VERSION])
-
-EMODP_PKGCONFIG_VERSION=em_pkgconfig_version
-AC_SUBST([EMODP_PKGCONFIG_VERSION])
 
 # Checks for programs.
 AC_PROG_CXX
@@ -164,7 +170,7 @@ EM_CHECK_CFLAG([-Wundef])
 EM_CHECK_CFLAG([-Wwrite-strings])
 EM_CHECK_CFLAG([-Wno-vla]) # Allow variable-length arrays (vla), for clang.
 
-EM_CFLAGS="$EM_CFLAGS -std=c99"
+EM_CFLAGS="$EM_CFLAGS -std=c11"
 
 # Extra flags for example to suppress certain warning types
 EM_CFLAGS="$EM_CFLAGS $EM_CFLAGS_EXTRA"
@@ -184,6 +190,8 @@ AS_IF([test -d $srcdir/.git],
        date=$(date '+%F %H:%M')
        build_info="$commit $date"],
       [build_info="Unknown"])
+EM_BUILD_INFO="$build_info"
+AC_SUBST(EM_BUILD_INFO)
 
 EM_CFLAGS="$EM_CFLAGS -DEM_BUILD_INFO=\"$build_info\""
 
@@ -302,6 +310,10 @@ AC_CONFIG_FILES([
 	programs/example/test/Makefile
 	programs/packet_io/Makefile
 	programs/performance/Makefile
+	])
+
+AC_CONFIG_FILES([
+	include/event_machine/api/event_machine_version.h
 	])
 
 ##########################################################################
@@ -462,7 +474,7 @@ AS_IF([test "x$enable_doxygen" != "xno"],
       [DX_HTML_FEATURE(ON)
        DX_PDF_FEATURE(OFF)
        DX_PS_FEATURE(OFF)
-       DX_INIT_DOXYGEN($PACKAGE, ${srcdir}/doc/Doxyfile, ${builddir}/doc/event_machine_api)
+       DX_INIT_DOXYGEN($PACKAGE_NAME, ${srcdir}/doc/Doxyfile, ${builddir}/doc/event_machine_api)
        AM_COND_IF([HAVE_DOXYGEN], [AC_CONFIG_FILES([doc/Makefile])])
       ])
 
@@ -482,9 +494,9 @@ AC_OUTPUT
 AC_MSG_RESULT([
 	$PACKAGE $VERSION
 	=================
-	EM API version:		${EM_API_VERSION}
+	EM API version:		${EM_VERSION_API}
 	EM ODP version:		${EM_VERSION}
-	Library version:	${EMODP_LIBSO_VERSION}
+	Library version:	${EM_VERSION_LIBSO}
 
 	host:			${host}
 	ARCH_ABI		${ARCH_ABI}

@@ -87,9 +87,22 @@ em_init(const em_conf_t *conf)
 	/*
 	 * Reserve the EM shared memory once at start-up.
 	 */
+	uint32_t flags = 0;
+
+#if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
+	flags |= ODP_SHM_SINGLE_VA;
+#else
+	odp_shm_capability_t shm_capa;
+
+	ret = odp_shm_capability(&shm_capa);
+	RETURN_ERROR_IF(ret, EM_ERR_OPERATION_FAILED, EM_ESCOPE_INIT,
+			"shm capability error:%d", ret);
+
+	if (shm_capa.flags & ODP_SHM_SINGLE_VA)
+		flags |= ODP_SHM_SINGLE_VA;
+#endif
 	odp_shm_t shm = odp_shm_reserve("em_shm", sizeof(em_shm_t),
-					ODP_CACHE_LINE_SIZE,
-					ODP_SHM_SINGLE_VA);
+					ODP_CACHE_LINE_SIZE, flags);
 
 	RETURN_ERROR_IF(shm == ODP_SHM_INVALID, EM_ERR_ALLOC_FAILED,
 			EM_ESCOPE_INIT, "Shared memory reservation failed!");

@@ -767,7 +767,7 @@ rx_error_check(eo_context_t *const eo_ctx, const em_event_t event,
 		APPL_PRINT("Pkt %s:%" PRIu16 " defQ drop-%d-#%" PRIu64 "\n",
 			   ip_str, port_dst, em_core_id(), drop_cnt++);
 
-		pktio_drop(event);
+		em_free(event);
 		return -1;
 	}
 

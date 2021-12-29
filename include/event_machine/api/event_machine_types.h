@@ -47,6 +47,7 @@ extern "C" {
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 /** EM boolean values. */
 #define EM_TRUE   1 /**< True */
@@ -484,6 +485,10 @@ typedef uint32_t em_escope_t;
 #define EM_ESCOPE_EVENT_MARK_FREE_MULTI           (EM_ESCOPE_API_MASK | 0x0612)
 #define EM_ESCOPE_EVENT_UNMARK_FREE_MULTI         (EM_ESCOPE_API_MASK | 0x0613)
 #define EM_ESCOPE_EVENT_CLONE                     (EM_ESCOPE_API_MASK | 0x0614)
+#define EM_ESCOPE_EVENT_UAREA_GET                 (EM_ESCOPE_API_MASK | 0x0615)
+#define EM_ESCOPE_EVENT_UAREA_ID_GET              (EM_ESCOPE_API_MASK | 0x0616)
+#define EM_ESCOPE_EVENT_UAREA_ID_SET              (EM_ESCOPE_API_MASK | 0x0617)
+#define EM_ESCOPE_EVENT_UAREA_INFO                (EM_ESCOPE_API_MASK | 0x0618)
 
 /* EM API escopes: Queue Group */
 #define EM_ESCOPE_QUEUE_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0701)

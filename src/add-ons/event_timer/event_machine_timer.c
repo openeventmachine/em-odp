@@ -56,6 +56,21 @@
 #define TMR_I2H(x) ((em_timer_t)(uintptr_t)((x) + 1))
 #define TMR_H2I(x) ((int)((uintptr_t)(x) - 1))
 
+static inline int is_queue_valid_type(em_timer_t tmr, const queue_elem_t *q_elem)
+{
+	unsigned int tmridx = (unsigned int)TMR_H2I(tmr);
+
+	/* implementation specific */
+	if (em_shm->timers.timer[tmridx].plain_q_ok && q_elem->type == EM_QUEUE_TYPE_UNSCHEDULED)
+		return 1;
+	/* EM assumes scheduled always supported */
+	return (q_elem->type == EM_QUEUE_TYPE_ATOMIC ||
+		q_elem->type == EM_QUEUE_TYPE_PARALLEL ||
+		q_elem->type == EM_QUEUE_TYPE_PARALLEL_ORDERED) ? 1 : 0;
+
+	/* LOCAL or OUTPUT queues not supported */
+}
+
 static inline int is_timer_valid(em_timer_t tmr)
 {
 	unsigned int i;
@@ -119,6 +134,26 @@ static inline bool check_tmo_flags(em_tmo_flag_t flags)
 					  EM_TMO_FLAG_NOSKIP);
 		if (unlikely(flags & inv_flags))
 			return false;
+	}
+	return true;
+}
+
+static inline bool check_timer_attr(const em_timer_attr_t *tmr_attr)
+{
+	if (unlikely(tmr_attr == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_TIMER_CREATE,
+			       "NULL ptr given");
+		return false;
+	}
+	if (unlikely(tmr_attr->__internal_check != EM_CHECK_INIT_CALLED)) {
+		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_TIMER_CREATE,
+			       "em_timer_attr_t not initialized");
+		return false;
+	}
+	if (unlikely(tmr_attr->resparam.res_ns && tmr_attr->resparam.res_hz)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_CREATE,
+			       "Only res_ns OR res_hz allowed");
+		return false;
 	}
 	return true;
 }
@@ -246,21 +281,8 @@ em_status_t em_timer_res_capability(em_timer_res_param_t *res, em_timer_clksrc_t
 em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 {
 	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(tmr_attr == NULL)) {
-			INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_TIMER_CREATE,
-				       "NULL ptr given");
+		if (check_timer_attr(tmr_attr) == false)
 			return EM_TIMER_UNDEF;
-		}
-		if (unlikely(tmr_attr->__internal_check != EM_CHECK_INIT_CALLED)) {
-			INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_TIMER_CREATE,
-				       "em_timer_attr_t not initialized");
-			return EM_TIMER_UNDEF;
-		}
-		if (unlikely(tmr_attr->resparam.res_ns && tmr_attr->resparam.res_hz)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_CREATE,
-				       "Only res_ns OR res_hz allowed");
-			return EM_TIMER_UNDEF;
-		}
 	}
 
 	odp_timer_pool_param_t odp_tpool_param;
@@ -280,6 +302,22 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 		return EM_TIMER_UNDEF;
 	}
 	odp_tpool_param.clk_src = odp_clksrc;
+
+	/* check queue type support */
+	odp_timer_capability_t capa;
+
+	if (unlikely(odp_timer_capability(odp_clksrc, &capa))) {
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TIMER_CREATE,
+			       "ODP timer capa failed for clk:%d",
+			       tmr_attr->resparam.clk_src);
+		return EM_TIMER_UNDEF;
+	}
+	if (unlikely(!capa.queue_type_sched)) { /* must support scheduled queues */
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TIMER_CREATE,
+			       "ODP does not support scheduled q for clk:%d",
+			       tmr_attr->resparam.clk_src);
+		return EM_TIMER_UNDEF;
+	}
 
 	/* buffer pool for tmos */
 	odp_pool_param_t odp_pool_param;
@@ -344,6 +382,7 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 			      tmo_pool_name, odp_pool_param.buf.num);
 
 		timer->flags = tmr_attr->flags;
+		timer->plain_q_ok = capa.queue_type_plain;
 		odp_timer_pool_start();
 		break;
 	}
@@ -426,6 +465,12 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
 			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_CREATE,
 				       "Tmr:%" PRI_TMR ": inv.Q:%" PRI_QUEUE "",
+				       tmr, queue);
+			return EM_TMO_UNDEF;
+		}
+		if (unlikely(!is_queue_valid_type(tmr, q_elem))) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CREATE,
+				       "Tmr:%" PRI_TMR ": inv.Q (type):%" PRI_QUEUE "",
 				       tmr, queue);
 			return EM_TMO_UNDEF;
 		}

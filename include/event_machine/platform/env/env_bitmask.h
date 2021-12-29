@@ -31,7 +31,7 @@
 /**
  * @file
  * Env bit mask functions - don't include this file directly,
- * instead #include "environment.h"
+ * instead include "environment.h"
  */
 
 #ifndef _ENV_BITMASK_H_

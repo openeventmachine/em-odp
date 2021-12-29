@@ -40,9 +40,6 @@
 
 #include "em_include.h"
 
-#define XSTR(x) #x
-#define STR(x) XSTR(x)
-
 static const char *cpu_arch_name(odp_cpu_arch_t cpu_arch)
 {
 	switch (cpu_arch) {
@@ -312,7 +309,8 @@ void print_em_info(void)
 		 "===========================================================\n"
 		 "EM Info on target: %s\n"
 		 "===========================================================\n"
-		 "EM API version:         v%i.%i, "
+		 "EM API version:         %s\n"
+		 "EM version:             %s, "
 #ifdef EM_64_BIT
 		 "64 bit "
 #else
@@ -320,9 +318,9 @@ void print_em_info(void)
 #endif
 		 "(EM_CHECK_LEVEL:%d, EM_ESV_ENABLE:%d)\n"
 		 "EM build info:          %s\n",
-		 EM_TARGET_STR, EM_API_VERSION_MAJOR, EM_API_VERSION_MINOR,
+		 EM_TARGET_STR, EM_VERSION_API_STR, EM_VERSION_STR,
 		 EM_CHECK_LEVEL, EM_ESV_ENABLE,
-		 STR(EM_BUILD_INFO));
+		 EM_BUILD_INFO_STR);
 
 	print_odp_info();
 	print_cpu_arch_info();

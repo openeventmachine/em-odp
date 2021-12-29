@@ -40,8 +40,6 @@
 extern "C" {
 #endif
 
-#pragma GCC visibility push(default)
-
 #define EVSTATE__UNDEF                         0
 #define EVSTATE__PREALLOC                      1
 #define EVSTATE__ALLOC                         2

@@ -55,7 +55,6 @@ void print_event_info(void)
 {
 	/* for sizeof() only: */
 	event_hdr_t evhdr = {0};
-	queue_elem_t *q_elem = NULL;
 
 	EM_PRINT("\n"
 		 "EM Events\n"
@@ -69,7 +68,7 @@ void print_event_info(void)
 	       "esv.state:\t%3zu B\t%2zu B\n"
 	       "start_node:\t%3zu B\t%2zu B\n"
 	       "q_elem:\t\t%3zu B\t%2zu B\n"
-	       "  <empty>\t ---\t%2zu B\n"
+	       "user_area info:\t%3zu B\t%2zu B\n"
 	       "event:\t\t%3zu B\t%2zu B\n"
 	       "queue:\t\t%3zu B\t%2zu B\n"
 	       "egrp:\t\t%3zu B\t%2zu B\n"
@@ -86,7 +85,7 @@ void print_event_info(void)
 	       offsetof(event_hdr_t, state), sizeof(evhdr.state),
 	       offsetof(event_hdr_t, start_node), sizeof(evhdr.start_node),
 	       offsetof(event_hdr_t, q_elem), sizeof(evhdr.q_elem),
-	       offsetof(event_hdr_t, event) - offsetof(event_hdr_t, q_elem) - sizeof(q_elem),
+	       offsetof(event_hdr_t, user_area), sizeof(evhdr.user_area),
 	       offsetof(event_hdr_t, event), sizeof(evhdr.event),
 	       offsetof(event_hdr_t, queue), sizeof(evhdr.queue),
 	       offsetof(event_hdr_t, egrp), sizeof(evhdr.egrp),

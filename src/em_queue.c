@@ -1361,6 +1361,34 @@ print_queue_info(void)
 		 FIRST_DYN_QUEUE, LAST_DYN_QUEUE);
 }
 
+void
+print_queue_prio_info(void)
+{
+	#define MAXPRIOBUF 127
+	char buf[MAXPRIOBUF + 1];
+	int pos = snprintf(buf, MAXPRIOBUF, "  Current queue priority map: [");
+
+	if (pos > 0 && pos < MAXPRIOBUF) {
+		for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
+			int num = snprintf(buf + pos, MAXPRIOBUF - pos, "%d",
+					   em_shm->queue_prio.map[i]);
+
+			if (num < 0 || num >= (MAXPRIOBUF - pos))
+				break;
+			pos += num;
+
+			if (i < EM_QUEUE_PRIO_NUM - 1) {
+				num = snprintf(buf + pos, MAXPRIOBUF - pos, ",");
+				if (num < 0 || num >= (MAXPRIOBUF - pos))
+					break;
+				pos += num;
+			}
+		}
+	}
+	buf[MAXPRIOBUF] = 0;
+	EM_PRINT("%s]\n", buf);
+}
+
 unsigned int
 queue_count(void)
 {
@@ -1461,13 +1489,8 @@ static int queue_init_prio_map(int minp, int maxp, int nump)
 		return -1;
 	}
 
-	EM_PRINT("  EM uses %d priorities, runtime %d (from %d)\n", EM_QUEUE_PRIO_NUM, nump, minp);
-	EM_PRINT("  =>Priority map: [");
-	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
-		EM_PRINT("%d", em_shm->queue_prio.map[i]);
-		if (i < EM_QUEUE_PRIO_NUM - 1)
-			EM_PRINT(",");
-	}
-	EM_PRINT("]\n");
+	EM_PRINT("  EM uses %d priorities, runtime %d (%d-%d)\n",
+		 EM_QUEUE_PRIO_NUM, nump, minp, nump - minp - 1);
+	print_queue_prio_info();
 	return 0;
 }

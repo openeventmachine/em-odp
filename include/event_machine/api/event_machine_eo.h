@@ -627,8 +627,11 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues);
  * Register an EO specific error handler.
  *
  * The EO specific error handler is called if an error occurs or em_error() is
- * called in the context of the EO. Note, the function will override any
- * previously registered error handler.
+ * called in the context of the running EO.
+ * Note, the provided function will override any previously registered
+ * error handler for the EO in question.
+ * The global error handler is called if no EO specific error handler is
+ * registered.
  *
  * @param eo            EO handle
  * @param handler       New error handler
@@ -643,7 +646,8 @@ em_eo_register_error_handler(em_eo_t eo, em_error_handler_t handler);
 /**
  * Unregister an EO specific error handler.
  *
- * Removes a previously registered EO specific error handler.
+ * Removes a previously registered EO specific error handler and restores the
+ * global error handler into use for the EO.
  *
  * @param eo            EO handle
  *

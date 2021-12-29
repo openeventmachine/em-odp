@@ -1,0 +1,263 @@
+/*
+ *   Copyright (c) 2021, Nokia Solutions and Networks
+ *   All rights reserved.
+ *
+ *   Redistribution and use in source and binary forms, with or without
+ *   modification, are permitted provided that the following conditions
+ *   are met:
+ *
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of the copyright holder nor the names of its
+ *       contributors may be used to endorse or promote products derived
+ *       from this software without specific prior written permission.
+ *
+ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#ifndef EVENT_MACHINE_VERSION_H
+#define EVENT_MACHINE_VERSION_H
+
+#pragma GCC visibility push(default)
+
+/**
+ * @file
+ * Event Machine version information
+ */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @defgroup em_version Version
+ * EM version information for the API and implementation
+ *
+ * The EM version numbering scheme reflects the used EM API version:
+ * maj.min.impl(-fix)
+ *     maj.min = EM API version supported
+ *               maj = major API version number, reserved for big changes
+ *              .min = minor API version, incremented when the API changes
+ *       .impl = Implementation number supporting EM API version maj.min
+ *               Updated for implementations with no API changes, starts at .0
+ *        -fix = Fix number, added for bugfixes on a certain implementation
+ *               version maj.min.impl (-0 is not added, first fix is -1)
+ * Examples:
+ *  1) EM version 2.7.0
+ *     maj.min = 2.7: supports EM API v2.7
+ *       .impl =  .0: first implementation supporting API 2.7 (starts at .0)
+ *        -fix = n/a, no fix
+ *  2) EM version 2.7.1-3
+ *     maj.min = 2.7: supports EM API v2.7
+ *       .impl =  .1: second implementation supporting API 2.7 (starts at .0)
+ *        -fix =  -3: third bugfix for 2.7.1
+ *
+ * Compile time version information can be obtained via the EM_VERSION_...
+ * macros and defines.
+ * The EM API version is identified by EM_VERSION_API_... preprocessor defines
+ * while the EM implementation version is identified by using EM_VERSION_...
+ *
+ * In addition to these compile time defines, EM API calls can be used to
+ * identify the implementation and API version at run time.
+ * @{
+ */
+
+/**
+ *  Event Machine for Open Data Plane
+ */
+#define EM_ODP 1
+
+/**
+ * EM target string: EM-on-ODP
+ */
+#define EM_TARGET_STR "em-odp"
+
+/**
+ * EM build string (obtained from git)
+ */
+#define EM_BUILD_INFO_STR "@EM_BUILD_INFO@"
+
+/**
+ * Major EM API version number.
+ *
+ * @verbatim MAJ.min.impl-fix @endverbatim
+ * (e.g. 2.7.1-3, major API version is 2)
+ */
+#define EM_VERSION_API_MAJOR  @EM_VERSION_API_MAJOR@
+/* Backwards compatible naming */
+#define EM_API_VERSION_MAJOR  EM_VERSION_API_MAJOR
+
+/**
+ * Minor EM API version number.
+ *
+ * @verbatim maj.MIN.impl-fix @endverbatim
+ * maj.MIN.impl-fix (e.g. 2.7.1-3: minor API version is 7)
+ */
+#define EM_VERSION_API_MINOR  @EM_VERSION_API_MINOR@
+/* Backwards compatible naming */
+#define EM_API_VERSION_MINOR  EM_VERSION_API_MINOR
+
+/**
+ * Implementation version of the API
+ *
+ * @verbatim maj.min.IMPL-fix @endverbatim
+ * (e.g. 2.7.1-3: implementation version of API 2.7 is 1)
+ */
+#define EM_VERSION_IMPLEMENTATION  @EM_VERSION_IMPLEMENTATION@
+
+/**
+ * Fix version of the implementation
+ *
+ * @verbatim maj.min.impl-FIX @endverbatim
+ * (e.g. 2.7.1-3: fix version of implementation 2.7.1 is 3)
+ */
+#define EM_VERSION_FIX  @EM_VERSION_FIX@
+
+/**
+ * EM API version string "maj.min"
+ */
+#define EM_VERSION_API_STR "@EM_VERSION_API@"
+
+/**
+ * EM version string "maj.min.impl(-fix)"
+ */
+#define EM_VERSION_STR "@EM_VERSION@"
+
+/**
+ * EM API version number macro
+ *
+ * Macro to build a version number for API version number comparisons
+ *
+ * @code {.c}
+ * #if EM_VERSION_API > EM_VERSION_API_NUM(2, 7)
+ *         ...code...
+ * #endif
+ * @endcode
+ *
+ * @see EM_VERSION_NUM() for full version number macro
+ */
+#define EM_VERSION_API_NUM(api_maj, api_min)  (((api_maj) & 0xffU) << 24 | \
+					       ((api_min) & 0xffU) << 16)
+/**
+ * EM full version number macro
+ *
+ * Macro to build a version number for version number comparisons
+ *
+ * @code {.c}
+ * #if EM_VERSION > EM_VERSION_NUM(2, 7, 1, 3)
+ *         ...code...
+ * #endif
+ * @endcode
+ *
+ * @see EM_VERSION_API_NUM() for API version number macro
+ */
+#define EM_VERSION_NUM(api_maj, api_min, impl, fix) (((api_maj) & 0xffU) << 24 | \
+						     ((api_min) & 0xffU) << 16 | \
+						     ((impl) & 0xffU) << 8     | \
+						     ((fix) & 0xffU))
+/**
+ * EM API version number
+ *
+ * EM API version number for comparisons against the EM_VERSION_API_NUM()
+ * macro output.
+ *
+ * @code {.c}
+ * #if EM_VERSION_API > EM_VERSION_API_NUM(2, 7)
+ *         ...code...
+ * #endif
+ * @endcode
+ */
+#define EM_VERSION_API  EM_VERSION_API_NUM(EM_VERSION_API_MAJOR, \
+					   EM_VERSION_API_MINOR)
+/**
+ * EM full version number
+ *
+ * EM version number for comparisons against the EM_VERSION_NUM()
+ * macro output.
+ *
+ * @code {.c}
+ * #if EM_VERSION > EM_VERSION_NUM(2, 7, 1, 3)
+ *         ...code...
+ * #endif
+ * @endcode
+ */
+#define EM_VERSION  EM_VERSION_NUM(EM_VERSION_API_MAJOR, EM_VERSION_API_MINOR, \
+				   EM_VERSION_IMPLEMENTATION, EM_VERSION_FIX)
+
+/**
+ * EM API version string
+ *
+ * Runtime EM API version string.
+ * Runtime and build-time versions might differ if the EM library has been
+ * updated after the application build.
+ *
+ * The API version string defines the EM API version in this format:
+ * @verbatim maj.min @endverbatim
+ *
+ * The string is null terminated.
+ *
+ * @return Pointer to the API version string
+ */
+const char *em_version_api_str(void);
+
+/**
+ * EM API version number
+ *
+ * Runtime EM API version number.
+ * Runtime and build-time versions might differ if the EM library has been
+ * updated after the application build.
+ *
+ * @return EM API version packed into an unsigned int
+ */
+unsigned int em_version_api_num(void);
+
+/**
+ * EM full version string
+ *
+ * Runtime EM version string.
+ * Runtime and build-time versions might differ if the EM library has been
+ * updated after the application build.
+ *
+ * The version string defines the EM full version in this format:
+ * @verbatim maj.min.impl(-fix) @endverbatim
+ * where -fix is only added for bugfix versions (i.e. -fix > 0)
+ *
+ * The string is null terminated.
+ *
+ * @return Pointer to the version string
+ */
+const char *em_version_str(void);
+
+/**
+ * EM full version number
+ *
+ * Runtime EM version number.
+ * Runtime and build-time versions might differ if the EM library has been
+ * updated after the application build.
+ *
+ * @return EM full version packed into an unsigned int
+ */
+unsigned int em_version_num(void);
+
+/**
+ * @}
+ */
+#ifdef __cplusplus
+}
+#endif
+
+#pragma GCC visibility pop
+#endif /* EVENT_MACHINE_VERSION_H */

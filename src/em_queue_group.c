@@ -547,7 +547,11 @@ send_qgrp_rem_reqs(queue_group_elem_t *qgrp_elem,
  * Called by em_queue_group_modify with flag is_delete=0 and by
  * em_queue_group_delete() with flag is_delete=1
  *
- * @param is_delete  Modify triggered by em_queue_group_delete()? 1=Yes, 0=No
+ * @param qgrp_elem  Queue group element
+ * @param new_mask   New core mask
+ * @param num_notif  Number of entries in notif_tbl (0 for no notification)
+ * @param notif_tbl  Array of notifications to send as the operation completes
+ * @param is_delete  Is this modify triggered by em_queue_group_delete()?
  */
 em_status_t
 queue_group_modify(queue_group_elem_t *const qgrp_elem,
@@ -654,7 +658,9 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
  * Called by em_queue_group_modify_sync with flag is_delete=0 and by
  * em_queue_group_delete_sync() with flag is_delete=1
  *
- * @param is_delete  Modify triggered by em_queue_group_delete()? 1=Yes, 0=No
+ * @param qgrp_elem  Queue group element
+ * @param new_mask   New core mask
+ * @param is_delete  Is this modify triggered by em_queue_group_delete_sync()?
  */
 em_status_t
 queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,

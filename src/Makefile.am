@@ -9,12 +9,13 @@ lib_LTLIBRARIES = $(LIB)/libemodp.la
 AM_CFLAGS += -I$(top_srcdir)/include
 AM_CFLAGS += -I$(top_srcdir)/include/event_machine/add-ons
 AM_CFLAGS += -I$(top_srcdir)/src/misc
+AM_CFLAGS += -I$(top_builddir)/include
 
 AM_CFLAGS += $(ODP_CFLAGS)
 AM_CFLAGS += $(LIBCONFIG_CFLAGS)
 AM_CFLAGS += $(VISIBILITY_CFLAGS) # -fvisibility=hidden set if supported
 
-AM_LDFLAGS += -version-number '$(EMODP_LIBSO_VERSION)'
+AM_LDFLAGS += -version-number '$(EM_VERSION_LIBSO)'
 
 DISTCLEANFILES = $(top_builddir)/include/em_libconfig_config.h
 include/em_libconfig_config.h: $(top_builddir)/$(rel_default_config_file) $(top_builddir)/config.status
@@ -35,7 +36,8 @@ $(top_srcdir)/include/event_machine/api/event_machine_event_group.h \
 $(top_srcdir)/include/event_machine/api/event_machine_queue.h \
 $(top_srcdir)/include/event_machine/api/event_machine_queue_group.h \
 $(top_srcdir)/include/event_machine/api/event_machine_scheduler.h \
-$(top_srcdir)/include/event_machine/api/event_machine_types.h
+$(top_srcdir)/include/event_machine/api/event_machine_types.h \
+$(top_builddir)/include/event_machine/api/event_machine_version.h
 
 emhelperincludedir = $(includedir)/event_machine/helper
 emhelperinclude_HEADERS = \
@@ -168,6 +170,8 @@ em_queue_group.h \
 em_queue_group_types.h \
 	\
 em_sync_api_types.h \
+	\
+em_version.c \
 	\
 env/env_sharedmem.c \
 	\
