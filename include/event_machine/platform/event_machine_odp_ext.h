@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -50,22 +50,20 @@ extern "C" {
 /**
  * Get the associated ODP queue.
  *
- * @param queue          EM queue
+ * @param queue  EM queue
  *
  * @return odp queue if successful, ODP_QUEUE_INVALID on error
  */
-odp_queue_t
-em_odp_queue_odp(const em_queue_t queue);
+odp_queue_t em_odp_queue_odp(em_queue_t queue);
 
 /**
  * Get the associated EM queue.
  *
- * @param queue          ODP queue
+ * @param queue  ODP queue
  *
  * @return em queue if successful, EM_QUEUE_UNDEF on error
  */
-em_queue_t
-em_odp_queue_em(const odp_queue_t queue);
+em_queue_t em_odp_queue_em(odp_queue_t queue);
 
 /**
  * Get EM event header size.
@@ -75,8 +73,7 @@ em_odp_queue_em(const odp_queue_t queue);
  *
  * @return em event header size.
  */
-uint32_t
-em_odp_event_hdr_size(void);
+uint32_t em_odp_event_hdr_size(void);
 
 /**
  * Convert EM event handle to ODP event handle.
@@ -85,8 +82,7 @@ em_odp_event_hdr_size(void);
  *
  * @return ODP event handle.
  */
-odp_event_t
-em_odp_event2odp(em_event_t event);
+odp_event_t em_odp_event2odp(em_event_t event);
 
 /**
  * Convert EM event handles to ODP event handles
@@ -98,21 +94,19 @@ em_odp_event2odp(em_event_t event);
  *                         handles are written. Array must fit 'num' entries.
  * @param      num         Number of entries in 'events[]' and 'odp_events[]'.
  */
-void
-em_odp_events2odp(const em_event_t events[], odp_event_t odp_events[/*out*/],
-		  const int num);
+void em_odp_events2odp(const em_event_t events[/*num*/],
+		       odp_event_t odp_events[/*out:num*/], int num);
 
 /**
  * Convert ODP event handle to EM event handle.
  *
  * The event must have been allocated by EM originally.
  *
- * @param event  ODP-event handle
+ * @param odp_event  ODP-event handle
  *
  * @return EM event handle.
  */
-em_event_t
-em_odp_event2em(odp_event_t odp_event);
+em_event_t em_odp_event2em(odp_event_t odp_event);
 
 /**
  * Convert EM event handles to ODP event handles
@@ -124,9 +118,8 @@ em_odp_event2em(odp_event_t odp_event);
  *                         handles are written. Array must fit 'num' entries.
  * @param      num         Number of entries in 'odp_events[]' and 'events[]'.
  */
-void
-em_odp_events2em(const odp_event_t odp_events[], em_event_t events[/*out*/],
-		 const int num);
+void em_odp_events2em(const odp_event_t odp_events[/*num*/],
+		      em_event_t events[/*out:num*/], int num);
 
 /**
  * @brief Get the ODP pools used as subpools in a given EM event pool.
@@ -176,16 +169,18 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num);
 em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
 
 /**
- * Enqueue packets into EM (from outside of EM, not allocated by em_alloc())
+ * Enqueue external packets into EM (packets are from outside of EM, i.e not
+ * allocated by EM using em_alloc/_multi())
  *
  * @param pkt_tbl  Array of external ODP-packets to enqueue into EM as events.
+ *                 The 'pkt_tbl[]' array must contain 'num' valid ODP packet
+ *                 handles.
  * @param num      The number of packets in the 'pkt_tbl[]' array, must be >0.
  * @param queue    EM queue into which to sen/enqueue the packets as EM-events.
  *
  * @return The number of ODP packets successfully send/enqueued as EM-events
  */
-int pkt_enqueue(const odp_packet_t pkt_tbl[], const int num,
-		const em_queue_t queue);
+int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue);
 
 #ifdef __cplusplus
 }

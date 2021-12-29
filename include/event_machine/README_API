@@ -1,9 +1,84 @@
 -------------------------------------------------------------------------------
-OpenEM API Release Notes
+EM API Release Notes
 -------------------------------------------------------------------------------
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/CHANGE_NOTES for changed and added features.
+
+-------------------------------------------------------------------------------
+API 2.7 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=7)
+-------------------------------------------------------------------------------
+Backwards compatible with EM 2.6 API
+
+1. EM version number APIs:
+   (see include/event_machine/api/event_machine_version.h.in, which is used to
+    create event_machine_version.h during package configuration/build)
+  - Version number macros and define constants that can be used to identify the
+    EM API and implementation versions at build time.
+    Can be used for conditional compilation:
+        #if EM_VERSION > EM_VERSION_NUM(2.7.0.0) ...
+          or
+        #if EM_VERSION_API > EM_VERSION_API_NUM(2.7) ...
+  - Runtime API functions that can be used to check the EM API and
+    implementation numbers at runtime.
+    The build-time and runtime versions numbers may differ e.g. if the
+    application has been compiled against the header files of a certain
+    EM release and later the EM shared library is updated without recompilation
+    of the application.
+      const char *em_version_api_str(void);
+      unsigned int em_version_api_num(void);
+      const char *em_version_str(void);
+      unsigned int em_version_num(void);
+
+2. EM Event User Area:
+   (see include/event_machine/api/event_machine_event.h)
+   The event user area is a fixed sized area located within the event metadata
+   (i.e. outside of the event payload) that can be used to store application
+   specific event related data without the need to adjust the payload.
+   The event user area is configured during EM event pool creation and thus the
+   size of the user area is set per pool.
+   Note that the user area content is not initialized by EM, neither em_alloc()
+   nor em_free() will touch it and thus it might contain old user data set the
+   last time the area was used during a previous allocation of the same event.
+   Since the user area is not part of the event payload, it will not be
+   transmitted as part of a packet etc.
+
+   - Get a pointer to the event user area, optionally along with its size.
+     void *em_event_uarea_get(em_event_t event, size_t *size/*out*/);
+
+   - Pool config for the Event User Area.
+     (see include/event_machine/platform/event_machine_pool.h)
+     Pool config em_pool_cfg_t::user_area.{.in_use, .size} has been updated to
+     include configuration options for the event user area.
+     The default event user area size can additionally be set via the
+     EM config file config/em-odp.conf:
+     pool: {
+        ...
+        # Default event user area size in bytes for all events from all pools.
+        #
+        # This is a global setting that can be overridden per pool using
+        # 'em_pool_cfg_t::user_area{}' with em_pool_create().
+        #
+        user_area_size = 0
+        ...
+     }
+
+3. EM Event User Area ID:
+   (see include/event_machine/api/event_machine_event.h)
+   The event user area can be associated with an optional ID that e.g. can be
+   used to identify the contents of the actual user area data. The ID is stored
+   outside of the actual user area data and is available for use even if the
+   user area size has been set to zero(0) for the pool the event was allocated
+   from.
+   - Get the event user area ID along with information if it has been set
+     em_status_t em_event_uarea_id_get(em_event_t event, bool *isset /*out*/,
+                                       uint16_t *id /*out*/);
+   - Set the event user area ID
+     em_status_t em_event_uarea_id_set(em_event_t event, uint16_t id);
+
+   - Get the event user area information for a given event.
+     em_status_t em_event_uarea_info(em_event_t event,
+                                     em_event_uarea_info_t *uarea_info /*out*/);
 
 -------------------------------------------------------------------------------
 API 2.6 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=6)

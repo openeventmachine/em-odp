@@ -36,7 +36,7 @@
 
 /**
  * @file
- * Event Machine API v2.6
+ * Event Machine API
  *
  * This file includes all other needed EM headers
  */
@@ -44,17 +44,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * Major API version number.
- * Step if not backwards compatible
- */
-#define EM_API_VERSION_MAJOR 2
-/**
- * Minor API version number.
- * Updates and additions
- */
-#define EM_API_VERSION_MINOR 6
 
 /** @mainpage
  *
@@ -115,7 +104,7 @@ extern "C" {
  * cores should get events to process and the total throughput will be relative
  * to the number of cores running the EM instance.
  *
- * EM_64_BIT or EM_32_BIT (needs to be defined in the makefile) defines whether
+ * EM_64_BIT or EM_32_BIT (needs to be defined by the build) defines whether
  * (most of) the types used in the API are 32 or 64 bits wide. NOTE, that this
  * is a major decision, since it may limit value passing between different
  * systems using the defined types directly. Using 64-bits may allow for a more
@@ -137,26 +126,31 @@ extern "C" {
  * performance it can be used directly from the applications.
  *
  * @section section_3 Inter-system communication
- * EM does not provide definition on how to communicate with another EM
- * instance or another system transparently (application does not need to know).
- * However this is a typical need and current API does have ways to achieve
- * almost transparent communication between systems ("event chaining"):
- * Since queue identifier is a system specific value, it is easy to code extra
- * information into it in the EM implementation. For instance it could be split
- * into two parts, where lower part is a local queue id or index and higher
- * part, if not zero, points to another system. Then implementation of
- * em_send() can easily detect non-local queue and forward events to the target
- * using any transport mechanism available and once at target instance the
+ * EM does not define how to communicate with another EM instance or another
+ * system transparently. However, this is a typical need and the current API
+ * does have ways to achieve almost transparent communication between systems
+ * ("event chaining"):
+ * Since the queue identifier is a system specific value, it is easy to encode
+ * extra information into it in the EM implementation. For instance it could be
+ * split into two parts, where the lower part is a local queue id or index and
+ * the higher part, if not zero, points to another system. The implementation
+ * of em_send() can detect a non-local queue and forward events to the target
+ * using any transport mechanism available and once at the target instance the
  * lower part is used to map to a local queue. For the application nothing
- * changes. Problem is the lack of shared memory between those systems. Given
- * event can be fully copied, but it may not have any references to sender's
- * local memory. This means it is not fully transparent unless no event
- * contains references to local memory.
+ * changes. The problem is the lack of shared memory between those systems.
+ * The given event can be fully copied, but it should not have any references to
+ * sender's local memory. Thus it is not fully transparent if the event contains
+ * references to local memory (e.g. pointers).
  *
  * @section section_4 Files
  * @subsection sub_1 Generic
  * - event_machine.h
- *   - Event Machine main API, application includes only this
+ *   - Event Machine API
+ *     The application should include this file only.
+ *
+ * Files included by event_machine.h:
+ * - event_machine_version.h (included by event_machine.h)
+ *   - Event Machine version defines, macros and APIs
  * - event_machine_types.h (included by event_machine.h)
  *   - Event Machine basic types
  * - event_machine_event.h (included by event_machine.h)
@@ -179,22 +173,24 @@ extern "C" {
  *   - scheduling related functionality
  * - event_machine_dispatcher.h (included by event_machine.h)
  *   - dispatching related functionality
- * - event_machine_helper.h
- *   - optional helper routines
  *
  * @subsection sub_2 HW Specific
- * - event_machine_config.h.template
+ * - event_machine_config.h (included by event_machine.h)
  *   - Event Machine constants and configuration options
- * - event_machine_hw_config.h.template
+ * - event_machine_hw_config.h (included by event_machine.h)
  *   - HW specific constants and configuration options
- * - event_machine_hw_types.h.template (included by event_machine.h)
+ * - event_machine_hw_types.h (included by event_machine.h)
  *   - HW specific types
- * - event_machine_init.h.template (included by event_machine.h)
+ * - event_machine_init.h (included by event_machine.h)
  *   - Event Machine initialization
- * - event_machine_pool.h.template (included by event_machine.h)
+ * - event_machine_pool.h (included by event_machine.h)
  *   - event pool related functionality
- * - event_machine_hw_specific.h.template (included by event_machine.h)
+ * - event_machine_hw_specific.h (included by event_machine.h)
  *   - HW specific functions and macros
+ *
+ * @subsection sub_3 Helper
+ * - event_machine_helper.h
+ *   - optional helper routines
  *
  * @example hello.c
  * @example dispatcher_callback.c
@@ -220,6 +216,9 @@ extern "C" {
  * @example queues_local.c
  * @example send_multi.c
  */
+
+/* EM version */
+#include <event_machine/api/event_machine_version.h>
 
 /* EM config & types */
 #include <event_machine/platform/event_machine_config.h>

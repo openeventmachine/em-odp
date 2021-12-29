@@ -119,8 +119,6 @@ typedef struct {
 			int if_count;
 			/** Interface names + placeholder for '\0' */
 			char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
-			/** Interface identifiers corresponding to 'if_name[]' */
-			int if_ids[IF_MAX_NUM];
 			/** Pktio is setup with an EM event-pool */
 			bool pktpool_em;
 			/** Pktio is setup with an ODP pkt-pool */
@@ -260,8 +258,22 @@ int cm_setup(int argc, char *argv[])
 	 *
 	 * Reserve application shared memory in one chunk.
 	 */
+	uint32_t flags = 0;
+
+#if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
+	flags |= ODP_SHM_SINGLE_VA;
+#else
+	odp_shm_capability_t shm_capa;
+	int err = odp_shm_capability(&shm_capa);
+
+	if (unlikely(err))
+		APPL_EXIT_FAILURE("shm capability error:%d", err);
+
+	if (shm_capa.flags & ODP_SHM_SINGLE_VA)
+		flags |= ODP_SHM_SINGLE_VA;
+#endif
 	odp_shm_t shm = odp_shm_reserve("appl_shm", sizeof(appl_shm_t),
-					ODP_CACHE_LINE_SIZE, ODP_SHM_SINGLE_VA);
+					ODP_CACHE_LINE_SIZE, flags);
 	if (unlikely(shm == ODP_SHM_INVALID))
 		APPL_EXIT_FAILURE("appl shared mem reservation failed");
 	appl_shm = odp_shm_addr(shm);
@@ -501,8 +513,10 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 
 	em_pool_cfg_init(&default_pool_cfg); /* mandatory */
 	default_pool_cfg.event_type = EM_EVENT_TYPE_SW;
-	default_pool_cfg.align_offset.in_use = 1;
-	default_pool_cfg.align_offset.value = 0;
+	default_pool_cfg.align_offset.in_use = true; /* override config file */
+	default_pool_cfg.align_offset.value = 0; /* set explicit '0 bytes' */
+	default_pool_cfg.user_area.in_use = true; /* override config file */
+	default_pool_cfg.user_area.size = 0; /* set explicit '0 bytes' */
 	default_pool_cfg.num_subpools = 4;
 	default_pool_cfg.subpool[0].size = 256;
 	default_pool_cfg.subpool[0].num = 16384;
@@ -605,7 +619,6 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 	for (int i = 0; i < parsed->args_appl.pktio.if_count; i++) {
 		memcpy(appl_conf->pktio.if_name[i],
 		       parsed->args_appl.pktio.if_name[i], IF_NAME_LEN + 1);
-		appl_conf->pktio.if_ids[i] = parsed->args_appl.pktio.if_ids[i];
 	}
 
 	appl_conf->pktio.pktpool_em = parsed->args_appl.pktio.pktpool_em;
@@ -881,8 +894,12 @@ run_core_fn(void *arg)
 
 	/* First core to exit dispatch stops the application */
 	if (exit_count == 0) {
-		if (appl_conf->pktio.if_count > 0)
-			pktio_halt(); /* halt further pktio rx & tx */
+		if (appl_conf->pktio.if_count > 0) {
+			/* halt further pktio rx & tx */
+			pktio_halt();
+			/* dispatch with pktio stopped before test_stop()*/
+			em_dispatch(TERM_DISPATCH_ROUNDS);
+		}
 		/*
 		 * Stop and delete created application EOs
 		 */

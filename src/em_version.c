@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2017, Nokia Solutions and Networks
+ *   Copyright (c) 2021, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -27,39 +27,25 @@
  *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef EM_TIMER_TYPES_H_
-#define EM_TIMER_TYPES_H_
 
-#include <odp_api.h>
-#include <event_machine_timer.h>
-#include "em_timer_conf.h"
+#include "em_include.h"
 
-/* per timer (ODP timer pool) */
-typedef struct event_timer_t {
-	odp_timer_pool_t odp_tmr_pool;
-	odp_pool_t tmo_pool;
-	em_timer_flag_t	flags;
-	int idx;
-	int plain_q_ok;
-} event_timer_t;
+const char *em_version_api_str(void)
+{
+	return EM_VERSION_API_STR;
+}
 
-/* Timer */
-typedef struct {
-	odp_ticketlock_t timer_lock;
-	event_timer_t timer[EM_ODP_MAX_TIMERS];
-} timer_storage_t;
+unsigned int em_version_api_num(void)
+{
+	return EM_VERSION_API;
+}
 
-/* EM timeout handle points to this. Holds the timer state */
-typedef struct em_timer_timeout_t {
-	odp_timer_t odp_timer;
-	odp_timer_pool_t odp_timer_pool;
-	odp_buffer_t odp_buffer;
-	uint64_t period;
-	uint64_t last_tick;
-	odp_atomic_u32_t state;
-	em_tmo_flag_t flags;
-	em_queue_t queue;
-	em_tmo_stats_t stats;
-} em_timer_timeout_t;
+const char *em_version_str(void)
+{
+	return EM_VERSION_STR;
+}
 
-#endif /* EM_TIMER_TYPES_H_ */
+unsigned int em_version_num(void)
+{
+	return EM_VERSION;
+}

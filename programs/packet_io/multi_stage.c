@@ -740,18 +740,24 @@ receive_packet_eo_1st(void *eo_context, em_event_t event, em_event_type_t type,
 	/* Drop everything from the default queue */
 	if (unlikely(queue == eo_ctx->default_queue)) {
 		static ENV_LOCAL uint64_t drop_cnt = 1;
-		uint8_t proto;
-		uint32_t ipv4_dst;
-		uint16_t port_dst;
-		char ip_str[sizeof("255.255.255.255")];
 
-		pktio_get_dst(event, &proto, &ipv4_dst, &port_dst);
-		ipaddr_tostr(ipv4_dst, ip_str, sizeof(ip_str));
+		/*
+		 * Print notice about pkt drop for the first pkt only to avoid
+		 * flooding the terminal with prints.
+		 */
+		if (drop_cnt == 1) {
+			uint8_t proto;
+			uint32_t ipv4_dst;
+			uint16_t port_dst;
+			char ip_str[sizeof("255.255.255.255")];
 
-		APPL_PRINT("Pkt recv(%s:%u), def.port, core%d, drop#%" PRIu64 "\n",
-			   ip_str, port_dst, em_core_id(), drop_cnt++);
-
-		pktio_drop(event);
+			pktio_get_dst(event, &proto, &ipv4_dst, &port_dst);
+			ipaddr_tostr(ipv4_dst, ip_str, sizeof(ip_str));
+			APPL_PRINT("Drop: pkt received from %s:%u, core%d\n",
+				   ip_str, port_dst, em_core_id());
+		}
+		em_free(event);
+		drop_cnt++;
 		return;
 	}
 

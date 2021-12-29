@@ -699,6 +699,13 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 	evstate_usr2em(event, ev_hdr, EVSTATE__MARK_SEND);
 
+	/*
+	 * Data memory barrier, we are bypassing em_send(), odp_queue_enq()
+	 * and need to guarantee memory sync before the event ends up into an
+	 * EM queue again.
+	 */
+	odp_mb_full();
+
 	return EM_OK;
 }
 
@@ -946,4 +953,211 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 	memcpy(dst, src, size);
 
 	return clone_event;
+}
+
+static int event_uarea_init(em_event_t event, event_hdr_t **ev_hdr/*out*/)
+{
+	odp_event_t odp_event = event_em2odp(event);
+	odp_event_type_t odp_evtype = odp_event_type(odp_event);
+	odp_pool_t odp_pool = ODP_POOL_INVALID;
+	odp_packet_t odp_pkt;
+	odp_buffer_t odp_buf;
+	event_hdr_t *hdr;
+	bool is_init;
+
+	switch (odp_evtype) {
+	case ODP_EVENT_PACKET:
+		odp_pkt = odp_packet_from_event(odp_event);
+		hdr = odp_packet_user_area(odp_pkt);
+		is_init = hdr->user_area.isinit;
+		if (!is_init)
+			odp_pool = odp_packet_pool(odp_pkt);
+		break;
+	case ODP_EVENT_BUFFER:
+		odp_buf = odp_buffer_from_event(odp_event);
+		hdr = odp_buffer_addr(odp_buf);
+		is_init = hdr->user_area.isinit;
+		if (!is_init)
+			odp_pool = odp_buffer_pool(odp_buf);
+		break;
+	default:
+		return -1;
+	}
+
+	*ev_hdr = hdr;
+
+	if (!is_init) {
+		/*
+		 * Event user area metadata is not initialized in
+		 * the event header - initialize it:
+		 */
+		hdr->user_area.all = 0; /* user_area.{} = all zero (.sizes=0) */
+		hdr->user_area.isinit = 1;
+
+		em_pool_t pool = pool_odp2em(odp_pool);
+
+		if (pool == EM_POOL_UNDEF)
+			return 0; /* ext ODP pool: OK, no user area, sz=0 */
+
+		/* Event from an EM event pool, can init event user area */
+		const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+		if (unlikely(!pool_elem))
+			return -2; /* invalid pool_elem */
+
+		hdr->user_area.req_size = pool_elem->user_area.req_size;
+		hdr->user_area.pad_size = pool_elem->user_area.pad_size;
+	}
+
+	return 0;
+}
+
+void *em_event_uarea_get(em_event_t event, size_t *size /*out, if given*/)
+{
+	/* Check args */
+	if (EM_CHECK_LEVEL >= 1 &&
+	    unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_GET,
+			       "Inv.arg: event undef");
+		goto no_uarea;
+	}
+
+	event_hdr_t *ev_hdr = NULL;
+	int err = event_uarea_init(event, &ev_hdr/*out*/);
+
+	if (unlikely(err)) {
+		INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_EVENT_UAREA_GET,
+			       "Cannot init event user area: %d", err);
+		goto no_uarea;
+	}
+
+	if (ev_hdr->user_area.req_size == 0)
+		goto no_uarea;
+
+	/*
+	 * Event has user area configured, return pointer and size
+	 */
+	void *uarea_ptr = (void *)((uintptr_t)ev_hdr + sizeof(event_hdr_t));
+
+	if (size)
+		*size = ev_hdr->user_area.req_size;
+
+	return uarea_ptr;
+
+no_uarea:
+	if (size)
+		*size = 0;
+	return NULL;
+}
+
+em_status_t em_event_uarea_id_set(em_event_t event, uint16_t id)
+{
+	/* Check args */
+	if (EM_CHECK_LEVEL >= 1)
+		RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
+				EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_ID_SET,
+				"Inv.arg: event undef");
+
+	event_hdr_t *ev_hdr = NULL;
+	int err = event_uarea_init(event, &ev_hdr/*out*/);
+
+	RETURN_ERROR_IF(err, EM_ERR_OPERATION_FAILED,
+			EM_ESCOPE_EVENT_UAREA_ID_SET,
+			"Cannot init event user area: %d", err);
+
+	ev_hdr->user_area.id = id;
+	ev_hdr->user_area.isset_id = 1;
+
+	return EM_OK;
+}
+
+em_status_t em_event_uarea_id_get(em_event_t event, bool *isset /*out*/,
+				  uint16_t *id /*out*/)
+{
+	bool id_set = false;
+	em_status_t status = EM_OK;
+
+	/* Check args, either 'isset' or 'id' ptrs must be provided (or both) */
+	if (EM_CHECK_LEVEL >= 1 &&
+	    (event == EM_EVENT_UNDEF || !(id || isset))) {
+		status = INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_ID_GET,
+					"Inv.args: event:%" PRI_EVENT " isset:%p id:%p",
+					event, isset, id);
+		goto id_isset;
+	}
+
+	event_hdr_t *ev_hdr = NULL;
+	int err = event_uarea_init(event, &ev_hdr/*out*/);
+
+	if (unlikely(err)) {
+		status = INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
+					EM_ESCOPE_EVENT_UAREA_ID_GET,
+					"Cannot init event user area: %d", err);
+		goto id_isset;
+	}
+
+	if (ev_hdr->user_area.isset_id) {
+		/* user-area-id has been set */
+		id_set = true;
+		if (id)
+			*id = ev_hdr->user_area.id; /*out*/
+	}
+
+id_isset:
+	if (isset)
+		*isset = id_set; /*out*/
+	return status;
+}
+
+em_status_t em_event_uarea_info(em_event_t event,
+				em_event_uarea_info_t *uarea_info /*out*/)
+{
+	em_status_t status = EM_ERROR;
+
+	/* Check args */
+	if (EM_CHECK_LEVEL >= 1 &&
+	    unlikely(event == EM_EVENT_UNDEF || !uarea_info)) {
+		status = INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_INFO,
+					"Inv.args: event:%" PRI_EVENT " uarea_info:%p",
+					event, uarea_info);
+		goto err_uarea;
+	}
+
+	event_hdr_t *ev_hdr = NULL;
+	int err = event_uarea_init(event, &ev_hdr/*out*/);
+
+	if (unlikely(err)) {
+		status = INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
+					EM_ESCOPE_EVENT_UAREA_INFO,
+					"Cannot init event user area: %d", err);
+		goto err_uarea;
+	}
+
+	if (ev_hdr->user_area.req_size == 0) {
+		uarea_info->uarea = NULL;
+		uarea_info->size = 0;
+	} else {
+		uarea_info->uarea = (void *)((uintptr_t)ev_hdr +
+					     sizeof(event_hdr_t));
+		uarea_info->size = ev_hdr->user_area.req_size;
+	}
+
+	if (ev_hdr->user_area.isset_id) {
+		uarea_info->id.isset = true;
+		uarea_info->id.value = ev_hdr->user_area.id;
+	} else {
+		uarea_info->id.isset = false;
+		uarea_info->id.value = 0;
+	}
+
+	return EM_OK;
+
+err_uarea:
+	if (uarea_info) {
+		uarea_info->uarea = NULL;
+		uarea_info->size = 0;
+		uarea_info->id.isset = false;
+		uarea_info->id.value = 0;
+	}
+	return status;
 }

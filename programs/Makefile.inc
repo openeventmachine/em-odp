@@ -6,7 +6,8 @@ LDADD = $(LIBCM)/libprgcm.la \
 AM_CFLAGS += -I$(srcdir) \
 	     -I$(top_srcdir)/programs \
 	     -I$(top_srcdir)/programs/common \
-	     -I$(top_srcdir)/include
+	     -I$(top_srcdir)/include \
+	     -I$(top_builddir)/include
 
 AM_LDFLAGS += -L$(LIBCM) \
 	      -L$(LIB)

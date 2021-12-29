@@ -47,9 +47,6 @@
 extern "C" {
 #endif
 
-#define EM_ODP  1 /**< Event Machine for Open Data Plane */
-#define EM_TARGET_STR "em-odp"
-
 /*
  * HW specific constants
  ***************************************
@@ -176,6 +173,14 @@ extern "C" {
  * The name of the EM default event pool
  */
 #define EM_POOL_DEFAULT_NAME "default"
+
+/**
+ * @def EM_EVENT_USER_AREA_MAX_SIZE
+ * The maximum size in bytes that can be configured for the event user area.
+ * The user area is located outside of the payload in the event metadata (hdr)
+ * and can be used to store event related state without affecting the payload.
+ */
+#define EM_EVENT_USER_AREA_MAX_SIZE 256
 
 /**
  * @def EM_SCHED_MULTI_MAX_BURST

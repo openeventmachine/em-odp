@@ -183,6 +183,24 @@ typedef struct {
 	 */
 	queue_elem_t *q_elem;
 
+	union {
+		uint64_t all;
+		struct {
+			/** requested size (bytes) */
+			uint64_t req_size : 16;
+			/** + padding, incl. space for align_offset (bytes) */
+			uint64_t pad_size : 16;
+			/** user area id */
+			uint64_t id       : 16;
+			/** is the user area id set? */
+			uint64_t isset_id : 1;
+			/** is the uarea initialized? */
+			uint64_t isinit   : 1;
+			/** reserved bits */
+			uint64_t rsvd     : 14;
+		};
+	} user_area;
+
 	/* --- CACHE LINE on systems with a 64B cache line size --- */
 
 	/**
@@ -227,11 +245,12 @@ typedef struct {
 	 * Event type, contains major and major parts
 	 */
 	em_event_type_t event_type;
+
 	/**
 	 * End of event header data,
 	 * for offsetof(event_hdr_t, end_hdr_data)
 	 */
-	char end_hdr_data[0];
+	uint8_t end_hdr_data[0];
 
 	/*
 	 * ! EMPTY SPACE !
@@ -243,6 +262,10 @@ typedef struct {
 	 *         sizeof(event_hdr_t) - offsetof(event_hdr_t, end_hdr_data)
 	 *   - events based on odp_packet_t have their event header in the
 	 *     odp pkt user area and alignment is adjusted in the pkt headroom.
+	 *
+	 * Note: If the event user area is enabled then (for bufs) it will start
+	 *       after the event header and the align offset is not included
+	 *       in the event header but instead starts after the user area.
 	 */
 
 	void *end[0] ODP_ALIGNED(64); /* pad to next 64B boundary */

@@ -46,7 +46,8 @@ extern "C" {
 #define invalid_pool(pool) ((unsigned int)pool_hdl2idx((pool)) > \
 			    EM_CONFIG_POOLS - 1)
 
-int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg);
+int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg,
+		     const char **err_str/*out*/);
 
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,

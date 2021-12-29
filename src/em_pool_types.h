@@ -49,8 +49,22 @@ typedef struct {
 	em_pool_t em_pool;
 	/** Event type of events allocated from the pool */
 	em_event_type_t event_type;
-	/** Subpool alignment requested from ODP */
+	/** Event alignment offset, see em-odp.conf */
 	uint32_t align_offset;
+	/** Event user area size */
+	struct {
+		/** Requested user area size (bytes) */
+		uint16_t req_size;
+		/** Padded size, includes space for align_offset (bytes) */
+		uint16_t pad_size;
+		/*
+		 * Note: Use uint16_t instead of size_t to match bitfield sizes
+		 *       of event_hdr_t::user_area.req_size/pad_size.
+		 *       Size is max EM_EVENT_USER_AREA_MAX_SIZE bytes which
+		 *       will fit into uint16_t.
+		 */
+	} user_area;
+
 	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
 	int num_subpools;
 	/** ODP (sub)pool buffer (event) payload sizes */

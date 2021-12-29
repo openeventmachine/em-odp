@@ -91,7 +91,7 @@ extern "C" {
  * @def MAX_RX_POLL_ROUNDS
  * @brief
  */
-#define MAX_RX_POLL_ROUNDS 2
+#define MAX_RX_POLL_ROUNDS 4
 
 /**
  * @def BURST_TX_DRAIN
@@ -153,8 +153,8 @@ typedef struct {
 typedef struct tx_burst {
 	/** store tx pkts temporaily in 'queue' before bursting onto tx */
 	odp_queue_t queue ODP_ALIGNED_CACHE;
-	/** count the number of events in 'queue' */
-	env_atomic64_t cnt;
+	/** count the number of events in 'queue', updated atomically */
+	odp_atomic_u64_t cnt;
 	/** lock needed when dequeueing from 'queue' */
 	odp_spinlock_t lock;
 	/** store the output interface port also here for easy access */
@@ -182,37 +182,67 @@ typedef struct {
  * Collection of shared data used by pktio Rx&Tx
  */
 typedef struct {
-	/** The number of pktio interfaces used */
-	int if_count;
-	struct {
-		/** EM pool for pktio */
-		em_pool_t em_pool;
-		/** Corresponding ODP pool for pktio (subpool of 'em_pool') */
-		odp_pool_t odp_pool;
-	} pktpool;
-
-	odp_pool_t odp_bufpool;
+	/** flag set after pktio_start() - prevent pkio rx&tx before started */
+	int pktio_started;
 
 	/** Default queue to use for incoming pkts without a dedicated queue */
 	em_queue_t default_queue;
-	/** flag set after pktio_start() - prevent pkio rx&tx before started */
-	int pktio_started;
-	/** ODP pktio handles */
-	odp_pktio_t pktio[IF_MAX_NUM];
 
-	/** Number of pktio input queues per interface */
-	int pktin_num_queues[IF_MAX_NUM];
-	/** All pktio input queues used, per interface */
-	odp_pktin_queue_t pktin_queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
-	/** Queue contains the used pktin_queues[][], deq one and use for Rx */
-	odp_queue_t pktin_queues_queue;
+	struct {
+		/** EM pool for pktio, only used with '--pktpool-em' option */
+		em_pool_t pktpool_em;
 
-	/** Number of pktio output queues per interface */
-	int pktout_num_queues[IF_MAX_NUM];
-	/** All pktio output queues used, per interface */
-	odp_queue_t pktout_queues[IF_MAX_NUM][PKTIO_MAX_OUT_QUEUES];
-	/** Queue contains the used tx_burst[][],deq one and use for timed Tx*/
-	odp_queue_t tx_bursts_queue;
+		/** ODP pool for pktio:
+		 *  1. Subpool of 'pktpool_em' when using '--pktpool-em' option
+		 *     or
+		 *  2. Direct ODP pkt pool when using '--pktpool-odp' option
+		 */
+		odp_pool_t pktpool_odp;
+
+		/** ODP pool for allocation of control structures */
+		odp_pool_t bufpool_odp;
+	} pools;
+
+	/** Packet I/O Interfaces */
+	struct {
+		/** The number of pktio interfaces used */
+		int count;
+		/** Interfaces created so far (up to '.count'), startup only */
+		int num_created;
+		/** Interface indexes used */
+		int idx[IF_MAX_NUM];
+		/** ODP pktio handles, .pktio_hdl[idx] corresponds to idx=.idx[i] */
+		odp_pktio_t pktio_hdl[IF_MAX_NUM];
+	} ifs;
+
+	/** Packet input and related resources */
+	struct {
+		/** Number of pktio input queues per interface */
+		int num_queues[IF_MAX_NUM];
+
+		/** All pktio input queues used, per interface */
+		odp_pktin_queue_t queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
+
+		/** A queue that contains the shared pktin.queues[][].
+		 *  Each core needs to dequeue one pktin queue to be able to use
+		 *  it to receive packets.
+		 */
+		odp_queue_t queues_queue;
+	} pktin;
+
+	/** Packet output and related resources */
+	struct {
+		/** Number of pktio output queues per interface */
+		int num_queues[IF_MAX_NUM];
+
+		/** All pktio output queues used, per interface */
+		odp_queue_t queues[IF_MAX_NUM][PKTIO_MAX_OUT_QUEUES];
+
+		/** A queue that contains the shared tx_burst[][] entries.
+		 *  Used when draining the available tx-burst buffers
+		 */
+		odp_queue_t tx_bursts_queue;
+	} pktout;
 
 	/** Info about the em-odp queues configured for pktio, store in hash */
 	rx_pkt_queue_t rx_pkt_queues[MAX_RX_PKT_QUEUES];
@@ -362,23 +392,6 @@ static inline em_event_t
 pktio_em_event_get(odp_packet_t odp_pkt)
 {
 	return em_odp_event2em(odp_packet_to_event(odp_pkt));
-}
-
-static inline em_event_t
-pktio_alloc(size_t len)
-{
-	odp_packet_t odp_pkt = odp_packet_alloc(pktio_pool_get(), len);
-	em_event_t event = pktio_em_event_get(odp_pkt);
-
-	return event;
-}
-
-static inline void
-pktio_drop(em_event_t event)
-{
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-
-	odp_packet_free(pkt);
 }
 
 static inline uint8_t *

@@ -215,10 +215,14 @@ typedef struct {
 	int in_atomic_group;
 	unsigned int idx;
 	uint64_t seqno;
-	/* Total number of events handled from the queue */
-	env_atomic64_t num_events;
 	/* Number of events at the previous check-point  */
 	uint64_t prev_events;
+	/*
+	 * Total number of events handled from the queue.
+	 * Atomically incremented, either by __atomic_add_fetch() or
+	 * protected by atomic context (set by queue type).
+	 */
+	uint64_t num_events ENV_CACHE_LINE_ALIGNED;
 
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } queue_context_t;
@@ -226,23 +230,11 @@ typedef struct {
 COMPILE_TIME_ASSERT(sizeof(queue_context_t) % ENV_CACHE_LINE_SIZE == 0,
 		    Q_CTX_T__SIZE_ERROR);
 
-#define EV_ID_DATA_EVENT  1
-#define EV_ID_START_EVENT 2
-/** Data event content */
-typedef struct {
-	int ev_id;
-	/* Next destination queue */
-	em_queue_t dest;
-	em_queue_t src;
-	/* Sequence number */
-	uint64_t seqno;
-	/* Test data */
-	uint8_t data[DATA_SIZE];
-} data_event_t;
-/** Startup event content */
-typedef struct {
-	int ev_id;
+/* IDs stored in the event user area ID */
+#define EV_ID_START_EVENT 1
+#define EV_ID_DATA_EVENT  2
 
+typedef struct {
 	int in_atomic_group_a;
 	int src_q_cnt;
 	em_queue_t src_queues[3];
@@ -250,14 +242,37 @@ typedef struct {
 	int in_atomic_group_b;
 	int dst_q_cnt;
 	em_queue_t dst_queues[3];
+} start_event_uarea_t;
+
+typedef struct {
+	/* Next destination queue */
+	em_queue_t dest;
+	em_queue_t src;
+	/* Sequence number */
+	uint64_t seqno;
+} data_event_uarea_t;
+
+typedef union {
+	start_event_uarea_t start;
+	data_event_uarea_t data;
+} test_event_uarea_t;
+
+/** Data event content */
+typedef struct {
+	/* Test data */
+	uint8_t data[DATA_SIZE];
+} data_event_t;
+
+typedef struct {
+	uint8_t u8[0]; /* no payload */
 } start_event_t;
+
 /**
  * Test event, content identified by 'ev_id'
  */
 typedef union {
-	int ev_id;
-	data_event_t data;
 	start_event_t start;
+	data_event_t data;
 } test_event_t;
 
 /**
@@ -293,7 +308,7 @@ static em_status_t
 stop(void *eo_context, em_eo_t eo);
 
 static void
-initialize_events(start_event_t *const start);
+initialize_events(const start_event_uarea_t *start);
 
 static void
 receive_a(void *eo_context, em_event_t event, em_event_type_t type,
@@ -416,13 +431,26 @@ test_start(appl_conf_t *const appl_conf)
 	queue_ag_b3 = EM_QUEUE_UNDEF;
 
 	/*
-	 * Store the event pool to use, use the EM default pool if no other
-	 * pool is provided through the appl_conf.
+	 * Create own pool with events containing user area.
 	 */
-	if (appl_conf->num_pools >= 1)
-		qtypes_shm->pool = appl_conf->pools[0];
-	else
-		qtypes_shm->pool = EM_POOL_DEFAULT;
+	em_pool_cfg_t pool_cfg;
+
+	em_pool_cfg_init(&pool_cfg);
+	pool_cfg.event_type = EM_EVENT_TYPE_SW;
+	pool_cfg.user_area.in_use = true;
+	pool_cfg.user_area.size = sizeof(test_event_uarea_t);
+
+	pool_cfg.num_subpools = 1;
+	pool_cfg.subpool[0].size = sizeof(test_event_t);
+	pool_cfg.subpool[0].num = NUM_EVENT * NUM_EO;
+	/* no cache needed, everything allocated at start-up: */
+	pool_cfg.subpool[0].cache_size = 0;
+
+	em_pool_t pool = em_pool_create("pool:Qtypes-AG",
+					EM_POOL_UNDEF, &pool_cfg);
+	test_fatal_if(pool == EM_POOL_UNDEF, "pool create failed");
+
+	qtypes_shm->pool = pool;
 
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
@@ -677,37 +705,46 @@ test_start(appl_conf_t *const appl_conf)
 		 * Allocate and send the startup event to the first EO of the
 		 * pair of this round.
 		 */
-		em_event_t event = em_alloc(sizeof(start_event_t),
+		em_event_t event = em_alloc(sizeof(test_event_t),
 					    EM_EVENT_TYPE_SW,
 					    qtypes_shm->pool);
 		test_fatal_if(event == EM_EVENT_UNDEF, "Event alloc fails");
-		start_event_t *start_event = em_event_pointer(event);
 
-		start_event->ev_id = EV_ID_START_EVENT;
+		size_t uarea_size;
+		test_event_uarea_t *test_uarea;
 
-		start_event->in_atomic_group_a = in_atomic_group_a;
+		test_uarea = em_event_uarea_get(event, &uarea_size);
+		test_fatal_if(!test_uarea && uarea_size < sizeof(test_event_uarea_t),
+			      "Event User Area error: ptr:%p sz:%zu < %zu",
+			      test_uarea, uarea_size, sizeof(test_event_uarea_t));
+
+		ret = em_event_uarea_id_set(event, EV_ID_START_EVENT);
+		test_fatal_if(ret != EM_OK,
+			      "Error setting uarea id, err:%" PRI_STAT "");
+
+		test_uarea->start.in_atomic_group_a = in_atomic_group_a;
 		if (in_atomic_group_a) {
-			start_event->src_q_cnt = 3;
-			start_event->src_queues[0] = queue_ag_a1;
-			start_event->src_queues[1] = queue_ag_a2;
-			start_event->src_queues[2] = queue_ag_a3;
+			test_uarea->start.src_q_cnt = 3;
+			test_uarea->start.src_queues[0] = queue_ag_a1;
+			test_uarea->start.src_queues[1] = queue_ag_a2;
+			test_uarea->start.src_queues[2] = queue_ag_a3;
 		} else {
-			start_event->src_q_cnt = 1;
-			start_event->src_queues[0] = queue_a;
+			test_uarea->start.src_q_cnt = 1;
+			test_uarea->start.src_queues[0] = queue_a;
 		}
 
-		start_event->in_atomic_group_b = in_atomic_group_b;
+		test_uarea->start.in_atomic_group_b = in_atomic_group_b;
 		if (in_atomic_group_b) {
-			start_event->dst_q_cnt = 3;
-			start_event->dst_queues[0] = queue_ag_b1;
-			start_event->dst_queues[1] = queue_ag_b2;
-			start_event->dst_queues[2] = queue_ag_b3;
+			test_uarea->start.dst_q_cnt = 3;
+			test_uarea->start.dst_queues[0] = queue_ag_b1;
+			test_uarea->start.dst_queues[1] = queue_ag_b2;
+			test_uarea->start.dst_queues[2] = queue_ag_b3;
 		} else {
-			start_event->dst_q_cnt = 1;
-			start_event->dst_queues[0] = queue_b;
+			test_uarea->start.dst_q_cnt = 1;
+			test_uarea->start.dst_queues[0] = queue_b;
 		}
 
-		ret = em_send(event, start_event->src_queues[0]);
+		ret = em_send(event, test_uarea->start.src_queues[0]);
 		test_fatal_if(ret != EM_OK, "Event send:%" PRI_STAT "", ret);
 	}
 
@@ -768,6 +805,12 @@ test_term(void)
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
+
+	em_status_t ret = em_pool_delete(qtypes_shm->pool);
+
+	test_fatal_if(ret != EM_OK,
+		      "em_pool_delete(%" PRI_POOL "):%" PRI_STAT "",
+		      qtypes_shm->pool, ret);
 
 	if (core == 0) {
 		env_shared_free(qtypes_shm);
@@ -843,7 +886,7 @@ stop(void *eo_context, em_eo_t eo)
 }
 
 static void
-initialize_events(start_event_t *const start)
+initialize_events(const start_event_uarea_t *start)
 {
 	/*
 	 * Allocate and send test events to the EO-pair of this round
@@ -856,6 +899,7 @@ initialize_events(start_event_t *const start)
 	int ev_cnt[max_q_cnt];
 	uint64_t seqno = 0;
 	int j, x, y;
+	em_status_t ret;
 
 	for (x = 0; x < max_q_cnt; x++)
 		ev_cnt[x] = 0;
@@ -868,23 +912,33 @@ initialize_events(start_event_t *const start)
 			test_fatal_if(event == EM_EVENT_UNDEF,
 				      "Event alloc fails");
 
-			test_event_t *const test_event =
-				em_event_pointer(event);
+			test_event_t *test_event = em_event_pointer(event);
+			size_t uarea_size = 0;
+			test_event_uarea_t *test_uarea =
+				em_event_uarea_get(event, &uarea_size);
+
+			test_fatal_if(!test_event || !test_uarea ||
+				      uarea_size != sizeof(test_event_uarea_t),
+				      "Event payload/uarea error");
 
 			memset(test_event, 0, sizeof(test_event_t));
-			test_event->ev_id = EV_ID_DATA_EVENT;
+			memset(test_uarea, 0, uarea_size);
+
+			ret = em_event_uarea_id_set(event, EV_ID_DATA_EVENT);
+			test_fatal_if(ret != EM_OK,
+				      "Error setting uarea id, err:%" PRI_STAT "");
 
 			if (start->in_atomic_group_b)
-				test_event->data.dest = start->dst_queues[y];
+				test_uarea->data.dest = start->dst_queues[y];
 			else
-				test_event->data.dest = start->dst_queues[0];
+				test_uarea->data.dest = start->dst_queues[0];
 
-			test_event->data.src = start->src_queues[x];
+			test_uarea->data.src = start->src_queues[x];
 
 			if (start->in_atomic_group_a ==
 			    start->in_atomic_group_b) {
 				/* verify seqno (symmetric EO-pairs)*/
-				test_event->data.seqno = seqno;
+				test_uarea->data.seqno = seqno;
 			}
 
 			all_events[x][ev_cnt[x]] = event;
@@ -933,14 +987,15 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 {
 	eo_context_t *const eo_ctx = eo_context;
 	queue_context_t *const q_ctx = queue_context;
-	test_event_t *const test_event = em_event_pointer(event);
-	data_event_t *data_event;
-	core_stat_t *cstat;
+	em_event_uarea_info_t uarea_info;
+	test_event_uarea_t *test_uarea;
 	em_queue_t dest_queue;
-	int core;
-	uint64_t core_events, queue_events, print_events = 0;
+	uint64_t queue_events;
 	uint64_t seqno;
 	em_status_t ret;
+
+	const int core = em_core_id();
+	core_stat_t *cstat = &qtypes_shm->core_stat[core];
 
 	(void)type;
 
@@ -949,7 +1004,12 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 		return;
 	}
 
-	if (unlikely(test_event->ev_id == EV_ID_START_EVENT)) {
+	ret = em_event_uarea_info(event, &uarea_info);
+	test_fatal_if(ret != EM_OK,
+		      "em_event_uarea_info() fails:%" PRI_STAT "", ret);
+	test_uarea = uarea_info.uarea;
+
+	if (unlikely(uarea_info.id.value == EV_ID_START_EVENT)) {
 		/*
 		 * Start-up only, one time: initialize the test event sending.
 		 * Called from EO-receive to avoid mixing up events & sequence
@@ -957,10 +1017,13 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 		 * start functions could mess up the seqno:s since all the
 		 * cores are already in the dispatch loop).
 		 */
-		initialize_events(&test_event->start);
+		initialize_events(&test_uarea->start);
 		em_free(event);
 		return;
 	}
+
+	test_fatal_if(uarea_info.id.value != EV_ID_DATA_EVENT,
+		      "Unexpected ev-id:%d", uarea_info.id.value);
 
 	if (VERIFY_ATOMIC_ACCESS)
 		verify_atomic_access__begin(eo_ctx);
@@ -968,22 +1031,50 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 	if (VERIFY_PROCESSING_CONTEXT)
 		verify_processing_context(eo_ctx, queue);
 
-	test_fatal_if(test_event->ev_id != EV_ID_DATA_EVENT,
-		      "Unexpected ev-id:%d", test_event->ev_id);
-	data_event = &test_event->data;
-
-	core = em_core_id();
-	cstat = &qtypes_shm->core_stat[core];
-
-	core_events = cstat->events;
-	seqno = data_event->seqno;
+	seqno = test_uarea->data.seqno;
 
 	/* Increment Q specific event counter (parallel Qs req atomic inc:s)*/
-	queue_events = env_atomic64_add_return(&q_ctx->num_events, 1);
+	if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC)
+		queue_events = q_ctx->num_events++;
+	else
+		queue_events = __atomic_add_fetch(&q_ctx->num_events, 1,
+						  __ATOMIC_RELAXED);
 
-	test_fatal_if(data_event->src != queue,
+	test_fatal_if(test_uarea->data.src != queue,
 		      "EO-A queue mismatch:%" PRI_QUEUE "!=%" PRI_QUEUE "",
-		      data_event->src, queue);
+		      test_uarea->data.src, queue);
+
+	if (eo_ctx->ordered_pair && eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC) {
+		/* Verify the seq nbr to make sure event order is maintained*/
+		verify_seqno(eo_ctx, q_ctx, seqno);
+	}
+
+	dest_queue = test_uarea->data.dest;
+	test_uarea->data.src = test_uarea->data.dest;
+	test_uarea->data.dest = queue;
+
+	ret = em_send(event, dest_queue);
+	if (unlikely(ret != EM_OK)) {
+		em_free(event);
+		test_fatal_if(!appl_shm->exit_flag, "EO-A em_send failure");
+	}
+
+	if (VERIFY_ATOMIC_ACCESS)
+		verify_atomic_access__end(eo_ctx);
+
+	if (CALL_ATOMIC_PROCESSING_END__A) {
+		/* Call em_atomic_processing_end() every once in a while */
+		if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC &&
+		    (queue_events % qtypes_shm->num_queues == q_ctx->idx))
+			em_atomic_processing_end();
+	}
+
+	/*
+	 * Update _core_ statistics after potentially releasing the
+	 * atomic context.
+	 */
+	uint64_t core_events = cstat->events;
+	uint64_t print_events = 0;
 
 	if (unlikely(core_events == 0)) {
 		cstat->begin_cycles = env_get_cycle();
@@ -998,44 +1089,19 @@ receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 		core_events += 1;
 		cstat->pt_count[eo_ctx->pair_type] += 1;
 	}
-
-	if (eo_ctx->ordered_pair && eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC) {
-		/* Verify the seq nbr to make sure event order is maintained*/
-		verify_seqno(eo_ctx, q_ctx, seqno);
-	}
-
-	dest_queue = data_event->dest;
-	data_event->src = data_event->dest;
-	data_event->dest = queue;
 	cstat->events = core_events;
-
-	ret = em_send(event, dest_queue);
-	if (unlikely(ret != EM_OK)) {
-		em_free(event);
-		test_fatal_if(!appl_shm->exit_flag, "EO-A em_send failure");
-	}
-
-	if (VERIFY_ATOMIC_ACCESS)
-		verify_atomic_access__end(eo_ctx);
-
-	if (CALL_ATOMIC_PROCESSING_END__A) {
-		/* Call em_atomic_processing_end() every once in a while */
-		if (queue_events % qtypes_shm->num_queues == q_ctx->idx)
-			em_atomic_processing_end();
-	}
 
 	/* Print core specific statistics */
 	if (unlikely(print_events)) {
-		int i;
-
-		em_atomic_processing_end();
+		if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC)
+			em_atomic_processing_end();
 
 		if (core == 0)
 			verify_all_queues_get_events();
 
 		print_core_stats(cstat, print_events);
 
-		for (i = 0; i < QUEUE_TYPE_PAIRS; i++)
+		for (int i = 0; i < QUEUE_TYPE_PAIRS; i++)
 			cstat->pt_count[i] = 0;
 
 		cstat->begin_cycles = env_get_cycle();
@@ -1055,13 +1121,14 @@ receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 {
 	eo_context_t *const eo_ctx = eo_context;
 	queue_context_t *const q_ctx = queue_context;
-	core_stat_t *cstat;
 	em_queue_t dest_queue;
-	test_event_t *test_event;
-	data_event_t *data_event;
-	int core;
-	uint64_t core_events, queue_events;
+	test_event_uarea_t *test_uarea;
+	uint64_t queue_events;
 	em_status_t ret;
+
+	const int core = em_core_id();
+	core_stat_t *cstat = &qtypes_shm->core_stat[core];
+
 	(void)type;
 
 	if (unlikely(appl_shm->exit_flag)) {
@@ -1075,37 +1142,33 @@ receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 	if (VERIFY_PROCESSING_CONTEXT)
 		verify_processing_context(eo_ctx, queue);
 
-	test_event = em_event_pointer(event);
-	test_fatal_if(test_event->ev_id != EV_ID_DATA_EVENT,
-		      "Unexpected ev-id:%d", test_event->ev_id);
-	data_event = &test_event->data;
+	em_event_uarea_info_t uarea_info;
 
-	core = em_core_id();
-	cstat = &qtypes_shm->core_stat[core];
-	core_events = cstat->events;
+	ret = em_event_uarea_info(event, &uarea_info);
+	test_fatal_if(ret != EM_OK,
+		      "em_event_uarea_info() fails:%" PRI_STAT "", ret);
+	test_fatal_if(uarea_info.id.value != EV_ID_DATA_EVENT,
+		      "Unexpected ev-id:%d", uarea_info.id.value);
 
-	/* Increment Q specific event counter (parallel Qs req atomic inc:s)*/
-	queue_events = env_atomic64_add_return(&q_ctx->num_events, 1);
-
-	test_fatal_if(data_event->src != queue,
+	/* Increment Q specific event counter (parallel Qs req atomic inc:s) */
+	if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC)
+		queue_events = q_ctx->num_events++;
+	else
+		queue_events = __atomic_add_fetch(&q_ctx->num_events, 1,
+						  __ATOMIC_RELAXED);
+	test_uarea = uarea_info.uarea;
+	test_fatal_if(test_uarea->data.src != queue,
 		      "EO-B queue mismatch:%" PRI_QUEUE "!=%" PRI_QUEUE "",
-		      data_event->src, queue);
+		      test_uarea->data.src, queue);
 
 	if (eo_ctx->ordered_pair && eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC) {
 		/* Verify the seq nbr to make sure event order is maintained*/
-		verify_seqno(eo_ctx, q_ctx, data_event->seqno);
+		verify_seqno(eo_ctx, q_ctx, test_uarea->data.seqno);
 	}
 
-	dest_queue = data_event->dest;
-	data_event->src = data_event->dest;
-	data_event->dest = queue;
-
-	if (unlikely(core_events == 0))
-		cstat->begin_cycles = env_get_cycle();
-	core_events++;
-
-	cstat->events = core_events;
-	cstat->pt_count[eo_ctx->pair_type] += 1;
+	dest_queue = test_uarea->data.dest;
+	test_uarea->data.src = test_uarea->data.dest;
+	test_uarea->data.dest = queue;
 
 	ret = em_send(event, dest_queue);
 	if (unlikely(ret != EM_OK)) {
@@ -1118,9 +1181,20 @@ receive_b(void *eo_context, em_event_t event, em_event_type_t type,
 
 	if (CALL_ATOMIC_PROCESSING_END__B) {
 		/* Call em_atomic_processing_end() every once in a while */
-		if (queue_events % qtypes_shm->num_queues == q_ctx->idx)
+		if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC &&
+		    (queue_events % qtypes_shm->num_queues == q_ctx->idx))
 			em_atomic_processing_end();
 	}
+
+	/*
+	 * Update _core_ statistics after potentially releasing the
+	 * atomic context.
+	 */
+	if (unlikely(cstat->events == 0))
+		cstat->begin_cycles = env_get_cycle();
+	cstat->events++;
+
+	cstat->pt_count[eo_ctx->pair_type] += 1;
 }
 
 static pair_type_t
@@ -1238,7 +1312,7 @@ verify_all_queues_get_events(void)
 					    NUM_EVENT / 3 : NUM_EVENT;
 		const char *q_type_str;
 
-		curr = env_atomic64_get(&tmp_qctx->num_events);
+		curr = __atomic_load_n(&tmp_qctx->num_events, __ATOMIC_RELAXED);
 		prev = tmp_qctx->prev_events;
 		diff = (curr >= prev) ?
 			curr - prev : UINT64_MAX - prev + curr + 1;
@@ -1291,8 +1365,8 @@ verify_all_queues_get_events(void)
 static inline void
 verify_atomic_access__begin(eo_context_t *const eo_ctx)
 {
-	if (unlikely(eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC &&
-		     !env_spinlock_trylock(&eo_ctx->verify_atomic_access)))
+	if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC &&
+	    unlikely(!env_spinlock_trylock(&eo_ctx->verify_atomic_access)))
 		test_error(EM_ERROR_SET_FATAL(__LINE__), 0xdead,
 			   "EO Atomic context lost!");
 }
@@ -1303,7 +1377,7 @@ verify_atomic_access__begin(eo_context_t *const eo_ctx)
 static inline void
 verify_atomic_access__end(eo_context_t *const eo_ctx)
 {
-	if (unlikely(eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC))
+	if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC)
 		env_spinlock_unlock(&eo_ctx->verify_atomic_access);
 }
 
@@ -1330,6 +1404,7 @@ verify_processing_context(eo_context_t *const eo_ctx, em_queue_t queue)
 	queue_type = em_queue_get_type(queue);
 	sched_type = em_sched_context_type_current(&tmp_queue);
 	test_fatal_if(tmp_queue != queue, "Invalid queue");
+	test_fatal_if(queue_type != eo_ctx->q_type, "Q-type mismatch");
 
 	if (queue_type == EM_QUEUE_TYPE_ATOMIC) {
 		test_fatal_if(sched_type != EM_SCHED_CONTEXT_TYPE_ATOMIC,

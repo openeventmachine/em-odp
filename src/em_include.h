@@ -53,6 +53,10 @@ extern "C" {
 #include <event_machine/helper/event_machine_helper.h>
 #include <event_machine/platform/env/environment.h>
 
+/* ODP API */
+#include <odp_api.h>
+#include <odp/helper/odph_api.h>
+
 /**
  * @def EM_CHECK_INIT_CALLED
  *

@@ -224,7 +224,7 @@ typedef struct {
  * Always initialize 'conf' first with em_conf_init(&conf) to
  * ensure backwards compatibility with potentially added new options.
  *
- * @param param   Address of the em_conf_t to be initialized
+ * @param conf  Address of the em_conf_t to be initialized
  *
  * @see em_init()
  */

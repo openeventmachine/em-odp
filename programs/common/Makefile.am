@@ -4,6 +4,7 @@ noinst_LTLIBRARIES = $(LIB)/libprgcm.la
 
 AM_CFLAGS += -I$(top_srcdir)/include/
 AM_CFLAGS += -I$(top_srcdir)/src
+AM_CFLAGS += -I$(top_builddir)/include
 
 AM_CFLAGS += $(ODP_CFLAGS)
 

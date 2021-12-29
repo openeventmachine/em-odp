@@ -117,10 +117,10 @@ typedef struct {
 		/**
 		 * Select: Use pool-specific align-offset 'value' from below or
 		 *         use the global default value from the config file.
-		 * false (0): Use value from the config file (default).
-		 * true (not 0): Use pool specific value set below.
+		 * false: Use value from the config file (default).
+		 *  true: Use pool-specific value set below.
 		 */
-		int in_use;
+		bool in_use;
 		/**
 		 * Pool-specific event payload alignment offset value in bytes
 		 * (only evaluated if 'in_use=true').
@@ -132,19 +132,55 @@ typedef struct {
 	} align_offset;
 
 	/**
+	 * Event user area size in bytes.
+	 * (for all events allocated from this EM pool).
+	 *
+	 * The user area is located within the event metadata (hdr) and is not
+	 * part of the event payload. The event user area can e.g. be used to
+	 * store additional state data related to the payload contents. EM does
+	 * not initialize the contents of the user area.
+	 *
+	 * This option concerns all events allocated from the pool and overrides
+	 * the global config file option 'pool.user_area_size' for this pool.
+	 */
+	struct {
+		/**
+		 * Select: Use pool-specific event user area 'size' from below
+		 *         or use the global default value from the config file.
+		 * false: Use user area size from the config file (default).
+		 *  true: Use pool-specific size set below.
+		 */
+		bool in_use;
+		/**
+		 * Pool-specific event user area size in bytes (only evaluated
+		 * if 'in_use=true').
+		 * Overrides the config file default size for this pool.
+		 * 0: Explicitly set 'No user area' for the pool.
+		 */
+		size_t size;
+	} user_area;
+
+	/**
 	 * Parameters for an EM-pool with '.event_type = EM_EVENT_TYPE_PACKET'
 	 * Ignored for other pool types.
 	 */
 	struct {
+		/**
+		 * Pool-specific packet minimum headroom
+		 *
+		 * This option conserns all events allocated from the pool and
+		 * overrides the global config file option 'pool.pkt_headroom'
+		 * for this pool.
+		 */
 		struct {
 			/**
 			 * Select: Use pool-specific packet headroom value from
 			 *         below or use the global default value from
 			 *         the config file.
-			 * false (0): Use value from the config file (default).
-			 * true (not 0): Use pool specific value set below.
+			 * false: Use value from the config file (default).
+			 *  true: Use pool-specific value set below.
 			 */
-			int in_use;
+			bool in_use;
 			/**
 			 * Pool-specific packet minimum headroom in bytes,
 			 * each packet must have at least this much headroom.
@@ -161,7 +197,10 @@ typedef struct {
 	 */
 	int num_subpools;
 	struct {
-		/** Event payload size of the subpool (size > 0)  */
+		/**
+		 * Event payload size of the subpool (size > 0).
+		 * EM does not initialize the payload data.
+		 */
 		uint32_t size;
 		/** Number of events in the subpool (num > 0) */
 		uint32_t num;
@@ -200,6 +239,8 @@ typedef struct {
 	em_event_type_t event_type;
 	/** Event payload alignment offset for events from the pool */
 	uint32_t align_offset;
+	/** Event user area size for events from the pool */
+	size_t user_area_size;
 	/** Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS */
 	int num_subpools;
 	struct {

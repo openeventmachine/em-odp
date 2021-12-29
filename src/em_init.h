@@ -63,6 +63,7 @@ typedef struct {
 		int statistics_enable; /* true/false */
 		unsigned int align_offset; /* bytes */
 		unsigned int pkt_headroom; /* bytes */
+		size_t user_area_size; /* bytes */
 	} pool;
 
 	struct {
