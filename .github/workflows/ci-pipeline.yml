@@ -21,8 +21,14 @@ jobs:
       - name: Lint check
         uses: github/super-linter@v4
         env:
-          VALIDATE_ALL_CODEBASE: false
           DEFAULT_BRANCH: master
+          VALIDATE_YAML: true
+          VALIDATE_PYTHON: true
+          VALIDATE_MARKDOWN: true
+          VALIDATE_GITHUB_ACTIONS: true
+          VALIDATE_ENV: true
+          VALIDATE_DOCKERFILE_HADOLINT: true
+          VALIDATE_SHELL_SHFMT: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Build doxygen documentation
