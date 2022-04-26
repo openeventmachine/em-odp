@@ -54,14 +54,14 @@
 #include <event_machine.h>
 #include <event_machine/add-ons/event_machine_timer.h>
 #include <event_machine/platform/env/environment.h>
-#include <odp.h>
+#include <odp_api.h>
 
 #include "cm_setup.h"
 #include "cm_error_handler.h"
 
 #include "timer_test_periodic.h"
 
-#define VERSION "WIP v0.8"
+#define VERSION "WIP v0.9"
 struct {
 	int num_periodic;
 	uint64_t res_ns;
@@ -93,6 +93,8 @@ struct {
 	int mz_huge;
 	uint64_t mz_ns;
 	int abort;		/* for testing abnormal exit */
+	int num_timers;
+	int no_del;
 
 } g_options = { .num_periodic =  1,	/* defaults for basic check */
 		.res_ns =        DEF_RES_NS,
@@ -123,12 +125,15 @@ struct {
 		.mz_mb =	 0,
 		.mz_huge =	 0,
 		.mz_ns =	 0,
-		.abort =	 0
+		.abort =	 0,
+		.num_timers =	 1,
+		.no_del =	 0
 		};
 
 typedef struct global_stats_t {
 	uint64_t num_late;	/* ack late */
 	int64_t	 max_dev_ns;	/* +- max deviation form target */
+	int64_t  max_early_ns;	/* max arrival before target time */
 	uint64_t num_tmo;	/* total received tmo count */
 	int	 max_cpu;	/* max CPU load % (any single) */
 	uint64_t max_dispatch;  /* max EO receive time */
@@ -137,7 +142,7 @@ typedef struct global_stats_t {
 typedef struct app_eo_ctx_t {
 	e_state state;
 	em_tmo_t heartbeat_tmo;
-	em_timer_t test_tmr;
+	em_timer_t test_tmr[MAX_TEST_TIMERS];
 	em_queue_t hb_q;
 	em_queue_t test_q;
 	em_queue_t stop_q;
@@ -167,7 +172,7 @@ typedef struct timer_app_shm_t {
 	em_pool_t pool;
 	app_eo_ctx_t eo_context;
 	em_timer_t hb_tmr;
-	em_timer_t test_tmr;
+	em_timer_t test_tmr[MAX_TEST_TIMERS];
 } timer_app_shm_t;
 
 #if defined(__aarch64__)
@@ -202,7 +207,7 @@ static int parse_my_args(int first, int argc, char *argv[]);
 static void analyze(app_eo_ctx_t *eo_ctx);
 static void write_trace(app_eo_ctx_t *eo_ctx, const char *name);
 static void cleanup(app_eo_ctx_t *eo_ctx);
-static int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns, int count);
+static int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns, int count, int tidx);
 static uint64_t linux_time_ns(void);
 static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
 static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo);
@@ -222,7 +227,8 @@ static void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns,
 static void timing_statistics(app_eo_ctx_t *eo_ctx);
 static void add_prof(app_eo_ctx_t *eo_ctx, time_stamp t1, e_op op, app_msg_t *msg);
 static int do_one_tmo(int id, app_eo_ctx_t *eo_ctx,
-		      time_stamp *min, time_stamp *max, time_stamp *first, int64_t *tgt_max_ns);
+		      time_stamp *min, time_stamp *max, time_stamp *first,
+		      int64_t *tgt_max_ns, int64_t *max_early_ns);
 static tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count, int *last);
 static uint64_t random_tmo_ns(void);
 static uint64_t random_work_ns(rnd_state_t *rng);
@@ -278,7 +284,7 @@ void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 			app_msg_t *msg = em_event_pointer(events[i]);
 
 			add_trace(my_eo_ctx, msg->id, OP_PROF_ENTER_CB,
-				  0, count++);
+				  0, count++, -1);
 		}
 	}
 	my_eo_ctx->cdat[em_core_id()].enter = get_time();
@@ -293,7 +299,7 @@ void exit_cb(em_eo_t eo)
 		return;
 
 	if (g_options.dispatch)
-		add_trace(my_eo_ctx, -1, OP_PROF_EXIT_CB, 0, count++);
+		add_trace(my_eo_ctx, -1, OP_PROF_EXIT_CB, 0, count++, -1);
 
 	core_data *cdat = &my_eo_ctx->cdat[em_core_id()];
 	time_stamp took;
@@ -480,10 +486,10 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		return;
 	}
 
-	fprintf(fle, "\n\n#BEGIN TRACE FORMAT 1\n"); /* for offline analyzers */
+	fprintf(fle, "\n\n#BEGIN TRACE FORMAT 2\n"); /* for offline analyzers */
 	fprintf(fle, "res_ns,res_hz,period_ns,max_period_ns,clksrc,num_tmo,loops,");
-	fprintf(fle, "traces,noskip,SW-ver,bg,mz\n");
-	fprintf(fle, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s,\"%d/%lu\",\"%d/%lu\"\n",
+	fprintf(fle, "traces,noskip,SW-ver,bg,mz,timers\n");
+	fprintf(fle, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s,\"%d/%lu\",\"%d/%lu\",%d\n",
 		g_options.res_ns,
 		g_options.res_hz,
 		g_options.period_ns,
@@ -495,8 +501,8 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		g_options.noskip,
 		VERSION,
 		g_options.bg_events, g_options.bg_time_ns / 1000UL,
-		g_options.mz_mb, g_options.mz_ns / 1000000UL
-		);
+		g_options.mz_mb, g_options.mz_ns / 1000000UL,
+		g_options.num_timers);
 	fprintf(fle, "time_hz,meas_time_hz,timer_hz,meas_timer_hz,linux_hz\n");
 	fprintf(fle, "%lu,%lu,%lu,%lu,%lu\n",
 		eo_ctx->time_hz,
@@ -518,7 +524,7 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 			eo_ctx->tmo_data[i].first);
 	}
 
-	fprintf(fle, "id,op,tick,time_ns,linux_time_ns,counter,core\n");
+	fprintf(fle, "id,op,tick,time_ns,linux_time_ns,counter,core,timer\n");
 	for (int c = 0; c < cores; c++) {
 		for (int i = 0; i < eo_ctx->cdat[c].count; i++) {
 			uint64_t ns;
@@ -530,14 +536,15 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 				ns = eo_ctx->cdat[c].trc[i].linuxt.u64;
 			}
 
-			fprintf(fle, "%d,%s,%lu,%lu,%lu,%d,%d\n",
+			fprintf(fle, "%d,%s,%lu,%lu,%lu,%d,%d,%d\n",
 				eo_ctx->cdat[c].trc[i].id,
 				op_labels[eo_ctx->cdat[c].trc[i].op],
 				eo_ctx->cdat[c].trc[i].tick,
 				time_to_ns(eo_ctx->cdat[c].trc[i].ts),
 				ns,
 				eo_ctx->cdat[c].trc[i].count,
-				c);
+				c,
+				eo_ctx->cdat[c].trc[i].tidx);
 		}
 	}
 	fprintf(fle, "#END TRACE\n\n");
@@ -552,9 +559,14 @@ void show_global_stats(app_eo_ctx_t *eo_ctx)
 	APPL_PRINT("  Num late ack:      %lu", eo_ctx->global_stat.num_late);
 	APPL_PRINT(" (%lu%%)\n",
 		   (eo_ctx->global_stat.num_late * 100) / eo_ctx->global_stat.num_tmo);
-	APPL_PRINT("  Max diff from tgt: %.1fus (res %.1fus)\n",
+	APPL_PRINT("  Max early arrival: %.1fus %s\n",
+		   ((double)eo_ctx->global_stat.max_early_ns) / 1000.0,
+		   (uint64_t)llabs(eo_ctx->global_stat.max_early_ns) > g_options.res_ns ? "!" : "");
+	APPL_PRINT("  Max diff from tgt: %.1fus (res %.1fus) %s\n",
 		   ((double)eo_ctx->global_stat.max_dev_ns) / 1000.0,
-		   (double)g_options.res_ns / 1000.0);
+		   (double)g_options.res_ns / 1000.0,
+		   (uint64_t)llabs(eo_ctx->global_stat.max_dev_ns) > (2 * g_options.res_ns) ?
+		   ">2x res!" : "");
 	APPL_PRINT("  Max CPU load:      %d%%\n", eo_ctx->global_stat.max_cpu);
 	if (eo_ctx->global_stat.max_dispatch)
 		APPL_PRINT("  Max EO rcv time:   %luns\n", eo_ctx->global_stat.max_dispatch);
@@ -608,7 +620,8 @@ tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count, int *last)
 }
 
 int do_one_tmo(int id, app_eo_ctx_t *eo_ctx,
-	       time_stamp *min, time_stamp *max, time_stamp *first, int64_t *tgt_max)
+	       time_stamp *min, time_stamp *max, time_stamp *first,
+	       int64_t *tgt_max, int64_t *max_early_ns)
 {
 	int num = 0;
 	time_stamp diff;
@@ -654,6 +667,8 @@ int do_one_tmo(int id, app_eo_ctx_t *eo_ctx,
 
 				if (llabs(max_tgt_diff) < llabs(tgtdiff))
 					max_tgt_diff = tgtdiff;
+				if (tgtdiff < *max_early_ns)
+					*max_early_ns = tgtdiff;
 			}
 		}
 		prev = tmo->ts;
@@ -665,7 +680,7 @@ int do_one_tmo(int id, app_eo_ctx_t *eo_ctx,
 
 void timing_statistics(app_eo_ctx_t *eo_ctx)
 {
-	/* todo: a lot to improve here */
+	/* basic statistics, more with offline tools (-w) */
 	time_stamp max_ts = {0}, min_ts = {0}, first_ts = {0};
 	int64_t tgt_max = 0;
 	const int cores = em_core_count();
@@ -687,9 +702,11 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 
 	for (int id = 0; id < g_options.num_periodic; id++) { /* each timeout */
 		tmo_setup *tmo_data = &eo_ctx->tmo_data[id];
-		int num = do_one_tmo(id, eo_ctx, &min_ts, &max_ts, &first_ts, &tgt_max);
+		int64_t max_early = 0;
+		int num = do_one_tmo(id, eo_ctx, &min_ts, &max_ts, &first_ts, &tgt_max, &max_early);
 
-		APPL_PRINT("STAT-TMO [%d]: %d tmos, period %luns (", id, num, tmo_data->period_ns);
+		APPL_PRINT("STAT-TMO [%d]: %d tmos (tmr#%d), period %luns (",
+			   id, num, tmo_data->tidx, tmo_data->period_ns);
 		if (num > 1) {
 			int64_t maxdiff = (int64_t)time_to_ns(max_ts) -
 					  (int64_t)tmo_data->period_ns;
@@ -703,6 +720,8 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 			APPL_PRINT("  - Max diff from target %.2fus\n", (double)tgt_max / 1000);
 			if (llabs(tgt_max) > llabs(eo_ctx->global_stat.max_dev_ns))
 				eo_ctx->global_stat.max_dev_ns = tgt_max;
+			if (max_early < eo_ctx->global_stat.max_early_ns)
+				eo_ctx->global_stat.max_early_ns = max_early;
 		} else {
 			APPL_PRINT("%lu ticks), 1st period %lu\n",
 				   tmo_data->ticks, time_to_ns(first_ts));
@@ -790,6 +809,7 @@ void profile_all_stats(int cores, app_eo_ctx_t *eo_ctx)
 	profile_statistics(OP_PROF_SET, cores, eo_ctx);
 	profile_statistics(OP_PROF_ACK, cores, eo_ctx);
 	profile_statistics(OP_PROF_DELETE, cores, eo_ctx);
+	profile_statistics(OP_PROF_CANCEL, cores, eo_ctx);
 }
 
 void analyze(app_eo_ctx_t *eo_ctx)
@@ -797,8 +817,6 @@ void analyze(app_eo_ctx_t *eo_ctx)
 	int cores = em_core_count();
 	int cancelled = 0;
 	int job_del = 0;
-
-	/* more checks TODO? */
 
 	timing_statistics(eo_ctx);
 
@@ -831,25 +849,24 @@ void analyze(app_eo_ctx_t *eo_ctx)
 		      "Not all tmos deleted (did not arrive at all?)\n");
 }
 
-int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns, int count)
+int add_trace(app_eo_ctx_t *eo_ctx, int id, e_op op, uint64_t ns, int count, int tidx)
 {
 	int core = em_core_id();
 	tmo_trace *tmo = &eo_ctx->cdat[core].trc[eo_ctx->cdat[core].count];
 
 	if (eo_ctx->cdat[core].count < g_options.tracebuf) {
-		if (op < OP_PROF_ACK) /* to be a bit faster for profiling */
-			tmo->tick = em_timer_current_tick(eo_ctx->test_tmr);
+		if (op < OP_PROF_ACK && (tidx != -1)) /* to be a bit faster for profiling */
+			tmo->tick = em_timer_current_tick(eo_ctx->test_tmr[tidx]);
 		tmo->op = op;
 		tmo->id = id;
 		tmo->ts = get_time();
 		tmo->linuxt.u64 = ns;
 		tmo->count = count;
+		tmo->tidx = tidx;
 		eo_ctx->cdat[core].count++;
 	}
-	if (eo_ctx->cdat[core].count >= g_options.stoplim)
-		return 0;
-	else
-		return 1;
+
+	return (eo_ctx->cdat[core].count >= g_options.stoplim) ? 0 : 1;
 }
 
 void send_bg_events(app_eo_ctx_t *eo_ctx)
@@ -876,6 +893,7 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 	em_tmo_flag_t flag = EM_TMO_FLAG_PERIODIC;
 	time_stamp t1 = {0};
 	uint64_t max_period = 0;
+	int tidx;
 
 	if (g_options.noskip)
 		flag |= EM_TMO_FLAG_NOSKIP;
@@ -892,15 +910,20 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 		msg->command = CMD_TMO;
 		msg->count = 0;
 		msg->id = i;
-		if (g_options.profile)
-			t1 = get_time();
-		tmo = em_tmo_create(m_shm->test_tmr, flag, eo_ctx->test_q);
-		if (g_options.profile)
-			add_prof(eo_ctx, t1, OP_PROF_CREATE, msg);
+		tidx = random() % g_options.num_timers;
+		msg->tidx = tidx;
 
-		test_fatal_if(tmo == EM_TMO_UNDEF, "Can't allocate test_tmo!\n");
-		msg->tmo = tmo;
-		eo_ctx->tmo_data[i].handle = tmo;
+		if (eo_ctx->tmo_data[i].handle == EM_TMO_UNDEF) { /* not -q */
+			if (g_options.profile)
+				t1 = get_time();
+			tmo = em_tmo_create(m_shm->test_tmr[tidx], flag, eo_ctx->test_q);
+			if (g_options.profile)
+				add_prof(eo_ctx, t1, OP_PROF_CREATE, msg);
+			test_fatal_if(tmo == EM_TMO_UNDEF, "Can't allocate test_tmo!\n");
+			eo_ctx->tmo_data[i].handle = tmo;
+		}
+		msg->tmo = eo_ctx->tmo_data[i].handle;
+		eo_ctx->tmo_data[i].tidx = tidx;
 
 		double ns = 1000000000 / (double)eo_ctx->test_hz;
 		uint64_t period;
@@ -936,17 +959,17 @@ void start_periodic(app_eo_ctx_t *eo_ctx)
 		eo_ctx->tmo_data[i].first = first;
 
 		eo_ctx->tmo_data[i].start_ts = get_time();
-		eo_ctx->tmo_data[i].start = em_timer_current_tick(m_shm->test_tmr);
+		eo_ctx->tmo_data[i].start = em_timer_current_tick(m_shm->test_tmr[tidx]);
 		first += eo_ctx->tmo_data[i].start;
 		if (g_options.profile)
 			t1 = get_time();
-		stat = em_tmo_set_periodic(tmo, first, period, event);
+		stat = em_tmo_set_periodic(eo_ctx->tmo_data[i].handle, first, period, event);
 		if (g_options.profile)
 			add_prof(eo_ctx, t1, OP_PROF_SET, msg);
 
 		if (unlikely(stat != EM_OK)) {
 			if (EXTRA_PRINTS) {
-				em_timer_tick_t now = em_timer_current_tick(eo_ctx->test_tmr);
+				em_timer_tick_t now = em_timer_current_tick(eo_ctx->test_tmr[tidx]);
 
 				APPL_PRINT("FAILED to set tmo, stat=%d: first=%lu, ", stat, first);
 				APPL_PRINT("now %lu (diff %ld), period=%lu\n",
@@ -969,7 +992,7 @@ void add_prof(app_eo_ctx_t *eo_ctx, time_stamp t1, e_op op, app_msg_t *msg)
 {
 	time_stamp dif = time_diff(get_time(), t1);
 
-	add_trace(eo_ctx, msg->id, op, dif.u64, msg->count);
+	add_trace(eo_ctx, msg->id, op, dif.u64, msg->count, -1);
 	/* if this filled the buffer it's handled on next tmo */
 }
 
@@ -987,7 +1010,7 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 
 	/* this is to optionally test abnormal exits only */
 	if (unlikely(g_options.abort != 0) && abs(g_options.abort) <= msg->count) {
-		if (g_options.abort < 0) { /* cause segfault */
+		if (g_options.abort < 0) { /* cause segfault to test exception here */
 			uint64_t *fault = NULL;
 			/* coverity[FORWARD_NULL] */
 			msg->arg = *fault;
@@ -997,7 +1020,7 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 	}
 
 	if (likely(state == STATE_RUN)) { /* add tmo trace */
-		if (!add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count))
+		if (!add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count, msg->tidx))
 			send_stop(eo_ctx); /* triggers state change */
 
 		if (g_options.work_prop) {
@@ -1010,12 +1033,12 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 				do {
 					t2 = get_time();
 				} while (time_to_ns(t2) < (ns + work));
-				add_trace(eo_ctx, msg->id, OP_WORK, work, msg->count);
+				add_trace(eo_ctx, msg->id, OP_WORK, work, msg->count, -1);
 			}
 		}
 
 		/* only ack while in running state */
-		add_trace(eo_ctx, msg->id, OP_ACK, 0, msg->count);
+		add_trace(eo_ctx, msg->id, OP_ACK, 0, msg->count, msg->tidx);
 		if (g_options.profile)
 			t1 = get_time();
 		em_status_t stat = em_tmo_ack(msg->tmo, event);
@@ -1028,31 +1051,38 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 	} else if (state == STATE_COOLOFF) { /* trace, but cancel */
 		em_event_t tmo_event = EM_EVENT_UNDEF;
 
-		add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count);
+		add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count, msg->tidx);
 		em_tmo_get_stats(msg->tmo, &ctrs);
 		APPL_PRINT("STAT-ACK [%d]:  %lu acks, %lu late, %lu skips\n",
 			   msg->id, ctrs.num_acks, ctrs.num_late_ack, ctrs.num_period_skips);
 		eo_ctx->tmo_data[msg->id].ack_late = ctrs.num_late_ack;
 		eo_ctx->global_stat.num_late += ctrs.num_late_ack;
 
-		if (g_options.profile)
-			t1 = get_time();
-		ret = em_tmo_delete(msg->tmo, &tmo_event);
-		if (g_options.profile)
-			add_prof(eo_ctx, t1, OP_PROF_DELETE, msg);
-		test_fatal_if(ret != EM_OK, "tmo_delete failed, ret %" PRI_STAT "!\n", ret);
-
 		if (unlikely(msg->id >= g_options.num_periodic))
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Corrupted tmo msg?\n");
 
-		eo_ctx->tmo_data[msg->id].handle = EM_TMO_UNDEF;
+		if (g_options.profile)
+			t1 = get_time();
+		if (g_options.no_del) { /* don't delete each round */
+			ret = em_tmo_cancel(msg->tmo, &tmo_event);
+			if (g_options.profile)
+				add_prof(eo_ctx, t1, OP_PROF_CANCEL, msg);
+			test_fatal_if(ret == EM_OK, "tmo_cancel ok, expecting fail here!\n");
+		} else {
+			ret = em_tmo_delete(msg->tmo, &tmo_event);
+			if (g_options.profile)
+				add_prof(eo_ctx, t1, OP_PROF_DELETE, msg);
+			test_fatal_if(ret != EM_OK, "tmo_delete failed, ret %" PRI_STAT "!\n", ret);
+			eo_ctx->tmo_data[msg->id].handle = EM_TMO_UNDEF;
+		}
+
 		eo_ctx->cdat[core].cancelled++;
-		if (unlikely(tmo_event != EM_EVENT_UNDEF)) { /* not expected */
+		if (unlikely(tmo_event != EM_EVENT_UNDEF)) { /* not expected as we have the event */
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 				   "periodic tmo delete returned evt!\n");
 		}
-		add_trace(eo_ctx, msg->id, OP_CANCEL, 0, msg->count);
-		reuse = 0; /* free this last tmo event of deleted tmo */
+		add_trace(eo_ctx, msg->id, OP_CANCEL, 0, msg->count, msg->tidx);
+		reuse = 0; /* free this last tmo event of canceled tmo */
 	} else {
 		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 			   "Timeout in state %s!\n", state_labels[state]);
@@ -1065,7 +1095,7 @@ void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns, uint64_t tmrtick,
 {
 	uint64_t linux_t2 = linux_time_ns();
 	time_stamp time_t2 = get_time();
-	uint64_t tmr_t2 = em_timer_current_tick(eo_ctx->test_tmr);
+	uint64_t tmr_t2 = em_timer_current_tick(eo_ctx->test_tmr[0]);
 
 	linux_t2 = linux_t2 - linuxns;
 	time_t2 = time_diff(time_t2, timetick);
@@ -1091,7 +1121,7 @@ int do_memzero(app_msg_t *msg, app_eo_ctx_t *eo_ctx)
 {
 	static int count;
 
-	add_trace(eo_ctx, -1, OP_MEMZERO, g_options.mz_mb, msg->count);
+	add_trace(eo_ctx, -1, OP_MEMZERO, g_options.mz_mb, msg->count, -1);
 	if (eo_ctx->mz_data == NULL) { /* first time we only allocate */
 		if (g_options.mz_huge) {
 			eo_ctx->mz_data = mmap(NULL, g_options.mz_mb * 1024UL * 1024UL,
@@ -1109,7 +1139,7 @@ int do_memzero(app_msg_t *msg, app_eo_ctx_t *eo_ctx)
 		memset(eo_ctx->mz_data, 0, g_options.mz_mb * 1024UL * 1024UL);
 		eo_ctx->mz_count++;
 	}
-	add_trace(eo_ctx, -1, OP_MEMZERO_END, g_options.mz_mb, count);
+	add_trace(eo_ctx, -1, OP_MEMZERO_END, g_options.mz_mb, count, -1);
 	__atomic_fetch_add(&count, 1, __ATOMIC_RELAXED);
 	return 0;
 }
@@ -1131,7 +1161,7 @@ int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx)
 	}
 
 	if (g_options.jobs)
-		add_trace(eo_ctx, -1, OP_BGWORK, msg->arg, msg->count);
+		add_trace(eo_ctx, -1, OP_BGWORK, msg->arg, msg->count, -1);
 
 	msg->count++;
 	eo_ctx->cdat[core].jobs++;
@@ -1183,7 +1213,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 	/* heartbeat runs states of the test */
 
 	msg->count++;
-	add_trace(eo_ctx, -1, OP_HB, linux_time_ns(), msg->count);
+	add_trace(eo_ctx, -1, OP_HB, linux_time_ns(), msg->count, -1);
 
 	if (EXTRA_PRINTS)
 		APPL_PRINT(".");
@@ -1202,7 +1232,8 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (linuxns == 0) {
 			linuxns = linux_time_ns();
 			timetick = get_time();
-			tmrtick = em_timer_current_tick(eo_ctx->test_tmr);
+			/* use timer[0] for this always */
+			tmrtick = em_timer_current_tick(eo_ctx->test_tmr[0]);
 		}
 		if (msg->count > eo_ctx->last_hbcount + MEAS_PERIOD) {
 			analyze_measure(eo_ctx, linuxns, tmrtick, timetick);
@@ -1211,7 +1242,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 			if (g_options.num_runs > 1)
 				APPL_PRINT("** Round %d\n", runs + 1);
 			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
-			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
+			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state, -1);
 		}
 		break;
 
@@ -1219,7 +1250,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (g_options.bg_events)
 			send_bg_events(eo_ctx);
 		__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
-		add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
+		add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state, -1);
 		if (EXTRA_PRINTS)
 			APPL_PRINT("->Starting tmos\n");
 		start_periodic(eo_ctx);
@@ -1236,7 +1267,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 		}
 		if (done) {
 			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
-			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
+			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state, -1);
 			eo_ctx->last_hbcount = msg->count;
 			if (EXTRA_PRINTS)
 				APPL_PRINT("->All cores done\n");
@@ -1246,7 +1277,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 	case STATE_COOLOFF:	/* stop further timeouts */
 		if (msg->count > (eo_ctx->last_hbcount + eo_ctx->cooloff)) {
 			__atomic_fetch_add(&eo_ctx->state, 1, __ATOMIC_SEQ_CST);
-			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state);
+			add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), eo_ctx->state, -1);
 			eo_ctx->last_hbcount = msg->count;
 			if (EXTRA_PRINTS)
 				APPL_PRINT("->Starting analyze\n");
@@ -1326,6 +1357,10 @@ int parse_my_args(int first, int argc, char *argv[])
 		break;
 		case 'u': {
 			g_options.usehuge = 1;
+		}
+		break;
+		case 'q': {
+			g_options.no_del = 1;
 		}
 		break;
 		case 'g': {
@@ -1481,6 +1516,14 @@ int parse_my_args(int first, int argc, char *argv[])
 		}
 		break;
 
+		case 'y': {
+			num = strtol(optarg, &endptr, 0);
+			if (*endptr != '\0' || num < 1)
+				return 0;
+			g_options.num_timers = num;
+		}
+		break;
+
 		case 'h':
 		default:
 			opterr = 0;
@@ -1614,6 +1657,7 @@ void test_start(appl_conf_t *const appl_conf)
 	stat = em_timer_capability(&capa, g_options.clock_src);
 
 	APPL_PRINT("Timer capability for clksrc %d:\n", g_options.clock_src);
+	APPL_PRINT(" maximum timers: %d\n", capa.max_timers);
 	APPL_PRINT(" max_res %luns %luhz min_tmo %lu max_tmo %lu\n",
 		   capa.max_res.res_ns, capa.max_res.res_hz,
 		   capa.max_res.min_tmo, capa.max_res.max_tmo);
@@ -1666,9 +1710,12 @@ void test_start(appl_conf_t *const appl_conf)
 			attr.resparam.res_hz = 0;
 		attr.num_tmo = g_options.num_periodic;
 		attr.resparam.max_tmo = g_options.max_period_ns; /* don't need more */
-		m_shm->test_tmr = em_timer_create(&attr);
-		test_fatal_if(m_shm->test_tmr == EM_TIMER_UNDEF, "Failed to create test timer!");
-		eo_ctx->test_tmr = m_shm->test_tmr;
+		for (int i = 0; i < g_options.num_timers; i++) {
+			m_shm->test_tmr[i] = em_timer_create(&attr);
+			test_fatal_if(m_shm->test_tmr[i] == EM_TIMER_UNDEF, "Failed to create test timer!");
+			eo_ctx->test_tmr[i] = m_shm->test_tmr[i];
+		}
+		APPL_PRINT("%d test timers created\n", g_options.num_timers);
 		g_options.res_ns = attr.resparam.res_ns;
 	}
 
@@ -1704,10 +1751,12 @@ test_stop(appl_conf_t *const appl_conf)
 	ret = em_timer_delete(m_shm->hb_tmr);
 	test_fatal_if(ret != EM_OK, "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
 		      m_shm->hb_tmr, ret);
-	if (m_shm->test_tmr != EM_TIMER_UNDEF) {
-		ret = em_timer_delete(m_shm->test_tmr);
-		test_fatal_if(ret != EM_OK, "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
-			      m_shm->test_tmr, ret);
+	for (int i = 0; i < g_options.num_timers; i++) {
+		if (m_shm->test_tmr[i] != EM_TIMER_UNDEF) {
+			ret = em_timer_delete(m_shm->test_tmr[i]);
+			test_fatal_if(ret != EM_OK, "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
+				      m_shm->test_tmr[i], ret);
+		}
 	}
 	free(m_shm->eo_context.tmo_data);
 }
@@ -1762,7 +1811,8 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	}
 
 	APPL_PRINT("\nActive run options:\n");
-	APPL_PRINT(" num timers:   %d\n", g_options.num_periodic);
+	APPL_PRINT(" num timers:   %d\n", g_options.num_timers);
+	APPL_PRINT(" num timeouts: %d\n", g_options.num_periodic);
 	if (g_options.res_hz) {
 		APPL_PRINT(" resolution:   %lu Hz (%f MHz)\n", g_options.res_hz,
 			   (double)g_options.res_hz / 1000000);
@@ -1834,6 +1884,8 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 		else
 			APPL_PRINT("0 (no)\n");
 	}
+	if (g_options.num_runs != 1)
+		APPL_PRINT(" delete tmos:  %s", g_options.no_del ? "no" : "yes");
 
 	APPL_PRINT("\nTracing first %d tmo events\n", g_options.tracebuf);
 
@@ -1882,9 +1934,9 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 		APPL_PRINT("FAILED to set HB tmo, stat=%d: period=%lu\n", stat, eo_ctx->hb_hz);
 	test_fatal_if(stat != EM_OK, "Can't activate heartbeat tmo!\n");
 
-	eo_ctx->test_hz = em_timer_get_freq(m_shm->test_tmr);
+	eo_ctx->test_hz = em_timer_get_freq(m_shm->test_tmr[0]); /* use timer[0] */
 	test_fatal_if(eo_ctx->test_hz == 0,
-		      "get_freq() failed, timer:%" PRI_TMR "", m_shm->test_tmr);
+		      "get_freq() failed, timer:%" PRI_TMR "", m_shm->test_tmr[0]);
 
 	stat = em_dispatch_register_enter_cb(enter_cb);
 	test_fatal_if(stat != EM_OK, "enter_cb() register failed!");
@@ -2059,7 +2111,7 @@ static void app_eo_receive(void *eo_context, em_event_t event,
 			/* only do this once */
 			if (state == STATE_RUN && queue == eo_ctx->stop_q) {
 				__atomic_store_n(&eo_ctx->state, STATE_COOLOFF, __ATOMIC_SEQ_CST);
-				add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), STATE_COOLOFF);
+				add_trace(eo_ctx, -1, OP_STATE, linux_time_ns(), STATE_COOLOFF, -1);
 				eo_ctx->last_hbcount = last_count;
 				eo_ctx->stopped = get_time();
 				APPL_PRINT("Core %d reported DONE\n", msgin->id);

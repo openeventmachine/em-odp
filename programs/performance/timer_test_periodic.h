@@ -12,6 +12,7 @@
 #define DEF_MIN_PERIOD	5 /* min period default, N * res */
 #define DEF_MAX_PERIOD	(2 * 1000 * 1000 * 1000ULL) /* 2 sec */
 #define EXTRA_PRINTS	0 /* dev option, normally 0 */
+#define MAX_TEST_TIMERS 32
 
 const struct option longopts[] = {
 	{"num-tmo",		required_argument, NULL, 'n'},
@@ -33,17 +34,19 @@ const struct option longopts[] = {
 	{"job-prof",		no_argument, NULL, 'b'},
 	{"info",		no_argument, NULL, 'i'},
 	{"use-huge",		no_argument, NULL, 'u'},
+	{"no-delete",		no_argument, NULL, 'q'},
 	{"use-cpu-cycle",	optional_argument, NULL, 'g'},
 	{"memzero",		required_argument, NULL, 'o'},
 	{"abort",		required_argument, NULL, 'k'},
+	{"num-timers",		required_argument, NULL, 'y'},
 	{"help",		no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiug::hz:o:k:";
+const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiuqg::hz:o:k:y:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
-	"Number of concurrent timers to create",
+	"Number of concurrent timeouts to create",
 	"Resolution of test timer (ns), Use 0 for highest supported",
 	"Resolution of periodic test timer as frequency (Hz). Use either -r or -z",
 	"Period of periodic test timer (ns). 0 for random",
@@ -58,24 +61,27 @@ const char *descopts[] = {
 	"Extra background job: -j2,20,500,10 e.g. num,time_us,total_kB,chunk_kB",
 	"Create timer without NOSKIP option",
 	"Measure API calls",
-	"Include dispatcher trace (EO enter-exit)",
+	"Include dispatcher trace (EO enter-exit, analysis currently broken)",
 	"Include bg job profile (note - can fill buffer quickly)",
 	"Only print timer capabilities and exit",
 	"Use huge page for trace buffer",
+	"Don't delete timeouts between runs (if -x)",
 	"Use CPU cycles instead of ODP time. Optionally give frequency (hz)",
 	"Allocate and clear memory: -o50,100[,1] to clear 50MB (,1 to use huge pg) every 100ms. Special HW test, must also use -j",
 	"Abort application after given tmos (test abnormal exit). Use negative count to do segfault instead",
+	"Number of timers to use for test. Default 1",
 	"Print usage and exit",
 	NULL
 };
 
 const char *instructions =
-"\nTest is controlled by command line arguments. Purpose of this tool is to manually test\n"
-"periodic timer accuracy and behaviour optionally under (over)load.\n"
-"Some API overheads can also be measured\n"
-"\nTwo EM timers are created. One for a heartbeat driving test states. Second\n"
-"timer is used for testing the periodic timeouts. It can be created with\n"
-"given attributes to also test limits.\n\n"
+"\nMain purpose of this experimental tool is to manually test periodic timer accuracy and\n"
+"behaviour optionally under (over)load. Test is controlled by command line arguments.\n"
+"Some API overheads can also be measured.\n"
+"\nAt least two EM timers are created. One for a heartbeat driving test states. Second\n"
+"timer (or multiple) is used for testing the periodic timeouts. It can be created with\n"
+"given attributes to also test limits. All the test timers are configured the same way.\n"
+"If multiple timers are used the timeouts are randomly placed on those.\n\n"
 "Test runs in states:\n"
 "	STATE_INIT	let some time pass before starting (to settle down)\n"
 "	STATE_MEASURE	measure timer tick frequency against linux clock\n"
@@ -102,7 +108,7 @@ const char *instructions =
 "Test can write a file of measured timings (-w). It is in CSV format and can\n"
 "be imported e.g. to excel for plotting. -w without name prints to stdout\n"
 "\nSingle time values can be postfixed with n,u,m,s to indicate nano(default),\n"
-"micro, milli or seconds. e.g. -p1m for 1ms. Integer only\n";
+"micro, milli or seconds. e.g. -p1m for 1ms. Integers only\n";
 
 typedef enum e_op {
 	OP_TMO,
@@ -116,6 +122,7 @@ typedef enum e_op {
 	OP_MEMZERO_END,
 	OP_PROF_ACK,	/* linux time used as tick diff for each PROF */
 	OP_PROF_DELETE,
+	OP_PROF_CANCEL,
 	OP_PROF_CREATE,
 	OP_PROF_SET,
 	OP_PROF_ENTER_CB,
@@ -135,6 +142,7 @@ const char *op_labels[] = {
 	"MEMZERO-END",
 	"PROF-ACK",
 	"PROF-DEL",
+	"PROF-CANCEL",
 	"PROF-CREATE",
 	"PROF-SET",
 	"PROF-ENTER_CB",
@@ -152,6 +160,7 @@ typedef struct tmo_trace {
 		time_stamp ts;
 		time_stamp linuxt;
 		int count;
+		int tidx;
 } tmo_trace;
 
 #define RND_STATE_BUF   32
@@ -185,6 +194,7 @@ typedef struct app_msg_t {
 	e_cmd command;
 	int count;
 	em_tmo_t tmo;
+	int tidx;
 	int id;
 	uint64_t arg;
 
@@ -219,4 +229,5 @@ typedef struct tmo_setup {
 	uint64_t first;
 	uint64_t ticks;
 	uint64_t ack_late;
+	int	 tidx;
 } tmo_setup;

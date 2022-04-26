@@ -78,6 +78,7 @@ em_event_group_delete(em_event_group_t event_group)
 			"Event group:%" PRI_EGRP " count not zero!",
 			event_group);
 
+	/* set num_notif = 0, ready = 0 */
 	egrp_elem->all = 0;
 
 	status = event_group_free(event_group);
@@ -353,6 +354,9 @@ em_send_group(em_event_t event, em_queue_t queue,
 	case EM_QUEUE_TYPE_PARALLEL:
 	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
 		stat = send_event(event, q_elem);
+		break;
+	case EM_QUEUE_TYPE_UNSCHEDULED:
+		stat = queue_unsched_enqueue(event, q_elem);
 		break;
 	case EM_QUEUE_TYPE_LOCAL:
 		stat = send_local(event, ev_hdr, q_elem);

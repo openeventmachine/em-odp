@@ -43,6 +43,7 @@ typedef struct {
 	int num_notif;
 	const em_notif_t *notif_tbl; /* notif_tbl[num_notif] */
 	int exclude_current_core;
+	bool sync_operation;
 } eo_local_func_call_param_t;
 
 static void
@@ -305,6 +306,7 @@ eo_start_local_req(eo_elem_t *const eo_elem,
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
 	param.exclude_current_core = EM_FALSE; /* all cores */
+	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
 }
@@ -354,6 +356,7 @@ eo_start_sync_local_req(eo_elem_t *const eo_elem)
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
 	param.exclude_current_core = EM_TRUE; /* exclude this core */
+	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
 }
@@ -365,6 +368,7 @@ eo_start_sync_local_req(eo_elem_t *const eo_elem)
 static void
 eo_start_sync_done_callback(void *args)
 {
+	em_locm_t *const locm = &em_locm;
 	const loc_func_retval_t *loc_func_retvals = args;
 	eo_elem_t *const eo_elem = loc_func_retvals->eo_elem;
 	em_status_t ret;
@@ -385,8 +389,9 @@ eo_start_sync_done_callback(void *args)
 	/* free the storage for local func return values */
 	em_free(loc_func_retvals->event);
 
-	/* Enable the caller of the sync API func to proceed */
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+	/* Enable the caller of the sync API func to proceed (on this core) */
+	locm->sync_api.in_progress = false;
+
 	/*
 	 * Events buffered during the EO-start/local-start functions are sent
 	 * from em_eo_start_sync() after this.
@@ -536,6 +541,7 @@ eo_stop_local_req(eo_elem_t *const eo_elem,
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
 	param.exclude_current_core = EM_FALSE; /* all cores */
+	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
 }
@@ -614,6 +620,7 @@ eo_stop_sync_local_req(eo_elem_t *const eo_elem)
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
 	param.exclude_current_core = EM_TRUE; /* exclude this core */
+	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
 }
@@ -625,6 +632,7 @@ eo_stop_sync_local_req(eo_elem_t *const eo_elem)
 static void
 eo_stop_sync_done_callback(void *args)
 {
+	em_locm_t *const locm = &em_locm;
 	const loc_func_retval_t *loc_func_retvals = args;
 	const eo_elem_t *eo_elem = loc_func_retvals->eo_elem;
 
@@ -633,7 +641,7 @@ eo_stop_sync_done_callback(void *args)
 			       EM_ESCOPE_EO_STOP_SYNC_DONE_CB,
 			       "eo_elem is NULL!");
 		/* Enable the caller of the sync API func to proceed */
-		env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+		locm->sync_api.in_progress = false;
 		return;
 	}
 
@@ -642,8 +650,8 @@ eo_stop_sync_done_callback(void *args)
 	/* free the storage for local func return values */
 	em_free(loc_func_retvals->event);
 
-	/* Enable the caller of the sync API func to proceed */
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+	/* Enable the caller of the sync API func to proceed (on this core) */
+	locm->sync_api.in_progress = false;
 }
 
 em_status_t
@@ -661,6 +669,7 @@ eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
 	param.exclude_current_core = EM_FALSE; /* all cores */
+	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
 }
@@ -718,6 +727,7 @@ eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
 	param.exclude_current_core = EM_TRUE; /* exclude this core */
+	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
 }
@@ -734,6 +744,7 @@ eo_remove_queue_sync_local(const eo_elem_t *eo_elem, const queue_elem_t *q_elem)
 static void
 eo_remove_queue_sync_done_callback(void *args)
 {
+	em_locm_t *const locm = &em_locm;
 	const loc_func_retval_t *loc_func_retvals = args;
 	eo_elem_t *const eo_elem = loc_func_retvals->eo_elem;
 	queue_elem_t *const q_elem = loc_func_retvals->q_elem;
@@ -743,7 +754,8 @@ eo_remove_queue_sync_done_callback(void *args)
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
 			       EM_ESCOPE_EO_REMOVE_QUEUE_SYNC_DONE_CB,
 			       "eo_elem/q_elem is NULL!");
-		env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+		/* Enable the caller of the sync API func to proceed */
+		locm->sync_api.in_progress = false;
 		return;
 	}
 
@@ -761,8 +773,8 @@ eo_remove_queue_sync_done_callback(void *args)
 	/* free the storage for local func return values */
 	em_free(loc_func_retvals->event);
 
-	/* Enable the caller of the sync API func to proceed */
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+	/* Enable the caller of the sync API func to proceed (on this core) */
+	locm->sync_api.in_progress = false;
 }
 
 em_status_t
@@ -780,6 +792,7 @@ eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
 	param.exclude_current_core = EM_FALSE; /* all cores */
+	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
 }
@@ -839,6 +852,7 @@ eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues)
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
 	param.exclude_current_core = EM_TRUE; /* exclude this core */
+	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
 }
@@ -855,6 +869,7 @@ eo_remove_queue_all_sync_local(const eo_elem_t *eo_elem, int delete_queues)
 static void
 eo_remove_queue_all_sync_done_callback(void *args)
 {
+	em_locm_t *const locm = &em_locm;
 	const loc_func_retval_t *loc_func_retvals = args;
 	eo_elem_t *const eo_elem = loc_func_retvals->eo_elem;
 	int delete_queues = loc_func_retvals->delete_queues;
@@ -864,7 +879,8 @@ eo_remove_queue_all_sync_done_callback(void *args)
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
 			       EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC_DONE_CB,
 			       "eo_elem is NULL!");
-		env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+		/* Enable the caller of the sync API func to proceed */
+		locm->sync_api.in_progress = false;
 		return;
 	}
 
@@ -885,8 +901,8 @@ eo_remove_queue_all_sync_done_callback(void *args)
 	/* free the storage for local func return values */
 	em_free(loc_func_retvals->event);
 
-	/* Enable the caller of the sync API func to proceed */
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+	/* Enable the caller of the sync API func to proceed (on this core) */
+	locm->sync_api.in_progress = false;
 }
 
 static em_status_t
@@ -1009,7 +1025,8 @@ eo_local_func_call_req(const eo_local_func_call_param_t *param)
 
 	err = send_core_ctrl_events(&core_mask, event,
 				    param->f_done_callback, f_done_arg_ptr,
-				    param->num_notif, param->notif_tbl);
+				    param->num_notif, param->notif_tbl,
+				    param->sync_operation);
 	if (unlikely(err)) {
 		char core_mask_str[EM_CORE_MASK_STRLEN];
 		uint32_t unsent_cnt = err;

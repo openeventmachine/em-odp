@@ -50,6 +50,7 @@ int em_libconfig_init_global(libconfig_t *libconfig)
 
 	config_init(config);
 	config_init(config_rt);
+	libconfig->has_cfg_runtime = 0;
 
 	if (!config_read_string(config, config_builtin)) {
 		EM_PRINT("Failed to read default config: %s(%d): %s\n",
@@ -98,6 +99,7 @@ int em_libconfig_init_global(libconfig_t *libconfig)
 		goto fail;
 	}
 
+	libconfig->has_cfg_runtime = 1;
 	return 0;
 fail:
 	EM_PRINT("Config file failure\n");
@@ -128,6 +130,26 @@ int em_libconfig_lookup_int(const libconfig_t *libconfig, const char *path,
 	return  (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) ? 1 : 0;
 }
 
+int em_libconfig_lookup_int64(const libconfig_t *libconfig, const char *path,
+			      int64_t *value /*out*/)
+{
+	int ret_def = CONFIG_FALSE;
+	int ret_rt = CONFIG_FALSE;
+	long long value_ll = 0;
+
+	ret_def = config_lookup_int64(&libconfig->cfg_default, path, &value_ll);
+
+	/* Runtime option overrides default value */
+	ret_rt = config_lookup_int64(&libconfig->cfg_runtime, path, &value_ll);
+
+	if (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) {
+		*value = (int64_t)value_ll;
+		return 1; /* success! */
+	}
+
+	return 0; /* fail */
+}
+
 int em_libconfig_lookup_bool(const libconfig_t *libconfig, const char *path,
 			     bool *value /*out*/)
 {
@@ -147,6 +169,20 @@ int em_libconfig_lookup_bool(const libconfig_t *libconfig, const char *path,
 	}
 
 	return  ret_val;
+}
+
+int em_libconfig_lookup_string(const libconfig_t *libconfig, const char *path,
+			       const char **value /*out*/)
+{
+	int ret_def = CONFIG_FALSE;
+	int ret_rt = CONFIG_FALSE;
+
+	ret_def = config_lookup_string(&libconfig->cfg_default, path, value);
+
+	/* Runtime option overrides default value */
+	ret_rt = config_lookup_string(&libconfig->cfg_runtime, path, value);
+
+	return (ret_def == CONFIG_TRUE || ret_rt == CONFIG_TRUE) ? 1 : 0;
 }
 
 int em_libconfig_lookup_array(const libconfig_t *libconfig, const char *path,
@@ -225,4 +261,43 @@ int em_libconfig_lookup_ext_int(const libconfig_t *libconfig,
 		return 1;
 
 	return 0;
+}
+
+int em_libconfig_print(const libconfig_t *libconfig)
+{
+	int c;
+	/* Temp file for config_write() output. Suppress Coverity warning about tmpfile() usage. */
+	/* coverity[secure_temp] */
+	FILE *file = tmpfile();
+
+	if (file == NULL)
+		return -1;
+
+	if (fprintf(file,
+		    "\nEM_CONFIG_FILE default values:\n"
+		    "-------------------------------\n\n") < 0)
+		goto fail;
+
+	config_write(&libconfig->cfg_default, file);
+
+	if (libconfig->has_cfg_runtime) {
+		if (fprintf(file,
+			    "\nEM_CONFIG_FILE override values:\n"
+			    "--------------------------------\n\n") < 0)
+			goto fail;
+
+		config_write(&libconfig->cfg_runtime, file);
+	}
+
+	/* Print temp file to the log */
+	rewind(file);
+	while ((c = fgetc(file)) != EOF)
+		EM_PRINT("%c", (char)c);
+
+	fclose(file);
+	return 0;
+
+fail:
+	fclose(file);
+	return -1;
 }

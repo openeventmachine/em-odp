@@ -252,6 +252,9 @@ esv_update_state(ev_hdr_state_t *const evstate, const uint16_t api_op,
 static inline void
 evhdr_update_state(event_hdr_t *const ev_hdr, const uint16_t api_op)
 {
+	if (!em_shm->opt.esv.store_state)
+		return; /* don't store updated state */
+
 	const void *ev_ptr = NULL;
 
 	if (em_shm->opt.esv.store_first_u32)
@@ -278,6 +281,22 @@ evhdr_update_state(event_hdr_t *const ev_hdr, const uint16_t api_op)
 "=> new-state:%s core:%02u:\t"                                      \
 "   EO:%" PRI_EO "-\"%s\" Q:%" PRI_QUEUE "-\"%s\" u32[0]:%s\n"
 
+/* ESV Error format when esv.store_state = false */
+#define EVSTATE__NO_PREV_STATE__ERROR_FMT \
+"ESV: Event:%" PRI_EVENT " state error -- counts current(vs.expected):\t"                      \
+"evgen:%" PRIu16 "(%" PRIu16 ") free:%" PRIi16 "(%" PRIi16 ") send:%" PRIi16 "(%" PRIi16 ")\n" \
+"  prev-state:n/a (disabled in conf)\n"                                                        \
+"=> new-state:%s core:%02u:\t"                                                                 \
+"   EO:%" PRI_EO "-\"%s\" Q:%" PRI_QUEUE "-\"%s\" u32[0]:%s\n"                                 \
+"   event:0x%016" PRIx64 ": ptr:0x%" PRIx64 ""
+
+/* ESV Error format for em_event_unmark_send/free/_multi() when esv.store_state = false */
+#define EVSTATE__NO_PREV_STATE__UNMARK_ERROR_FMT \
+"ESV: Event:%" PRI_EVENT " state error - Invalid 'unmark'-API use\n"\
+"  prev-state:n/a (disabled in conf)\n"                             \
+"=> new-state:%s core:%02u:\t"                                      \
+"   EO:%" PRI_EO "-\"%s\" Q:%" PRI_QUEUE "-\"%s\" u32[0]:%s\n"
+
 /**
  * ESV Error reporting
  */
@@ -286,18 +305,17 @@ esv_error(const evstate_cnt_t cnt, const evstate_cnt_t exp, evhdl_t evhdl,
 	  const event_hdr_t *const ev_hdr, const uint16_t api_op,
 	  bool is_unmark_error)
 {
+	uint16_t prev_op = ev_hdr->state.api_op;
+	ev_hdr_state_t prev_state = ev_hdr->state; /* store prev good state */
+	ev_hdr_state_t err_state = {0}; /* store current invalid/error state */
 	const em_event_t event = event_hdr_to_event(ev_hdr);
 	const void *ev_ptr = NULL;
-	uint16_t prev_op = ev_hdr->state.api_op;
 
 	if (unlikely(prev_op > EVSTATE__LAST))
 		prev_op = EVSTATE__UNDEF;
 
 	const evstate_info_t *err_info = &evstate_info_tbl[api_op];
 	const evstate_info_t *prev_info = &evstate_info_tbl[prev_op];
-
-	ev_hdr_state_t err_state = {0};  /* store current invalid/error state */
-	ev_hdr_state_t prev_state;       /* store previous good known state */
 
 	char curr_eoname[EM_EO_NAME_LEN] = "(noname)";
 	char prev_eoname[EM_EO_NAME_LEN] = "(noname)";
@@ -314,8 +332,6 @@ esv_error(const evstate_cnt_t cnt, const evstate_cnt_t exp, evhdl_t evhdl,
 		ev_ptr = event_pointer(event);
 	/* Store the new _invalid_ event-state info into a separate struct */
 	esv_update_state(&err_state, api_op, ev_ptr);
-	/* Copy the previous valid event-state info from the event-header */
-	prev_state = ev_hdr->state;
 
 	/*
 	 * Print the first 32bits of the event payload on failure,
@@ -327,69 +343,106 @@ esv_error(const evstate_cnt_t cnt, const evstate_cnt_t exp, evhdl_t evhdl,
 			 "0x%08" PRIx32 "", err_state.payload_first);
 		curr_payload[sizeof(curr_payload) - 1] = '\0';
 	}
-	/*
-	 * Print the first 32 bits of the event payload for the previous valid
-	 * state transition, if enabled in the EM runtime config file:
-	 * 'esv.store_payload_first_u32 = true', otherwise not even stored.
-	 */
-	if (em_shm->opt.esv.store_first_u32) {
-		snprintf(prev_payload, sizeof(prev_payload),
-			 "0x%08" PRIx32 "", prev_state.payload_first);
-		prev_payload[sizeof(prev_payload) - 1] = '\0';
-	}
 
 	/* current EO-name: */
 	eo_elem = eo_elem_get(err_state.eo);
 	if (eo_elem != NULL)
 		eo_get_name(eo_elem, curr_eoname, sizeof(curr_eoname));
-	/* previous EO-name: */
-	eo_elem = eo_elem_get(prev_state.eo);
-	if (eo_elem != NULL)
-		eo_get_name(eo_elem, prev_eoname, sizeof(prev_eoname));
 	/* current queue-name: */
 	q_elem = queue_elem_get(err_state.queue);
 	if (q_elem != NULL)
 		queue_get_name(q_elem, curr_qname, sizeof(curr_qname));
-	/* previous queue-name: */
-	q_elem = queue_elem_get(prev_state.queue);
-	if (q_elem != NULL)
-		queue_get_name(q_elem, prev_qname, sizeof(prev_qname));
 
-	if (!is_unmark_error) {
-		/* "Normal" ESV Error */
-		const int16_t free_cnt = cnt.free_cnt - FREE_CNT_INIT;
-		const int16_t free_exp = exp.free_cnt - FREE_CNT_INIT;
-		const int16_t send_cnt = cnt.send_cnt - SEND_CNT_INIT;
-		const int16_t send_exp = exp.send_cnt - SEND_CNT_INIT;
-		uint16_t evgen_cnt = cnt.evgen;
-		const uint16_t evgen_hdl = evhdl.evgen;
+	const int16_t free_cnt = cnt.free_cnt - FREE_CNT_INIT;
+	const int16_t free_exp = exp.free_cnt - FREE_CNT_INIT;
+	const int16_t send_cnt = cnt.send_cnt - SEND_CNT_INIT;
+	const int16_t send_exp = exp.send_cnt - SEND_CNT_INIT;
+	uint16_t evgen_cnt = cnt.evgen;
+	const uint16_t evgen_hdl = evhdl.evgen;
 
-		INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE), err_info->escope,
-			       EVSTATE_ERROR_FMT,
-			       event, evgen_hdl, evgen_cnt,
-			       free_cnt, free_exp, send_cnt, send_exp,
-			       prev_info->str, prev_state.core,
-			       prev_state.eo, prev_eoname,
-			       prev_state.queue, prev_qname,
-			       prev_payload,
-			       err_info->str, err_state.core,
-			       err_state.eo, curr_eoname,
-			       err_state.queue, curr_qname,
-			       curr_payload,
-			       evhdl.event, evhdl.evptr);
-	} else {
-		/* ESV Error from em_event_unmark_send/free/_multi() */
-		INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE), err_info->escope,
-			       EVSTATE_UNMARK_ERROR_FMT,
-			       event,
-			       prev_info->str, prev_state.core,
-			       prev_state.eo, prev_eoname,
-			       prev_state.queue, prev_qname,
-			       prev_payload,
-			       err_info->str, err_state.core,
-			       err_state.eo, curr_eoname,
-			       err_state.queue, curr_qname,
-			       curr_payload);
+	/* Read the previous event state only if it has been stored */
+	if (em_shm->opt.esv.store_state) {
+		/*
+		 * Print the first 32 bits of the event payload for the previous
+		 * valid state transition, if enabled in the EM config file:
+		 * 'esv.store_payload_first_u32 = true', otherwise not stored.
+		 */
+		if (em_shm->opt.esv.store_first_u32) {
+			snprintf(prev_payload, sizeof(prev_payload),
+				 "0x%08" PRIx32 "", prev_state.payload_first);
+			prev_payload[sizeof(prev_payload) - 1] = '\0';
+		}
+		/* previous EO-name: */
+		eo_elem = eo_elem_get(prev_state.eo);
+		if (eo_elem != NULL)
+			eo_get_name(eo_elem, prev_eoname, sizeof(prev_eoname));
+		/* previous queue-name: */
+		q_elem = queue_elem_get(prev_state.queue);
+		if (q_elem != NULL)
+			queue_get_name(q_elem, prev_qname, sizeof(prev_qname));
+
+		if (!is_unmark_error) {
+			/* "Normal" ESV Error, prev state available */
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
+				       err_info->escope,
+				       EVSTATE_ERROR_FMT,
+				       event, evgen_hdl, evgen_cnt,
+				       free_cnt, free_exp, send_cnt, send_exp,
+				       prev_info->str, prev_state.core,
+				       prev_state.eo, prev_eoname,
+				       prev_state.queue, prev_qname,
+				       prev_payload,
+				       err_info->str, err_state.core,
+				       err_state.eo, curr_eoname,
+				       err_state.queue, curr_qname,
+				       curr_payload,
+				       evhdl.event, evhdl.evptr);
+		} else {
+			/*
+			 * ESV Error from em_event_unmark_send/free/_multi(),
+			 * prev state available.
+			 */
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
+				       err_info->escope,
+				       EVSTATE_UNMARK_ERROR_FMT,
+				       event,
+				       prev_info->str, prev_state.core,
+				       prev_state.eo, prev_eoname,
+				       prev_state.queue, prev_qname,
+				       prev_payload,
+				       err_info->str, err_state.core,
+				       err_state.eo, curr_eoname,
+				       err_state.queue, curr_qname,
+				       curr_payload);
+		}
+	} else { /* em_shm->opt.esv.store_state == false */
+		/* No previous state stored by EM at runtime */
+		if (!is_unmark_error) {
+			/* "Normal" ESV Error, prev state not stored */
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
+				       err_info->escope,
+				       EVSTATE__NO_PREV_STATE__ERROR_FMT,
+				       event, evgen_hdl, evgen_cnt,
+				       free_cnt, free_exp, send_cnt, send_exp,
+				       err_info->str, err_state.core,
+				       err_state.eo, curr_eoname,
+				       err_state.queue, curr_qname,
+				       curr_payload,
+				       evhdl.event, evhdl.evptr);
+		} else {
+			/*
+			 * ESV Error from em_event_unmark_send/free/_multi(),
+			 * prev state not stored.
+			 */
+			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
+				       err_info->escope,
+				       EVSTATE__NO_PREV_STATE__UNMARK_ERROR_FMT,
+				       event,
+				       err_info->str, err_state.core,
+				       err_state.eo, curr_eoname,
+				       err_state.queue, curr_qname,
+				       curr_payload);
+		}
 	}
 }
 
@@ -957,6 +1010,20 @@ static int read_config_file(void)
 		memset(&em_shm->opt.esv, 0, sizeof(em_shm->opt.esv));
 		return 0;
 	}
+
+	/*
+	 * Option: esv.store_state
+	 */
+	conf_str = "esv.store_state";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.esv.store_state = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
 
 	/*
 	 * Option: esv.store_payload_first_u32

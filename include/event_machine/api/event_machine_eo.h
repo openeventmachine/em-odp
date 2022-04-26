@@ -504,15 +504,15 @@ em_eo_t
 em_eo_find(const char *name);
 
 /**
- * Add a queue to an EO.
+ * Add a queue to an EO, asynchronous (non-blocking)
  *
  * Add the given queue to the EO and enable scheduling for it. The function
  * returns immediately, but the operation can be asynchronous and only fully
- * complete later. Any notifications given are sent when the operation has
+ * complete later. The given notification events are sent when the operation has
  * completed and the queue is ready to receive events.
  * Note, that the completion notification(s) guarantee that the queue itself is
- * operational, but if the target EO is not yet started then events will still
- * be dropped by dispatcher.
+ * operational, but if the target EO is not yet started then events sent into
+ * the queue will still be dropped by dispatcher.
  *
  * @param eo            EO handle
  * @param queue         Queue handle
@@ -522,17 +522,31 @@ em_eo_find(const char *name);
  *
  * @return EM_OK if successful.
  *
- * @see em_queue_create(), em_eo_create(), em_eo_remove_queue()
+ * @see em_queue_create(), em_eo_create(), em_eo_remove_queue(),
+ *      em_eo_add_queue_sync()
  */
 em_status_t
 em_eo_add_queue(em_eo_t eo, em_queue_t queue,
 		int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Add a queue to an EO, synchronous
+ * Add a queue to an EO, synchronous (blocking)
  *
  * As em_eo_add_queue(), but does not return until the queue is ready to
  * receive events.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo            EO handle
  * @param queue         Queue handle
@@ -540,19 +554,20 @@ em_eo_add_queue(em_eo_t eo, em_queue_t queue,
  * @return EM_OK if successful.
  *
  * @see em_queue_create(), em_eo_create(), em_eo_remove_queue()
+ * @see em_eo_add_queue() for an asynchronous version of the API
  */
 em_status_t
 em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue);
 
 /**
- * Removes a queue from an EO.
+ * Removes a queue from an EO, asynchronous (non-blocking)
  *
  * Disables queue scheduling and removes the queue from the EO. The function
  * returns immediately, but the operation can be asynchronous and only fully
- * complete later. Any notifications given are sent when the operation has
- * completed and no event from this queue is no longer under work.
- * Use notifications to know when the operation has fully completed and the
- * queue can safely be deleted.
+ * complete later. The given notification events are sent when the operation has
+ * completed across all cores and no event from this queue is being dispatched
+ * anymore. Use notifications to know when the operation has fully completed
+ * and the queue can safely be deleted.
  *
  * @param eo            EO handle
  * @param queue         Queue handle to remove
@@ -569,28 +584,42 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
 		   int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Removes a queue from an EO, synchronous
+ * Removes a queue from an EO, synchronous (blocking)
  *
- * As em_eo_remove_queue(), but will not return until the queue is disabled and
- * no more event processing from this queue is under work.
+ * As em_eo_remove_queue(), but will not return until the queue has been
+ * disabled, removed from the EO and no more events are being processed from
+ * the queue.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo            EO handle
  * @param queue         Queue handle to remove
  *
  * @return EM_OK if successful.
  *
- * @see em_eo_remove_queue()
+ * @see em_eo_remove_queue() for an asynchronous version of the API
  */
 em_status_t
 em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue);
 
 /**
- * Removes all queues from an EO.
+ * Removes all queues from an EO, asynchronous (non-blocking)
  *
  * Like em_eo_remove_queue(), but removes all queues currently associated with
  * the EO.
- * The argument 'delete_queues' can be used to automatically delete all queues
- * by setting it to EM_TRUE (EM_FALSE otherwise).
+ * The argument 'delete_queues' can be used to automatically also delete all
+ * queues by setting it to EM_TRUE (EM_FALSE otherwise).
  * Note: any allocated queue contexts will still need to be handled elsewhere.
  *
  * @param eo             EO handle
@@ -601,24 +630,39 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue);
  *
  * @return EM_OK if successful.
  *
- * @see em_eo_add_queue(), em_eo_remove_queue_sync()
+ * @see em_eo_add_queue(), em_eo_remove_queue_sync(),
+ *      em_eo_remove_queue_all_sync()
  */
 em_status_t
 em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
 		       int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Removes all queues from an EO, synchronous.
+ * Removes all queues from an EO, synchronous (blocking).
  *
  * As em_eo_remove_queue_all(), but does not return until all queues have
  * been removed.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo              EO handle
  * @param delete_queues   delete the EO's queues if set to EM_TRUE
  *
  * @return EM_OK if successful.
  *
- * @see em_eo_remove_queue_all()
+ *
+ * @see em_eo_remove_queue_all() for an asynchronous version of the API
  */
 em_status_t
 em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues);
@@ -657,7 +701,7 @@ em_status_t
 em_eo_unregister_error_handler(em_eo_t eo);
 
 /**
- * Start an Execution Object (EO).
+ * Start an Execution Object (EO), asynchronous (non-blocking)
  *
  * Start and enable a previously created EO.
  * The em_eo_start() function will first call the user provided global EO start
@@ -700,16 +744,30 @@ em_eo_unregister_error_handler(em_eo_t eo);
  *
  * @return EM_OK if successful.
  *
- * @see em_start_func_t(), em_start_local_func_t(), em_eo_stop()
+ * @see em_start_func_t(), em_start_local_func_t(), em_eo_stop(),
+ *      em_eo_start_sync()
  */
 em_status_t
 em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 	    int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Start Execution Object (EO), synchronous
+ * Start Execution Object (EO), synchronous (blocking)
  *
  * As em_eo_start(), but will not return until the operation is complete.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param      eo      EO handle
  * @param[out] result  Optional pointer to em_status_t, which gets updated to
@@ -720,12 +778,13 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
  * @return EM_OK if successful.
  *
  * @see em_start_func_t(), em_start_local_func_t(), em_eo_stop()
+ * @see em_eo_start() for an asynchronous version of the API
  */
 em_status_t
 em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf);
 
 /**
- * Stop Execution Object (EO).
+ * Stop Execution Object (EO), asynchronous (non-blocking)
  *
  * Disables event dispatch from all related queues, calls core local stop
  * on all cores and finally calls the global stop function of the EO when all
@@ -750,21 +809,36 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf);
  *
  * @return EM_OK if successful.
  *
- * @see em_stop_func_t(), em_stop_local_func_t(), em_eo_start()
+ * @see em_stop_func_t(), em_stop_local_func_t(), em_eo_start(),
+ *      em_eo_stop_sync()
  */
 em_status_t
 em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Stop Execution Object (EO), synchronous
+ * Stop Execution Object (EO), synchronous (blocking)
  *
  * As em_eo_stop(), but will not return until the operation is complete.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo            EO handle
  *
  * @return EM_OK if successful.
  *
  * @see em_stop_func_t(), em_stop_local_func_t(), em_eo_start()
+ * @see em_eo_stop() for an asynchronous version of the API
  */
 em_status_t
 em_eo_stop_sync(em_eo_t eo);

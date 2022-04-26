@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [2])
-m4_define([em_version_api_minor], [7])
+m4_define([em_version_api_minor], [8])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -286,6 +286,47 @@ AC_ARG_ENABLE([debug-print],
 AC_SUBST([EM_DEBUG_PRINT])
 
 ##########################################################################
+# Set optional libcli path
+##########################################################################
+AC_ARG_WITH([libcli-path],
+    [AS_HELP_STRING([--with-libcli-path=DIR],
+        [path to libcli libs and headers [default=system]])],
+    [libcli_path_given=yes
+        LIBCLI_CPPFLAGS="-I$withval/include"
+        LIBCLI_LIBS="-L$withval/lib"],
+    [])
+
+# CPPFLAGS and LIBS temporarily include the libcli path given above, enabling
+# following AC_CHECK_HEADER(libcli.h) on the given non-standard path
+OLD_CPPFLAGS=$CPPFLAGS
+OLD_LIBS=$LIBS
+CPPFLAGS="$LIBCLI_CPPFLAGS $CPPFLAGS"
+LIBS="$LIBCLI_LIBS $LIBS"
+
+#########################################################################
+# If libcli is available, enable EM_CLI
+#########################################################################
+em_cli=no
+EM_CLI="-DEM_CLI=0"
+libodphelper_name=""
+AC_CHECK_HEADER(libcli.h,
+    [AC_CHECK_LIB(cli, cli_init,
+    	[em_cli=yes EM_CLI="-DEM_CLI=1" libodphelper_name="libodphelper"],
+	[], [-lcrypt])],
+    [AS_IF([test "x$libcli_path_given" = "xyes"],
+        [AC_MSG_ERROR([libcli not found at the given path (--with-libcli-path)])])])
+
+# Substitute @EM_CLI@ and @libodphelper_name@ into the pkgconfig file libemodp.pc.in
+AC_SUBST([EM_CLI])
+AC_SUBST([libodphelper_name])
+
+EM_CPPFLAGS="$EM_CPPFLAGS $EM_CLI"
+
+# Restore old saved variables
+LIBS=$OLD_LIBS
+CPPFLAGS=$OLD_CPPFLAGS
+
+##########################################################################
 # Default include setup
 ##########################################################################
 AM_CFLAGS="$AM_CFLAGS $EM_CFLAGS"
@@ -543,4 +584,5 @@ AC_MSG_RESULT([
 	EM check level:		${check_level_info}
 	EM ESV:			${esv_info}
 	EM debug print:		${debug_print_info}
+	EM CLI:			${em_cli}
 	])

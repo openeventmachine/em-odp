@@ -215,13 +215,10 @@ em_queue_get_group(em_queue_t queue)
 		return q_elem->queue_group;
 }
 
-em_event_t
-em_queue_dequeue(em_queue_t queue)
+em_event_t em_queue_dequeue(em_queue_t queue)
 {
 	const queue_elem_t *q_elem = queue_elem_get(queue);
-	odp_queue_t odp_queue;
-	odp_event_t odp_event;
-	em_event_t em_event;
+	em_event_t event;
 
 	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE,
@@ -235,27 +232,14 @@ em_queue_dequeue(em_queue_t queue)
 		return EM_EVENT_UNDEF;
 	}
 
-	odp_queue = q_elem->odp_queue;
-	odp_event = odp_queue_deq(odp_queue);
-	if (odp_event == ODP_EVENT_INVALID)
-		return EM_EVENT_UNDEF;
-
-	em_event = event_odp2em(odp_event);
-
-	if (esv_enabled()) {
-		event_hdr_t *ev_hdr = event_to_hdr(em_event);
-
-		em_event = evstate_em2usr(em_event, ev_hdr, EVSTATE__DEQUEUE);
-	}
-
-	return em_event;
+	event = queue_dequeue(q_elem);
+	return event;
 }
 
-int
-em_queue_dequeue_multi(em_queue_t queue, em_event_t events[/*out*/], int num)
+int em_queue_dequeue_multi(em_queue_t queue,
+			   em_event_t events[/*out*/], int num)
 {
 	const queue_elem_t *q_elem = queue_elem_get(queue);
-	odp_queue_t odp_queue;
 	int ret;
 
 	if (unlikely(q_elem == NULL || !queue_allocated(q_elem) ||
@@ -276,28 +260,12 @@ em_queue_dequeue_multi(em_queue_t queue, em_event_t events[/*out*/], int num)
 		return 0;
 	}
 
-	/* use same output-array for dequeue: odp_events[] = events[] */
-	odp_event_t *const odp_events = (odp_event_t *)events;
-
-	odp_queue = q_elem->odp_queue;
-	ret = odp_queue_deq_multi(odp_queue, odp_events /*out*/, num);
-	if (ret == 0)
-		return 0;
-
+	ret = queue_dequeue_multi(q_elem, events /*out*/, num);
 	if (unlikely(ret < 0)) {
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 			       EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
 			       "odp_queue_deq_multi(%d):%d", num, ret);
 		return 0;
-	}
-
-	/* now events[] = odp_events[], events[].evgen missing, set below: */
-	if (esv_enabled()) {
-		event_hdr_t *ev_hdrs[ret];
-
-		event_to_hdr_multi(events, ev_hdrs, ret);
-		evstate_em2usr_multi(events, ev_hdrs, ret,
-				     EVSTATE__DEQUEUE_MULTI);
 	}
 
 	return ret;

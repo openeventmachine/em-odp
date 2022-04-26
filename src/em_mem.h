@@ -116,8 +116,6 @@ typedef struct {
 	/** Send-hook function storage, many sets of hook-tables */
 	hook_storage_t send_hook_storage ENV_CACHE_LINE_ALIGNED;
 
-	/** Synchronous API locks */
-	sync_api_t sync_api ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated EOs */
 	env_atomic32_t eo_count ENV_CACHE_LINE_ALIGNED;
 	/** Timer resources */
@@ -151,25 +149,35 @@ COMPILE_TIME_ASSERT(sizeof(em_shm_t) % ENV_CACHE_LINE_SIZE == 0,
 		    EM_SHM_SIZE_ERROR);
 
 /**
+ * EM core/local current state
+ *
+ * Contains information about the current EO, queue, event group etc. when
+ * running in an EO context (e.g. in an EO-receive function),
+ * undef/NULL otherwise.
+ */
+typedef struct {
+	/** Current queue element during a receive call */
+	queue_elem_t *q_elem;
+	/** Current scheduled queue element that set the sched context*/
+	queue_elem_t *sched_q_elem;
+	/** Current event group element */
+	event_group_elem_t *egrp_elem;
+	/** Current event group */
+	em_event_group_t egrp;
+	/** Current event group generation count*/
+	int32_t egrp_gen;
+	/** EO-receive function burst count */
+	int rcv_multi_cnt;
+	/** Current scheduling context type */
+	em_sched_context_type_t sched_context_type;
+} em_locm_current_t;
+
+/**
  * EM core local data
  */
 typedef struct {
-	struct {
-		/** Current queue element during a receive call */
-		queue_elem_t *q_elem;
-		/** Current scheduled queue element that set the sched context*/
-		queue_elem_t *sched_q_elem;
-		/** Current event group element */
-		event_group_elem_t *egrp_elem;
-		/** Current event group */
-		em_event_group_t egrp;
-		/** Current event group generation count*/
-		int32_t egrp_gen;
-		/** EO-receive function burst count */
-		int rcv_multi_cnt;
-		/** Current scheduling context type */
-		em_sched_context_type_t sched_context_type;
-	} current;
+	/** EM core/local current state */
+	em_locm_current_t current;
 
 	/** EM core id for this core */
 	int core_id;
@@ -177,6 +185,11 @@ typedef struct {
 	int event_burst_cnt;
 	/** em_atomic_processing_end() called during event dispatch */
 	int atomic_group_released;
+
+	/** Number of dispatch rounds since previous polling of ctrl queues */
+	unsigned int dispatch_cnt;
+	/** Time when polling of ctrl queues where last done */
+	odp_time_t dispatch_last_run;
 
 	/** Local queues, i.e. storage for events to local queues */
 	local_queues_t local_queues;
@@ -193,6 +206,15 @@ typedef struct {
 	bool do_input_poll;
 	/** Is output_drain_fn executed on this core */
 	bool do_output_drain;
+
+	/** EM-core local log function */
+	em_log_func_t log_fn;
+
+	/** Is thread external to EM (doesn't participate in event dispatching) */
+	bool is_external_thr;
+
+	/** Synchronous API */
+	sync_api_t sync_api;
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;

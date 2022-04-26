@@ -57,7 +57,7 @@ event_group_init(event_group_tbl_t *const event_group_tbl,
 			return EM_ERR_BAD_POINTER;
 
 		egrp_elem->event_group = egrp; /* store handle */
-		egrp_elem->all = 0;
+		egrp_elem->all = 0; /* set num_notif = 0, ready = 0 */
 		env_atomic64_set(&egrp_elem->post.atomic, 0);
 		env_atomic64_set(&egrp_elem->pre.atomic, 0);
 	}

@@ -45,15 +45,9 @@ extern "C" {
 #define invalid_qgrp(queue_group) \
 	((unsigned int)qgrp_hdl2idx((queue_group)) >= EM_MAX_QUEUE_GROUPS)
 
-em_status_t
-queue_group_init(queue_group_tbl_t *const queue_group_tbl,
-		 queue_group_pool_t *const queue_group_pool);
-
-em_queue_group_t
-default_queue_group_create(void);
-
-em_queue_group_t
-default_queue_group_update(void);
+em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
+			     queue_group_pool_t *const queue_group_pool);
+em_status_t queue_group_init_local(void);
 
 em_queue_group_t
 queue_group_create(const char *name, const em_core_mask_t *mask,
@@ -72,17 +66,42 @@ em_status_t
 queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 			const em_core_mask_t *new_mask, bool is_delete);
 
-void
-queue_group_add_queue_list(queue_group_elem_t *const queue_group_elem,
-			   queue_elem_t *const queue_elem);
-void
-queue_group_rem_queue_list(queue_group_elem_t *const queue_group_elem,
-			   queue_elem_t *const queue_elem);
-unsigned int
-queue_group_count(void);
+void queue_group_add_queue_list(queue_group_elem_t *const queue_group_elem,
+				queue_elem_t *const queue_elem);
+void queue_group_rem_queue_list(queue_group_elem_t *const queue_group_elem,
+				queue_elem_t *const queue_elem);
+unsigned int queue_group_count(void);
 
-void
-print_queue_group_info(void);
+/**
+ * @brief Check that only running EM cores are set in mask
+ *
+ * @param mask Queue group core mask
+ * @return EM_OK if mask is valid
+ */
+em_status_t queue_group_check_mask(const em_core_mask_t *mask);
+
+/**
+ * @brief Print EM queue group info
+ */
+void queue_group_info_print_all(void);
+
+/**
+ * @brief EM internal event handler, add core to an EM queue group.
+ *        (see em_internal_event.c&h)
+ *
+ * Handle the internal event requesting to add the core to an
+ * ODP schedule group that is related to an EM queue group.
+ */
+void i_event__qgrp_add_core_req(const internal_event_t *i_ev);
+
+/**
+ * @brief EM internal event handler, remove core from an EM queue group.
+ *        (see em_internal_event.c&h)
+ *
+ * Handle the internal event requesting to remove the core from an
+ * ODP schedule group that is related to an EM queue group.
+ */
+void i_event__qgrp_rem_core_req(const internal_event_t *i_ev);
 
 /**
  * Convert queue group handle <-> index
@@ -126,16 +145,21 @@ queue_group_allocated(const queue_group_elem_t *queue_group_elem)
 }
 
 /**
- * Modify the EM_QUEUE_GROUP_CORE_LOCAL_BASE_NAME ("core00") for a core
+ * Write the EM single-core queue group name for a given core.
  */
 static inline void
-core_queue_grp_name(char *name, int core)
+core_queue_grp_name(int core, char qgrp_name[/*out:len*/], size_t len)
 {
-	const int tens = core / 10;
+	const size_t maxlen = len < EM_QUEUE_GROUP_NAME_LEN ?
+				len : EM_QUEUE_GROUP_NAME_LEN;
 
-	/* "core00" */
-	name[4] = '0' + tens;
-	name[5] = '0' + (core - (tens * 10));
+	if (unlikely(maxlen == 0))
+		return;
+
+	/* write "core#" into qgrp_name[] */
+	snprintf(qgrp_name, maxlen, "%s%d",
+		 EM_QUEUE_GROUP_CORE_BASE_NAME, core);
+	qgrp_name[maxlen - 1] = '\0';
 }
 
 #ifdef __cplusplus

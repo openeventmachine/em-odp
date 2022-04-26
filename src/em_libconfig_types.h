@@ -41,6 +41,8 @@ extern "C" {
 #endif
 
 typedef struct libconfig {
+	/** Runtime configuration given or not */
+	bool has_cfg_runtime;
 	/** Default libconfig */
 	config_t cfg_default;
 	/** Given runtime libconfig */

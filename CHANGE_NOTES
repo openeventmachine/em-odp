@@ -1,4 +1,4 @@
-Copyright (c) 2013-2021, Nokia Solutions and Networks
+Copyright (c) 2013-2022, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -51,6 +51,83 @@ Examples:
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v2.8.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.8 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * Small API change, a new define is added.
+
+- EM config file options - config/em-odp.conf:
+ - Config file version number bumped up to "0.0.13", see new options below.
+
+- EM Queue Group start-up improvements:
+  - The EM default queue group (EM_QUEUE_GROUP_DEFAULT) is now available at
+    start-up after init, before all cores have run local init.
+    This allows an application to create queues using the default queue group
+    before all other EM cores have initialized.
+  - If enabled in the EM config file, the single-core EM queue groups are also
+    similarly available at startup.
+
+- Concurrent sync-APIs
+  - EM allows concurrent sync-APIs. Multiple concurrent calls to e.g.
+    em_eo_start_sync(), em_queue_group_modify_sync() etc. are allowed.
+    Previously only one sync-operation at a time was permitted, now there is
+    no limit.
+    One restriction remains: conserned cores need to be dispatching
+    (or processing other sync-API calls) for the operations to complete.
+    A core that has left the dispatch loop or is sleeping etc. will not allow
+    the sync-API operation to complete.
+
+- Changed EM internal communication:
+  The EM internal event communication previously used scheduled queues and
+  single-core queue groups. This has now been replaced by unscheduled queues
+  that each core polls periodically for internal control-events. The internal
+  control operations and events are all triggered by EM APIs, e.g. sync-APIs.
+  This change allows EM to support concurrent sync-APIs.
+  Adjust the EM control queue polling rate to a suitable level based on the
+  needs of the application, see options in the EM config file
+  config/em-odp.conf:
+  - dispatch.poll_ctrl_interval = 100 # Rate limit EM control queue polling
+  - dispatch.poll_ctrl_interval_ns = 1000000L # poll max every 1ms
+  See the EM config file for additional documentation and details.
+  These options affect the timing of the EM control operations and the
+  application may see changes in control operation duration and latency.
+  Tune the "dispatch.poll_ctrl_..." options to a preferred level of
+  performance vs. latency (performance impact of polling is quite small).
+
+- EM single-core queue groups disabled by default:
+  The EM single-core queue groups have been disabled by default since EM does
+  not need them for internal communication anymore (see above).
+  - EM single core queue group naming (if enabled and available):
+    EM_QUEUE_GROUP_CORE_BASE_NAME + "%d": "core0", "core1", etc.
+  Disabling saves on available queue groups especially when running with many
+  cores (since EM would otherwise at startup create a queue group per core).
+  Applications must override the default config if these single-core
+  queue groups are needed, see option in the EM config file
+  config/em-odp.conf:
+  - queue_group.create_core_queue_groups = false(default)|true
+  See the EM config file for additional documentation and details.
+
+- EM Command Line Interface (EM CLI)
+  The first version of the EM CLI has been integrated but is by disabled by
+  default. A change to the EM config file is needed in order to use it.
+  The EM CLI allows a developer to connect via telnet to a running EM instance
+  in order to extract runtime information about the EM application.
+  - Dependency: libcli needs to be availabe to use the EM CLI.
+    If libcli is unavailable at compile time then the CLI feature is left out.
+    - An autoconf configure script option "--with-libcli-path=[install-dir]" can
+      be used to set the path to libcli if not installed in the standard path:
+      em-odp/build $> ../configure ... --with-libcli-path=[install-dir] ...
+    - EM CLI options (see the EM config file for additional documentation and
+      details), config/em-odp.conf:
+      - cli.enable = false(default)|true
+      - cli.ip_addr = "127.0.0.1" # localhost
+      - cli.port = 55555
+  Currently, only very basic commands are available - new ones will be added and
+  existing ones extended & improved.
+  Note: existing commands might still be renamed and reworked.
 
 --------------------------------------------------------------------------------
 Event Machine (EM) on ODP v2.7.0
@@ -149,10 +226,10 @@ Event Machine (EM) on ODP v2.6.0
   Arch specific CFLAGS should be passed to EM and ODP via configure.
   Example for a made up ARMv8 SoC called "soc-x":
   odp-soc-x/build> ../configure … --with-platform=soc-x [default=linux-generic]
-     em-odp/build> ../configure … CFLAGS=”-march=armv8.2-a+… -mcpu=soc-x”
+     em-odp/build> ../configure … CFLAGS=”-O3 -march=armv8.2-a+… -mcpu=soc-x”
   The whole chain of used SW libs/dependencies should preferably be compiled
   with the same -march/-mcpu options for best results:
-    other-libs/build> ../configure … CFLAGS=”-march=armv8.2-a+… -mcpu=soc-x”
+    other-libs/build> ../configure … CFLAGS=”-O3 -march=armv8.2-a+… -mcpu=soc-x”
 
 - Program termination: flush the scheduler in em_term_core() on each EM-core.
   Move the flushing of scheduled events from em_term() to em_term_core() so that

@@ -101,8 +101,7 @@ core_map_init_local(core_map_t *const core_map)
 	return EM_OK;
 }
 
-int
-logic_to_thr_core_id(const int logic_core)
+int logic_to_thr_core_id(const int logic_core)
 {
 	if (unlikely(logic_core >= EM_MAX_CORES))
 		return -1;
@@ -110,8 +109,7 @@ logic_to_thr_core_id(const int logic_core)
 	return em_shm->core_map.thr_vs_logic.odp_thr[logic_core];
 }
 
-int
-thr_to_logic_core_id(const int thr_id)
+int thr_to_logic_core_id(const int thr_id)
 {
 	if (unlikely(thr_id >= ODP_THREAD_COUNT_MAX))
 		return -1;
@@ -119,9 +117,8 @@ thr_to_logic_core_id(const int thr_id)
 	return em_shm->core_map.thr_vs_logic.logic[thr_id];
 }
 
-void
-mask_em2odp(const em_core_mask_t *const em_core_mask,
-	    odp_thrmask_t *const odp_thrmask /*out*/)
+void mask_em2odp(const em_core_mask_t *const em_core_mask,
+		 odp_thrmask_t *const odp_thrmask /*out*/)
 {
 	int core_count = em_core_count();
 	int odp_thread_id;
@@ -129,11 +126,36 @@ mask_em2odp(const em_core_mask_t *const em_core_mask,
 
 	odp_thrmask_zero(odp_thrmask);
 
+	if (unlikely(!em_shm->init.em_init_done)) {
+		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_INIT,
+			       "Cannot convert EM-mask to ODP-thrmask,\n"
+			       "not all ODP threads are initialized yet.");
+		return;
+	}
+
 	/* EM cores are consequtive 0 -> em_core_count()-1 */
 	for (i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, em_core_mask)) {
 			odp_thread_id = logic_to_thr_core_id(i);
 			odp_thrmask_set(odp_thrmask, odp_thread_id);
+		}
+	}
+}
+
+void mask_em2phys(const em_core_mask_t *const em_core_mask,
+		  odp_cpumask_t *const odp_cpumask /*out*/)
+{
+	int core_count = em_core_count();
+	int cpu_id;
+	int i;
+
+	odp_cpumask_zero(odp_cpumask);
+
+	/* EM cores are consequtive 0 -> em_core_count()-1 */
+	for (i = 0; i < core_count; i++) {
+		if (em_core_mask_isset(i, em_core_mask)) {
+			cpu_id = logic_to_phys_core_id(i);
+			odp_cpumask_set(odp_cpumask, cpu_id);
 		}
 	}
 }

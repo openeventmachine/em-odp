@@ -47,6 +47,7 @@ extern "C" {
  * EM version information for the API and implementation
  *
  * The EM version numbering scheme reflects the used EM API version:
+ * @verbatim
  * maj.min.impl(-fix)
  *     maj.min = EM API version supported
  *               maj = major API version number, reserved for big changes
@@ -64,6 +65,7 @@ extern "C" {
  *     maj.min = 2.7: supports EM API v2.7
  *       .impl =  .1: second implementation supporting API 2.7 (starts at .0)
  *        -fix =  -3: third bugfix for 2.7.1
+ * @endverbatim
  *
  * Compile time version information can be obtained via the EM_VERSION_...
  * macros and defines.

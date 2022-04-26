@@ -853,8 +853,8 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 	odp_event_t odp_event = event_em2odp(event);
 	odp_event_type_t odp_evtype = odp_event_type(odp_event);
 	odp_pool_t odp_pool = ODP_POOL_INVALID;
-	odp_packet_t pkt;
-	odp_buffer_t buf;
+	odp_packet_t pkt = ODP_PACKET_INVALID;
+	odp_buffer_t buf = ODP_BUFFER_INVALID;
 
 	if (unlikely(odp_evtype != ODP_EVENT_PACKET &&
 		     odp_evtype != ODP_EVENT_BUFFER)) {

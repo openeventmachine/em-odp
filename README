@@ -1,4 +1,4 @@
-Copyright (c) 2013-2021, Nokia Solutions and Networks
+Copyright (c) 2013-2022, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -84,6 +84,19 @@ runtime config files:
   ./programs/example/hello/hello -c 0xe -t
 
 Stop by pressing Ctrl-C.
+
+===============================================================================
+CPU Architecture specific options
+===============================================================================
+Arch specific compilation options should be passed to EM and ODP via configure.
+Example for a made up ARMv8 SoC called "soc-x":
+odp-soc-x/build> ../configure … --with-platform=soc-x [default=linux-generic] …
+   em-odp/build> ../configure … CFLAGS=”-O3 -march=armv8.2-a+… -mcpu=soc-x” \
+                   --with-odp-path=<odp-soc-x install path> \
+		   --with-odp-lib=libodp-soc-x …
+The whole chain of used SW libs/dependencies should preferably be compiled
+with the same -march/-mcpu options for best results:
+  other-libs/build> ../configure … CFLAGS=”-O3 -march=armv8.2-a+… -mcpu=soc-x”
 
 ===============================================================================
 Debug compilation

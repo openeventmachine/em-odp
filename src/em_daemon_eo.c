@@ -37,12 +37,8 @@ static em_status_t
 daemon_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf);
 static em_status_t
 daemon_eo_stop(void *eo_ctx, em_eo_t eo);
-static void
-daemon_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
-		  em_queue_t queue, void *q_ctx);
 
-void
-daemon_eo_create(void)
+void daemon_eo_create(void)
 {
 	em_eo_t eo;
 	em_status_t stat;
@@ -63,8 +59,7 @@ daemon_eo_create(void)
 			     "daemon-eo start failed!");
 }
 
-void
-daemon_eo_shutdown(void)
+void daemon_eo_shutdown(void)
 {
 	const int core = em_core_id();
 	const em_eo_t eo = em_shm->daemon.eo;
@@ -92,80 +87,69 @@ daemon_eo_shutdown(void)
 			     "daemon-eo stop/delete failed!");
 }
 
-static em_status_t
-daemon_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
+em_status_t daemon_eo_queues_create(void)
 {
 	const int num_cores = em_core_count();
-	char qgrp_name[] = EM_QUEUE_GROUP_CORE_LOCAL_BASE_NAME;
-	char q_name[EM_QUEUE_NAME_LEN] = "EM_Q_INTERNAL_000000";
-	em_queue_group_t queue_group;
+	char q_name[EM_QUEUE_NAME_LEN];
+	em_queue_t shared_unsched_queue;
 	em_queue_t queue;
-	em_queue_t shared_queue;
-	em_core_mask_t mask;
-	em_status_t stat;
+	em_queue_conf_t unsch_conf;
+
 	const char *err_str = "";
 	int i;
 
-	(void)eo_ctx;
-	(void)conf;
-
-	EM_PRINT("daemon-eo starting!\n");
+	EM_DBG("%s()\n", __func__);
 
 	/*
-	 * Create static internal queue used for internal EM messaging.
+	 * Create shared internal unsched queue used for internal EM messaging.
 	 * Cannot use em_queue_create_static() here since the requested handle
-	 * 'SHARED_INTERNAL_QUEUE' lies outside of the normal static range.
+	 * 'SHARED_INTERNAL_UNSCHED_QUEUE' lies outside of the normal static
+	 * range.
 	 */
-	shared_queue = queue_id2hdl(SHARED_INTERNAL_QUEUE);
-	queue = queue_create("EM_Q_INTERNAL_SHARED", EM_QUEUE_TYPE_ATOMIC,
-			     INTERNAL_QUEUE_PRIORITY, EM_QUEUE_GROUP_DEFAULT,
-			     shared_queue, EM_ATOMIC_GROUP_UNDEF,
+	shared_unsched_queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
+	queue = queue_create("EMctrl-unschedQ-shared", EM_QUEUE_TYPE_UNSCHEDULED,
+			     EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF,
+			     shared_unsched_queue, EM_ATOMIC_GROUP_UNDEF,
 			     NULL /* use default queue config */, &err_str);
-	if (queue == EM_QUEUE_UNDEF || queue != shared_queue)
+	if (queue == EM_QUEUE_UNDEF || queue != shared_unsched_queue)
 		return EM_FATAL(EM_ERR_NOT_FREE);
 
-	stat = em_eo_add_queue(eo, shared_queue, 0, NULL);
-	if (stat != EM_OK)
-		return EM_FATAL(stat);
+	/*
+	 * Create static internal per-core UNSCHEDULED queues used for
+	 * internal EM messaging. Cannot use em_queue_create_static()
+	 * here since the requested handles lies outside of the normal
+	 * static range.
+	 */
+	memset(&unsch_conf, 0, sizeof(unsch_conf));
+	unsch_conf.flags |= EM_QUEUE_FLAG_DEQ_NOT_MTSAFE;
 
 	for (i = 0; i < num_cores; i++) {
 		em_queue_t queue_req;
 
-		em_core_mask_zero(&mask);
-		em_core_mask_set(i, &mask);
-		core_queue_grp_name(qgrp_name, i);
-
-		/*
-		 * Create per-core queue groups for core-specific queues
-		 */
-		queue_group = em_queue_group_create(qgrp_name, &mask, 0, NULL);
-		if (unlikely(queue_group == EM_QUEUE_GROUP_UNDEF))
-			return EM_FATAL(EM_ERR_ALLOC_FAILED);
-
-		queue_req = queue_id2hdl(FIRST_INTERNAL_QUEUE + i);
-		snprintf(&q_name[14], EM_QUEUE_NAME_LEN - 14,
-			 "%" PRI_QUEUE "", queue_req);
+		queue_req = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
+		snprintf(q_name, sizeof(q_name), "EMctrl-unschedQ-core%d", i);
 		q_name[EM_QUEUE_NAME_LEN - 1] = '\0';
 
-		/*
-		 * Create static internal per-core queues used for internal
-		 * EM messaging. Cannot use em_queue_create_static() here since
-		 * the requested handles lies outside of the normal static
-		 * range.
-		 */
-		queue = queue_create(q_name, EM_QUEUE_TYPE_ATOMIC,
-				     INTERNAL_QUEUE_PRIORITY, queue_group,
+		queue = queue_create(q_name, EM_QUEUE_TYPE_UNSCHEDULED,
+				     EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF,
 				     queue_req, EM_ATOMIC_GROUP_UNDEF,
-				     NULL, /* use default queue config */
+				     &unsch_conf, /* request deq-not-mtsafe */
 				     &err_str);
 		if (unlikely(queue == EM_QUEUE_UNDEF || queue != queue_req))
 			return EM_FATAL(EM_ERR_NOT_FREE);
-
-		stat = em_eo_add_queue(eo, queue, 0, NULL);
-		if (unlikely(stat != EM_OK))
-			return EM_FATAL(stat);
 	}
 
+	return EM_OK;
+}
+
+static em_status_t
+daemon_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
+{
+	(void)eo_ctx;
+	(void)eo;
+	(void)conf;
+
+	EM_PRINT("daemon-eo:%" PRI_EO " starting!\n", eo);
 	return EM_OK;
 }
 
@@ -191,12 +175,41 @@ daemon_eo_stop(void *eo_ctx, em_eo_t eo)
 	/* Finally delete the daemon-eo, API func is ok here */
 	stat |= em_eo_delete(eo);
 
+	const int num_cores = em_core_count();
+	em_queue_t unsched_queue;
+	em_event_t unsched_event;
+
+	unsched_queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
+	for (;/* flush unsched queue */;) {
+		unsched_event = em_queue_dequeue(unsched_queue);
+		if (unsched_event == EM_EVENT_UNDEF)
+			break;
+		em_free(unsched_event);
+	}
+	stat = em_queue_delete(unsched_queue);
+	if (unlikely(stat != EM_OK))
+		return DAEMON_ERROR(stat, "shared unschedQ delete");
+
+	for (int i = 0; i < num_cores; i++) {
+		unsched_queue = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
+
+		for (;/* flush unsched queue */;) {
+			unsched_event = em_queue_dequeue(unsched_queue);
+			if (unsched_event == EM_EVENT_UNDEF)
+				break;
+			em_free(unsched_event);
+		}
+
+		stat = em_queue_delete(unsched_queue);
+		if (unlikely(stat != EM_OK))
+			return DAEMON_ERROR(stat, "core unschedQ:%d delete", i);
+	}
+
 	return stat;
 }
 
-static void
-daemon_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
-		  em_queue_t queue, void *q_ctx)
+void daemon_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
+		       em_queue_t queue, void *q_ctx)
 {
 	internal_event_receive(eo_ctx, event, type, queue, q_ctx);
 }

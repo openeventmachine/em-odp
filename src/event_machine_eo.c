@@ -276,22 +276,25 @@ em_eo_find(const char *name)
 	return EM_EO_UNDEF;
 }
 
-em_status_t
-em_eo_add_queue(em_eo_t eo, em_queue_t queue,
-		int num_notif, const em_notif_t notif_tbl[])
-{
-	eo_elem_t *const eo_elem = eo_elem_get(eo);
+/**
+ * @brief Helper for em_eo_add_queue/_sync()
+ */
+static em_status_t
+eo_add_queue_escope(em_eo_t eo, em_queue_t queue,
+		    int num_notif, const em_notif_t notif_tbl[],
+		    em_escope_t escope)
+{	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	em_queue_type_t q_type;
 	em_status_t err;
 	int valid;
 
 	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_ADD_QUEUE,
+			EM_ERR_BAD_ARG, escope,
 			"Invalid args: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem) || !queue_allocated(q_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_ADD_QUEUE,
+			EM_ERR_BAD_ARG, escope,
 			"Not allocated: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 
@@ -300,26 +303,29 @@ em_eo_add_queue(em_eo_t eo, em_queue_t queue,
 		q_type == EM_QUEUE_TYPE_PARALLEL ||
 		q_type == EM_QUEUE_TYPE_PARALLEL_ORDERED ||
 		q_type == EM_QUEUE_TYPE_LOCAL;
-	RETURN_ERROR_IF(!valid, EM_ERR_BAD_CONTEXT, EM_ESCOPE_EO_ADD_QUEUE,
+	RETURN_ERROR_IF(!valid, EM_ERR_BAD_CONTEXT, escope,
 			"Invalid queue type: %" PRI_QTYPE "", q_type);
 
-	err = check_notif_tbl(num_notif, notif_tbl);
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_EO_ADD_QUEUE,
-			"Invalid notif cfg given!");
+	if (num_notif > 0) {
+		err = check_notif_tbl(num_notif, notif_tbl);
+		RETURN_ERROR_IF(err != EM_OK, err, escope,
+				"Invalid notif cfg given!");
+	}
 
 	err = eo_add_queue(eo_elem, q_elem);
+	RETURN_ERROR_IF(err != EM_OK, err, escope,
+			"eo_add_queue(Q:%" PRI_QUEUE ") fails", queue);
 
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_EO_ADD_QUEUE,
-			"eo_add_queue(Q:%" PRI_QUEUE ") failed", queue);
-
-	if (eo_elem->state == EM_EO_STATE_RUNNING)
-		queue_enable(q_elem); /* enabled later in eo-start otherwise */
+	if (eo_elem->state == EM_EO_STATE_RUNNING) {
+		err = queue_enable(q_elem); /* otherwise enabled in eo-start */
+		RETURN_ERROR_IF(err != EM_OK, err, escope,
+				"queue_enable(Q:%" PRI_QUEUE ") fails", queue);
+	}
 
 	if (num_notif > 0) {
 		/* Send notifications if requested */
 		err = send_notifs(num_notif, notif_tbl);
-
-		RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_EO_ADD_QUEUE,
+		RETURN_ERROR_IF(err != EM_OK, err, escope,
 				"EO:%" PRI_EO " send notif fails", eo);
 	}
 
@@ -327,53 +333,19 @@ em_eo_add_queue(em_eo_t eo, em_queue_t queue,
 }
 
 em_status_t
+em_eo_add_queue(em_eo_t eo, em_queue_t queue,
+		int num_notif, const em_notif_t notif_tbl[])
+{
+	return eo_add_queue_escope(eo, queue, num_notif, notif_tbl,
+				   EM_ESCOPE_EO_ADD_QUEUE);
+}
+
+em_status_t
 em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue)
 {
-	eo_elem_t *const eo_elem = eo_elem_get(eo);
-	queue_elem_t *const q_elem = queue_elem_get(queue);
-	em_queue_type_t q_type;
-	em_status_t err;
-	int valid;
-	int lock_taken;
-
-	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_ADD_QUEUE_SYNC,
-			"Invalid args: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
-			eo, queue);
-	RETURN_ERROR_IF(!eo_allocated(eo_elem) || !queue_allocated(q_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_ADD_QUEUE_SYNC,
-			"Not allocated: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
-			eo, queue);
-
-	q_type = em_queue_get_type(queue);
-	valid = q_type == EM_QUEUE_TYPE_ATOMIC ||
-		q_type == EM_QUEUE_TYPE_PARALLEL ||
-		q_type == EM_QUEUE_TYPE_PARALLEL_ORDERED ||
-		q_type == EM_QUEUE_TYPE_LOCAL;
-	RETURN_ERROR_IF(!valid, EM_ERR_BAD_CONTEXT, EM_ESCOPE_EO_ADD_QUEUE_SYNC,
-			"Invalid queue type: %" PRI_QTYPE "", q_type);
-
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_global);
-	RETURN_ERROR_IF(!lock_taken, EM_ERR_NOT_FREE,
-			EM_ESCOPE_EO_ADD_QUEUE_SYNC,
-			"Another sync API function in progress");
-	/* locked: */
-	err = eo_add_queue(eo_elem, q_elem);
-	if (err != EM_OK)
-		goto eo_add_queue_sync_err;
-
-	if (eo_elem->state == EM_EO_STATE_RUNNING) {
-		err = queue_enable(q_elem); /* otherwise enabled in eo-start */
-		if (err != EM_OK)
-			goto eo_add_queue_sync_err;
-	}
-
-eo_add_queue_sync_err:
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
-
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_EO_ADD_QUEUE_SYNC,
-			"Failure: EO:%" PRI_EO " Q:%" PRI_QUEUE "", eo, queue);
-	return EM_OK;
+	/* No sync blocking needed when adding a queue to an EO */
+	return eo_add_queue_escope(eo, queue, 0, NULL,
+				   EM_ESCOPE_EO_ADD_QUEUE_SYNC);
 }
 
 em_status_t
@@ -420,7 +392,7 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
 		ret = queue_disable(q_elem);
 
 		RETURN_ERROR_IF(ret != EM_OK, ret, EM_ESCOPE_EO_REMOVE_QUEUE,
-				"queue_disable(queue=%" PRI_QUEUE ") fails",
+				"queue_disable(Q:%" PRI_QUEUE ") fails",
 				queue);
 	}
 
@@ -436,12 +408,12 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
 em_status_t
 em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 {
+	em_locm_t *const locm = &em_locm;
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	em_queue_type_t q_type;
 	em_status_t ret;
 	int valid;
-	int lock_taken;
 
 	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
 			EM_ERR_BAD_ID, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
@@ -466,19 +438,8 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 			"Can't remove Q:%" PRI_QUEUE ", not added to this EO",
 			queue);
 
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_global);
-	RETURN_ERROR_IF(!lock_taken, EM_ERR_NOT_FREE,
-			EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
-			"Another sync API function in progress");
-	/* locked: */
-
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_caller);
-	if (unlikely(!lock_taken)) {
-		env_spinlock_unlock(&em_shm->sync_api.lock_global);
-		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-				      EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
-				      "Sync API-caller lock taken");
-	}
+	/* Mark that a sync-API call is in progress */
+	locm->sync_api.in_progress = true;
 
 	/*
 	 * Disable the queue if not already done, dispatcher will drop any
@@ -503,18 +464,22 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 		goto eo_remove_queue_sync_error;
 
 	/*
-	 * Spin on the lock until eo_remove_queue_sync_done_callback()
-	 * unlocks when the operation has completed.
+	 * Poll the core-local unscheduled control-queue for events.
+	 * These events request the core to do a core-local operation (or nop).
+	 * Poll and handle events until 'locm->sync_api.in_progress == false'
+	 * indicating that this sync-API is 'done' on all conserned cores.
 	 */
-	env_spinlock_lock(&em_shm->sync_api.lock_caller);
+	while (locm->sync_api.in_progress)
+		poll_unsched_ctrl_queue();
+
+	return EM_OK;
 
 eo_remove_queue_sync_error:
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
+	locm->sync_api.in_progress = false;
 
-	RETURN_ERROR_IF(ret != EM_OK, ret, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
-			"Failure: EO:%" PRI_EO " Q:%" PRI_QUEUE "", eo, queue);
-	return EM_OK;
+	return INTERNAL_ERROR(ret, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
+			      "Failure: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+			      eo, queue);
 }
 
 em_status_t
@@ -551,8 +516,8 @@ em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
 em_status_t
 em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues)
 {
+	em_locm_t *const locm = &em_locm;
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
-	int lock_taken;
 	em_status_t ret;
 
 	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID,
@@ -562,19 +527,8 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues)
 			EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC,
 			"Not allocated: EO:%" PRI_EO "", eo);
 
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_global);
-	RETURN_ERROR_IF(!lock_taken, EM_ERR_NOT_FREE,
-			EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC,
-			"Another sync API function in progress");
-	/* locked: */
-
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_caller);
-	if (unlikely(!lock_taken)) {
-		env_spinlock_unlock(&em_shm->sync_api.lock_global);
-		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-				      EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC,
-				      "Sync API-caller lock taken");
-	}
+	/* Mark that a sync-API call is in progress */
+	locm->sync_api.in_progress = true;
 
 	ret = queue_disable_all(eo_elem);
 	if (unlikely(ret != EM_OK))
@@ -591,18 +545,21 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues)
 		goto eo_remove_queue_all_sync_error;
 
 	/*
-	 * Spin on the lock until eo_remove_queue_all_sync_done_callback
-	 * unlocks when the operation has completed.
+	 * Poll the core-local unscheduled control-queue for events.
+	 * These events request the core to do a core-local operation (or nop).
+	 * Poll and handle events until 'locm->sync_api.in_progress == false'
+	 * indicating that this sync-API is 'done' on all conserned cores.
 	 */
-	env_spinlock_lock(&em_shm->sync_api.lock_caller);
+	while (locm->sync_api.in_progress)
+		poll_unsched_ctrl_queue();
+
+	return EM_OK;
 
 eo_remove_queue_all_sync_error:
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
+	locm->sync_api.in_progress = false;
 
-	RETURN_ERROR_IF(ret != EM_OK, ret, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
-			"Failure: EO:%" PRI_EO "", eo);
-	return EM_OK;
+	return INTERNAL_ERROR(ret, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
+			      "Failure: EO:%" PRI_EO "", eo);
 }
 
 em_status_t
@@ -764,7 +721,6 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 	queue_elem_t *const save_q_elem = locm->current.q_elem;
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
-	int lock_taken;
 
 	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID, EM_ESCOPE_EO_START_SYNC,
 			"Invalid EO id %" PRI_EO "", eo);
@@ -809,23 +765,9 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 		}
 	}
 
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_global);
-	RETURN_ERROR_IF(!lock_taken, EM_ERR_NOT_FREE, EM_ESCOPE_EO_START_SYNC,
-			"Another sync API function in progress");
-	/* locked: */
-
 	if (eo_elem->start_local_func != NULL) {
-		lock_taken =
-		env_spinlock_trylock(&em_shm->sync_api.lock_caller);
-
-		if (unlikely(!lock_taken)) {
-			ret = EM_ERR_LIB_FAILED;
-			INTERNAL_ERROR(ret, EM_ESCOPE_EO_START_SYNC,
-				       "EO:%" PRI_EO " caller sync lock fails",
-				       eo);
-			/* Can't allow user err handler to change error here */
-			goto eo_start_sync_error;
-		}
+		/* Mark that a sync-API call is in progress */
+		locm->sync_api.in_progress = true;
 
 		locm->start_eo_elem = eo_elem;
 		locm->current.q_elem = &tmp_q_elem;
@@ -837,9 +779,7 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 
 		if (unlikely(ret != EM_OK)) {
 			INTERNAL_ERROR(ret, EM_ESCOPE_EO_START_SYNC,
-				       "EO:%" PRI_EO " local start func fails",
-				       eo);
-			env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+				       "EO:%" PRI_EO " local start func fails", eo);
 			/* Can't allow user err handler to change error here */
 			goto eo_start_sync_error;
 		}
@@ -847,24 +787,22 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 		ret = eo_start_sync_local_req(eo_elem);
 		if (unlikely(ret != EM_OK)) {
 			INTERNAL_ERROR(ret, EM_ESCOPE_EO_START_SYNC,
-				       "EO:%" PRI_EO " eo_start_sync_local_req",
-				       eo);
-			env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+				       "EO:%" PRI_EO " eo_start_sync_local_req", eo);
 			/* Can't allow user err handler to change error here */
 			goto eo_start_sync_error;
 		}
 
 		/*
-		 * Spin on the lock until eo_start_sync_done_callback()
-		 * unlocks when the operation has completed.
+		 * Poll the core-local unscheduled control-queue for events.
+		 * These events request the core to do a core-local operation (or nop).
+		 * Poll and handle events until 'locm->sync_api.in_progress == false'
+		 * indicating that this sync-API is 'done' on all conserned cores.
 		 */
-		env_spinlock_lock(&em_shm->sync_api.lock_caller);
-		env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+		while (locm->sync_api.in_progress)
+			poll_unsched_ctrl_queue();
 
 		/* Send events buffered during the EO-start/local-start funcs */
 		eo_start_send_buffered_events(eo_elem);
-
-		env_spinlock_unlock(&em_shm->sync_api.lock_global);
 		/*
 		 * EO state changed to 'EO_STATE_RUNNING' after successful
 		 * completion of EO local starts on all cores.
@@ -885,15 +823,12 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 
 	/* Send events buffered during the EO-start/local-start functions */
 	eo_start_send_buffered_events(eo_elem);
-
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
 	return EM_OK;
 
 eo_start_sync_error:
+	locm->sync_api.in_progress = false;
 	/* roll back state to allow EO delete */
 	eo_elem->state = EM_EO_STATE_ERROR;
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
-
 	return ret;
 }
 
@@ -948,7 +883,6 @@ em_eo_stop_sync(em_eo_t eo)
 	queue_elem_t *const save_q_elem = locm->current.q_elem;
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
-	int lock_taken;
 
 	RETURN_ERROR_IF(eo_elem == NULL || !eo_allocated(eo_elem),
 			EM_ERR_BAD_ID, EM_ESCOPE_EO_STOP_SYNC,
@@ -957,17 +891,8 @@ em_eo_stop_sync(em_eo_t eo)
 			EM_ERR_BAD_STATE, EM_ESCOPE_EO_STOP_SYNC,
 			"EO invalid state, cannot stop:%d", eo_elem->state);
 
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_global);
-	RETURN_ERROR_IF(!lock_taken, EM_ERR_NOT_FREE,
-			EM_ESCOPE_EO_STOP_SYNC,
-			"Another sync API function in progress");
-	/* locked: */
-
-	lock_taken = env_spinlock_trylock(&em_shm->sync_api.lock_caller);
-	if (unlikely(!lock_taken)) {
-		ret = EM_ERR_LIB_FAILED;
-		goto eo_stop_sync_error;
-	}
+	/* Mark that a sync-API call is in progress */
+	locm->sync_api.in_progress = true;
 
 	eo_elem->state = EM_EO_STATE_STOPPING;
 
@@ -976,10 +901,8 @@ em_eo_stop_sync(em_eo_t eo)
 	 * It doesn't matter if some of the queues are already disabled.
 	 */
 	ret = queue_disable_all(eo_elem);
-	if (unlikely(ret != EM_OK)) {
-		env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+	if (unlikely(ret != EM_OK))
 		goto eo_stop_sync_error;
-	}
 
 	/*
 	 * Use a tmp q_elem as the 'current q_elem' to enable calling
@@ -996,11 +919,8 @@ em_eo_stop_sync(em_eo_t eo)
 		ret = eo_elem->stop_local_func(eo_elem->eo_ctx, eo_elem->eo);
 		/* Restore the original 'current q_elem' */
 		locm->current.q_elem = save_q_elem;
-
-		if (unlikely(ret != EM_OK)) {
-			env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+		if (unlikely(ret != EM_OK))
 			goto eo_stop_sync_error;
-		}
 	}
 
 	/*
@@ -1016,21 +936,20 @@ em_eo_stop_sync(em_eo_t eo)
 		INTERNAL_ERROR(ret, EM_ESCOPE_EO_STOP_SYNC,
 			       "EO:%" PRI_EO " local stop func fails", eo);
 		/* Can't allow user err handler to change error here */
-		env_spinlock_unlock(&em_shm->sync_api.lock_caller);
 		goto eo_stop_sync_error;
 	}
 
 	/*
-	 * Spin on the lock until eo_stop_sync_done_callback()
-	 * unlocks when the operation has completed.
+	 * Poll the core-local unscheduled control-queue for events.
+	 * These events request the core to do a core-local operation (or nop).
+	 * Poll and handle events until 'locm->sync_api.in_progress == false'
+	 * indicating that this sync-API is 'done' on all conserned cores.
 	 */
-	env_spinlock_lock(&em_shm->sync_api.lock_caller);
-	env_spinlock_unlock(&em_shm->sync_api.lock_caller);
+	while (locm->sync_api.in_progress)
+		poll_unsched_ctrl_queue();
 
 	/* Change state here to allow em_eo_delete() from EO global stop */
 	eo_elem->state = EM_EO_STATE_CREATED; /* == stopped */
-
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
 
 	locm->current.q_elem = &tmp_q_elem;
 	/*
@@ -1050,8 +969,7 @@ em_eo_stop_sync(em_eo_t eo)
 	return EM_OK;
 
 eo_stop_sync_error:
-	env_spinlock_unlock(&em_shm->sync_api.lock_global);
-
+	locm->sync_api.in_progress = false;
 	return INTERNAL_ERROR(ret, EM_ESCOPE_EO_STOP_SYNC,
 			      "Failure: EO:%" PRI_EO "", eo);
 }

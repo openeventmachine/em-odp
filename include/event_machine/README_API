@@ -6,6 +6,20 @@ EM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 -------------------------------------------------------------------------------
+API 2.8 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=8)
+-------------------------------------------------------------------------------
+Backwards compatible with EM 2.7 API
+
+1. Add a define for the base-name of the EM core-specific queue groups (one per
+   EM-core): #define EM_QUEUE_GROUP_CORE_BASE_NAME "core"
+   The full queue group name for a single-core queue group is: "core" + "%d",
+   which gives "core0", "core1", ... "core99", ...
+   EM earlier relied on these queue groups for internal core specific
+   messaging and also allowed applicatioins to use them. Currently EM
+   does not internally need these groups but will create them based on
+   an EM config file option for applications relying on their existence.
+
+-------------------------------------------------------------------------------
 API 2.7 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=7)
 -------------------------------------------------------------------------------
 Backwards compatible with EM 2.6 API

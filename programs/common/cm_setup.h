@@ -97,6 +97,28 @@ typedef struct {
 } sync_t;
 
 /**
+ * @brief Application startup mode
+ *
+ * Enables testing of different startup scenarios.
+ */
+typedef enum startup_mode {
+	/**
+	 * Start up & initialize all EM cores before setting up the
+	 * application using EM APIs. The em_init() function has been run and
+	 * all EM-cores have run em_init_core() before application setup.
+	 * Option: -s, --startup-mode = 0 (All EM-cores before application)
+	 */
+	STARTUP_ALL_CORES = 0,
+	/**
+	 * Start up & initialize only one EM core before setting up the
+	 * application using EM APIs. The em_init() function has been run and
+	 * only one EM-core has run em_init_core() before application setup.
+	 * Option: -s, --startup-mode = 1 (One EM-core before application...))
+	 */
+	STARTUP_ONE_CORE_FIRST
+} startup_mode_t;
+
+/**
  * Application configuration
  */
 typedef struct {
@@ -108,6 +130,9 @@ typedef struct {
 	unsigned int num_threads;
 	/** dispatch rounds before returning */
 	uint32_t dispatch_rounds;
+	/** Start-up mode */
+	startup_mode_t startup_mode;
+
 	/** number of memory pools set up for the application */
 	unsigned int num_pools;
 	/** pool ids of the created application pools */

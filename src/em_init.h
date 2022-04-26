@@ -67,6 +67,10 @@ typedef struct {
 	} pool;
 
 	struct {
+		bool create_core_queue_groups;
+	} queue_group;
+
+	struct {
 		unsigned int min_events_default; /* default min nbr of events */
 		struct {
 		int map_mode;
@@ -80,9 +84,23 @@ typedef struct {
 
 	struct {
 		int enable;
+		int store_state;
 		int store_first_u32;
 		int prealloc_pools;
 	} esv;
+
+	struct {
+		int enable;
+		const char *ip_addr;
+		int port;
+	} cli;
+
+	struct {
+		unsigned int poll_ctrl_interval;
+		uint64_t poll_ctrl_interval_ns;
+		/** convert option 'poll_ctrl_interval_ns' to odp_time_t */
+		odp_time_t poll_ctrl_interval_time;
+	} dispatch;
 } opt_t;
 
 em_status_t
@@ -106,6 +124,31 @@ input_poll_init_local(bool *const result /*out*/, int core_id,
 em_status_t
 output_drain_init_local(bool *const result /*out*/, int core_id,
 			const em_conf_t *conf);
+
+/**
+ * Set EM core local log function.
+ *
+ * Called by EM-core (= process, thread or bare metal core) when a
+ * different log function than EM internal log is needed.
+ *
+ */
+void
+core_log_fn_set(em_log_func_t func);
+
+/**
+ * Initialize a thread external to EM.
+ *
+ * This function makes sure that EM shared memory has been setup properly before
+ * an EM external thread is created.
+ *
+ * Must be called once by non EM core which wants to access EM shared memory or
+ * use EM APIs.
+ *
+ * @return EM_OK if successful.
+ */
+em_status_t init_ext_thread(void);
+
+em_status_t sync_api_init_local(void);
 
 #ifdef __cplusplus
 }

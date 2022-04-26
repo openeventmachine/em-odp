@@ -48,7 +48,7 @@
 
 #ifndef EM_ODP_MAX_TIMERS
 /* Max number of supported EM timers (ODP timer pools) */
-#define EM_ODP_MAX_TIMERS	8
+#define EM_ODP_MAX_TIMERS	16
 #endif
 
 #ifndef EM_ODP_DEFAULT_TMOS

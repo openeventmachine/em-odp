@@ -66,15 +66,15 @@ phys_to_logic_core_id(const int phys_core)
 	return em_shm->core_map.phys_vs_logic.logic[phys_core];
 }
 
-int
-logic_to_thr_core_id(const int logic_core);
+int logic_to_thr_core_id(const int logic_core);
 
-int
-thr_to_logic_core_id(const int thr_id);
+int thr_to_logic_core_id(const int thr_id);
 
-void
-mask_em2odp(const em_core_mask_t *const em_core_mask,
-	    odp_thrmask_t *const odp_thrmask /*out*/);
+void mask_em2odp(const em_core_mask_t *const em_core_mask,
+		 odp_thrmask_t *const odp_thrmask /*out*/);
+
+void mask_em2phys(const em_core_mask_t *const em_core_mask,
+		  odp_cpumask_t *const odp_cpumask /*out*/);
 
 #ifdef __cplusplus
 }

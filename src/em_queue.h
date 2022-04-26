@@ -90,6 +90,10 @@ unsigned int queue_count(void);
 size_t queue_get_name(const queue_elem_t *const q_elem,
 		      char name[/*out*/], const size_t maxlen);
 
+em_event_t queue_dequeue(const queue_elem_t *q_elem);
+int queue_dequeue_multi(const queue_elem_t *q_elem,
+			em_event_t events[/*out*/], int num);
+
 void print_queue_info(void);
 void print_queue_prio_info(void);
 

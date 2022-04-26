@@ -52,7 +52,8 @@ extern "C" {
 #include <event_machine/platform/event_machine_hw_types.h>
 
 /**
- * Create a new queue group to control queue to core mapping.
+ * Create a new queue group to control queue to core mapping,
+ * asynchronous (non-blocking)
  *
  * Allocates a new queue group handle with a given core mask.
  * Cores added to the queue group can be changed later with
@@ -60,9 +61,9 @@ extern "C" {
  *
  * This operation may be asynchronous, i.e. the creation may complete well after
  * this function has returned. Provide notification events, if the application
- * needsto know about the actual completion. EM will send notifications when the
- * operation has completed. Note that using a queue group before the creation
- * has completed may result in undefined behaviour.
+ * needs to know about the actual completion. EM will send notifications when
+ * the operation has completed. Note that using a queue group before the
+ * creation has completed may result in undefined behaviour.
  *
  * The core mask is visible through em_queue_group_get_mask() only after the
  * create operation has completed.
@@ -94,30 +95,45 @@ extern "C" {
  *
  * @return Queue group or EM_QUEUE_GROUP_UNDEF on error.
  *
- * @see em_queue_group_find(), em_queue_group_modify(), em_queue_group_delete()
+ * @see em_queue_group_find(), em_queue_group_modify(), em_queue_group_delete(),
+ *      em_queue_group_create_sync()
  */
 em_queue_group_t
 em_queue_group_create(const char *name, const em_core_mask_t *mask,
 		      int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Create a new queue group to control queue to core mapping, synchronous.
+ * Create a new queue group to control queue to core mapping,
+ * synchronous (blocking).
  *
  * As em_queue_group_create(), but will not return until the operation is
  * complete.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param name       Queue group name (optional, NULL ok)
  * @param mask       Core mask for the queue group
  *
  * @return Queue group or EM_QUEUE_GROUP_UNDEF on error.
  *
- * @see em_queue_group_create()
+ * @see em_queue_group_create() for an asynchronous version of the API
  */
 em_queue_group_t
 em_queue_group_create_sync(const char *name, const em_core_mask_t *mask);
 
 /**
- * Delete the queue group.
+ * Delete the queue group, asynchronous (non-blocking)
  *
  * Removes all cores from the queue group and free's the handle for re-use.
  * All queues in the queue group must be deleted with em_queue_delete() before
@@ -129,29 +145,43 @@ em_queue_group_create_sync(const char *name, const em_core_mask_t *mask);
  *
  * @return EM_OK if successful.
  *
- * @see em_queue_group_create(), em_queue_group_modify(), em_queue_delete()
+ * @see em_queue_group_create(), em_queue_group_modify(), em_queue_delete(),
+ *      em_queue_group_delete_sync()
  */
 em_status_t
 em_queue_group_delete(em_queue_group_t queue_group,
 		      int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Delete the queue group, synchronous.
+ * Delete the queue group, synchronous (blocking).
  *
  * As em_queue_group_delete(), but will not return until the operation is
  * complete.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param queue_group  Queue group to delete
  *
  * @return EM_OK if successful.
  *
- * @see em_queue_group_delete()
+ * @see em_queue_group_delete() for an asynchronous version of the API
  */
 em_status_t
 em_queue_group_delete_sync(em_queue_group_t queue_group);
 
 /**
- * Modify the core mask of an existing queue group.
+ * Modify the core mask of an existing queue group, asynchronous (non-blocking)
  *
  * The function compares the new core mask to the current mask and changes the
  * core mapping for the given queue group accordingly.
@@ -178,7 +208,7 @@ em_queue_group_delete_sync(em_queue_group_t queue_group);
  * @return EM_OK if successful.
  *
  * @see em_queue_group_create(), em_queue_group_find(), em_queue_group_delete()
- *      em_queue_group_get_mask()
+ *      em_queue_group_get_mask(), em_queue_group_modify_sync()
  */
 em_status_t
 em_queue_group_modify(em_queue_group_t queue_group,
@@ -186,17 +216,30 @@ em_queue_group_modify(em_queue_group_t queue_group,
 		      int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Modify core mask of an existing queue group, synchronous.
+ * Modify core mask of an existing queue group, synchronous (blocking).
  *
  * As em_queue_group_modify(), but will not return until the operation is
  * complete.
+ *
+ * Note that the function is blocking and will not return until the operation
+ * has completed across all concerned EM cores.
+ * Sync-API calls can block the core for a long (indefinite) time, thus they
+ * should not be used to make runtime changes on real time EM cores - consider
+ * the async variants of the APIs in these cases instead.
+ * While one core is calling a sync-API function, the others must be running the
+ * EM dispatch loop to be able to receive and handle the sync-API request events
+ * sent internally.
+ * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
+ * called at a time: EM will report and return an error from the API to avoid
+ * deadlock if multiple cores simultaneously try to call synchronous APIs.
+ * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param queue_group  Queue group to modify
  * @param new_mask     New core mask
  *
  * @return EM_OK if successful.
  *
- * @see em_queue_group_modify()
+ * @see em_queue_group_modify() for an asynchronous version of the API
  */
 em_status_t
 em_queue_group_modify_sync(em_queue_group_t queue_group,

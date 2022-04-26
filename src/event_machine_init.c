@@ -47,7 +47,8 @@ ENV_LOCAL em_locm_t em_locm ENV_CACHE_LINE_ALIGNED = {
 		.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE,
 		.local_queues.empty = 1,
 		.do_input_poll = false,
-		.do_output_drain = false
+		.do_output_drain = false,
+		.sync_api.in_progress = false
 		/* other members initialized to 0 or NULL as per C standard */
 };
 
@@ -136,10 +137,6 @@ em_init(const em_conf_t *conf)
 	RETURN_ERROR_IF(ret != 0, EM_ERR_OPERATION_FAILED, EM_ESCOPE_INIT,
 			"libconfig initialization failed:%d", ret);
 
-	/* Initialize the synchronous API locks */
-	env_spinlock_init(&em_shm->sync_api.lock_global);
-	env_spinlock_init(&em_shm->sync_api.lock_caller);
-
 	/*
 	 * Initialize the physical-core <-> EM-core mapping
 	 *
@@ -149,9 +146,13 @@ em_init(const em_conf_t *conf)
 	 */
 	stat = core_map_init(&em_shm->core_map, conf->core_count,
 			     &conf->phys_mask);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"core_map_init() failed:%" PRI_STAT "", stat);
+
+	/* Initialize the EM event dispatcher */
+	stat = dispatch_init();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"dispatch_init() failed:%" PRI_STAT "", stat);
 
 	/*
 	 * Check validity of core masks for input_poll_fn and output_drain_fn.
@@ -186,49 +187,42 @@ em_init(const em_conf_t *conf)
 	 */
 	stat = pool_init(&em_shm->mpool_tbl, &em_shm->mpool_pool,
 			 &conf->default_pool_cfg);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"pool_init() failed:%" PRI_STAT "", stat);
 
 	stat = event_init();
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"event_init() failed:%" PRI_STAT "", stat);
 
 	stat = event_group_init(&em_shm->event_group_tbl,
 				&em_shm->event_group_pool);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"event_group_init() failed:%" PRI_STAT "", stat);
 
 	stat = queue_init(&em_shm->queue_tbl, &em_shm->queue_pool,
 			  &em_shm->queue_pool_static);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"queue_init() failed:%" PRI_STAT "", stat);
 
 	stat = queue_group_init(&em_shm->queue_group_tbl,
 				&em_shm->queue_group_pool);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"queue_group_init() failed:%" PRI_STAT "", stat);
 
 	stat = atomic_group_init(&em_shm->atomic_group_tbl,
 				 &em_shm->atomic_group_pool);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"atomic_group_init() failed:%" PRI_STAT "", stat);
 
 	stat = eo_init(&em_shm->eo_tbl, &em_shm->eo_pool);
-
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"eo_init() failed:%" PRI_STAT "", stat);
 
-	em_queue_group_t default_queue_group = default_queue_group_create();
+	stat = daemon_eo_queues_create();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"daemon_eo_queues_create() failed:%" PRI_STAT "", stat);
 
-	RETURN_ERROR_IF(default_queue_group != EM_QUEUE_GROUP_DEFAULT,
-			EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-			"default_queue_group_create() failed!");
+	daemon_eo_create();
 
 	/* timer add-on */
 	if (conf->event_timer) {
@@ -243,6 +237,11 @@ em_init(const em_conf_t *conf)
 	stat = chaining_init(&em_shm->event_chaining);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"chaining_init() failed:%" PRI_STAT "", stat);
+
+	/* Initialize em_cli */
+	stat = emcli_init();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"emcli_init() failed:%" PRI_STAT "", stat);
 
 	return EM_OK;
 }
@@ -273,8 +272,18 @@ em_init_core(void)
 			"Shared memory init fails: em_shm:%p != shm_addr:%p",
 			em_shm, shm_addr);
 
-	/* Store the EM core id of this core, returned by em_core_id() */
-	locm->core_id = phys_to_logic_core_id(odp_cpu_id());
+	/* Initialize core mappings not known yet in core_map_init() */
+	stat = core_map_init_local(&em_shm->core_map);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"core_map_init_local() failed:%" PRI_STAT "", stat);
+
+	stat = queue_group_init_local();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"queue_group_init_local() failed:%" PRI_STAT "", stat);
+
+	stat = dispatch_init_local();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"dispatch_init_local() failed:%" PRI_STAT "", stat);
 
 	/* Check if input_poll_fn should be executed on this core */
 	stat = input_poll_init_local(&locm->do_input_poll,
@@ -288,11 +297,6 @@ em_init_core(void)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
 			"output_drain_init_local() failed:%" PRI_STAT "", stat);
 
-	/* Initialize core mappings not known yet in core_map_init() */
-	stat = core_map_init_local(&em_shm->core_map);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"core_map_init_local() failed:%" PRI_STAT "", stat);
-
 	stat = queue_init_local();
 	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_INIT_CORE,
 			"queue_init_local() failed:%" PRI_STAT "", stat);
@@ -305,6 +309,18 @@ em_init_core(void)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
 			"timer_init_local() failed:%" PRI_STAT "", stat);
 
+	stat = sync_api_init_local();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"sync_api_init_local() failed:%" PRI_STAT "", stat);
+
+	/* Init the EM CLI locally on this core (only if enabled) */
+	stat = emcli_init_local();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
+			"emcli_init_local() failed:%" PRI_STAT "", stat);
+
+	/* This is an EM-core that will participate in EM event dispatching */
+	locm->is_external_thr = false;
+
 	env_spinlock_lock(&em_shm->init.lock);
 	init_count = ++em_shm->init.em_init_core_cnt;
 	env_spinlock_unlock(&em_shm->init.lock);
@@ -313,16 +329,7 @@ em_init_core(void)
 
 	/* Print info about the Env&HW when the last core has initialized */
 	if (init_count == em_core_count()) {
-		em_queue_group_t def_qgrp;
-
-		def_qgrp = default_queue_group_update();
-		RETURN_ERROR_IF(def_qgrp != EM_QUEUE_GROUP_DEFAULT,
-				EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-				"default_queue_group_update() failed!");
-
-		daemon_eo_create();
 		print_em_info();
-
 		/* Last */
 		em_shm->init.em_init_done = 1;
 	}
@@ -342,6 +349,10 @@ em_term(const em_conf_t *conf)
 
 	if (em_shm->conf.event_timer)
 		timer_term();
+
+	stat = emcli_term();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"emcli_term() failed:%" PRI_STAT "", stat);
 
 	stat = chaining_term(&em_shm->event_chaining);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
@@ -375,6 +386,7 @@ em_term_core(void)
 	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 	odp_queue_t odp_queue;
 	em_status_t stat = EM_OK;
+	em_status_t ret_stat = EM_OK;
 	bool esv_ena = esv_enabled();
 	int num_events;
 
@@ -382,10 +394,28 @@ em_term_core(void)
 		daemon_eo_shutdown();
 
 	/* Stop timer add-on. Just a NOP if timer was not enabled (config) */
-	stat |= timer_term_local();
+	stat = timer_term_local();
+	if (stat != EM_OK) {
+		ret_stat = stat;
+		INTERNAL_ERROR(stat, EM_ESCOPE_TERM_CORE,
+			       "timer_term_local() fails: %" PRI_STAT "", stat);
+	}
+
+	/* Term the EM CLI locally (if enabled) */
+	stat = emcli_term_local();
+	if (stat != EM_OK) {
+		ret_stat = stat;
+		INTERNAL_ERROR(stat, EM_ESCOPE_TERM_CORE,
+			       "emcli_term_local() fails: %" PRI_STAT "", stat);
+	}
 
 	/* Delete the local queues */
-	stat |= queue_term_local();
+	stat = queue_term_local();
+	if (stat != EM_OK) {
+		ret_stat = stat;
+		INTERNAL_ERROR(stat, EM_ESCOPE_TERM_CORE,
+			       "queue_term_local() fails: %" PRI_STAT "", stat);
+	}
 
 	/*
 	 * Flush all events in the scheduler.
@@ -416,5 +446,5 @@ em_term_core(void)
 		odp_schedule_pause();
 	}
 
-	return stat == EM_OK ? EM_OK : EM_ERR;
+	return ret_stat == EM_OK ? EM_OK : EM_ERR;
 }
