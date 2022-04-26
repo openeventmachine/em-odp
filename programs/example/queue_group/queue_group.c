@@ -85,6 +85,9 @@ typedef struct app_eo_ctx_t {
 
 	em_queue_t test_queue;
 	em_queue_type_t test_queue_type;
+	/** Has the test_queue been added to the EO? */
+	bool test_queue_added;
+
 	em_queue_group_t test_qgrp;
 	em_event_group_t event_group;
 
@@ -118,8 +121,11 @@ typedef struct app_q_ctx_t {
  * Application event
  */
 typedef union app_event_t {
-	#define EVENT_NOTIF 1 /**< Event id: notification*/
-	#define EVENT_DATA  2 /**< Event id: data */
+	/** Event id: notification */
+	#define EVENT_NOTIF 1
+	/** Event id: data */
+	#define EVENT_DATA  2
+
 	/** Id is first in all events */
 	uint32_t id;
 
@@ -163,6 +169,8 @@ COMPILE_TIME_ASSERT(sizeof(core_stat_t) == ENV_CACHE_LINE_SIZE,
  */
 typedef struct qgrp_shm_t {
 	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+	/** The application has seen the exit_flag and is ready for tear down */
+	env_atomic32_t exit_ack;
 
 	app_eo_ctx_t app_eo_ctx ENV_CACHE_LINE_ALIGNED;
 
@@ -188,8 +196,8 @@ receive(void *eo_context, em_event_t event, em_event_type_t type,
 	em_queue_t queue, void *queue_context);
 
 static inline void
-receive_event_notif(app_eo_ctx_t *const eo_ctx, em_event_t event,
-		    em_queue_t queue, app_q_ctx_t *const q_ctx);
+receive_event_notif(app_eo_ctx_t *eo_ctx, em_event_t event,
+		    em_queue_t queue, app_q_ctx_t *q_ctx);
 
 static void
 notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue);
@@ -201,8 +209,10 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 			    em_queue_t queue);
 
 static inline void
-receive_event_data(app_eo_ctx_t *const eo_ctx, em_event_t event,
-		   em_queue_t queue, app_q_ctx_t *const q_ctx);
+receive_event_data(app_eo_ctx_t *eo_ctx, em_event_t event,
+		   em_queue_t queue, app_q_ctx_t *q_ctx);
+
+static void await_exit_ack(void);
 
 static em_status_t
 start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
@@ -314,6 +324,12 @@ test_start(appl_conf_t *const appl_conf)
 		      "Max supported core count for this test is: %u\n",
 		      core_count, MAX_CORES);
 
+	env_atomic32_init(&qgrp_shm->exit_ack);
+	env_atomic32_set(&qgrp_shm->exit_ack, 0);
+
+	/*
+	 * Create the application EO and queues
+	 */
 	eo = em_eo_create("test_appl_queue_group",
 			  start, start_local, stop, stop_local,
 			  receive, &qgrp_shm->app_eo_ctx);
@@ -372,15 +388,19 @@ void
 test_stop(appl_conf_t *const appl_conf)
 {
 	const int core = em_core_id();
-	em_eo_t eo = qgrp_shm->app_eo_ctx.eo;
-	em_event_group_t egrp;
-	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
-	int num_notifs;
 	em_status_t err;
 
 	(void)appl_conf;
 
-	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
+	APPL_PRINT("%s() on EM-core %02d\n", __func__, core);
+
+	/* Await 'exit_ack' to be set by the EO */
+	await_exit_ack();
+
+	em_eo_t eo = qgrp_shm->app_eo_ctx.eo;
+	em_event_group_t egrp;
+	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
+	int num_notifs;
 
 	err = em_eo_stop_sync(eo);
 	test_fatal_if(err != EM_OK,
@@ -406,7 +426,7 @@ test_term(void)
 {
 	int core = em_core_id();
 
-	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
+	APPL_PRINT("%s() on EM-core %02d\n", __func__, core);
 
 	if (core == 0) {
 		env_shared_free(qgrp_shm);
@@ -421,17 +441,36 @@ static void
 receive(void *eo_context, em_event_t event, em_event_type_t type,
 	em_queue_t queue, void *queue_context)
 {
-	app_eo_ctx_t *const eo_ctx = eo_context;
-	app_event_t *const app_event = em_event_pointer(event);
+	app_eo_ctx_t *eo_ctx = eo_context;
+	app_event_t *app_event = em_event_pointer(event);
 	/* Only set for the test_queue */
-	app_q_ctx_t *const q_ctx = queue_context;
+	app_q_ctx_t *q_ctx = queue_context;
 
 	test_fatal_if(em_get_type_major(type) != EM_EVENT_TYPE_SW,
 		      "Unexpected event type: 0x%x", type);
 
 	if (unlikely(appl_shm->exit_flag)) {
-		em_free(event);
-		return;
+		/* Handle exit request */
+		uint32_t exit_ack = env_atomic32_get(&qgrp_shm->exit_ack);
+
+		if (exit_ack) {
+			em_free(event);
+			return;
+		}
+
+		if (app_event->id == EVENT_NOTIF &&
+		    (app_event->notif.type == NOTIF_QUEUE_GROUP_MODIFY_DONE_FIRST ||
+		     app_event->notif.type == NOTIF_QUEUE_GROUP_MODIFY_DONE)) {
+			/* can be set by multiple cores */
+			if (!exit_ack)
+				env_atomic32_set(&qgrp_shm->exit_ack, 1);
+			em_free(event);
+			return;
+		}
+		/*
+		 * Handle events normally until a MODIFY_DONE has been
+		 * received and exit_ack has been set.
+		 */
 	}
 
 	switch (app_event->id) {
@@ -452,10 +491,10 @@ receive(void *eo_context, em_event_t event, em_event_type_t type,
  * Handle the notification events received through the notif_queue
  */
 static inline void
-receive_event_notif(app_eo_ctx_t *const eo_ctx, em_event_t event,
-		    em_queue_t queue, app_q_ctx_t *const q_ctx)
+receive_event_notif(app_eo_ctx_t *eo_ctx, em_event_t event,
+		    em_queue_t queue, app_q_ctx_t *q_ctx)
 {
-	app_event_t *const app_event = em_event_pointer(event);
+	app_event_t *app_event = em_event_pointer(event);
 	em_status_t err;
 	(void)q_ctx;
 
@@ -478,6 +517,7 @@ receive_event_notif(app_eo_ctx_t *const eo_ctx, em_event_t event,
 		err = em_eo_add_queue_sync(eo_ctx->eo, eo_ctx->test_queue);
 		test_fatal_if(err != EM_OK,
 			      "EO add queue:%" PRI_STAT "", err);
+		eo_ctx->test_queue_added = true;
 		notif_queue_group_modify_done(eo_ctx, event, queue);
 		break;
 
@@ -508,7 +548,7 @@ notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue)
 	em_notif_t notif_tbl;
 	em_status_t err;
 	const em_queue_group_t qgrp_curr = em_queue_get_group(queue);
-	app_event_t *const app_event = em_event_pointer(event);
+	app_event_t *app_event = em_event_pointer(event);
 
 	test_fatal_if(app_event->notif.used_group != qgrp_curr,
 		      "Qgrp mismatch: %" PRI_QGRP "!=%" PRI_QGRP "!",
@@ -586,6 +626,7 @@ notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue)
 					     eo_ctx->test_qgrp, NULL);
 	test_fatal_if(eo_ctx->test_queue == EM_QUEUE_UNDEF,
 		      "Test queue creation failed!");
+	eo_ctx->test_queue_added = false;
 
 	APPL_PRINT("\n"
 		   "Created test queue:%" PRI_QUEUE " type:%s(%u)\t"
@@ -612,7 +653,7 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 {
 	em_status_t err;
 	const em_queue_group_t qgrp_curr = em_queue_get_group(queue);
-	app_event_t *const app_event = em_event_pointer(event);
+	app_event_t *app_event = em_event_pointer(event);
 
 	test_fatal_if(app_event->notif.used_group != qgrp_curr,
 		      "Qgrp mismatch: %" PRI_QGRP "!=%" PRI_QGRP "!",
@@ -635,6 +676,7 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 					      eo_ctx->test_queue);
 		test_fatal_if(err != EM_OK,
 			      "Remove test queue:%" PRI_STAT "", err);
+		eo_ctx->test_queue_added = false;
 
 		APPL_PRINT("Deleting test queue:%" PRI_QUEUE ",\t"
 			   "Qgrp ID:%" PRI_QGRP " (name:\"%s\")\n",
@@ -644,6 +686,7 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 		err = em_queue_delete(eo_ctx->test_queue);
 		test_fatal_if(err != EM_OK,
 			      "Delete test queue:%" PRI_STAT "", err);
+		eo_ctx->test_queue = EM_QUEUE_UNDEF;
 
 		/*
 		 * Delete the queue group later in restart after the
@@ -713,7 +756,7 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 	int core_count;
 	int i;
 	const em_queue_group_t qgrp_curr = em_queue_get_group(queue);
-	app_event_t *const app_event = em_event_pointer(event);
+	app_event_t *app_event = em_event_pointer(event);
 
 	test_fatal_if(app_event->notif.used_group != qgrp_curr,
 		      "Qgrp mismatch: %" PRI_QGRP "!=%" PRI_QGRP "!",
@@ -809,11 +852,11 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
  * notif_queue to begin the queue group modification sequence.
  */
 static inline void
-receive_event_data(app_eo_ctx_t *const eo_ctx, em_event_t event,
-		   em_queue_t queue, app_q_ctx_t *const q_ctx)
+receive_event_data(app_eo_ctx_t *eo_ctx, em_event_t event,
+		   em_queue_t queue, app_q_ctx_t *q_ctx)
 {
 	int core_id = em_core_id();
-	app_event_t *const app_event = em_event_pointer(event);
+	app_event_t *app_event = em_event_pointer(event);
 	em_queue_group_t qgrp_curr = em_queue_get_group(queue);
 	em_core_mask_t used_mask;
 	em_status_t err;
@@ -866,12 +909,46 @@ receive_event_data(app_eo_ctx_t *const eo_ctx, em_event_t event,
 }
 
 /**
+ * Await exit_ack to be set by the EO.
+ */
+static void await_exit_ack(void)
+{
+	env_time_t t_max = env_time_global_from_ns(10 * 1000000000ULL); /*10s*/
+	env_time_t t_now = ENV_TIME_NULL;
+	env_time_t t_start = env_time_global();
+	env_time_t t_end = env_time_sum(t_start, t_max);
+	uint64_t ns;
+	uint32_t exit_ack = 0;
+
+	long double sec;
+
+	do {
+		if (!exit_ack)
+			em_dispatch(1);
+		exit_ack = env_atomic32_get(&qgrp_shm->exit_ack);
+		t_now = env_time_global();
+	} while (!exit_ack && env_time_cmp(t_now, t_end) < 0);
+
+	ns = env_time_diff_ns(t_now, t_start);
+	sec = (long double)ns / 1000000000.0;
+
+	if (unlikely(!exit_ack)) {
+		test_error(EM_ERR_TIMEOUT, 0xdead,
+			   "Timeout: No exit_ack within %Lfs!\n", sec);
+		return;
+	}
+
+	APPL_PRINT("exit_ack in %Lfs on EM-core:%02d => Tearing down\n",
+		   sec, em_core_id());
+}
+
+/**
  * Global start function for the test EO
  */
 static em_status_t
 start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 {
-	app_eo_ctx_t *const eo_ctx = eo_context;
+	app_eo_ctx_t *eo_ctx = eo_context;
 	uint64_t tot_modify_count = 0;
 	uint64_t tmp;
 	int ret;
@@ -950,14 +1027,18 @@ static em_status_t
 stop(void *eo_context, em_eo_t eo)
 {
 	em_status_t err;
-
-	(void)eo_context;
+	app_eo_ctx_t *eo_ctx = eo_context;
 
 	/* remove and delete all of the EO's queues */
 	err = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(err != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
 		      err, eo);
+	if (eo_ctx->test_queue != EM_QUEUE_UNDEF && !eo_ctx->test_queue_added) {
+		err = em_queue_delete(eo_ctx->test_queue);
+		test_fatal_if(err != EM_OK,
+			      "Delete test queue:%" PRI_STAT "", err);
+	}
 
 	/* delete the EO at the end of the stop-function */
 	err = em_eo_delete(eo);
@@ -978,7 +1059,7 @@ start_local(void *eo_context, em_eo_t eo)
 	(void)eo_context;
 	(void)eo;
 
-	APPL_PRINT("Queue Group Test - Local EO Start: core%02d\n",
+	APPL_PRINT("Queue Group Test - Local EO Start: EM-core:%02d\n",
 		   em_core_id());
 	return EM_OK;
 }
@@ -992,7 +1073,7 @@ stop_local(void *eo_context, em_eo_t eo)
 	(void)eo_context;
 	(void)eo;
 
-	APPL_PRINT("Queue Group Test - Local EO Stop: core%02d\n",
+	APPL_PRINT("Queue Group Test - Local EO Stop: EM-core:%02d\n",
 		   em_core_id());
 	return EM_OK;
 }

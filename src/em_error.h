@@ -54,7 +54,14 @@
 	}							  \
 }
 
-#define EM_LOG(level, fmt, ...) (em_shm->log_fn((level), fmt, ## __VA_ARGS__))
+#define EM_LOG(level, fmt, ...) \
+	do { \
+		em_locm_t *const locm = &em_locm; \
+		if (locm && locm->log_fn) \
+			locm->log_fn((level), fmt, ## __VA_ARGS__); \
+		else \
+			em_shm->log_fn((level), fmt, ## __VA_ARGS__); \
+	} while (0)
 
 #define EM_VLOG(level, fmt, args) (em_shm->vlog_fn((level), fmt, (args)))
 

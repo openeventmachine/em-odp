@@ -41,11 +41,14 @@
 extern "C" {
 #endif
 
-void
-daemon_eo_create(void);
+em_status_t daemon_eo_queues_create(void);
 
-void
-daemon_eo_shutdown(void);
+void daemon_eo_create(void);
+
+void daemon_eo_shutdown(void);
+
+void daemon_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
+		       em_queue_t queue, void *q_ctx);
 
 #ifdef __cplusplus
 }

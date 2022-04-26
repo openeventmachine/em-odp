@@ -372,16 +372,13 @@ event_to_hdr_multi(const em_event_t events[], event_hdr_t *ev_hdrs[/*out*/],
 		case ODP_EVENT_PACKET:
 			odp_packet_from_event_multi(odp_pkts, &odp_events[ev],
 						    num_type);
-			for (i = 0; i < num_type; i++) {
-				ev_hdrs[ev + i] =
-					odp_packet_user_area(odp_pkts[i]);
-			}
+			for (i = 0; i < num_type; i++)
+				ev_hdrs[ev + i] = odp_packet_user_area(odp_pkts[i]);
 			break;
 
 		case ODP_EVENT_BUFFER:
 			for (i = 0; i < num_type; i++) {
-				odp_buf =
-				odp_buffer_from_event(odp_events[ev + i]);
+				odp_buf = odp_buffer_from_event(odp_events[ev + i]);
 				ev_hdrs[ev + i] = odp_buffer_addr(odp_buf);
 			}
 			break;

@@ -53,13 +53,16 @@ int
 send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 		      void (*f_done_callback)(void *arg_ptr),
 		      void *f_done_arg_ptr,
-		      int num_notif, const em_notif_t notif_tbl[]);
+		      int num_notif, const em_notif_t notif_tbl[],
+		      bool sync_operation);
 
-em_status_t
-internal_done_w_notif_req(em_event_group_t event_group, int event_group_count,
+em_event_group_t
+internal_done_w_notif_req(int event_group_count,
 			  void (*f_done_callback)(void *arg_ptr),
 			  void  *f_done_arg_ptr,
-			  int num_notif, const em_notif_t notif_tbl[]);
+			  int num_notif, const em_notif_t notif_tbl[],
+			  bool sync_operation);
+void evgrp_abort_delete(em_event_group_t event_group);
 
 em_status_t
 send_notifs(const int num_notif, const em_notif_t notif_tbl[]);
@@ -68,6 +71,8 @@ em_status_t
 check_notif(const em_notif_t *const notif);
 em_status_t
 check_notif_tbl(const int num_notif, const em_notif_t notif_tbl[]);
+
+void poll_unsched_ctrl_queue(void);
 
 #ifdef __cplusplus
 }

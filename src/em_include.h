@@ -91,6 +91,7 @@ extern "C" {
 #include "em_hook_types.h"
 #include "em_libconfig_types.h"
 #include "add-ons/event_timer/em_timer_types.h"
+#include "em_cli_types.h"
 
 #include "em_mem.h"
 
@@ -111,6 +112,7 @@ extern "C" {
 #include "em_libconfig.h"
 #include "em_hooks.h"
 #include "em_chaining.h"
+#include "em_cli.h"
 
 #ifdef __cplusplus
 }

@@ -7,6 +7,6 @@ Name: libemodp
 Description: The Event Machine library
 Version: @EM_VERSION_PKGCONFIG@
 Requires: @libodp_name@
-Requires.private: libconfig
+Requires.private: libconfig @libodphelper_name@
 Libs: -L${libdir} -lemodp
-Cflags: -I${includedir} @EM_CHECK_LEVEL@ @EM_ESV_ENABLE@ @EM_DEBUG_PRINT@
+Cflags: -I${includedir} @EM_CHECK_LEVEL@ @EM_ESV_ENABLE@ @EM_DEBUG_PRINT@ @EM_CLI@

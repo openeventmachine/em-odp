@@ -10,7 +10,8 @@ AM_CFLAGS += -I$(srcdir) \
 	     -I$(top_builddir)/include
 
 AM_LDFLAGS += -L$(LIBCM) \
-	      -L$(LIB)
+	      -L$(LIB) \
+	      $(LIBCONFIG_LIBS)
 
 if STATIC_APPS
 # Link em-odp/programs/* statically against libemodp.a and libodp*.a

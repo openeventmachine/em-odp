@@ -370,8 +370,7 @@ em_queue_get_group(em_queue_t queue);
  * @return Event from head of queue or EM_EVENT_UNDEF if there was no events
  *         or an error occurred.
  */
-em_event_t
-em_queue_dequeue(em_queue_t queue);
+em_event_t em_queue_dequeue(em_queue_t queue);
 
 /**
  * Dequeue multiple events from an unscheduled queue
@@ -392,8 +391,8 @@ em_queue_dequeue(em_queue_t queue);
  *
  * @return Number of successfully dequeued events (0 to num)
  */
-int
-em_queue_dequeue_multi(em_queue_t queue, em_event_t events[/*out*/], int num);
+int em_queue_dequeue_multi(em_queue_t queue,
+			   em_event_t events[/*out*/], int num);
 
 /**
  * Returns the current active queue

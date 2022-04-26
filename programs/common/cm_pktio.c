@@ -538,8 +538,8 @@ pktio_create(const char *dev, int num_workers)
 				  dev, ret);
 
 	odp_pktio_config_init(&pktio_config);
-	pktio_config.parser.layer = ODP_PKTIO_PARSER_LAYER_NONE;
-	/* pktio_config.parser.layer = ODP_PKTIO_PARSER_LAYER_L4; */
+	pktio_config.parser.layer = ODP_PROTO_LAYER_NONE;
+	/* pktio_config.parser.layer = ODP_PROTO_LAYER_L4; */
 
 	ret = odp_pktio_config(pktio, &pktio_config);
 	if (ret != 0)

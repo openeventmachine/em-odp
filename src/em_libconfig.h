@@ -68,6 +68,9 @@ int em_libconfig_term_global(libconfig_t *libconfig);
 int em_libconfig_lookup_int(const libconfig_t *libconfig, const char *path,
 			    int *value /*out*/);
 
+int em_libconfig_lookup_int64(const libconfig_t *libconfig, const char *path,
+			      int64_t *value /*out*/);
+
 /**
  * Reads a boolean from runtime config if given, otherwise default config.
  *
@@ -78,6 +81,17 @@ int em_libconfig_lookup_int(const libconfig_t *libconfig, const char *path,
  */
 int em_libconfig_lookup_bool(const libconfig_t *libconfig,
 			     const char *path, bool *value /*out*/);
+
+/**
+ * Reads a string from runtime config if given, otherwise default config.
+ *
+ * @param      libconfig	Pointer to shared libconfig data
+ * @param      path		Path to value
+ * @param[out] value		Pointer where read value will be stored
+ * @return int			1 on success, 0 otherwise
+ */
+int em_libconfig_lookup_string(const libconfig_t *libconfig, const char *path,
+			       const char **value /*out*/);
 
 /**
  * Reads an arrays of integers from runtime config if given, otherwise from
@@ -106,6 +120,14 @@ int em_libconfig_lookup_array(const libconfig_t *libconfig, const char *path,
 int em_libconfig_lookup_ext_int(const libconfig_t *libconfig,
 				const char *base_path, const char *local_path,
 				const char *name, int *value /*out*/);
+
+/**
+ * Prints default config and runtime config (if given).
+ *
+ * @param      libconfig	Pointer to shared libconfig data
+ * @return int			1 on success, 0 otherwise
+ */
+int em_libconfig_print(const libconfig_t *libconfig);
 
 #ifdef __cplusplus
 }

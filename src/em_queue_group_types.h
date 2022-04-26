@@ -49,14 +49,9 @@ COMPILE_TIME_ASSERT(sizeof(EM_QUEUE_GROUP_DEFAULT_NAME) <=
 		    EM_QUEUE_GROUP_NAME_LEN,
 		    EM_QUEUE_GROUP_DEFAULT_NAME_SIZE_ERROR);
 
-/**
- * The base-name of the messaging queue groups, one per core.
- */
-#define EM_QUEUE_GROUP_CORE_LOCAL_BASE_NAME "core00"
-
-COMPILE_TIME_ASSERT(sizeof(EM_QUEUE_GROUP_CORE_LOCAL_BASE_NAME) <=
+COMPILE_TIME_ASSERT(sizeof(EM_QUEUE_GROUP_CORE_BASE_NAME) <=
 		    EM_QUEUE_GROUP_NAME_LEN,
-		    EM_QUEUE_GROUP_CORE_LOCAL_BASE_NAME_SIZE_ERROR);
+		    EM_QUEUE_GROUP_CORE_BASE_NAME_SIZE_ERROR);
 
 /**
  * EM queue group element
@@ -68,18 +63,16 @@ typedef struct queue_group_elem_t {
 	odp_schedule_group_t odp_sched_group;
 	/** EM core mask */
 	em_core_mask_t core_mask;
-	/** Associated ODP thread mask */
-	odp_thrmask_t odp_thrmask;
-	/** Queue group elem lock */
-	env_spinlock_t lock;
 	/** Queue list, all queues that belong to this queue group */
 	list_node_t queue_list;
-	/** Number of queues that belong to this queue group */
-	env_atomic32_t num_queues;
 	/** Queue pool elem for linking free queues for queue_alloc()*/
 	objpool_elem_t queue_group_pool_elem;
-	/** "is queue group modification pending?" 1=True, 0=False */
-	uint8_t pending_modify;
+	/** Number of queues that belong to this queue group */
+	env_atomic32_t num_queues;
+	/** is queue group deletion ongoing? true/false */
+	bool ongoing_delete;
+	/** Queue group elem lock */
+	env_spinlock_t lock;
 	/** Pad to multiple of cache line size  */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } queue_group_elem_t ENV_CACHE_LINE_ALIGNED;

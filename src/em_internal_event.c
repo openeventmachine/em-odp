@@ -56,7 +56,8 @@ int
 send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 		      void (*f_done_callback)(void *arg_ptr),
 		      void *f_done_arg_ptr,
-		      int num_notif, const em_notif_t notif_tbl[])
+		      int num_notif, const em_notif_t notif_tbl[],
+		      bool sync_operation)
 {
 	em_status_t err;
 	em_event_group_t event_group = EM_EVENT_GROUP_UNDEF;
@@ -76,23 +77,17 @@ send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 		return unsent_count;
 	}
 
-	event_group = em_event_group_create();
-	if (unlikely(event_group == EM_EVENT_GROUP_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_INTERNAL_NOTIF,
-			       "Event group alloc failed");
-		return unsent_count;
-	}
-
 	/*
 	 * Set up internal notification when all cores are done.
 	 */
-	err = internal_done_w_notif_req(event_group, mask_count,
-					f_done_callback, f_done_arg_ptr,
-					num_notif, notif_tbl);
-	if (unlikely(err != EM_OK)) {
-		INTERNAL_ERROR(err, EM_ESCOPE_INTERNAL_NOTIF,
+	event_group = internal_done_w_notif_req(mask_count /*=evgrp count*/,
+						f_done_callback, f_done_arg_ptr,
+						num_notif, notif_tbl,
+						sync_operation);
+	if (unlikely(event_group == EM_EVENT_GROUP_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_NOT_FREE, EM_ESCOPE_INTERNAL_NOTIF,
 			       "Internal 'done' notif setup failed");
-		goto err_delete_event_group;
+		return unsent_count;
 	}
 
 	/*
@@ -108,7 +103,7 @@ send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 			INTERNAL_ERROR(EM_ERR_ALLOC_FAILED,
 				       EM_ESCOPE_INTERNAL_NOTIF,
 				       "Internal event alloc failed");
-			goto err_free_events;
+			goto err_free_resources;
 		}
 		alloc_count++;
 
@@ -123,7 +118,7 @@ send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 	/*
 	 * Send ctrl events to the concerned cores
 	 */
-	first_qidx = queue_id2idx(FIRST_INTERNAL_QUEUE);
+	first_qidx = queue_id2idx(FIRST_INTERNAL_UNSCHED_QUEUE);
 
 	for (i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, mask)) {
@@ -137,7 +132,7 @@ send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 			if (unlikely(err != EM_OK)) {
 				INTERNAL_ERROR(err, EM_ESCOPE_INTERNAL_NOTIF,
 					       "Event group send failed");
-				goto err_free_events;
+				goto err_free_resources;
 			}
 			sent_count++;
 			unsent_count--;
@@ -147,30 +142,33 @@ send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
 	return 0; /* Success, all ctrl events sent */
 
 	/* Error handling, free resources */
-err_free_events:
+err_free_resources:
 	for (i = sent_count; i < alloc_count; i++)
 		em_free(events[i]);
-err_delete_event_group:
-	(void)em_event_group_abort(event_group);
-	(void)em_event_group_delete(event_group);
+	evgrp_abort_delete(event_group);
 	return unsent_count;
 }
 
 /**
  * Receive function for handling internal ctrl events, called by the daemon EO
  */
-void
-internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
-		       em_queue_t queue, void *q_ctx)
+void internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
+			    em_queue_t queue, void *q_ctx)
 {
-	const internal_event_t *i_event;
-
 	/* currently unused args */
 	(void)eo_ctx;
 	(void)type;
 	(void)q_ctx;
 
-	i_event = em_event_pointer(event);
+	internal_event_t *i_event = em_event_pointer(event);
+
+	if (unlikely(!i_event)) {
+		if (event != EM_EVENT_UNDEF)
+			em_free(event); /* unrecognized odp event type? */
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_INTERNAL_EVENT_RECV_FUNC,
+			       "Q:%" PRI_QUEUE ": Invalid event, evptr NULL", queue);
+		return;
+	}
 
 	switch (i_event->id) {
 	/*
@@ -179,15 +177,19 @@ internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 	case EM_INTERNAL_DONE:
 		i_event__internal_done(i_event);
 		break;
+
+	/*
+	 * Internal event related to Queue Group modification: add a core
+	 */
+	case QUEUE_GROUP_ADD_REQ:
+		i_event__qgrp_add_core_req(i_event);
+		break;
+
 	/*
 	 * Internal event related to Queue Group modification: remove a core
 	 */
 	case QUEUE_GROUP_REM_REQ:
-	case QUEUE_GROUP_REM_SYNC_REQ:
-		/*
-		 * Nothing needs to be done, enough to ensure the core is not
-		 * processing an event from a queue in the modified queue group
-		 */
+		i_event__qgrp_rem_core_req(i_event);
 		break;
 	/*
 	 * Internal events related to EO local start&stop functionality
@@ -211,6 +213,7 @@ internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 		break;
 	}
 
+	i_event->id = 0;
 	em_free(event);
 }
 
@@ -251,15 +254,24 @@ i_event__internal_done(const internal_event_t *i_ev)
 
 /**
  * Helper func: Allocate & set up the internal 'done' event with
- * function callbacks and notification events.
+ * function callbacks and notification events. Creates the needed event group
+ * and applies the event group count. A successful setup returns the event group
+ * ready for use with em_send_group().
+ *
+ * @return An event group successfully 'applied' with count and notifications.
+ * @retval EM_EVENT_GROUP_UNDEF on error
+ *
+ * @see evgrp_abort_delete() below for deleting the event group returned by this
+ *      function.
  */
-em_status_t
-internal_done_w_notif_req(em_event_group_t event_group,
-			  int event_group_count,
+em_event_group_t
+internal_done_w_notif_req(int event_group_count,
 			  void (*f_done_callback)(void *arg_ptr),
 			  void  *f_done_arg_ptr,
-			  int num_notif, const em_notif_t notif_tbl[])
+			  int num_notif, const em_notif_t notif_tbl[],
+			  bool sync_operation)
 {
+	em_event_group_t event_group;
 	em_event_t event;
 	internal_event_t *i_event;
 	em_notif_t i_notif;
@@ -268,9 +280,21 @@ internal_done_w_notif_req(em_event_group_t event_group,
 
 	event = em_alloc(sizeof(internal_event_t), EM_EVENT_TYPE_SW,
 			 EM_POOL_DEFAULT);
-	RETURN_ERROR_IF(event == EM_EVENT_UNDEF, EM_ERR_ALLOC_FAILED,
-			EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ,
-			"Internal event 'DONE' alloc failed!");
+	if (unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED,
+			       EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ,
+			       "Internal event 'DONE' alloc failed!");
+		return EM_EVENT_GROUP_UNDEF;
+	}
+
+	event_group = em_event_group_create();
+	if (unlikely(event_group == EM_EVENT_GROUP_UNDEF)) {
+		em_free(event);
+		INTERNAL_ERROR(EM_ERR_NOT_FREE,
+			       EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ,
+			       "Event group create failed!");
+		return EM_EVENT_GROUP_UNDEF;
+	}
 
 	i_event = em_event_pointer(event);
 	i_event->id = EM_INTERNAL_DONE;
@@ -286,7 +310,12 @@ internal_done_w_notif_req(em_event_group_t event_group,
 	}
 
 	i_notif.event = event;
-	i_notif.queue = queue_id2hdl(SHARED_INTERNAL_QUEUE);
+	if (sync_operation) {
+		i_notif.queue = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE +
+					     em_core_id());
+	} else {
+		i_notif.queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
+	}
 	i_notif.egroup = EM_EVENT_GROUP_UNDEF;
 
 	/*
@@ -296,11 +325,35 @@ internal_done_w_notif_req(em_event_group_t event_group,
 	 */
 	err = em_event_group_apply(event_group, event_group_count,
 				   1, &i_notif);
+	if (unlikely(err != EM_OK)) {
+		INTERNAL_ERROR(err, EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ,
+			       "Event group apply failed");
+		em_free(event);
+		(void)em_event_group_delete(event_group);
+		return EM_EVENT_GROUP_UNDEF;
+	}
 
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ,
-			"Event group apply failed");
+	return event_group;
+}
 
-	return EM_OK;
+/**
+ * @brief internal_done_w_notif_req() 'companion' to abort and delete the
+ *        event group created by the mentioned function.
+ */
+void evgrp_abort_delete(em_event_group_t event_group)
+{
+	em_notif_t free_notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
+
+	int num = em_event_group_get_notif(event_group,
+					   EM_EVENT_GROUP_MAX_NOTIF,
+					   free_notif_tbl);
+	em_status_t err = em_event_group_abort(event_group);
+
+	if (err == EM_OK && num > 0) {
+		for (int i = 0; i < num; i++)
+			em_free(free_notif_tbl[i].event);
+	}
+	(void)em_event_group_delete(event_group);
 }
 
 /**
@@ -311,6 +364,7 @@ send_notifs(const int num_notif, const em_notif_t notif_tbl[])
 {
 	int i;
 	em_status_t err;
+	em_status_t ret = EM_OK;
 
 	for (i = 0; i < num_notif; i++) {
 		const em_event_t event = notif_tbl[i].event;
@@ -323,11 +377,14 @@ send_notifs(const int num_notif, const em_notif_t notif_tbl[])
 		else
 			err = em_send_group(event, queue, egrp);
 
-		if (unlikely(err != EM_OK))
-			return err;
+		if (unlikely(err != EM_OK)) {
+			em_free(event);
+			if (ret == EM_OK)
+				ret = err; /* return the first error */
+		}
 	}
 
-	return EM_OK;
+	return ret;
 }
 
 em_status_t
@@ -376,4 +433,99 @@ check_notif_tbl(const int num_notif, const em_notif_t notif_tbl[])
 	}
 
 	return EM_OK;
+}
+
+/**
+ * @brief Helper for poll_unsched_ctrl_queue()
+ */
+static inline void
+handle_ctrl_events(em_queue_t unsched_queue,
+		   const em_event_t ev_tbl[], const int num)
+{
+	em_locm_t *const locm = &em_locm;
+	event_hdr_t *evhdr_tbl[num];
+
+	event_to_hdr_multi(ev_tbl, evhdr_tbl/*out*/, num);
+
+	for (int i = 0; i < num; i++) {
+		/*
+		 * Simulate a dispatch-round for the core-local ctrl event.
+		 * Dispatch an unscheduled event as scheduled, be careful!
+		 * Don't call dispatch enter/exit callbacks here.
+		 */
+		em_event_t event = ev_tbl[i];
+		const event_hdr_t *ev_hdr = evhdr_tbl[i];
+		em_event_type_t event_type = ev_hdr->event_type;
+
+		/* Check and set core local event group */
+		event_group_set_local(ev_hdr->egrp, ev_hdr->egrp_gen, 1);
+
+		internal_event_receive(NULL, event, event_type,
+				       unsched_queue, NULL);
+
+		/*
+		 * Event belongs to an event_group, update the count and
+		 * if requested send notifications
+		 */
+		if (locm->current.egrp != EM_EVENT_GROUP_UNDEF) {
+			/*
+			 * Atomically decrease the event group count.
+			 * If the new count is zero, send notification events.
+			 */
+			event_group_count_decrement(1);
+		}
+		locm->current.egrp = EM_EVENT_GROUP_UNDEF;
+	}
+}
+
+void poll_unsched_ctrl_queue(void)
+{
+	em_locm_t *const locm = &em_locm;
+
+	queue_elem_t *core_unsch_qelem = locm->sync_api.ctrl_poll.core_unsched_qelem;
+	em_queue_t core_unsched_queue = locm->sync_api.ctrl_poll.core_unsched_queue;
+
+	queue_elem_t *shared_unsch_qelem = locm->sync_api.ctrl_poll.shared_unsched_qelem;
+	em_queue_t shared_unsched_queue = locm->sync_api.ctrl_poll.shared_unsched_queue;
+
+	em_locm_current_t current;
+
+	const int deq_max = 16;
+	em_event_t core_ev_tbl[deq_max];
+	em_event_t shared_ev_tbl[deq_max];
+	int core_num;
+	int shared_num;
+	int round = 0;
+
+	do {
+		core_num = queue_dequeue_multi(core_unsch_qelem,
+					       core_ev_tbl/*out*/, deq_max);
+		shared_num = queue_dequeue_multi(shared_unsch_qelem,
+						 shared_ev_tbl/*out*/, deq_max);
+		if (core_num <= 0 && shared_num <= 0)
+			break; /* no ctrl events, exit loop */
+
+		/* Save local current state the first time only */
+		if (round == 0) {
+			current = locm->current; /* save */
+			locm->current.rcv_multi_cnt = 1;
+			locm->current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
+		}
+
+		if (core_num > 0) {
+			locm->current.q_elem = core_unsch_qelem;
+			locm->current.sched_q_elem = core_unsch_qelem;
+			handle_ctrl_events(core_unsched_queue, core_ev_tbl, core_num);
+		}
+		if (shared_num > 0) {
+			locm->current.q_elem = shared_unsch_qelem;
+			locm->current.sched_q_elem = shared_unsch_qelem;
+			handle_ctrl_events(shared_unsched_queue, shared_ev_tbl, shared_num);
+		}
+
+		round++;
+	} while (true);
+
+	if (round > 0)
+		locm->current = current; /* restore */
 }

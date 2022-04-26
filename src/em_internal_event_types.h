@@ -62,8 +62,6 @@ extern "C" {
 
 #define QUEUE_GROUP_ADD_REQ             (EVENT_ID_MASK | 0x30)
 #define QUEUE_GROUP_REM_REQ             (EVENT_ID_MASK | 0x31)
-#define QUEUE_GROUP_ADD_SYNC_REQ        (EVENT_ID_MASK | 0x32)
-#define QUEUE_GROUP_REM_SYNC_REQ        (EVENT_ID_MASK | 0x33)
 
 /**
  * Store local function return values into a common struct for later inspection

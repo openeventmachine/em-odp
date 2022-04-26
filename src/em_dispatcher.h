@@ -40,6 +40,9 @@
 extern "C" {
 #endif
 
+em_status_t dispatch_init(void);
+em_status_t dispatch_init_local(void);
+
 static inline void
 dispatch_multi_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
 		       const int num_events, queue_elem_t *const q_elem,
@@ -471,6 +474,36 @@ dispatch_events(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
 	locm->current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
 }
 
+static inline void
+dispatch_poll_ctrl_queue(void)
+{
+	const unsigned int poll_interval = em_shm->opt.dispatch.poll_ctrl_interval;
+
+	/*
+	 * Rate limit how often this core checks the unsched ctrl queue.
+	 */
+
+	if (poll_interval > 1) {
+		em_locm_t *const locm = &em_locm;
+
+		locm->dispatch_cnt--;
+		if (locm->dispatch_cnt > 0)
+			return;
+		locm->dispatch_cnt = poll_interval;
+
+		odp_time_t now = odp_time_global();
+		odp_time_t period = odp_time_diff(now, locm->dispatch_last_run);
+		odp_time_t poll_period = em_shm->opt.dispatch.poll_ctrl_interval_time;
+
+		if (odp_time_cmp(period, poll_period) < 0)
+			return;
+		locm->dispatch_last_run = now;
+	}
+
+	/* Poll internal unscheduled ctrl queues */
+	poll_unsched_ctrl_queue();
+}
+
 /*
  * Run a dispatch round - query the scheduler for events and dispatch
  */
@@ -482,6 +515,8 @@ dispatch_round(void)
 	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
 	em_event_t ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 	queue_elem_t *queue_elem;
+
+	dispatch_poll_ctrl_queue();
 
 	/*
 	 * Schedule events to the core from queues

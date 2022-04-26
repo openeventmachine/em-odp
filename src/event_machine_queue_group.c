@@ -43,16 +43,26 @@ em_queue_group_create(const char *name, const em_core_mask_t *mask,
 	em_queue_group_t queue_group;
 	em_status_t err;
 
-	if (unlikely(mask == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_GROUP_CREATE,
+	if (unlikely(!mask)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE,
 			       "Core mask NULL");
+		return EM_QUEUE_GROUP_UNDEF;
+	}
+
+	err = queue_group_check_mask(mask);
+	if (unlikely(err != EM_OK)) {
+		char mstr[EM_CORE_MASK_STRLEN];
+
+		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, mask);
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE,
+			       "Invalid mask given:%s", mstr);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
 	err = check_notif_tbl(num_notif, notif_tbl);
 	if (unlikely(err != EM_OK)) {
-		INTERNAL_ERROR(err, EM_ESCOPE_QUEUE_GROUP_CREATE,
-			       "Invalid notif cfg given!");
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE,
+			       "Invalid notif cfg given:%" PRI_STAT "!", err);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
@@ -65,11 +75,21 @@ em_queue_group_t
 em_queue_group_create_sync(const char *name, const em_core_mask_t *mask)
 {
 	em_queue_group_t queue_group;
+	em_status_t err;
 
-	if (unlikely(mask == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-			       EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC,
+	if (unlikely(!mask)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC,
 			       "Core mask NULL");
+		return EM_QUEUE_GROUP_UNDEF;
+	}
+
+	err = queue_group_check_mask(mask);
+	if (unlikely(err != EM_OK)) {
+		char mstr[EM_CORE_MASK_STRLEN];
+
+		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, mask);
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC,
+			       "Invalid mask given:%s", mstr);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
@@ -88,13 +108,13 @@ em_queue_group_delete(em_queue_group_t queue_group,
 	queue_group_elem_t *const qgrp_elem =
 		queue_group_elem_get(queue_group);
 
-	RETURN_ERROR_IF(qgrp_elem == NULL || !queue_group_allocated(qgrp_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GROUP_DELETE,
+	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_DELETE,
 			"Invalid queue group: %" PRI_QGRP "", queue_group);
 
 	err = check_notif_tbl(num_notif, notif_tbl);
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_GROUP_DELETE,
-			"Invalid notif cfg given!");
+	RETURN_ERROR_IF(err != EM_OK, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_DELETE,
+			"Invalid notif cfg given, err=%" PRI_STAT "", err);
 
 	em_core_mask_zero(&zero_mask);
 
@@ -118,9 +138,9 @@ em_queue_group_delete_sync(em_queue_group_t queue_group)
 	queue_group_elem_t *const qgrp_elem =
 		queue_group_elem_get(queue_group);
 
-	RETURN_ERROR_IF(qgrp_elem == NULL || !queue_group_allocated(qgrp_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC,
-			"Invalid queue group: %" PRI_QGRP "", queue_group);
+	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC,
+			"Invalid queue group:%" PRI_QGRP "", queue_group);
 
 	em_core_mask_zero(&zero_mask);
 
@@ -144,18 +164,27 @@ em_queue_group_modify(em_queue_group_t queue_group,
 		queue_group_elem_get(queue_group);
 	em_status_t err;
 
-	RETURN_ERROR_IF(qgrp_elem == NULL || !queue_group_allocated(qgrp_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GROUP_MODIFY,
-			"Invalid queue group: %" PRI_QGRP "", queue_group);
+	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
+			"Invalid queue group:%" PRI_QGRP "", queue_group);
 
-	RETURN_ERROR_IF(new_mask == NULL,
-			EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_GROUP_MODIFY,
+	RETURN_ERROR_IF(!new_mask, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
 			"Queue group mask NULL! Queue group:%" PRI_QGRP "",
 			queue_group);
 
+	err = queue_group_check_mask(new_mask);
+	if (unlikely(err != EM_OK)) {
+		char mstr[EM_CORE_MASK_STRLEN];
+
+		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, new_mask);
+		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
+				      "Queue group:%" PRI_QGRP ", invalid mask given:%s",
+				      queue_group, mstr);
+	}
+
 	err = check_notif_tbl(num_notif, notif_tbl);
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_GROUP_MODIFY,
-			"Invalid notif cfg given!");
+	RETURN_ERROR_IF(err != EM_OK, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
+			"Invalid notif cfg given, err=%" PRI_STAT "", err);
 
 	err = queue_group_modify(qgrp_elem, new_mask, num_notif, notif_tbl,
 				 false /*!is_delete*/);
@@ -173,14 +202,23 @@ em_queue_group_modify_sync(em_queue_group_t queue_group,
 		queue_group_elem_get(queue_group);
 	em_status_t err;
 
-	RETURN_ERROR_IF(qgrp_elem == NULL || !queue_group_allocated(qgrp_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
+	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
 			"Invalid queue group: %" PRI_QGRP "", queue_group);
 
-	RETURN_ERROR_IF(new_mask == NULL,
-			EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
+	RETURN_ERROR_IF(!new_mask, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
 			"Queue group mask NULL! Queue group:%" PRI_QGRP "",
 			queue_group);
+
+	err = queue_group_check_mask(new_mask);
+	if (unlikely(err != EM_OK)) {
+		char mstr[EM_CORE_MASK_STRLEN];
+
+		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, new_mask);
+		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
+				      "Queue group:%" PRI_QGRP ", invalid core mask given:%s",
+				      queue_group, mstr);
+	}
 
 	err = queue_group_modify_sync(qgrp_elem, new_mask, false/*!is_delete*/);
 
@@ -195,7 +233,7 @@ em_queue_group_find(const char *name)
 {
 	odp_schedule_group_t odp_group;
 
-	if (name == NULL || name[0] == '\0')
+	if (!name || name[0] == '\0')
 		return EM_QUEUE_GROUP_UNDEF;
 
 	odp_group = odp_schedule_group_lookup(name);
@@ -215,29 +253,29 @@ em_queue_group_find(const char *name)
 }
 
 em_status_t
-em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask)
+em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask /*out*/)
 {
 	int allocated;
-	int pending_modify;
-	queue_group_elem_t *const qg_elem = queue_group_elem_get(queue_group);
+	bool ongoing_delete;
+	queue_group_elem_t *const qgrp_elem = queue_group_elem_get(queue_group);
 
-	RETURN_ERROR_IF(qg_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GROUP_MASK,
+	RETURN_ERROR_IF(!qgrp_elem, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MASK,
 			"Invalid queue group:%" PRI_QGRP "", queue_group);
 
-	env_spinlock_lock(&qg_elem->lock);
+	env_spinlock_lock(&qgrp_elem->lock);
 
-	allocated = queue_group_allocated(qg_elem);
-	pending_modify = qg_elem->pending_modify;
-	em_core_mask_copy(mask, &qg_elem->core_mask);
+	allocated = queue_group_allocated(qgrp_elem);
+	ongoing_delete = qgrp_elem->ongoing_delete;
+	em_core_mask_copy(mask, &qgrp_elem->core_mask);
 
-	env_spinlock_unlock(&qg_elem->lock);
+	env_spinlock_unlock(&qgrp_elem->lock);
 
-	RETURN_ERROR_IF(!allocated || pending_modify,
+	RETURN_ERROR_IF(!allocated || ongoing_delete,
 			EM_ERR_BAD_STATE, EM_ESCOPE_QUEUE_GROUP_MASK,
 			"Queue group:%" PRI_QGRP " in bad state:\t"
-			"allocated=%i, pending_modify=%i",
-			queue_group, allocated, pending_modify);
+			"allocated=%s, ongoing_delete=%s",
+			queue_group, allocated ? "true" : "false(!)",
+			ongoing_delete ? "true(!)" : "false");
 
 	return EM_OK;
 }
@@ -246,14 +284,13 @@ size_t
 em_queue_group_get_name(em_queue_group_t queue_group,
 			char *name, size_t maxlen)
 {
-	const queue_group_elem_t *qg_elem = queue_group_elem_get(queue_group);
+	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 	odp_schedule_group_info_t info;
 	size_t len;
 	int ret;
 
-	if (unlikely(name == NULL || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-			       EM_ESCOPE_QUEUE_GROUP_GET_NAME,
+	if (unlikely(!name || maxlen == 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_GET_NAME,
 			       "Invalid name=0x%" PRIx64 " or maxlen=%zu",
 			       name, maxlen);
 		return 0;
@@ -261,23 +298,21 @@ em_queue_group_get_name(em_queue_group_t queue_group,
 
 	name[0] = '\0';
 
-	if (unlikely(qg_elem == NULL || !queue_group_allocated(qg_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-			       EM_ESCOPE_QUEUE_GROUP_GET_NAME,
+	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_GET_NAME,
 			       "Invalid queue group:%" PRI_QGRP "",
 			       queue_group);
 		return 0;
 	}
 
-	ret = odp_schedule_group_info(qg_elem->odp_sched_group, &info);
+	ret = odp_schedule_group_info(qgrp_elem->odp_sched_group, &info);
 	if (unlikely(ret != 0)) {
-		INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-			       EM_ESCOPE_QUEUE_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_GROUP_GET_NAME,
 			       "Failed to retrieve queue group info");
 		return 0;
 	}
 
-	if (unlikely(info.name == NULL))
+	if (unlikely(!info.name))
 		return 0;
 
 	len = strnlen(info.name, ODP_SCHED_GROUP_NAME_LEN - 1);
@@ -351,9 +386,8 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 {
 	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 
-	if (unlikely(qgrp_elem == NULL || !queue_group_allocated(qgrp_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID,
-			       EM_ESCOPE_QUEUE_GROUP_QUEUE_GET_FIRST,
+	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_QUEUE_GET_FIRST,
 			       "Invalid queue group:%" PRI_QGRP "",
 			       queue_group);
 		if (num)

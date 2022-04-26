@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2022, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -156,6 +156,33 @@ extern "C" {
  * The name of the EM default queue group
  */
 #define EM_QUEUE_GROUP_DEFAULT_NAME "default"
+
+/**
+ * @def EM_QUEUE_GROUP_CORE_BASE_NAME
+ * Base-name of EM core-specific queue groups (one per EM-core),
+ * if created by EM (note: see the EM runtime config file for option).
+ * The full queue group name for a single-core group is: "core" + "%d",
+ * which gives "core0", "core1", ... "core99", ...
+ * EM earlier relied on these queue groups for internal core specific
+ * messaging and also allowed applications to use them. Currently EM
+ * does not internally need these groups but will create them based on
+ * an EM config file option for applications relying on their existence.
+ *
+ * Example: Find the queue group that includes only this core.
+ *          (EM single-core queue group creation enabled in config file)
+ * @code
+ *	char qgrp_name[EM_QUEUE_GROUP_NAME_LEN];
+ *	int core = em_core_id();
+ *	em_queue_group_t qgrp_core;
+ *
+ *	snprintf(qgrp_name, sizeof(qgrp_name), "%s%d",
+ *		 EM_QUEUE_GROUP_CORE_BASE_NAME, core);
+ *	...
+ *	qgrp_core = em_queue_group_find(qgrp_name);
+ *	...
+ * @endcode
+ */
+#define EM_QUEUE_GROUP_CORE_BASE_NAME "core"
 
 /**
  * @def EM_POOL_DEFAULT

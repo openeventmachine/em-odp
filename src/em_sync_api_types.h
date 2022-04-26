@@ -41,11 +41,28 @@
 extern "C" {
 #endif
 
+/**
+ * @typedef sync_api_t
+ * EM-core local sync-API info/state.
+ */
 typedef struct {
-	/** Only allow one sync-API call at a time */
-	env_spinlock_t lock_global;
-	/** Lock the caller of a sync API func to spin on this lock */
-	env_spinlock_t lock_caller;
+	struct {
+		/** Core-local ctrl queue */
+		em_queue_t core_unsched_queue;
+		/** Queue element for the core-local unsched queue above */
+		queue_elem_t *core_unsched_qelem;
+		/** Corresponding ODP plain queue */
+		odp_queue_t core_odp_plain_queue;
+
+		/** Shared ctrl queue */
+		em_queue_t shared_unsched_queue;
+		/** Queue element for the shared unsched queue above */
+		queue_elem_t *shared_unsched_qelem;
+		/** Corresponding ODP plain queue */
+		odp_queue_t shared_odp_plain_queue;
+	} ctrl_poll;
+	/** Indication whether a sync-API is in progress on this core */
+	bool in_progress;
 } sync_api_t;
 
 #ifdef __cplusplus

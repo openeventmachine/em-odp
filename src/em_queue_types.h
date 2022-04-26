@@ -46,8 +46,6 @@ extern "C" {
  * device-id.
  * Note that the EM queue handle range is determined by 'EM_QUEUE_RANGE_OFFSET'
  */
-
-/* A queue per core and a shared queue, round up to multiple of 32 */
 #define MAX_INTERNAL_QUEUES   ROUND_UP(EM_MAX_CORES + 1, 32)
 
 #define _FIRST_INTERNAL_QUEUE (_EM_QUEUE_STATIC_MAX + 1)
@@ -56,7 +54,8 @@ extern "C" {
 #define _LAST_INTERNAL_QUEUE  (_FIRST_INTERNAL_QUEUE + MAX_INTERNAL_QUEUES - 1)
 #define LAST_INTERNAL_QUEUE   ((uint16_t)_LAST_INTERNAL_QUEUE)
 
-#define SHARED_INTERNAL_QUEUE (LAST_INTERNAL_QUEUE)
+#define FIRST_INTERNAL_UNSCHED_QUEUE   (FIRST_INTERNAL_QUEUE)
+#define SHARED_INTERNAL_UNSCHED_QUEUE  (LAST_INTERNAL_QUEUE)
 
 /* Priority for the EM-internal queues */
 #define INTERNAL_QUEUE_PRIORITY (EM_QUEUE_PRIO_HIGHEST)

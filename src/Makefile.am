@@ -105,6 +105,10 @@ em_chaining.c \
 em_chaining.h \
 em_chaining_types.h \
 	\
+em_cli.c \
+em_cli.h \
+em_cli_types.h \
+	\
 em_core.c \
 em_core.h \
 em_core_types.h \

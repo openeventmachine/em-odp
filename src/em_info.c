@@ -79,6 +79,14 @@ static const char *arm_isa_name(odp_cpu_arch_arm_t isa)
 		return "ARMv8.5-A";
 	case ODP_CPU_ARCH_ARMV8_6:
 		return "ARMv8.6-A";
+	case ODP_CPU_ARCH_ARMV8_7:
+		return "ARMv8.7-A";
+	case ODP_CPU_ARCH_ARMV9_0:
+		return "ARMv9.0-A";
+	case ODP_CPU_ARCH_ARMV9_1:
+		return "ARMv9.1-A";
+	case ODP_CPU_ARCH_ARMV9_2:
+		return "ARMv9.2-A";
 	default:
 		return "Unknown";
 	}
@@ -169,6 +177,24 @@ static odp_cpu_arch_arm_t detect_sw_isa_arm(void)
 			case 6:
 				isa_arm = ODP_CPU_ARCH_ARMV8_6;
 				break;
+			case 7:
+				isa_arm = ODP_CPU_ARCH_ARMV8_7;
+				break;
+			default:
+				isa_arm = ODP_CPU_ARCH_ARM_UNKNOWN;
+				break;
+			}
+		} else if (major == 9) {
+			switch (minor) {
+			case 0:
+				isa_arm = ODP_CPU_ARCH_ARMV9_0;
+				break;
+			case 1:
+				isa_arm = ODP_CPU_ARCH_ARMV9_1;
+				break;
+			case 2:
+				isa_arm = ODP_CPU_ARCH_ARMV9_2;
+				break;
 			default:
 				isa_arm = ODP_CPU_ARCH_ARM_UNKNOWN;
 				break;
@@ -243,7 +269,7 @@ static odp_cpu_arch_isa_t detect_sw_isa(odp_cpu_arch_t cpu_arch)
 	return sw_isa;
 }
 
-static void print_core_map_info(void)
+void print_core_map_info(void)
 {
 	int logic_core;
 
@@ -259,7 +285,7 @@ static void print_core_map_info(void)
 	EM_PRINT("\n");
 }
 
-static void print_cpu_arch_info(void)
+void print_cpu_arch_info(void)
 {
 	odp_system_info_t sysinfo;
 	int err;
@@ -326,7 +352,7 @@ void print_em_info(void)
 	print_cpu_arch_info();
 	print_core_map_info();
 	print_queue_info();
-	print_queue_group_info();
+	queue_group_info_print_all();
 	em_pool_info_print_all();
 	print_event_info();
 }
