@@ -674,10 +674,11 @@ void pktio_close(void)
 		odp_pktio_t pktio = pktio_shm->ifs.pktio_hdl[if_idx];
 		int ret = odp_pktio_close(pktio);
 
-		if (unlikely(ret != 0))
+		if (unlikely(ret != 0)) {
 			APPL_EXIT_FAILURE("pktio close failed for if:%d",
 					  if_idx);
-			pktio_shm->ifs.pktio_hdl[if_idx] = ODP_PKTIO_INVALID;
+		}
+		pktio_shm->ifs.pktio_hdl[if_idx] = ODP_PKTIO_INVALID;
 	}
 
 	pktin_queue_queueing_destroy();
