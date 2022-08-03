@@ -58,16 +58,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install libconfig-dev
         sudo pip3 install robotframework
+        sudo apt-get install libcli-dev
+        sudo apt-get install telnet
     - name: Checkout EM-ODP
       uses: actions/checkout@v2
-    # Checkout ci for robot files
-    - name: Checkout ci
-      uses: actions/checkout@v2
-      with:
-        repository: ${{ github.repository_owner }}/ci
-        clean: false
-        path: ci
-        ref: master
     - name: Build EM-ODP
       run: ./scripts/build.sh
     - name: Run Robot Tests
