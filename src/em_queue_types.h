@@ -132,8 +132,7 @@ typedef enum queue_state {
 	EM_QUEUE_STATE_READY = 3,
 
 	/*
-	 * Non-scheduled queue (UNSCHED, LOCAL, OUTPUT) state use the
-	 * UNSCHEDULED-state.
+	 * Non-scheduled queue (UNSCHED, OUTPUT) state use the UNSCHEDULED-state.
 	 */
 	/* Use separete value for unscheduled queues to catch illegal usage */
 	EM_QUEUE_STATE_UNSCHEDULED = 999

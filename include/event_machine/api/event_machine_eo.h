@@ -176,7 +176,6 @@ typedef void (*em_receive_func_t)(void *eo_ctx,
  * @param eo_ctx  EO context data given to em_eo_create_multircv(),
  *                EM does not dereference.
  * @param events  Event handles: events[num]
- * @param types   Event types: types[num] - types[i] is related to event[i]
  * @param num     Number of events received
  *                (0 to 'max_events' of em_eo_create_multircv())
  * @param queue   Queue from which the event was dequeued
@@ -543,9 +542,6 @@ em_eo_add_queue(em_eo_t eo, em_queue_t queue,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo            EO handle
@@ -598,9 +594,6 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo            EO handle
@@ -651,9 +644,6 @@ em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo              EO handle
@@ -764,9 +754,6 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param      eo      EO handle
@@ -828,9 +815,6 @@ em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[]);
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param eo            EO handle

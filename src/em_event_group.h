@@ -275,6 +275,9 @@ restore_current_evgrp(const em_event_group_t saved_egrp,
 unsigned int
 event_group_count(void);
 
+/** Print information about all event groups */
+void event_group_info_print(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -454,7 +454,7 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 	}
 
 	/*
-	 * Request each core to run locally the eo_remove_queue_local() function
+	 * Request each core to run locally the eo_remove_queue_sync_local() function
 	 * and when all are done call eo_remove_queue_sync_done_callback.
 	 * The callback will finally remove the queue from the EO when it's
 	 * known that no core is anymore processing events from that EO/queue.
@@ -504,7 +504,7 @@ em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
 			"queue_disable_all() failed!");
 
 	/*
-	 * Request each core to run locally the eo_remove_queue_local() function
+	 * Request each core to run locally the eo_remove_queue_all_local() function
 	 * and when all are done call eo_remove_queue_all_done_callback().
 	 * The callback will finally remove the queue from the EO when it's
 	 * known that no core is anymore processing events from that EO/queue.
@@ -535,7 +535,7 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues)
 		goto eo_remove_queue_all_sync_error;
 
 	/*
-	 * Request each core to run locally the eo_remove_queue_local() function
+	 * Request each core to run locally the eo_remove_queue_all_sync_local() function
 	 * and when all are done call eo_remove_queue_all_sync_done_callback().
 	 * The callback will finally remove the queue from the EO when it's
 	 * known that no core is anymore processing events from that EO/queue.
@@ -671,7 +671,7 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 		/*
 		 * Note: Return here, queues will be enabled after the local
 		 * start funcs complete.
-		 * EO state changed to 'EO_STATE_STARTED' after successful
+		 * EO state changed to 'EM_EO_STATE_RUNNING' after successful
 		 * completion of EO local starts on all cores.
 		 */
 		return EM_OK;
@@ -857,7 +857,7 @@ em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[])
 	queue_disable_all(eo_elem);
 
 	/*
-	 * Notifications sent when the local start functions
+	 * Notifications sent when the local stop functions
 	 * have completed. EO global stop called when all local stops have
 	 * been completed. EO state changed to 'stopped' only after completing
 	 * the EO global stop function.

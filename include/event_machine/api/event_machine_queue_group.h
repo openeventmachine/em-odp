@@ -117,9 +117,6 @@ em_queue_group_create(const char *name, const em_core_mask_t *mask,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param name       Queue group name (optional, NULL ok)
@@ -166,9 +163,6 @@ em_queue_group_delete(em_queue_group_t queue_group,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param queue_group  Queue group to delete
@@ -229,9 +223,6 @@ em_queue_group_modify(em_queue_group_t queue_group,
  * While one core is calling a sync-API function, the others must be running the
  * EM dispatch loop to be able to receive and handle the sync-API request events
  * sent internally.
- * Only one sync-API of any kind, i.e. of APIs named "em_..._sync()", can be
- * called at a time: EM will report and return an error from the API to avoid
- * deadlock if multiple cores simultaneously try to call synchronous APIs.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
  * @param queue_group  Queue group to modify

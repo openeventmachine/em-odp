@@ -163,7 +163,7 @@ em_status_t em_event_group_delete(em_event_group_t event_group);
  * This function sets the event count and notification parameters for the event
  * group. After it returns, events sent or assigned to the event group are
  * counted against the current count value. Notification events are sent when
- * all (counted) events have been processed (count is decrement at EO receive
+ * all (counted) events have been processed (count is decremented at EO receive
  * return or by calling em_event_group_processing_end()). A new apply call is
  * needed to re-use the event group for another cycle (with a new count and
  * notifications).
@@ -328,7 +328,7 @@ void em_event_group_processing_end(void);
  * Assign will fail if there already is an active current event group, i.e.
  * only one event group can be active at a time (per core).
  *
- * This needs to use used with care, i.e. match the amount of events applied
+ * This needs to be used with care, i.e. match the amount of events applied
  * and assigned.
  *
  * @param event_group   An applied event group to assign to

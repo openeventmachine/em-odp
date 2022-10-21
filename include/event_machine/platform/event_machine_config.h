@@ -122,7 +122,7 @@ extern "C" {
  * @def EM_MAX_QUEUES
  * Maximum total number of queues
  */
-#define EM_MAX_QUEUES  960  /* Should be <= odp-max-queues */
+#define EM_MAX_QUEUES  1024  /* Should be <= odp-max-queues */
 
 /**
  * @def EM_QUEUE_NAME_LEN

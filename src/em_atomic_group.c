@@ -171,12 +171,12 @@ ag_internal_enq(const atomic_group_elem_t *ag_elem, const em_event_t ev_tbl[],
 	odp_queue_t plain_q;
 	int ret;
 
+	events_em2odp(ev_tbl, odp_ev_tbl, num_events);
+
 	if (priority == EM_QUEUE_PRIO_HIGHEST)
 		plain_q = ag_elem->internal_queue.hi_prio;
 	else
 		plain_q = ag_elem->internal_queue.lo_prio;
-
-	events_em2odp(ev_tbl, odp_ev_tbl, num_events);
 
 	/* Enqueue events to internal queue */
 	ret = odp_queue_enq_multi(plain_q, odp_ev_tbl, num_events);
@@ -300,4 +300,154 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 		} while (tbl_idx < deq_cnt);
 
 	} while (!ag_local_processing_ended(ag_elem));
+}
+
+#define AG_INFO_HDR_STR \
+"Number of atomic groups: %d\n\n" \
+"ID        Name                            Qgrp      Q-num\n" \
+"---------------------------------------------------------\n%s\n"
+
+#define AG_INFO_LEN 58
+#define AG_INFO_FMT "%-10" PRI_AGRP "%-32s%-10" PRI_QGRP "%-5d\n"/*58 characters*/
+
+void print_atomic_group_info(void)
+{
+	unsigned int ag_num; /*atomic group number*/
+	const atomic_group_elem_t *ag_elem;
+	em_atomic_group_t ag_check;
+	char ag_name[EM_ATOMIC_GROUP_NAME_LEN];
+	int len = 0;
+	int n_print = 0;
+
+	em_atomic_group_t ag = em_atomic_group_get_first(&ag_num);
+
+	/*
+	 * ag_num might not match the actual number of atomic groups returned
+	 * by iterating with func em_atomic_group_get_next() if atomic groups
+	 * are added or removed in parallel by another core. Thus space for 10
+	 * extra atomic groups is reserved. If more than 10 atomic groups are
+	 * added in parallel by other cores, we print only information of the
+	 * (ag_num + 10) atomic groups.
+	 *
+	 * The extra 1 byte is reserved for the terminating null byte.
+	 */
+	const int ag_info_str_len = (ag_num + 10) * AG_INFO_LEN + 1;
+	char ag_info_str[ag_info_str_len];
+
+	while (ag != EM_ATOMIC_GROUP_UNDEF) {
+		ag_elem = atomic_group_elem_get(ag);
+
+		em_atomic_group_get_name(ag, ag_name, sizeof(ag_name));
+
+		ag_check = em_atomic_group_find(ag_name);
+		if (unlikely(ag_elem == NULL || ag_check != ag ||
+			     !atomic_group_allocated(ag_elem))) {
+			ag = em_atomic_group_get_next();
+			continue;
+		}
+
+		n_print = snprintf(ag_info_str + len, ag_info_str_len - len,
+				   AG_INFO_FMT, ag, ag_name, ag_elem->queue_group,
+				   env_atomic32_get(&ag_elem->num_queues));
+
+		/* Not enough space to hold more atomic group info */
+		if (n_print >= ag_info_str_len - len)
+			break;
+
+		len += n_print;
+		ag = em_atomic_group_get_next();
+	}
+
+	/* No atomic group */
+	if (len == 0) {
+		EM_PRINT("No atomic group has been created\n");
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last atomic group
+	 * when there is not enough space to hold all atomic group info.
+	 */
+	ag_info_str[len] = '\0';
+	EM_PRINT(AG_INFO_HDR_STR, ag_num, ag_info_str);
+}
+
+#define AG_QUEUE_INFO_HDR_STR \
+"Atomic group %" PRI_AGRP "(%s) has %d queue(s):\n\n" \
+"ID        Name                           Priority  Type      State    Qgrp      Ctx\n" \
+"-----------------------------------------------------------------------------------\n" \
+"%s\n"
+
+#define AG_Q_INFO_LEN 85
+#define AG_Q_INFO_FMT "%-10" PRI_QUEUE "%-32s%-10d%-10s%-9s%-10" PRI_QGRP "%-3c\n"
+
+void print_atomic_group_queues(em_atomic_group_t ag)
+{
+	unsigned int q_num;
+	em_queue_t ag_queue;
+	const queue_elem_t *q_elem;
+	char q_name[EM_QUEUE_NAME_LEN];
+	int len = 0;
+	int n_print = 0;
+
+	atomic_group_elem_t *ag_elem = atomic_group_elem_get(ag);
+
+	if (unlikely(ag_elem == NULL || !atomic_group_allocated(ag_elem))) {
+		EM_PRINT("Atomic group %" PRI_AGRP "is not created!\n", ag);
+		return;
+	}
+
+	ag_queue = em_atomic_group_queue_get_first(&q_num, ag);
+
+	/*
+	 * q_num may not match the number of queues actually returned by iterating
+	 * with em_atomic_group_queue_get_next() if queues are added or removed
+	 * in parallel by another core. Thus space for 10 extra queues is reserved.
+	 * If more than 10 queues are added to this atomic group by other cores
+	 * in parallel, we print only information of the (q_num + 10) queues.
+	 *
+	 * The extra 1 byte is reserved for the terminating null byte.
+	 */
+	int q_info_str_len = (q_num + 10) * AG_Q_INFO_LEN + 1;
+	char q_info_str[q_info_str_len];
+
+	while (ag_queue != EM_QUEUE_UNDEF) {
+		q_elem = queue_elem_get(ag_queue);
+
+		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
+			ag_queue = em_atomic_group_queue_get_next();
+			continue;
+		}
+
+		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
+
+		n_print = snprintf(q_info_str + len, q_info_str_len - len,
+				   AG_Q_INFO_FMT, ag_queue, q_name,
+				   q_elem->priority,
+				   queue_get_type_str(q_elem->type),
+				   queue_get_state_str(q_elem->state),
+				   q_elem->queue_group,
+				   q_elem->context ? 'Y' : 'N');
+
+		/* Not enough space to hold more queue info */
+		if (n_print >= q_info_str_len - len)
+			break;
+
+		len += n_print;
+		ag_queue = em_atomic_group_queue_get_next();
+	}
+
+	/* Atomic group has no queue */
+	if (!len) {
+		EM_PRINT("Atomic group %" PRI_AGRP "(%s) has no queue!\n",
+			 ag, ag_elem->name);
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last queue when
+	 * there is not enough space to hold all queue info.
+	 */
+	q_info_str[len] = '\0';
+	EM_PRINT(AG_QUEUE_INFO_HDR_STR, ag, ag_elem->name, q_num, q_info_str);
 }

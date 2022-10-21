@@ -74,8 +74,6 @@ void print_event_info(void)
 	       "egrp:\t\t%3zu B\t%2zu B\n"
 	       "egrp_gen:\t%3zu B\t%2zu B\n"
 	       "event_size:\t%3zu B\t%2zu B\n"
-	       "pool:\t\t%3zu B\t%2zu B\n"
-	       "subpool:\t%3zu B\t%2zu B\n"
 	       "align_offset:\t%3zu B\t%2zu B\n"
 	       "event_type:\t%3zu B\t%2zu B\n"
 	       "end_hdr_data:\t%3zu B\t%2zu B\n"
@@ -91,8 +89,6 @@ void print_event_info(void)
 	       offsetof(event_hdr_t, egrp), sizeof(evhdr.egrp),
 	       offsetof(event_hdr_t, egrp_gen), sizeof(evhdr.egrp_gen),
 	       offsetof(event_hdr_t, event_size), sizeof(evhdr.event_size),
-	       offsetof(event_hdr_t, pool), sizeof(evhdr.pool),
-	       offsetof(event_hdr_t, subpool), sizeof(evhdr.subpool),
 	       offsetof(event_hdr_t, align_offset), sizeof(evhdr.align_offset),
 	       offsetof(event_hdr_t, event_type), sizeof(evhdr.event_type),
 	       offsetof(event_hdr_t, end_hdr_data), sizeof(evhdr.end_hdr_data),
@@ -136,11 +132,6 @@ em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool)
 
 	/* clone_hdr->event_type = use parent's type as is */
 	clone_hdr->egrp = EM_EVENT_GROUP_UNDEF;
-
-	if (em_shm->opt.pool.statistics_enable) {
-		/* clone_hdr->subpool = 0; */
-		clone_hdr->pool = EM_POOL_UNDEF;
-	}
 
 	return clone_event;
 }
@@ -191,18 +182,13 @@ output_queue_drain(const queue_elem_t *output_q_elem)
 		/* odp_deq_events[] == output_ev_tbl[], .evgen still missing */
 
 		/* decrement pool statistics before passing events out-of-EM */
-		if (em_shm->opt.pool.statistics_enable || esv_ena) {
+		if (esv_ena) {
 			event_hdr_t *ev_hdrs[output_num];
 
 			event_to_hdr_multi(output_ev_tbl, ev_hdrs, output_num);
-			if (em_shm->opt.pool.statistics_enable) {
-				poolstat_dec_evhdr_multi_output(ev_hdrs,
-								output_num);
-			}
-			if (esv_ena)
-				evstate_em2usr_multi(output_ev_tbl/*in/out*/,
-						     ev_hdrs, output_num,
-						     EVSTATE__OUTPUT_MULTI);
+			evstate_em2usr_multi(output_ev_tbl/*in/out*/,
+					     ev_hdrs, output_num,
+					     EVSTATE__OUTPUT_MULTI);
 		}
 
 		ret = output_fn(output_ev_tbl, output_num,

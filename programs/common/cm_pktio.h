@@ -51,7 +51,7 @@ extern "C" {
  * @def PKTIO_MAX_IN_QUEUES
  * @brief Maximum number of odp pktio input queues per interface
  */
-#define PKTIO_MAX_IN_QUEUES   16
+#define PKTIO_MAX_IN_QUEUES   32
 
 /**
  * @def PKTIO_MAX_OUT_QUEUES
@@ -198,9 +198,6 @@ typedef struct {
 		 *  2. Direct ODP pkt pool when using '--pktpool-odp' option
 		 */
 		odp_pool_t pktpool_odp;
-
-		/** ODP pool for allocation of control structures */
-		odp_pool_t bufpool_odp;
 	} pools;
 
 	/** Packet I/O Interfaces */
@@ -217,17 +214,25 @@ typedef struct {
 
 	/** Packet input and related resources */
 	struct {
-		/** Number of pktio input queues per interface */
+		/* Packet input mode */
+		pktin_mode_t in_mode;
+
+		/** Number of input queues per interface */
 		int num_queues[IF_MAX_NUM];
 
-		/** All pktio input queues used, per interface */
-		odp_pktin_queue_t queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
+		/** pktin queues used in DIRECT_RECV-mode, per interface */
+		odp_pktin_queue_t pktin_queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
 
-		/** A queue that contains the shared pktin.queues[][].
-		 *  Each core needs to dequeue one pktin queue to be able to use
-		 *  it to receive packets.
+		/** plain event queues used in PLAIN_QUEUE-mode, per interface */
+		odp_queue_t plain_queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
+
+		/** A queue that contains pointers to the shared
+		 *  pktin_queues[][] in DIRECT_RECV-mode or to the shared
+		 *  plain_queues[][] in PLAIN_QUEUE-mode.
+		 *  Each core needs to dequeue one packet input queue to be
+		 *  able to use it to receive packets.
 		 */
-		odp_queue_t queues_queue;
+		odp_stash_t pktin_queue_stash;
 	} pktin;
 
 	/** Packet output and related resources */
@@ -238,10 +243,10 @@ typedef struct {
 		/** All pktio output queues used, per interface */
 		odp_queue_t queues[IF_MAX_NUM][PKTIO_MAX_OUT_QUEUES];
 
-		/** A queue that contains the shared tx_burst[][] entries.
+		/** A stash that contains the shared tx_burst[][] entries.
 		 *  Used when draining the available tx-burst buffers
 		 */
-		odp_queue_t tx_bursts_queue;
+		odp_stash_t tx_burst_stash;
 	} pktout;
 
 	/** Info about the em-odp queues configured for pktio, store in hash */
@@ -267,8 +272,6 @@ typedef struct {
 typedef struct {
 	/** Event contains the currently used pktio input queue */
 	odp_event_t pktin_queue_event;
-	/** Event contains the currently used tx-burst buffer for timed Tx */
-	odp_event_t tx_burst_timed_event;
 	/** Determine need for timed drain of pktio Tx queues */
 	uint64_t tx_prev_cycles;
 	/** Array of hash keys for the current received Rx pkt burst */
@@ -281,8 +284,23 @@ typedef struct {
 	odp_event_t ev_burst[MAX_PKT_BURST_TX];
 } pktio_locm_t;
 
+/**
+ * Reserve shared memory for pktio
+ *
+ * Must be called once at startup. Additionally each EM-core needs to call the
+ * pktio_mem_lookup() function before using any further pktio resources.
+ */
 void pktio_mem_reserve(void);
-void pktio_mem_lookup(void);
+/**
+ * Lookup shared memory for pktio
+ *
+ * Must be called once by each EM-core before using any further pktio resources.
+ *
+ * @param is_thread_per_core  true:  EM running in thread-per-core mode
+ *                            false: EM running in process-per-core mode
+ */
+void pktio_mem_lookup(bool is_thread_per_core);
+
 void pktio_mem_free(void);
 
 void pktio_pool_create(int if_count, bool pktpool_em);
@@ -291,14 +309,15 @@ void pktio_pool_destroy(bool pktpool_em);
 void pktio_init(const appl_conf_t *appl_conf);
 void pktio_deinit(const appl_conf_t *appl_conf);
 
-int pktio_create(const char *dev, int num_workers);
+int pktio_create(const char *dev, int num_workers, pktin_mode_t in_mode);
 void pktio_start(void);
 void pktio_halt(void);
 void pktio_stop(void);
 void pktio_close(void);
 
 /**
- * @brief Poll input resources for pkts/events and enqueue into EM queues
+ * @brief Poll input resources for pkts/events in DIRECT_RECV-mode
+ *        and enqueue into EM queues.
  *
  * Given to EM via 'em_conf.input.input_poll_fn' - EM will call this on
  * each core in the dispatch loop.
@@ -306,7 +325,19 @@ void pktio_close(void);
  *
  * @return number of pkts/events received from input and enqueued into EM
  */
-int input_poll(void);
+int pktin_pollfn_direct(void);
+
+/**
+ * @brief Poll input resources for pkts/events in PLAIN_QUEUE-mode
+ *        and enqueue into EM queues.
+ *
+ * Given to EM via 'em_conf.input.input_poll_fn' - EM will call this on
+ * each core in the dispatch loop.
+ * The function is of type 'em_input_poll_func_t'
+ *
+ * @return number of pkts/events received from input and enqueued into EM
+ */
+int pktin_pollfn_plainqueue(void);
 
 /**
  * @brief Drain buffered output - ensure low rate flows are also sent out.
@@ -322,7 +353,7 @@ int input_poll(void);
  *
  * @return number of events successfully drained and sent for output
  */
-int output_drain(void);
+int pktout_drainfn(void);
 
 /**
  * @brief User provided EM output-queue callback function ('em_output_func_t')

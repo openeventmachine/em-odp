@@ -49,6 +49,10 @@
  * they receive as arguments, nor should they call the same API from within the
  * hook to avoid hook recursion.
  * Hook support is only available when EM_API_HOOKS_ENABLE != 0.
+ * Multiple API-callback hook functions (up to the number 'EM_CALLBACKS_MAX')
+ * can be registered for a given EM API. The calling order of multiple
+ * registered API hook functions is the order of registration. If the same
+ * function is registered twice then it will be called twice.
  *
  * Do not include this file from the application, event_machine.h will
  * do it for you.
@@ -186,6 +190,11 @@ typedef struct {
  *
  * API-callback hook functions can be called concurrently from different cores.
  *
+ * Multiple API-callback hook functions (up to the number 'EM_CALLBACKS_MAX')
+ * can be registered.
+ * The order of calling multiple registered hook functions is the order of
+ * registration. If same function is registered twice it will be called twice.
+ *
  * @param func   API-callback hook function
  * @return EM_OK if callback hook registration succeeded
  */
@@ -212,6 +221,11 @@ em_hooks_unregister_alloc(em_api_hook_alloc_t func);
  * free hook leads to hook recursion and must be avoided.
  *
  * API-callback hook functions can be called concurrently from different cores.
+ *
+ * Multiple API-callback hook functions (up to the number 'EM_CALLBACKS_MAX')
+ * can be registered.
+ * The order of calling multiple registered hook functions is the order of
+ * registration. If same function is registered twice it will be called twice.
  *
  * @param func   API-callback hook function
  * @return EM_OK if callback hook registration succeeded
@@ -243,6 +257,11 @@ em_hooks_unregister_free(em_api_hook_free_t func);
  * must be avoided.
  *
  * API-callback hook functions can be called concurrently from different cores.
+ *
+ * Multiple API-callback hook functions (up to the number 'EM_CALLBACKS_MAX')
+ * can be registered.
+ * The order of calling multiple registered hook functions is the order of
+ * registration. If same function is registered twice it will be called twice.
  *
  * @param func   API-callback hook function
  * @return EM_OK if callback hook registration succeeded

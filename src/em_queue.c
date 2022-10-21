@@ -56,7 +56,7 @@ static const em_queue_conf_t default_queue_conf = {
 
 static int
 queue_init_prio_map(int minp, int maxp, int nump);
-static int
+static void
 queue_init_prio_legacy(int minp, int maxp);
 static void
 queue_init_prio_adaptive(int minp, int maxp, int nump);
@@ -973,6 +973,12 @@ queue_setup_unscheduled(queue_elem_t *q_elem /*in,out*/,
 	 * and retrieved with em_queue_get_context().
 	 */
 	odp_queue_param.context = q_elem;
+	/*
+	 * Set the context data length (in bytes) for potential prefetching.
+	 * The ODP implementation may use this value as a hint for the number
+	 * of context data bytes to prefetch.
+	 */
+	odp_queue_param.context_len = sizeof(*q_elem);
 
 	int err = create_odp_queue(q_elem, &odp_queue_param);
 
@@ -1334,8 +1340,7 @@ int queue_dequeue_multi(const queue_elem_t *q_elem,
 	return ret;
 }
 
-void
-print_queue_info(void)
+void print_queue_capa(void)
 {
 	const odp_queue_capability_t *queue_capa =
 		&em_shm->queue_tbl.odp_queue_capability;
@@ -1409,32 +1414,24 @@ print_queue_info(void)
 		 FIRST_DYN_QUEUE, LAST_DYN_QUEUE);
 }
 
-void
-print_queue_prio_info(void)
+void print_queue_prio_info(void)
 {
-	#define MAXPRIOBUF 127
-	char buf[MAXPRIOBUF + 1];
-	int pos = snprintf(buf, MAXPRIOBUF, "  Current queue priority map: [");
+	#define MAXPRIOBUF 128
+	char buf[MAXPRIOBUF];
+	int pos = 0;
 
-	if (pos > 0 && pos < MAXPRIOBUF) {
-		for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
-			int num = snprintf(buf + pos, MAXPRIOBUF - pos, "%d",
-					   em_shm->queue_prio.map[i]);
-
-			if (num < 0 || num >= (MAXPRIOBUF - pos))
-				break;
-			pos += num;
-
-			if (i < EM_QUEUE_PRIO_NUM - 1) {
-				num = snprintf(buf + pos, MAXPRIOBUF - pos, ",");
-				if (num < 0 || num >= (MAXPRIOBUF - pos))
-					break;
-				pos += num;
-			}
-		}
+	for (int i = 0; i < EM_QUEUE_PRIO_NUM; i++) {
+		/* comma separated list of priorities */
+		int num = snprintf(&buf[pos], MAXPRIOBUF - pos, "%d%c",
+				   em_shm->queue_prio.map[i],
+				   i < (EM_QUEUE_PRIO_NUM - 1) ? ',' : '\0');
+		if (num < 0 || num >= (MAXPRIOBUF - pos))
+			break;
+		pos += num;
 	}
-	buf[MAXPRIOBUF] = 0;
-	EM_PRINT("%s]\n", buf);
+
+	buf[MAXPRIOBUF - 1] = 0;
+	EM_PRINT("  Current queue priority map: [%s]\n", buf);
 }
 
 unsigned int
@@ -1460,7 +1457,7 @@ size_t queue_get_name(const queue_elem_t *const q_elem,
 	return len;
 }
 
-static int queue_init_prio_legacy(int minp, int maxp)
+static void queue_init_prio_legacy(int minp, int maxp)
 {
 	/* legacy mode - match the previous simple 3-level implementation */
 
@@ -1481,8 +1478,6 @@ static int queue_init_prio_legacy(int minp, int maxp)
 		em_shm->queue_prio.map[EM_QUEUE_PRIO_NORMAL - 1] = def;
 	if (EM_QUEUE_PRIO_HIGH - EM_QUEUE_PRIO_NORMAL > 1) /* legacy 6-4 */
 		em_shm->queue_prio.map[EM_QUEUE_PRIO_NORMAL + 1] = def;
-
-	return 0;
 }
 
 static void queue_init_prio_adaptive(int minp, int maxp, int nump)
@@ -1522,8 +1517,7 @@ static int queue_init_prio_map(int minp, int maxp, int nump)
 
 	switch (em_shm->opt.queue.priority.map_mode) {
 	case 0: /* legacy mode, use only 3 levels */
-		if (queue_init_prio_legacy(minp, maxp) != 0)
-			return -1;
+		queue_init_prio_legacy(minp, maxp);
 		break;
 	case 1: /* adapt to runtime (full spread) */
 		queue_init_prio_adaptive(minp, maxp, nump);
@@ -1541,4 +1535,143 @@ static int queue_init_prio_map(int minp, int maxp, int nump)
 		 EM_QUEUE_PRIO_NUM, nump, minp, nump - minp - 1);
 	print_queue_prio_info();
 	return 0;
+}
+
+const char *queue_get_state_str(queue_state_t state)
+{
+	const char *str;
+
+	switch (state) {
+	case EM_QUEUE_STATE_INVALID:
+		str = "INVALID";
+		break;
+	case EM_QUEUE_STATE_INIT:
+		str = "INIT";
+		break;
+	case EM_QUEUE_STATE_BIND:
+		str = "BIND";
+		break;
+	case EM_QUEUE_STATE_READY:
+		str = "READY";
+		break;
+	case EM_QUEUE_STATE_UNSCHEDULED:
+		str = "UNSCH";
+		break;
+	default:
+		str = "UNKNOWN";
+		break;
+	}
+
+	return str;
+}
+
+const char *queue_get_type_str(em_queue_type_t type)
+{
+	const char *type_str;
+
+	switch (type) {
+	case EM_QUEUE_TYPE_UNDEF:
+		type_str = "UNDEF";
+		break;
+	case EM_QUEUE_TYPE_ATOMIC:
+		type_str = "ATOMIC";
+		break;
+	case EM_QUEUE_TYPE_PARALLEL:
+		type_str = "PARALLEL";
+		break;
+	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+		type_str = "ORDERED";
+		break;
+	case EM_QUEUE_TYPE_UNSCHEDULED:
+		type_str = "UNSCH";
+		break;
+	case EM_QUEUE_TYPE_LOCAL:
+		type_str = "LOCAL";
+		break;
+	case EM_QUEUE_TYPE_OUTPUT:
+		type_str = "OUTPUT";
+		break;
+	default:
+		type_str = "UNKNOWN";
+		break;
+	}
+
+	return type_str;
+}
+
+#define QUEUE_INFO_HDR_STR \
+"Number of queues: %d\n\n" \
+"Handle    Name                            Priority  Type      State    Qgrp" \
+"      Agrp      EO        Multi-rcv  Max-events  Ctx\n" \
+"---------------------------------------------------------------------------" \
+"----------------------------------------------------\n" \
+"%s\n"
+
+#define QUEUE_INFO_LEN 128
+
+#define QUEUE_INFO_FMT \
+"%-10" PRI_QUEUE "%-32s%-10" PRI_QPRIO "%-10s%-9s%-10" PRI_QGRP "%-10" PRI_AGRP \
+"%-10" PRI_EO "%-11c%-12d%-3c\n" /*128 bytes per queue*/
+
+void print_queue_info(void)
+{
+	unsigned int q_num;
+	const queue_elem_t *q_elem;
+	char q_name[EM_QUEUE_NAME_LEN];
+	int len = 0;
+	int n_print = 0;
+
+	em_queue_t q = em_queue_get_first(&q_num);
+
+	/* q_num may not match the amount of queues actually returned by iterating
+	 * using em_queue_get_next() if queues are added or removed in parallel
+	 * by another core. Thus space for 10 extra queues is reserved. If more
+	 * than 10 queues are added by other cores in parallel, we print only info
+	 * of the (q_num + 10) queues.
+	 */
+	const int q_info_buf_len = (q_num + 10) * QUEUE_INFO_LEN + 1/*Terminating null byte*/;
+	char q_info_buf[q_info_buf_len];
+
+	while (q != EM_QUEUE_UNDEF) {
+		q_elem = queue_elem_get(q);
+
+		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
+			q = em_queue_get_next();
+			continue;
+		}
+
+		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
+		n_print = snprintf(q_info_buf + len,
+				   q_info_buf_len - len,
+				   QUEUE_INFO_FMT,
+				   q, q_name, q_elem->priority,
+				   queue_get_type_str(q_elem->type),
+				   queue_get_state_str(q_elem->state),
+				   q_elem->queue_group,
+				   q_elem->atomic_group,
+				   q_elem->eo,
+				   q_elem->use_multi_rcv ? 'Y' : 'N',
+				   q_elem->max_events,
+				   q_elem->context ? 'Y' : 'N');
+
+		/* Not enough space to hold more queue info */
+		if (n_print >= q_info_buf_len - len)
+			break;
+
+		len += n_print;
+		q = em_queue_get_next();
+	}
+
+	/* No queue */
+	if (len == 0) {
+		EM_PRINT("No EM queue!\n");
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last queue when
+	 * there is not enough space to hold all queue info.
+	 */
+	q_info_buf[len] = '\0';
+	EM_PRINT(QUEUE_INFO_HDR_STR, q_num, q_info_buf);
 }

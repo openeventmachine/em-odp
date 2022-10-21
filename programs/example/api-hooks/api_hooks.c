@@ -59,7 +59,7 @@ typedef struct {
 } ping_event_t;
 
 /**
- * EO context in the dispatcher callback test
+ * EO context in the API hooks test
  */
 typedef struct {
 	/* Init before start */
@@ -143,7 +143,7 @@ int main(int argc, char *argv[])
 }
 
 /**
- * Init of the Dispatcher Callback test application.
+ * Init of the API Hooks test application.
  *
  * @attention Run on all cores.
  *
@@ -172,7 +172,7 @@ test_init(void)
 }
 
 /**
- * Startup of the Dispatcher Callback test application.
+ * Startup of the API Hooks test application.
  *
  * @attention Run only on EM core 0.
  *

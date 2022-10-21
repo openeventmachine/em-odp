@@ -84,9 +84,6 @@ send_chaining(em_event_t event, event_hdr_t *const ev_hdr,
 		em_locm.current.sched_context_type;
 
 	if (num_outq == 0 || sched_ctx_type != EM_SCHED_CONTEXT_TYPE_ORDERED) {
-		if (em_shm->opt.pool.statistics_enable)
-			poolstat_dec_evhdr_output(ev_hdr);
-
 		if (!esv_enabled())
 			return event_send_device(event, chaining_queue);
 		/*
@@ -134,9 +131,6 @@ send_chaining_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
 		em_locm.current.sched_context_type;
 
 	if (num_outq == 0 || sched_ctx_type != EM_SCHED_CONTEXT_TYPE_ORDERED) {
-		if (em_shm->opt.pool.statistics_enable)
-			poolstat_dec_evhdr_multi_output(ev_hdrs, num);
-
 		if (!esv_enabled())
 			return event_send_device_multi(events, num,
 						       chaining_queue);

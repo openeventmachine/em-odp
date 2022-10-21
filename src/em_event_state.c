@@ -905,7 +905,7 @@ void evstate_usr2em_revert_multi(const em_event_t ev_tbl[],
  */
 static inline void
 check_valid_unmark(const event_hdr_t *ev_hdr, uint16_t api_op,
-		   uint16_t expected_ops[], const int num_ops)
+		   const uint16_t expected_ops[], const int num_ops)
 {
 	uint16_t prev_op = ev_hdr->state.api_op;
 
@@ -920,7 +920,7 @@ check_valid_unmark(const event_hdr_t *ev_hdr, uint16_t api_op,
 
 static inline void
 check_valid_unmark_multi(event_hdr_t *const ev_hdr_tbl[], const int num_evs,
-			 uint16_t api_op, uint16_t expected_ops[], const int num_ops)
+			 uint16_t api_op, const uint16_t expected_ops[], const int num_ops)
 {
 	uint16_t prev_op;
 	bool is_valid;
@@ -997,7 +997,7 @@ static int read_config_file(void)
 	conf_str = "esv.enable";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
-		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
 	/* store & print the value */
@@ -1017,7 +1017,7 @@ static int read_config_file(void)
 	conf_str = "esv.store_state";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
-		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
 	/* store & print the value */
@@ -1031,7 +1031,7 @@ static int read_config_file(void)
 	conf_str = "esv.store_payload_first_u32";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
-		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
 	/* store & print the value */
@@ -1045,7 +1045,7 @@ static int read_config_file(void)
 	conf_str = "esv.prealloc_pools";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
-		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
 	/* store & print the value */

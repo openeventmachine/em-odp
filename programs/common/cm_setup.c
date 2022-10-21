@@ -63,31 +63,34 @@
  * Usage help string
  */
 #define USAGE_FMT \
-"\n"									\
-"Usage: %s APPL&EM-OPTIONS\n"						\
-"  E.g. %s -c 0xfe -p\n"						\
-"\n"									\
-"Event Machine (EM) example application.\n"				\
-"\n"									\
-"Mandatory EM-OPTIONS:\n"						\
-"  -c, --coremask          Select the cores to use, hexadecimal\n"	\
-"  -p, --process-per-core  Running EM with one process per core.\n"	\
-"  -t, --thread-per-core   Running EM with one thread per core.\n"	\
-"    Select EITHER -p OR -t, but not both!\n"				\
-"\n"									\
-"Optional [APPL&EM-OPTIONS]\n"						\
-"  -d, --device-id         Set the device-id, hexadecimal (defaults to 0)\n" \
-"  -r, --dispatch-rounds   Set number of dispatch rounds (for testing)\n" \
-"  -s, --startup-mode      Select application startup mode (for testing):\n" \
-"                           0: Start-up & init all EM cores before appl-setup (default)\n" \
-"                           1: Start-up & init only one EM core before appl-setup,\n" \
-"                              the rest of the EM-cores are init only after that.\n" \
-"Packet-IO\n"								\
-"  -i, --eth-interface     Select the ethernet interface(s) to use\n"		\
-"  -e, --pktpool-em        Create and use an EM-pool with packet-io (default)\n"\
-"  -o, --pktpool-odp       Create and use an ODP-pool with packet-io\n"		\
-"    Select EITHER -e OR -o, but not both!\n"					\
-"Help\n"								\
+"\n"										\
+"Usage: %s APPL&EM-OPTIONS\n"							\
+"  E.g. %s -c 0xfe -p\n"							\
+"\n"										\
+"Event Machine (EM) example application.\n"					\
+"\n"										\
+"Mandatory EM-OPTIONS:\n"							\
+"  -c, --coremask <arg>    Select the cores to use, hexadecimal\n"		\
+"  -p, --process-per-core  Running EM with one process per core.\n"		\
+"  -t, --thread-per-core   Running EM with one thread per core.\n"		\
+"    Select EITHER -p OR -t, but not both!\n"					\
+"\n"										\
+"Optional [APPL&EM-OPTIONS]\n"							\
+"  -d, --device-id <arg>        Device-id, hexadecimal (default: 0x0)\n"	\
+"  -r, --dispatch-rounds <arg>  Number of dispatch rounds (for testing)\n"	\
+"  -s, --startup-mode <arg>     Application startup mode (for testing):\n"	\
+"                               0: Start-up & init all EM cores before appl-setup (default)\n" \
+"                               1: Start-up & init only one EM core before appl-setup,\n" \
+"                                  the rest of the EM-cores are init only after that.\n" \
+"Packet-IO\n"									\
+"  -m, --pktin-mode <arg>        Select the packet-input mode to use:\n"	\
+"                                0: Direct mode: PKTIN_MODE_DIRECT (default)\n"	\
+"                                1: Plain queue mode: PKTIN_MODE_QUEUE\n"	\
+"  -i, --eth-interface <arg(s)>  Select the ethernet interface(s) to use\n"	\
+"  -e, --pktpool-em              Packet-io pool is an EM-pool (default)\n"	\
+"  -o, --pktpool-odp             Packet-io pool is an ODP-pool\n"		\
+"    Select EITHER -e OR -o, but not both!\n" \
+"Help\n" \
 "  -h, --help              Display help and exit.\n" \
 "\n"
 
@@ -121,6 +124,8 @@ typedef struct {
 		uint32_t dispatch_rounds;
 		/** Packet I/O parameters */
 		struct {
+			/** Packet input mode */
+			pktin_mode_t in_mode;
 			/** Interface count */
 			int if_count;
 			/** Interface names + placeholder for '\0' */
@@ -530,11 +535,15 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 		/*
 		 * Request EM to poll input for pkts in the dispatch loop
 		 */
-		em_conf->input.input_poll_fn = input_poll; /* user fn */
+		if (parsed->args_appl.pktio.in_mode == PLAIN_QUEUE)
+			em_conf->input.input_poll_fn = pktin_pollfn_plainqueue;
+		else /* DIRECT_RECV */
+			em_conf->input.input_poll_fn = pktin_pollfn_direct;
+
 		/*
 		 * Request EM to drain buffered output in the dispatch loop
 		 */
-		em_conf->output.output_drain_fn = output_drain; /* user fn*/
+		em_conf->output.output_drain_fn = pktout_drainfn; /* user fn*/
 	}
 
 	/*
@@ -601,6 +610,7 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 	appl_conf->pools[0] = appl_pool;
 	appl_conf->num_pools = 1;
 
+	appl_conf->pktio.in_mode = parsed->args_appl.pktio.in_mode;
 	appl_conf->pktio.if_count = parsed->args_appl.pktio.if_count;
 	for (int i = 0; i < parsed->args_appl.pktio.if_count; i++) {
 		memcpy(appl_conf->pktio.if_name[i],
@@ -620,7 +630,8 @@ create_pktio(appl_conf_t *appl_conf/*in/out*/, const cpu_conf_t *cpu_conf)
 	/* Create a pktio instance for each interface */
 	for (int i = 0; i < appl_conf->pktio.if_count; i++) {
 		int if_id = pktio_create(appl_conf->pktio.if_name[i],
-					 cpu_conf->num_worker);
+					 cpu_conf->num_worker,
+					 appl_conf->pktio.in_mode);
 		if (unlikely(if_id < 0))
 			APPL_EXIT_FAILURE("Cannot create pktio if:%s",
 					  appl_conf->pktio.if_name[i]);
@@ -696,7 +707,8 @@ create_odp_threads(odp_instance_t instance,
  * @param sync       Application start-up and tear-down synchronization vars
  * @param appl_conf  Application configuration
  */
-static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf)
+static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
+			      bool is_thread_per_core)
 {
 	em_status_t stat;
 	int core_id;
@@ -713,7 +725,7 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf)
 	odp_barrier_wait(&sync->start_barrier);
 
 	if (appl_conf->pktio.if_count > 0)
-		pktio_mem_lookup();
+		pktio_mem_lookup(is_thread_per_core);
 
 	odp_barrier_wait(&sync->start_barrier);
 
@@ -752,7 +764,7 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf)
 	const char *str = appl_conf->dispatch_rounds == 0 ?
 				"forever" : "rounds";
 
-	APPL_PRINT("Entering the event dispatch loop(%s=%d) on EM-core %d\n",
+	APPL_PRINT("Entering the event dispatch loop(%s=%d) on EM-core:%02d\n",
 		   str, appl_conf->dispatch_rounds, core_id);
 
 	odp_barrier_wait(&sync->start_barrier); /* to print pretty */
@@ -796,7 +808,8 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf)
  * @param sync       Application start-up and tear-down synchronization vars
  * @param appl_conf  Application configuration
  */
-static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf)
+static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
+				   bool is_thread_per_core)
 {
 	em_status_t stat;
 	uint64_t enter_count = env_atomic64_return_add(&sync->enter_count, 1);
@@ -810,7 +823,7 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf)
 			APPL_EXIT_FAILURE("em_init_core():%" PRI_STAT ", EM-core:%02d",
 					  stat, em_core_id());
 		if (appl_conf->pktio.if_count > 0)
-			pktio_mem_lookup();
+			pktio_mem_lookup(is_thread_per_core);
 
 		/* Ensure all EM cores can find the default event pool */
 		if (em_pool_find(EM_POOL_DEFAULT_NAME) != EM_POOL_DEFAULT)
@@ -856,7 +869,7 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf)
 					  stat, em_core_id());
 
 		if (appl_conf->pktio.if_count > 0)
-			pktio_mem_lookup();
+			pktio_mem_lookup(is_thread_per_core);
 
 		/*
 		 * EM is ready on this EM-core (= proc, thread or core)
@@ -884,7 +897,7 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf)
 	const char *str = appl_conf->dispatch_rounds == 0 ?
 				"forever" : "rounds";
 
-	APPL_PRINT("Entering the event dispatch loop(%s=%d) on EM-core %d\n",
+	APPL_PRINT("Entering the event dispatch loop(%s=%d) on EM-core:%02d\n",
 		   str, appl_conf->dispatch_rounds, core_id);
 
 	/*
@@ -922,6 +935,7 @@ run_core_fn(void *arg)
 	appl_conf_t *appl_conf;
 	sync_t *sync;
 	em_status_t stat;
+	bool is_thread_per_core;
 
 	/* thread: depend on the odp helper to call odp_init_local */
 	/* process: parent called odp_init_local, fork creates copy for child */
@@ -940,6 +954,7 @@ run_core_fn(void *arg)
 
 	appl_conf = &appl_shm->appl_conf;
 	sync = &appl_shm->sync;
+	is_thread_per_core = appl_shm->em_conf.thread_per_core ? true : false;
 
 	/*
 	 * Allow testing different startup scenarios:
@@ -949,14 +964,14 @@ run_core_fn(void *arg)
 		/*
 		 * All EM-cores start-up and init before appication setup
 		 */
-		startup_all_cores(sync, appl_conf);
+		startup_all_cores(sync, appl_conf, is_thread_per_core);
 		break;
 	case STARTUP_ONE_CORE_FIRST:
 		/*
 		 * Only one EM-core start-up and init before application setup,
 		 * the rest of the EM-cores are init after that.
 		 */
-		startup_one_core_first(sync, appl_conf);
+		startup_one_core_first(sync, appl_conf, is_thread_per_core);
 		break;
 	default:
 		APPL_EXIT_FAILURE("Unsupported startup-mode:%d",
@@ -1053,7 +1068,7 @@ run_core_fn(void *arg)
 	while (em_dispatch(TERM_DISPATCH_ROUNDS) > 0)
 		;
 
-	APPL_PRINT("Left the event dispatch loop on EM-core %d\n", core_id);
+	APPL_PRINT("Left the event dispatch loop on EM-core:%02d\n", core_id);
 
 	odp_barrier_wait(&sync->exit_barrier);
 
@@ -1105,14 +1120,16 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		{"eth-interface",    required_argument, NULL, 'i'},
 		{"pktpool-em",       no_argument,       NULL, 'e'},
 		{"pktpool-odp",      no_argument,       NULL, 'o'},
+		{"pktin-mode",       required_argument, NULL, 'm'},
 		{"startup-mode",     required_argument, NULL, 's'},
 		{"help",             no_argument,       NULL, 'h'},
 		{NULL, 0, NULL, 0}
 	};
-	static const char *shortopts = "+c:ptd:r:i:oes:h";
+	static const char *shortopts = "+c:ptd:r:i:oem:s:h";
 	long device_id = -1;
 
 	/* set defaults: */
+	parsed->args_appl.pktio.in_mode = DIRECT_RECV;
 	parsed->args_appl.startup_mode = STARTUP_ALL_CORES;
 
 	opterr = 0; /* don't complain about unknown options here */
@@ -1224,6 +1241,26 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 			parsed->args_appl.pktio.pktpool_odp = true;
 			break;
 
+		case 'm': {
+			int mode = atoi(optarg);
+
+			if (mode == 0) {
+				parsed->args_appl.pktio.in_mode = DIRECT_RECV;
+			} else if (mode == 1) {
+				parsed->args_appl.pktio.in_mode = PLAIN_QUEUE;
+			} else if (mode == 2) {
+				parsed->args_appl.pktio.in_mode = SCHED_PARALLEL;
+			} else if (mode == 3) {
+				parsed->args_appl.pktio.in_mode = SCHED_ATOMIC;
+			} else if (mode == 4) {
+				parsed->args_appl.pktio.in_mode = SCHED_ORDERED;
+			} else {
+				usage(argv[0]);
+				APPL_EXIT_FAILURE("Unknown value: -m, --pktin-mode = %d", mode);
+			}
+		}
+		break;
+
 		case 's': {
 			int mode = atoi(optarg);
 
@@ -1233,7 +1270,7 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 				parsed->args_appl.startup_mode = STARTUP_ONE_CORE_FIRST;
 			} else {
 				usage(argv[0]);
-				APPL_EXIT_FAILURE("Unknown option: -s, --startup-mode = %d", mode);
+				APPL_EXIT_FAILURE("Unknown value: -s, --startup-mode = %d", mode);
 			}
 		}
 		break;

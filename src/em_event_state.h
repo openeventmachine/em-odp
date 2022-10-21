@@ -30,7 +30,7 @@
 
  /**
   * @file
-  * EM event chaining support
+  * EM event state verification support
   */
 
 #ifndef EM_EVENT_CHECKS_H_

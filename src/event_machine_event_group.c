@@ -295,7 +295,7 @@ em_send_group(em_event_t event, em_queue_t queue,
 			EM_ERR_BAD_STATE, EM_ESCOPE_SEND_GROUP,
 			"Invalid event group:%" PRI_EGRP "", event_group);
 
-	/* Buffer events from EO-start sent to scheduled queues */
+	/* Buffer events sent from EO-start to scheduled queues */
 	if (unlikely(!is_external &&
 		     q_elem->scheduled && em_locm.start_eo_elem)) {
 		/*
@@ -454,7 +454,7 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		return 0;
 	}
 
-	/* Buffer events from EO-start sent to scheduled queues */
+	/* Buffer events sent from EO-start to scheduled queues */
 	if (unlikely(!is_external &&
 		     q_elem->scheduled && em_locm.start_eo_elem)) {
 		/*

@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [2])
-m4_define([em_version_api_minor], [8])
+m4_define([em_version_api_minor], [9])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -536,7 +536,7 @@ AC_MSG_RESULT([
 	$PACKAGE $VERSION
 	=================
 	EM API version:		${EM_VERSION_API}
-	EM ODP version:		${EM_VERSION}
+	EM (em-odp) version:	${EM_VERSION}
 	Library version:	${EM_VERSION_LIBSO}
 
 	host:			${host}

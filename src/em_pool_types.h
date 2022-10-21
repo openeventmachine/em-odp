@@ -79,13 +79,6 @@ typedef struct {
 	char name[EM_POOL_NAME_LEN];
 } mpool_elem_t;
 
-typedef struct {
-	struct {
-		uint64_t alloc;
-		uint64_t free;
-	} stat[EM_CONFIG_POOLS][EM_MAX_SUBPOOLS];
-} mpool_statistics_t ENV_CACHE_LINE_ALIGNED;
-
 /**
  * @def POOL_ODP2EM_TBL_LEN
  * Length of the mpool_tbl_t::pool_odp2em[] array
@@ -111,9 +104,6 @@ typedef struct {
 	 * Verified at runtime that: POOL_ODP2EM_TBL_LEN > odp_pool_max_index()
 	 */
 	em_pool_t pool_odp2em[POOL_ODP2EM_TBL_LEN] ENV_CACHE_LINE_ALIGNED;
-
-	/** Pool usage statistics - updated per EM-core */
-	mpool_statistics_t pool_stat_core[EM_MAX_CORES] ENV_CACHE_LINE_ALIGNED;
 
 	/** ODP pool capabilities common for all pools */
 	odp_pool_capability_t odp_pool_capability ENV_CACHE_LINE_ALIGNED;

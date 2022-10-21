@@ -79,7 +79,8 @@
 
 /**
  * The number of times to call em_event_group_increment() per received
- * data event, results in '(7+1) * DATA_EVENTS' events before notification
+ * data event, results in '(EVENT_GROUP_INCREMENT + 1) * DATA_EVENTS'
+ * events before notification
  */
 #define EVENT_GROUP_INCREMENT  7
 

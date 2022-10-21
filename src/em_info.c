@@ -351,7 +351,7 @@ void print_em_info(void)
 	print_odp_info();
 	print_cpu_arch_info();
 	print_core_map_info();
-	print_queue_info();
+	print_queue_capa();
 	queue_group_info_print_all();
 	em_pool_info_print_all();
 	print_event_info();

@@ -165,6 +165,12 @@ eo_current(void)
 void
 i_event__eo_local_func_call_req(const internal_event_t *i_ev);
 
+/** Print information about all EOs */
+void eo_info_print_all(void);
+
+/** Print information about all queues of the given eo */
+void eo_queue_info_print(em_eo_t eo);
+
 #ifdef __cplusplus
 }
 #endif

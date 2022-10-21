@@ -1192,3 +1192,186 @@ size_t eo_get_name(const eo_elem_t *const eo_elem,
 
 	return len;
 }
+
+static const char *state_to_str(em_eo_state_t state)
+{
+	const char *state_str;
+
+	switch (state) {
+	case EM_EO_STATE_UNDEF:
+		state_str = "UNDEF";
+		break;
+	case EM_EO_STATE_CREATED:
+		state_str = "CREATED";
+		break;
+	case EM_EO_STATE_STARTING:
+		state_str = "STARTING";
+		break;
+	case EM_EO_STATE_RUNNING:
+		state_str = "RUNNING";
+		break;
+	case EM_EO_STATE_STOPPING:
+		state_str = "STOPPING";
+		break;
+	case EM_EO_STATE_ERROR:
+		state_str = "ERROR";
+		break;
+	default:
+		state_str = "UNKNOWN";
+		break;
+	}
+
+	return state_str;
+}
+
+#define EO_INFO_HDR_FMT \
+"Number of EOs: %d\n\n" \
+"ID        Name                            State     Start-local  Stop-local" \
+"  Multi-rcv  Max-events  Err-hdl  Q-num  EO-ctx\n" \
+"---------------------------------------------------------------------------" \
+"-----------------------------------------------\n%s\n"
+
+#define EO_INFO_LEN 123
+#define EO_INFO_FMT "%-10" PRI_EO "%-32s%-10s%-13c%-12c%-11c%-12d%-9c%-7d%-6c\n"
+
+void eo_info_print_all(void)
+{
+	unsigned int num_eo;
+	eo_elem_t *eo_elem;
+	int len = 0;
+	int n_print = 0;
+	em_eo_t eo = em_eo_get_first(&num_eo);
+
+	/*
+	 * num_eo may not match the amount of EOs actually returned by iterating
+	 * using em_eo_get_next() if EOs are added or removed in parallel by
+	 * another core. Thus space for 10 extra EOs is reserved. If more than 10
+	 * EOs are added by other cores in parallel, we only print information of
+	 * the (num_eo + 10) EOs.
+	 *
+	 * The extra 1 byte is reserved for the terminating null byte.
+	 */
+	const int eo_info_str_len = (num_eo + 10) * EO_INFO_LEN + 1;
+	char eo_info_str[eo_info_str_len];
+
+	while (eo != EM_EO_UNDEF) {
+		eo_elem = eo_elem_get(eo);
+		if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
+			eo = em_eo_get_next();
+			continue;
+		}
+
+		n_print = snprintf(eo_info_str + len,
+				   eo_info_str_len - len,
+				   EO_INFO_FMT, eo, eo_elem->name,
+				   state_to_str(eo_elem->state),
+				   eo_elem->start_local_func ? 'Y' : 'N',
+				   eo_elem->stop_local_func ? 'Y' : 'N',
+				   eo_elem->use_multi_rcv ? 'Y' : 'N',
+				   eo_elem->max_events,
+				   eo_elem->error_handler_func ? 'Y' : 'N',
+				   env_atomic32_get(&eo_elem->num_queues),
+				   eo_elem->eo_ctx ? 'Y' : 'N');
+
+		/* Not enough space to hold more eo info */
+		if (n_print >= eo_info_str_len - len)
+			break;
+
+		len += n_print;
+		eo = em_eo_get_next();
+	}
+
+	/* No EO */
+	if (!len) {
+		EM_PRINT("No EO has been created!\n");
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last eo when there
+	 * is not enough space to hold all eo info.
+	 */
+	eo_info_str[len] = '\0';
+	EM_PRINT(EO_INFO_HDR_FMT, num_eo, eo_info_str);
+}
+
+#define EO_Q_INFO_HDR_FMT \
+"EO %" PRI_EO "(%s) has %d queue(s):\n\n" \
+"Handle    Name                            Priority  Type      State    Qgrp" \
+"      Ctx\n" \
+"---------------------------------------------------------------------------" \
+"---------\n" \
+"%s\n"
+
+#define EO_Q_INFO_LEN 85
+#define EO_Q_INFO_FMT \
+"%-10" PRI_QUEUE "%-32s%-10d%-10s%-9s%-10" PRI_QGRP "%-3c\n" /*85 characters*/
+
+void eo_queue_info_print(em_eo_t eo)
+{
+	unsigned int q_num;
+	em_queue_t q;
+	const queue_elem_t *q_elem;
+	char q_name[EM_QUEUE_NAME_LEN];
+	int len = 0;
+	int n_print = 0;
+	const eo_elem_t *eo_elem = eo_elem_get(eo);
+
+	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
+		EM_PRINT("EO %" PRI_EO " is not created!\n", eo);
+		return;
+	}
+
+	q = em_eo_queue_get_first(&q_num, eo);
+
+	/*
+	 * q_num may not match the amount of queues actually returned by iterating
+	 * using em_eo_queue_get_next() if queues are added or removed in parallel
+	 * by another core. Thus space for 10 extra queues is reserved. If more
+	 * than 10 queues are added to this EO by other cores, we only print info
+	 * of the (q_num + 10) queues.
+	 *
+	 * The extra 1 byte is reserved for the terminating null byte.
+	 */
+	const int eo_q_info_str_len = (q_num + 10) * EO_Q_INFO_LEN + 1;
+	char eo_q_info_str[eo_q_info_str_len];
+
+	while (q != EM_QUEUE_UNDEF) {
+		q_elem = queue_elem_get(q);
+		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
+			q = em_eo_queue_get_next();
+			continue;
+		}
+
+		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
+
+		n_print = snprintf(eo_q_info_str + len,
+				   eo_q_info_str_len - len,
+				   EO_Q_INFO_FMT,
+				   q, q_name, q_elem->priority,
+				   queue_get_type_str(q_elem->type),
+				   queue_get_state_str(q_elem->state),
+				   q_elem->queue_group,
+				   q_elem->context ? 'Y' : 'N');
+
+		/* Not enough space to hold more queue info */
+		if (n_print >= eo_q_info_str_len - len)
+			break;
+
+		len += n_print;
+		q = em_eo_queue_get_next();
+	}
+
+	/* EO has no queue */
+	if (!len) {
+		EM_PRINT("EO %" PRI_EO "(%s) has no queue!\n", eo, eo_elem->name);
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last queue when
+	 * there is not enough space to hold all queue info.
+	 */
+	eo_q_info_str[len] = '\0';
+	EM_PRINT(EO_Q_INFO_HDR_FMT, eo, eo_elem->name, q_num, eo_q_info_str);
+}

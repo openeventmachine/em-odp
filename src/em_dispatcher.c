@@ -80,6 +80,49 @@ static int read_config_file(void)
 	/* Store ns value as odp_time_t */
 	em_shm->opt.dispatch.poll_ctrl_interval_time = odp_time_global_from_ns(val64);
 
+	/*
+	 * Option: dispatch.poll_drain_interval
+	 */
+	conf_str = "dispatch.poll_drain_interval";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+
+	if (val < 0) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n",
+		       conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.dispatch.poll_drain_interval = val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	/*
+	 * Option: dispatch.poll_drain_interval_ns
+	 */
+	conf_str = "dispatch.poll_drain_interval_ns";
+	ret = em_libconfig_lookup_int64(&em_shm->libconfig, conf_str, &val64);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+
+	if (val64 < 0) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %" PRId64 "'\n",
+		       conf_str, val64);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.dispatch.poll_drain_interval_ns = val64;
+	sec = (long double)val64 / 1000000000.0;
+
+	EM_PRINT("  %s: %" PRId64 "ns (%Lfs)\n", conf_str, val64, sec);
+
+	/* Store ns value as odp_time_t */
+	em_shm->opt.dispatch.poll_drain_interval_time = odp_time_global_from_ns(val64);
+
 	return 0;
 }
 
@@ -94,9 +137,28 @@ em_status_t dispatch_init(void)
 em_status_t dispatch_init_local(void)
 {
 	em_locm_t *const locm = &em_locm;
+	odp_time_t poll_period = em_shm->opt.dispatch.poll_ctrl_interval_time;
+	odp_time_t now = odp_time_global();
 
-	locm->dispatch_cnt = em_shm->opt.dispatch.poll_ctrl_interval;
-	locm->dispatch_last_run = ODP_TIME_NULL;
+	/*
+	 * Initialize values so that the _first_ call to em_dispatch() on each
+	 * core will trigger a poll of the unscheduled ctrl queues.
+	 */
+	locm->dispatch_cnt = 1;
+	locm->dispatch_last_run = odp_time_diff(now, poll_period); /* wrap OK */
+
+	/*
+	 * Sanity check:
+	 * Perform the same calculation as in dispatch_poll_ctrl_queue()
+	 * to verify that ctrl queue polling is triggered by the first dispatch.
+	 */
+	odp_time_t period = odp_time_diff(now, locm->dispatch_last_run);
+
+	if (odp_time_cmp(period, poll_period) != 0) /* 0: periods equal */
+		return EM_ERR_TOONEAR;
+
+	locm->poll_drain_dispatch_cnt = em_shm->opt.dispatch.poll_drain_interval;
+	locm->poll_drain_dispatch_last_run = now;
 
 	return EM_OK;
 }

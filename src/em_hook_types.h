@@ -30,7 +30,7 @@
 
 /**
  * @file
- * EM internal dispatcher types & definitions
+ * EM internal API hook types & definitions
  *
  */
 

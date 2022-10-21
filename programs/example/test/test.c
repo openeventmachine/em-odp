@@ -278,11 +278,14 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	em_core_mask_t mask;
 	char mstr[EM_CORE_MASK_STRLEN];
 	const int mbits_len = (EM_MAX_CORES + 63) / 64;
+	int len;
 	uint64_t mbits[mbits_len];
 	em_core_mask_t phys_mask;
 
 	/* Queue group core mask tests: */
-	em_queue_group_get_mask(EM_QUEUE_GROUP_DEFAULT, &mask);
+	stat = em_queue_group_get_mask(EM_QUEUE_GROUP_DEFAULT, &mask);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("em_queue_group_get_mask():%" PRI_STAT "", stat);
 	em_core_mask_tostr(mstr, sizeof(mstr), &mask);
 	em_core_mask_get_bits(mbits, mbits_len, &mask);
 	printf("EM_QUEUE_GROUP_DEFAULT:%s\n", mstr);
@@ -292,9 +295,11 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	printf("\n");
 
 	em_core_mask_get_physical(&phys_mask, &mask);
-	em_core_mask_get_bits(mbits, mbits_len, &phys_mask);
+	len = em_core_mask_get_bits(mbits, mbits_len, &phys_mask);
+	if (len <= 0)
+		APPL_EXIT_FAILURE("em_core_mask_get_bits():%d", len);
 	printf("physical core mask bits:");
-	for (i = mbits_len - 1; i >= 0; i--)
+	for (i = len - 1; i >= 0; i--)
 		printf(" mbits[%d]:0x%" PRIx64 "", i, mbits[i]);
 	printf("\n");
 
@@ -302,10 +307,12 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 		mbits[i] = 0xabbaacdcdeadbeef;
 	em_core_mask_set_bits(mbits, mbits_len, &mask);
 	em_core_mask_tostr(mstr, sizeof(mstr), &mask);
-	em_core_mask_get_bits(mbits, mbits_len, &mask);
+	len = em_core_mask_get_bits(mbits, mbits_len, &mask);
+	if (len <= 0)
+		APPL_EXIT_FAILURE("em_core_mask_get_bits():%d", len);
 	printf("core mask test:%s\n", mstr);
 	printf("core mask test bits:");
-	for (i = mbits_len - 1; i >= 0; i--)
+	for (i = len - 1; i >= 0; i--)
 		printf(" mbits[%d]:0x%" PRIx64 "", i, mbits[i]);
 	printf("\n\n");
 	/* end queue group core mask tests */
@@ -373,11 +380,24 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	if (test_qgrp == EM_QUEUE_GROUP_UNDEF)
 		APPL_EXIT_FAILURE("Test queue group creation failed!");
 
-	em_queue_group_get_name(test_qgrp, test_qgrp_name,
-				sizeof(TEST_QUEUE_GROUP_NAME));
+	size_t sz = em_queue_group_get_name(test_qgrp, test_qgrp_name,
+					    sizeof(TEST_QUEUE_GROUP_NAME));
+	if (sz == 0)
+		APPL_EXIT_FAILURE("em_queue_group_get_name():%zu", sz);
 	if (strncmp(test_qgrp_name, TEST_QUEUE_GROUP_NAME,
 		    sizeof(TEST_QUEUE_GROUP_NAME)) != 0)
 		APPL_EXIT_FAILURE("Test queue group get name failed!");
+
+	stat = em_queue_group_delete(test_qgrp, 0, NULL);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("Test queue group delete failed!");
+
+	em_core_mask_zero(&mask);
+	em_core_mask_set_count(1, &mask);
+
+	test_qgrp = em_queue_group_create_sync(TEST_QUEUE_GROUP_NAME, &mask);
+	if (test_qgrp == EM_QUEUE_GROUP_UNDEF)
+		APPL_EXIT_FAILURE("Test queue group creation failed!");
 
 	stat = em_queue_group_delete(test_qgrp, 0, NULL);
 	if (stat != EM_OK)

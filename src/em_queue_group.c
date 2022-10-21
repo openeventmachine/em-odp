@@ -82,7 +82,7 @@ send_qgrp_addrem_reqs(queue_group_elem_t *qgrp_elem,
  * Return the queue group elem that includes the given objpool_elem_t
  */
 static inline queue_group_elem_t *
-queue_group_poolelem2queue(objpool_elem_t *const queue_group_pool_elem)
+queue_group_poolelem2qgrpelem(objpool_elem_t *const queue_group_pool_elem)
 {
 	return (queue_group_elem_t *)((uintptr_t)queue_group_pool_elem -
 			offsetof(queue_group_elem_t, queue_group_pool_elem));
@@ -103,7 +103,7 @@ read_config_file(void)
 	conf_str = "queue_group.create_core_queue_groups";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
-		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
 	/* store & print the value */
@@ -157,7 +157,7 @@ em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 	em_queue_group_t default_queue_group = default_queue_group_create();
 
 	if (default_queue_group != EM_QUEUE_GROUP_DEFAULT) {
-		EM_LOG(EM_LOG_ERR, "default_queue_group_create() failed!");
+		EM_LOG(EM_LOG_ERR, "default_queue_group_create() failed!\n");
 		return EM_ERR_LIB_FAILED;
 	}
 
@@ -168,9 +168,7 @@ em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 		em_status_t stat = core_queue_groups_create();
 
 		if (stat != EM_OK) {
-			EM_LOG(EM_LOG_ERR,
-			       "core_queue_groups_create():%" PRI_STAT "",
-			       stat);
+			EM_LOG(EM_LOG_ERR, "core_queue_groups_create():%" PRI_STAT "\n", stat);
 			return stat;
 		}
 	}
@@ -186,7 +184,7 @@ em_status_t queue_group_init_local(void)
 	em_queue_group_t def_qgrp = default_queue_group_update_local();
 
 	if (def_qgrp != EM_QUEUE_GROUP_DEFAULT) {
-		EM_LOG(EM_LOG_ERR, "default_queue_group_update_local() failed!");
+		EM_LOG(EM_LOG_ERR, "default_queue_group_update_local() failed!\n");
 		return EM_ERR_LIB_FAILED;
 	}
 
@@ -198,9 +196,7 @@ em_status_t queue_group_init_local(void)
 		em_status_t stat = core_queue_group_update_local();
 
 		if (stat != EM_OK) {
-			EM_LOG(EM_LOG_ERR,
-			       "core_queue_group_update_local():%" PRI_STAT "",
-			       stat);
+			EM_LOG(EM_LOG_ERR, "core_queue_group_update_local():%" PRI_STAT "\n", stat);
 			return EM_ERR_LIB_FAILED;
 		}
 	}
@@ -233,7 +229,7 @@ queue_group_alloc(em_queue_group_t queue_group)
 		if (unlikely(qgrp_pool_elem == NULL))
 			return EM_QUEUE_GROUP_UNDEF;
 
-		qgrp_elem = queue_group_poolelem2queue(qgrp_pool_elem);
+		qgrp_elem = queue_group_poolelem2qgrpelem(qgrp_pool_elem);
 	} else {
 		/*
 		 * Allocate a specific queue group, handle given as argument
@@ -687,7 +683,7 @@ static void addrem_events_free(em_event_t add_events[], int add_count,
 }
 
 /**
- * @brief send_qgrp_addrem_reqs() helper: send add or rem req events to to cores
+ * @brief send_qgrp_addrem_reqs() helper: send add or rem req events to cores
  *        in 'mask', send with an event group to trigger 'done' notification.
  *
  * Mark each sent event in the array as 'undef' to help detect sent vs. unsent
@@ -792,7 +788,7 @@ set_qgrp_done_func(em_escope_t escope,
 }
 
 /**
- * @brief queue_group_modify/_sync() helper: send qgrp rem-req events to cores
+ * @brief queue_group_create/modify/_sync() helper: send qgrp addrem-req events to cores
  */
 static em_status_t
 send_qgrp_addrem_reqs(queue_group_elem_t *qgrp_elem,
@@ -982,7 +978,7 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	/*
 	 * Send add/rem-req events to all other conserned cores.
 	 * Note: if .ongoing_delete = true:
-	 *       Threat errors as EM_FATAL because failures will leave
+	 *       Treat errors as EM_FATAL because failures will leave
 	 *       .ongoing_delete = true for the group until restart of EM.
 	 */
 	err = send_qgrp_addrem_reqs(qgrp_elem, new_mask, &add_mask, &rem_mask,
@@ -1085,7 +1081,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	/*
 	 * Send add/rem-req events to all other conserned cores.
 	 * Note: if .ongoing_delete = true:
-	 *       Threat errors as EM_FATAL because failures will leave
+	 *       Treat errors as EM_FATAL because failures will leave
 	 *       .ongoing_delete = true for the group until restart of EM.
 	 */
 	err = send_qgrp_addrem_reqs(qgrp_elem, new_mask, &add_mask, &rem_mask,
@@ -1098,7 +1094,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 
 	/*
 	 * Poll the core-local unscheduled control-queue for events.
-	 * These events request the core to do a core-local operation (or nop).
+	 * These events request the core to do a core-local operation (or not).
 	 * Poll and handle events until 'locm->sync_api.in_progress == false'
 	 * indicating that this sync-API is 'done' on all conserned cores.
 	 */
@@ -1390,38 +1386,30 @@ unsigned int queue_group_count(void)
 }
 
 #define QGRP_INFO_HDR_STR \
-"  id        name    EM-mask      cpumask   ODP-mask\n"
+"EM Queue group(s):%2u\n" \
+"ID        Name                            EM-mask             Cpumask         " \
+"    ODP-mask            Q-num\n" \
+"------------------------------------------------------------------------------" \
+"------------------------------\n" \
+"%s\n"
 
-static void queue_group_info_print_hdr(unsigned int num_qgrps)
-{
-	if (num_qgrps == 1) {
-		EM_PRINT("EM Queue group\n"
-			 "--------------\n"
-			 QGRP_INFO_HDR_STR);
-	} else {
-		EM_PRINT("EM Queue groups:%2u\n"
-			 "------------------\n"
-			 QGRP_INFO_HDR_STR, num_qgrps);
-	}
-}
+/* Info len (in bytes) per queue group, calculated from QGRP_INFO_FMT */
+#define QGRP_INFO_LEN (108 + 1 /* Terminating null byte */)
+#define QGRP_INFO_FMT "%-10" PRI_QGRP "%-32s%-20s%-20s%-20s%-5d\n" /*108 bytes*/
 
-static void queue_group_info_print_err(em_queue_group_t queue_group)
-{
-	EM_PRINT("  %-6" PRI_QGRP "%8s %10s   %10s %10s\n",
-		 queue_group, "err:n/a", "n/a", "n/a", "n/a");
-}
-
-static void queue_group_info_print(em_queue_group_t queue_group)
+static void queue_group_info_str(em_queue_group_t queue_group,
+				 char qgrp_info_str[/*out*/])
 {
 	em_core_mask_t core_mask;
 	odp_thrmask_t odp_thrmask;
 	odp_cpumask_t odp_cpumask;
 	char qgrp_name[EM_QUEUE_GROUP_NAME_LEN];
-	char mask_str[EM_CORE_MASK_STRLEN];
+	char em_mask_str[EM_CORE_MASK_STRLEN];
 	char odp_thrmask_str[ODP_THRMASK_STR_SIZE];
 	char odp_cpumask_str[ODP_CPUMASK_STR_SIZE];
 	em_status_t err;
 	int ret;
+	int len = 0;
 
 	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 
@@ -1432,7 +1420,7 @@ static void queue_group_info_print(em_queue_group_t queue_group)
 	err = em_queue_group_get_mask(queue_group, &core_mask);
 	if (unlikely(err != EM_OK))
 		goto info_print_err;
-	em_core_mask_tostr(mask_str, sizeof(mask_str), &core_mask);
+	em_core_mask_tostr(em_mask_str, sizeof(em_mask_str), &core_mask);
 
 	/* ODP thread mask */
 	ret = odp_schedule_group_thrmask(qgrp_elem->odp_sched_group,
@@ -1453,29 +1441,150 @@ static void queue_group_info_print(em_queue_group_t queue_group)
 		goto info_print_err;
 	odp_cpumask_str[ret - 1] = '\0';
 
-	EM_PRINT("  %-6" PRI_QGRP "%8s %10s   %10s %10s\n",
-		 queue_group, qgrp_name, mask_str,
-		 odp_cpumask_str, odp_thrmask_str);
+	len = snprintf(qgrp_info_str, QGRP_INFO_LEN, QGRP_INFO_FMT,
+		       queue_group, qgrp_name, em_mask_str,
+		       odp_cpumask_str, odp_thrmask_str,
+		       env_atomic32_get(&qgrp_elem->num_queues));
+
+	qgrp_info_str[len] = '\0';
 	return;
 
 info_print_err:
-	queue_group_info_print_err(queue_group);
+	len = snprintf(qgrp_info_str, QGRP_INFO_LEN, QGRP_INFO_FMT,
+		       queue_group, "err:n/a", "n/a", "n/a", "n/a", 0);
+	qgrp_info_str[len] = '\0';
 }
 
 void queue_group_info_print_all(void)
 {
-	em_queue_group_t queue_group;
-	unsigned int num;
+	em_queue_group_t qgrp;
+	unsigned int qgrp_num;
+	char single_qgrp_info_str[QGRP_INFO_LEN];
+	int len = 0;
+	int n_print = 0;
 
-	queue_group = em_queue_group_get_first(&num);
+	qgrp = em_queue_group_get_first(&qgrp_num);
 
-	queue_group_info_print_hdr(num);
+	/*
+	 * qgrp_num may not match the amount of queue groups actually returned
+	 * by iterating using em_queue_group_get_next() if queue groups are added
+	 * or removed in parallel by another core. Thus space for 10 extra queue
+	 * groups is reserved. If more than 10 queue groups are added by other
+	 * cores in parallel, we print only information of the (qgrp_num + 10)
+	 * queue groups.
+	 *
+	 * The extra 1 byte is reserved for the terminating null byte.
+	 */
+	const int all_qgrp_info_str_len = (qgrp_num + 10) * QGRP_INFO_LEN + 1;
+	char all_qgrp_info_str[all_qgrp_info_str_len];
 
-	while (queue_group != EM_QUEUE_GROUP_UNDEF) {
-		queue_group_info_print(queue_group);
-		/* next queue group */
-		queue_group = em_queue_group_get_next();
+	while (qgrp != EM_QUEUE_GROUP_UNDEF) {
+		queue_group_info_str(qgrp, single_qgrp_info_str);
+
+		n_print = snprintf(all_qgrp_info_str + len,
+				   all_qgrp_info_str_len - len,
+				   "%s", single_qgrp_info_str);
+
+		/* Not enough space to hold more queue group info */
+		if (n_print >= all_qgrp_info_str_len - len)
+			break;
+
+		len += n_print;
+		qgrp = em_queue_group_get_next();
 	}
 
-	EM_PRINT("\n");
+	/* No EM queue group */
+	if (len == 0) {
+		EM_PRINT("No EM queue group!\n");
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last queue group
+	 * when there is not enough space to hold all queue group info.
+	 */
+	all_qgrp_info_str[len] = '\0';
+	EM_PRINT(QGRP_INFO_HDR_STR, qgrp_num, all_qgrp_info_str);
+}
+
+#define QGRO_QUEUE_INFO_HDR_STR \
+"Queue group %" PRI_QGRP "(%s) has %d queue(s):\n\n" \
+"Id        Name                            Priority  Type      State    Ctx\n" \
+"--------------------------------------------------------------------------\n" \
+"%s\n"
+
+/* Info len (in bytes) per queue group queue, calculated from QGRP_Q_INFO_FMT */
+#define QGRP_Q_LEN 75
+#define QGRP_Q_INFO_FMT "%-10" PRI_QUEUE "%-32s%-10d%-10s%-9s%-3c\n" /*75 bytes*/
+
+void queue_group_queues_print(em_queue_group_t qgrp)
+{
+	unsigned int q_num;
+	em_queue_t qgrp_queue;
+	const queue_elem_t *q_elem;
+	char qgrp_name[EM_QUEUE_GROUP_NAME_LEN];
+	char q_name[EM_QUEUE_NAME_LEN];
+	int len = 0;
+	int n_print = 0;
+
+	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(qgrp);
+
+	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
+		EM_PRINT("Queue group %" PRI_QGRP " is not created!\n", qgrp);
+		return;
+	}
+
+	em_queue_group_get_name(qgrp, qgrp_name, sizeof(qgrp_name));
+	qgrp_queue = em_queue_group_queue_get_first(&q_num, qgrp);
+
+	/*
+	 * q_num may not match the amount of queues actually returned by iterating
+	 * using em_queue_group_queue_get_next() if queues are added or removed
+	 * in parallel by another core. Thus space for 10 extra queues is reserved.
+	 * If more than 10 extra queues are added to this queue group by other
+	 * cores in parallel, we print only information of the (q_num + 10) queues.
+	 *
+	 * The extra 1 byte is reserved for the terminating null byte.
+	 */
+	const int q_info_len = (q_num + 10) * QGRP_Q_LEN + 1;
+	char q_info_str[q_info_len];
+
+	while (qgrp_queue != EM_QUEUE_UNDEF) {
+		q_elem = queue_elem_get(qgrp_queue);
+
+		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
+			qgrp_queue = em_queue_group_queue_get_next();
+			continue;
+		}
+
+		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
+
+		n_print = snprintf(q_info_str + len, q_info_len - len,
+				   QGRP_Q_INFO_FMT, qgrp_queue, q_name,
+				   q_elem->priority,
+				   queue_get_type_str(q_elem->type),
+				   queue_get_state_str(q_elem->state),
+				   q_elem->context ? 'Y' : 'N');
+
+		/* Not enough space to hold more queue info */
+		if (n_print >= q_info_len - len)
+			break;
+
+		len += n_print;
+		qgrp_queue = em_queue_group_queue_get_next();
+	}
+
+	/* No queue belonging to the queue group */
+	if (!len) {
+		EM_PRINT("Queue group %" PRI_QGRP "(%s) has no queue!\n",
+			 qgrp, qgrp_name);
+		return;
+	}
+
+	/*
+	 * To prevent printing incomplete information of the last queue when
+	 * there is not enough space to hold all queue info.
+	 */
+	q_info_str[len] = '\0';
+	EM_PRINT(QGRO_QUEUE_INFO_HDR_STR, qgrp, qgrp_name, q_num, q_info_str);
 }

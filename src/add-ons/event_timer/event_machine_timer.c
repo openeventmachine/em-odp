@@ -288,7 +288,7 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	odp_timer_pool_param_t odp_tpool_param;
 	odp_timer_clk_src_t odp_clksrc;
 
-	memset(&odp_tpool_param, 0, sizeof(odp_timer_pool_param_t));
+	odp_timer_pool_param_init(&odp_tpool_param);
 	odp_tpool_param.res_ns = tmr_attr->resparam.res_ns;
 	odp_tpool_param.res_hz = tmr_attr->resparam.res_hz;
 	odp_tpool_param.min_tmo = tmr_attr->resparam.min_tmo;
@@ -581,6 +581,7 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
 	bool esv_ena = esv_enabled();
+	odp_timer_start_t startp;
 
 	if (esv_ena) {
 		ev_hdr = event_to_hdr(tmo_ev);
@@ -588,8 +589,11 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 	}
 
 	/* set tmo active and arm with absolute time */
+	startp.tick_type = ODP_TIMER_TICK_ABS;
+	startp.tick = ticks_abs;
+	startp.tmo_ev = odp_ev;
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_ACTIVE);
-	int ret = odp_timer_set_abs(tmo->odp_timer, ticks_abs, &odp_ev);
+	int ret = odp_timer_start(tmo->odp_timer, &startp);
 
 	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
@@ -600,7 +604,7 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 		else if (ret == ODP_TIMER_TOOEARLY)
 			return EM_ERR_TOONEAR;
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_ABS,
-				      "odp_timer_set_abs():%d", ret);
+				      "odp_timer_start():%d", ret);
 	}
 	TMR_DBG_PRINT("OK\n");
 	return EM_OK;
@@ -629,6 +633,7 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
 	bool esv_ena = esv_enabled();
+	odp_timer_start_t startp;
 
 	if (esv_ena) {
 		ev_hdr = event_to_hdr(tmo_ev);
@@ -642,8 +647,11 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 				 ticks_rel;
 	}
 	TMR_DBG_PRINT("last_tick %lu\n", tmo->last_tick);
+	startp.tick_type = ODP_TIMER_TICK_REL;
+	startp.tick = ticks_rel;
+	startp.tmo_ev = odp_ev;
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_ACTIVE);
-	int ret = odp_timer_set_rel(tmo->odp_timer, ticks_rel, &odp_ev);
+	int ret = odp_timer_start(tmo->odp_timer, &startp);
 
 	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
@@ -684,6 +692,7 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
 	bool esv_ena = esv_enabled();
+	odp_timer_start_t startp;
 
 	if (esv_ena) {
 		ev_hdr = event_to_hdr(tmo_ev);
@@ -700,8 +709,11 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 		      odp_timer_current_tick(tmo->odp_timer_pool));
 
 	/* set tmo active and arm with absolute time */
+	startp.tick_type = ODP_TIMER_TICK_ABS;
+	startp.tick = start_abs;
+	startp.tmo_ev = odp_ev;
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_ACTIVE);
-	int ret = odp_timer_set_abs(tmo->odp_timer, start_abs, &odp_ev);
+	int ret = odp_timer_start(tmo->odp_timer, &startp);
 
 	if (unlikely(ret != ODP_TIMER_SUCCESS)) {
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
@@ -716,7 +728,7 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 			return EM_ERR_TOONEAR;
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 				      EM_ESCOPE_TMO_SET_PERIODIC,
-				      "odp_timer_set_abs():%d", ret);
+				      "odp_timer_start():%d", ret);
 	}
 	return EM_OK;
 }
@@ -820,11 +832,16 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 	int ret;
 	int tries = EM_TIMER_ACK_TRIES;
 	em_status_t err;
+	odp_timer_start_t startp;
+
+	startp.tick_type = ODP_TIMER_TICK_ABS;
+	startp.tmo_ev = odp_ev;
 
 	/* try to set tmo EM_TIMER_ACK_TRIES times */
 	do {
 		/* ask new timeout for next period */
-		ret = odp_timer_set_abs(tmo->odp_timer, tmo->last_tick, &odp_ev);
+		startp.tick = tmo->last_tick;
+		ret = odp_timer_start(tmo->odp_timer, &startp);
 		/*
 		 * Calling ack() was delayed over next period if 'ret' is
 		 * ODP_TIMER_TOOEARLY, i.e. now in past. Other errors

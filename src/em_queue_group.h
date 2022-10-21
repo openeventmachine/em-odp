@@ -86,6 +86,11 @@ em_status_t queue_group_check_mask(const em_core_mask_t *mask);
 void queue_group_info_print_all(void);
 
 /**
+ * @brief Print info about all queues belonging to the given queue group
+ */
+void queue_group_queues_print(em_queue_group_t qgrp);
+
+/**
  * @brief EM internal event handler, add core to an EM queue group.
  *        (see em_internal_event.c&h)
  *
