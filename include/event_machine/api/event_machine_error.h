@@ -38,14 +38,14 @@
  * @defgroup em_error Error management
  *  Error/Exception management
  *
- *  OpenEM provides two basic mechanisms to manage operational exceptions
+ *  EM provides two basic mechanisms to manage operational exceptions
  *
  *  -# Return value
  *    - Most API calls return a status which can be checked by the application
  *
  *  -# Error handler
  *    - An optional error handler function can be registered. The given
- *      function is called by the EM implementation as an error occurs. This
+ *      function is called by the EM implementation when an error occurs. This
  *      makes it possible to centralize the error management or even modify
  *      some API behavior as an error handler can modify the original API call
  *      return value as well. For instance, a global error handler could modify
@@ -71,8 +71,7 @@ extern "C" {
  * The user can register EO specific and/or EM global error handlers. When an
  * error occurs, EM calls the EO specific error handler, if registered. If
  * there's no EO specific handler registered or the error occurs outside of an
- * EO context, EM calls the global error handler. If no error handlers are
- * found, EM just returns the error code depending on the API function.
+ * EO context, EM calls the global error handler.
  *
  * The error handler is called with the original error code (that's about to be
  * returned) from the API call or em_error(). The error scope identifies the

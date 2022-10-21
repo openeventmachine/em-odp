@@ -154,7 +154,7 @@ typedef struct {
 		struct {
 			/**
 			 * Together the evstate_cnt_t counters (evgen, free_cnt
-			 * and send_cnt) can be used to  detect invalid states
+			 * and send_cnt) can be used to detect invalid states
 			 * and operations on the event, e.g.:
 			 * double-free, double-send, send-after-free,
 			 * free-after-send, usage-after-output,
@@ -163,7 +163,7 @@ typedef struct {
 			evstate_cnt_t state_cnt;
 
 			/**
-			 * Event state, updated on valid state trasitions.
+			 * Event state, updated on valid state transitions.
 			 * "Best effort" update, i.e. atomic update not
 			 * guaranteed in invalid simultaneous state-updates.
 			 *
@@ -225,16 +225,6 @@ typedef struct {
 	 */
 	uint32_t event_size;
 	/**
-	 * Handle of the EM pool the event was allocated from.
-	 * @note only used if EM config file: pool.statistics_enable=true
-	 */
-	em_pool_t pool;
-	/**
-	 * Subpool index of the EM pool the event was allocated from.
-	 * @note only used if EM config file: pool.statistics_enable=true
-	 */
-	int16_t subpool;
-	/**
 	 * Payload alloc alignment offset/push into free area of ev_hdr.
 	 * Only used by events based on ODP buffers that have the ev_hdr in the
 	 * beginning of the buf payload (pkts use 'user-area' for ev_hdr).
@@ -242,7 +232,7 @@ typedef struct {
 	 */
 	uint16_t align_offset;
 	/**
-	 * Event type, contains major and major parts
+	 * Event type, contains major and minor parts
 	 */
 	em_event_type_t event_type;
 

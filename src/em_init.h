@@ -100,6 +100,10 @@ typedef struct {
 		uint64_t poll_ctrl_interval_ns;
 		/** convert option 'poll_ctrl_interval_ns' to odp_time_t */
 		odp_time_t poll_ctrl_interval_time;
+
+		unsigned int poll_drain_interval;
+		uint64_t poll_drain_interval_ns;
+		odp_time_t poll_drain_interval_time;
 	} dispatch;
 } opt_t;
 

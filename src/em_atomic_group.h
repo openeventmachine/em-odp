@@ -135,6 +135,12 @@ atomic_group_release(void)
 unsigned int
 atomic_group_count(void);
 
+/** Print information about all atomic groups */
+void print_atomic_group_info(void);
+
+/** Print information about all queues of the given atomic group */
+void print_atomic_group_queues(em_atomic_group_t ag);
+
 #ifdef __cplusplus
 }
 #endif

@@ -77,9 +77,23 @@ read_config_file(void)
 	conf_str = "pool.statistics_enable";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
-		EM_LOG(EM_LOG_ERR, "Config option '%s' not found", conf_str);
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
+
+	if (val_bool) {
+		if (!capa->buf.stats.bit.available || !capa->pkt.stats.bit.available) {
+			EM_LOG(EM_LOG_ERR, "! %s: NOT supported by ODP - disabling!\n",
+			       conf_str);
+			val_bool = false; /* disable pool statistics, no ODP support! */
+		}
+
+		if (!capa->buf.stats.bit.cache_available || !capa->pkt.stats.bit.cache_available) {
+			EM_LOG(EM_LOG_ERR, "! %s: omit events in pool cache, no ODP support!\n",
+			       conf_str);
+		}
+	}
+
 	/* store & print the value */
 	em_shm->opt.pool.statistics_enable = (int)val_bool;
 	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
@@ -95,8 +109,9 @@ read_config_file(void)
 		return -1;
 	}
 	if (val < 0 || val > ALIGN_OFFSET_MAX || !POWEROF2(val)) {
-		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n",
-		       conf_str, val);
+		EM_LOG(EM_LOG_ERR,
+		       "Bad config value '%s = %d' (max: %d and value must be power of 2)\n",
+		       conf_str, val, ALIGN_OFFSET_MAX);
 		return -1;
 	}
 	/* store & print the value */
@@ -480,24 +495,6 @@ set_poolcache_size(em_pool_cfg_t *pool_cfg)
 }
 
 /*
- * pool_create() helper: initialize the pool statistics for this EM-pool
- */
-static void
-init_pool_stat(em_pool_t pool)
-{
-	const int cores = em_core_count();
-	const int pool_idx = pool_hdl2idx(pool);
-	mpool_statistics_t *const pstat_core = em_shm->mpool_tbl.pool_stat_core;
-
-	for (int i = 0; i < cores; i++) {
-		for (int j = 0; j < EM_MAX_SUBPOOLS; j++) {
-			pstat_core[i].stat[pool_idx][j].alloc = 0;
-			pstat_core[i].stat[pool_idx][j].free = 0;
-		}
-	}
-}
-
-/*
  * pool_create() helper: determine payload alignment.
  */
 static int
@@ -597,6 +594,80 @@ set_pkt_headroom(const em_pool_cfg_t *pool_cfg,
 	return 0;
 }
 
+/** Helper to create_subpools() */
+static void set_pool_params_pkt(odp_pool_param_t *pool_params /* out */,
+				uint32_t size, uint32_t num, uint32_t cache_size,
+				uint32_t align_offset, uint32_t odp_align,
+				uint32_t uarea_size, uint32_t pkt_headroom)
+{
+	const odp_pool_capability_t *capa = &em_shm->mpool_tbl.odp_pool_capability;
+
+	odp_pool_param_init(pool_params);
+
+	pool_params->type = ODP_POOL_PACKET;
+	/* num == max_num, helps pool-info stats calculation */
+	pool_params->pkt.num = num;
+	pool_params->pkt.max_num = num;
+
+	if (size > align_offset)
+		size = size - align_offset;
+	else
+		size = 1; /* 0:default, can be big => use 1 */
+	/* len == max_len */
+	pool_params->pkt.len = size;
+	pool_params->pkt.max_len = size;
+	pool_params->pkt.seg_len = size;
+	pool_params->pkt.align = odp_align;
+	/*
+	 * Reserve space for the event header in each packet's
+	 * ODP-user-area:
+	 */
+	pool_params->pkt.uarea_size = sizeof(event_hdr_t) + uarea_size;
+	/*
+	 * Set the pkt headroom.
+	 * Make sure the alloc-alignment fits into the headroom.
+	 */
+	pool_params->pkt.headroom = pkt_headroom;
+	if (pkt_headroom < align_offset)
+		pool_params->pkt.headroom = align_offset;
+
+	pool_params->pkt.cache_size = cache_size;
+
+	/* Pkt pool statistics */
+	pool_params->stats.all = 0;
+	if (em_shm->opt.pool.statistics_enable) {
+		if (capa->pkt.stats.bit.available)
+			pool_params->stats.bit.available = 1;
+		if (capa->pkt.stats.bit.cache_available)
+			pool_params->stats.bit.cache_available = 1;
+	}
+}
+
+/** Helper to create_subpools() */
+static void set_pool_params_buf(odp_pool_param_t *pool_params /* out */,
+				uint32_t size, uint32_t num, uint32_t cache_size,
+				uint32_t odp_align, uint32_t uarea_size)
+{
+	const odp_pool_capability_t *capa = &em_shm->mpool_tbl.odp_pool_capability;
+
+	odp_pool_param_init(pool_params);
+
+	pool_params->type = ODP_POOL_BUFFER;
+	pool_params->buf.num = num;
+	pool_params->buf.size = size + sizeof(event_hdr_t) + uarea_size;
+	pool_params->buf.align = odp_align;
+	pool_params->buf.cache_size = cache_size;
+
+	/* Buf pool statistics */
+	pool_params->stats.all = 0;
+	if (em_shm->opt.pool.statistics_enable) {
+		if (capa->buf.stats.bit.available)
+			pool_params->stats.bit.available = 1;
+		if (capa->buf.stats.bit.cache_available)
+			pool_params->stats.bit.cache_available = 1;
+	}
+}
+
 static int
 create_subpools(const em_pool_cfg_t *pool_cfg,
 		uint32_t align_offset, uint32_t odp_align,
@@ -610,47 +681,18 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 		char pool_name[ODP_POOL_NAME_LEN];
 		odp_pool_param_t pool_params;
 		uint32_t size = pool_cfg->subpool[i].size;
+		uint32_t num = pool_cfg->subpool[i].num;
 		uint32_t cache_size = pool_cfg->subpool[i].cache_size;
 
-		odp_pool_param_init(&pool_params);
-
 		if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
-			pool_params.type = ODP_POOL_PACKET;
-			/* num == max_num */
-			pool_params.pkt.num = pool_cfg->subpool[i].num;
-			pool_params.pkt.max_num = pool_cfg->subpool[i].num;
-
-			if (size > align_offset)
-				size = size - align_offset;
-			else
-				size = 1; /* 0:default, can be big => use 1 */
-			/* len == max_len */
-			pool_params.pkt.len = size;
-			pool_params.pkt.max_len = size;
-			pool_params.pkt.seg_len = size;
-			pool_params.pkt.align = odp_align;
-			/*
-			 * Reserve space for the event header in each packet's
-			 * ODP-user-area:
-			 */
-			pool_params.pkt.uarea_size = sizeof(event_hdr_t) +
-						     uarea_size;
-			/*
-			 * Set the pkt headroom.
-			 * Make sure the alloc-alignment fits into the headroom.
-			 */
-			pool_params.pkt.headroom = pkt_headroom;
-			if (pkt_headroom < align_offset)
-				pool_params.pkt.headroom = align_offset;
-
-			pool_params.pkt.cache_size = cache_size;
+			set_pool_params_pkt(&pool_params /* out */,
+					    size, num, cache_size,
+					    align_offset, odp_align,
+					    uarea_size, pkt_headroom);
 		} else { /* pool_cfg->event_type == EM_EVENT_TYPE_SW */
-			pool_params.type = ODP_POOL_BUFFER;
-			pool_params.buf.num = pool_cfg->subpool[i].num;
-			pool_params.buf.size = size + sizeof(event_hdr_t) +
-					       uarea_size;
-			pool_params.buf.align = odp_align;
-			pool_params.buf.cache_size = cache_size;
+			set_pool_params_buf(&pool_params /* out */,
+					    size, num, cache_size,
+					    odp_align, uarea_size);
 		}
 
 		snprintf(pool_name, sizeof(pool_name), "%" PRI_POOL ":%d-%s",
@@ -721,11 +763,6 @@ pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
 
 	/* Store the sorted config */
 	mpool_elem->pool_cfg = sorted_cfg;
-
-	/*
-	 * Initialize pool-statistics for this pool
-	 */
-	init_pool_stat(pool);
 
 	/*
 	 * Event payload alignment requirement for the pool

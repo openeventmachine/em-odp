@@ -78,10 +78,10 @@
 /** Samples before adding more groups */
 #define NUM_SAMPLES  8
 
-/** Num events a core processes between samples */
+/** Number of events a core processes between samples */
 #define EVENTS_PER_SAMPLE  0x400000
 
-/** Num events to recv before checking the 'ready'-status of the test-step */
+/** Number of events to recv before checking the 'ready'-status of the test-step */
 #define EVENTS_CHECK_READY_MASK  0xffff
 
 /**
@@ -97,9 +97,7 @@
 typedef union {
 	uint8_t u8[2 * ENV_CACHE_LINE_SIZE] ENV_CACHE_LINE_ALIGNED;
 	struct {
-		int queues;
-		int queue_groups;
-		int step;
+		int num_qgrp; /* Number of queue groups created */
 		int samples;
 		int num_cores;
 		int free_flag;
@@ -121,7 +119,7 @@ COMPILE_TIME_ASSERT((sizeof(test_status_t) % ENV_CACHE_LINE_SIZE) == 0,
 typedef union {
 	uint8_t u8[ENV_CACHE_LINE_SIZE] ENV_CACHE_LINE_ALIGNED;
 	struct {
-		uint64_t events;
+		uint64_t num_events;
 		env_time_t begin_time;
 		env_time_t end_time;
 		env_time_t diff_time;
@@ -243,9 +241,26 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	     em_queue_t queue, void *q_context);
 
 static void
-create_and_link_queues(int num_queues);
+receive_notif_queue_group_created(perf_event_t *perf, em_event_t event);
 
 static void
+receive_notif_all_queue_groups_created(em_event_t event);
+
+static void
+receive_perf_event(env_time_t recv_time, em_event_t event,
+		   perf_event_t *perf, em_queue_t queue, void *q_context);
+
+static inline void
+update_latency(env_time_t recv_time, queue_context_t *q_ctx, perf_event_t *perf,
+	       core_stat_t *const cstat);
+
+static void
+print_sample_statistics(test_status_t *const tstat);
+
+static void
+create_and_link_queues(int num_queues);
+
+static int
 unschedule_and_delete_queues(int num_queues);
 
 /**
@@ -286,7 +301,10 @@ error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 	if (appl_shm->exit_flag && EM_ESCOPE(escope) &&
 	    !EM_ERROR_IS_FATAL(error)) {
 		/* Suppress non-fatal EM-error logs during tear-down */
-		if (escope == EM_ESCOPE_EO_ADD_QUEUE_SYNC) {
+		if (escope == EM_ESCOPE_EO_ADD_QUEUE_SYNC ||
+		    escope == EM_ESCOPE_EO_REMOVE_QUEUE_SYNC ||
+		    escope == EM_ESCOPE_EO_REMOVE_QUEUE_SYNC_DONE_CB ||
+		    escope == EM_ESCOPE_QUEUE_DELETE) {
 			APPL_PRINT("\nExit: suppress queue setup error\n\n");
 			return error;
 		}
@@ -373,7 +391,7 @@ test_start(appl_conf_t *const appl_conf)
 				    1000000.0;
 	perf_shm->test_status.reset_flag = 0;
 	perf_shm->test_status.num_cores = em_core_count();
-	perf_shm->test_status.queue_groups = 0;
+	perf_shm->test_status.num_qgrp = 0;
 
 	env_atomic64_init(&perf_shm->test_status.ready_count);
 	env_atomic64_init(&perf_shm->test_status.freed_count);
@@ -451,10 +469,10 @@ init_queue_groups(int count)
 	em_queue_group_t queue_group;
 	em_status_t stat;
 	perf_event_t *notif_event;
-	int i, ret, queue_groups;
+	int i, ret, num_qgrp;
 	size_t nlen;
 
-	queue_groups = perf_shm->test_status.queue_groups;
+	num_qgrp = perf_shm->test_status.num_qgrp;
 
 	APPL_PRINT("\nCreating %d new queue group(s)\n", count);
 
@@ -491,7 +509,7 @@ init_queue_groups(int count)
 		      "em_event_group_apply():%" PRI_STAT "", stat);
 
 	/* Create new queue groups */
-	for (i = queue_groups; i < (queue_groups + count); i++) {
+	for (i = num_qgrp; i < (num_qgrp + count); i++) {
 		em_notif_t completed_notif_tbl[1];
 
 		/*
@@ -526,7 +544,7 @@ init_queue_groups(int count)
 			exit(EXIT_SUCCESS);
 		}
 		/*
-		 * Update perf_shm->test_status.queue_groups count and
+		 * Update perf_shm->test_status.num_qgrp count and
 		 * perf_shm->queue_group_tbl[] with new qgrp when receiving
 		 * notif event.
 		 */
@@ -569,8 +587,6 @@ test_step(void)
 			return;
 		}
 	}
-
-	perf_shm->test_status.step++;
 }
 
 /**
@@ -608,7 +624,7 @@ stop(void *eo_context, em_eo_t eo)
 
 	APPL_PRINT("EO %" PRI_EO " stopping.\n", eo);
 
-	/* remove and delete all of the EO's queues */
+	/* Remove and delete all of the EO's queues */
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
 	test_fatal_if(ret != EM_OK,
 		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
@@ -628,20 +644,12 @@ static void
 receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	     em_queue_t queue, void *q_context)
 {
-	em_queue_t dest_queue;
-	perf_event_t *perf;
-	queue_context_t *q_ctx;
-	em_status_t ret;
-	uint64_t events;
-	uint64_t freed_count;
-	uint64_t ready_count;
 	env_time_t recv_time;
-	const int core = em_core_id();
-	test_status_t *const tstat = &perf_shm->test_status;
-	core_stat_t *const cstat = &perf_shm->core_stat[core];
 
 	if (MEASURE_LATENCY)
 		recv_time = env_time_global();
+
+	perf_event_t *perf = em_event_pointer(event);
 
 	(void)eo_context;
 	(void)type;
@@ -651,48 +659,89 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 		return;
 	}
 
-	q_ctx = q_context;
-	events = cstat->events;
-	perf = em_event_pointer(event);
-
 	if (unlikely(perf->type == NOTIF_QUEUE_GROUP_CREATED)) {
-		char name[EM_QUEUE_GROUP_NAME_LEN];
-		const int tbl_idx = tstat->queue_groups;
-		em_queue_group_t queue_group =
-			em_queue_group_find(perf->qgrp_name);
-		int cmp;
-
-		test_fatal_if(queue_group == EM_QUEUE_GROUP_UNDEF,
-			      "QGrp:%s not found!", perf->qgrp_name);
-		em_queue_group_get_name(queue_group, name, sizeof(name));
-		cmp = strncmp(perf->qgrp_name, name, sizeof(name));
-		test_fatal_if(cmp != 0, "Qgrp name check fails! %s != %s",
-			      perf->qgrp_name, name);
-
-		perf_shm->queue_group_tbl[tbl_idx] = queue_group;
-		tstat->queue_groups++;
-
-		APPL_PRINT("New group name: %s\n"
-			   "Queue group created - total num:%d\n",
-			   name, tstat->queue_groups);
-		em_free(event);
+		receive_notif_queue_group_created(perf, event);
 		return;
 	}
+
 	if (unlikely(perf->type == NOTIF_ALL_QUEUE_GROUPS_CREATED)) {
-		APPL_PRINT("New queue group(s) ready\n");
-		ret = em_event_group_delete(perf_shm->eo_context.event_group);
-		test_fatal_if(ret != EM_OK,
-			      "egrp:%" PRI_EGRP " delete:%" PRI_STAT "",
-			      perf_shm->eo_context.event_group, ret);
-		em_free(event);
-		next_test_step();
+		receive_notif_all_queue_groups_created(event);
 		return;
 	}
 
-	events++;
+	/* perf->type == PERF_EVENT */
+	receive_perf_event(recv_time, event, perf, queue, q_context);
+}
+
+/*
+ * Verify the receive queue group and update perf_shm->test_status.num_qgrp
+ * and perf_shm->queue_group_tbl[] with new qgrp.
+ */
+static void receive_notif_queue_group_created(perf_event_t *perf, em_event_t event)
+{
+	int cmp;
+	char name[EM_QUEUE_GROUP_NAME_LEN];
+
+	test_status_t *const tstat = &perf_shm->test_status;
+	const int tbl_idx = tstat->num_qgrp;
+	em_queue_group_t queue_group = em_queue_group_find(perf->qgrp_name);
+
+	test_fatal_if(queue_group == EM_QUEUE_GROUP_UNDEF,
+		      "QGrp:%s not found!", perf->qgrp_name);
+
+	em_queue_group_get_name(queue_group, name, sizeof(name));
+	cmp = strncmp(perf->qgrp_name, name, sizeof(name));
+	test_fatal_if(cmp != 0, "Qgrp name check fails! %s != %s",
+		      perf->qgrp_name, name);
+
+	perf_shm->queue_group_tbl[tbl_idx] = queue_group;
+	tstat->num_qgrp++;
+
+	APPL_PRINT("New group name: %s\n"
+		   "Queue group created - total num:%d\n",
+		   name, tstat->num_qgrp);
+
+	em_free(event);
+}
+
+static void receive_notif_all_queue_groups_created(em_event_t event)
+{
+	em_status_t ret;
+
+	APPL_PRINT("New queue group(s) ready\n");
+
+	ret = em_event_group_delete(perf_shm->eo_context.event_group);
+	test_fatal_if(ret != EM_OK,
+		      "egrp:%" PRI_EGRP " delete:%" PRI_STAT "",
+		      perf_shm->eo_context.event_group, ret);
+
+	em_free(event);
+
+	/* Create queues, link them to the created queue groups, send step
+	 * events evenly to the created queues.
+	 */
+	next_test_step();
+}
+
+static void receive_perf_event(env_time_t recv_time, em_event_t event,
+			       perf_event_t *perf, em_queue_t queue,
+			       void *q_context)
+{
+	em_status_t ret;
+	em_queue_t dest_queue;
+	uint64_t freed_count;
+	uint64_t ready_count;
+	queue_context_t *q_ctx;
+	const int core = em_core_id();
+	test_status_t *const tstat = &perf_shm->test_status;
+	core_stat_t *const cstat = &perf_shm->core_stat[core];
+	uint64_t num_events = cstat->num_events;
+
+	q_ctx = q_context;
+	num_events++;
 
 	if (unlikely(tstat->reset_flag)) {
-		events = 0;
+		num_events = 0;
 
 		/* Free all old events before allocating new ones. */
 		if (unlikely(tstat->free_flag)) {
@@ -728,119 +777,50 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 			}
 		}
 	/* First event resets counters. */
-	} else if (unlikely(events == 1)) {
+	} else if (unlikely(num_events == 1)) {
 		cstat->begin_time = env_time_global();
 		cstat->latency_hi = ENV_TIME_NULL;
 		cstat->latency_lo = ENV_TIME_NULL;
 		core_state = CORE_STATE_MEASURE;
-	} else if (unlikely(events == EVENTS_PER_SAMPLE)) {
+	} else if (unlikely(num_events == EVENTS_PER_SAMPLE)) {
 		/*
 		 * Measurement done for this step. Store results and
 		 * continue receiving events until all cores are done.
 		 */
-		env_time_t diff_time, begin_time, end_time;
-
 		cstat->end_time = env_time_global();
+		cstat->diff_time = env_time_diff(cstat->end_time, cstat->begin_time);
 
-		end_time = cstat->end_time;
-		begin_time = cstat->begin_time;
-		diff_time = env_time_diff(end_time, begin_time);
-
-		cstat->diff_time = diff_time;
+		/*
+		 * Update the latency for the last measurement round.
+		 */
+		update_latency(recv_time, q_ctx, perf, cstat);
 
 		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
 
 		/*
 		 * Check whether all cores are done with the step, and if done
-		 * proceed to the next step.
+		 * proceed to the next sample step.
 		 */
 		if (unlikely((int)ready_count == tstat->num_cores)) {
-			env_time_t latency_hi;
-			env_time_t latency_lo;
-			double cycles_per_event, events_per_sec;
-			env_time_t total_time = ENV_TIME_NULL;
-			const uint64_t total_events =
-				(uint64_t)tstat->num_cores * EVENTS_PER_SAMPLE;
-
-			/* No real need for atomicity, only ran on last core*/
-			env_atomic64_init(&tstat->ready_count);
-
-			if (MEASURE_LATENCY) {
-				latency_hi = ENV_TIME_NULL;
-				latency_lo = ENV_TIME_NULL;
-			}
-
-			for (int i = 0; i < tstat->num_cores; i++) {
-				core_stat_t *cstat = &perf_shm->core_stat[i];
-
-				total_time =
-				env_time_sum(total_time, cstat->diff_time);
-				if (MEASURE_LATENCY) {
-					latency_hi =
-					env_time_sum(latency_hi,
-						     cstat->latency_hi);
-					latency_lo =
-					env_time_sum(latency_lo,
-						     cstat->latency_lo);
-				}
-			}
-
-			cycles_per_event =
-			(double)env_time_to_cycles(total_time, tstat->cpu_hz) /
-			(double)total_events;
-			events_per_sec = tstat->mhz * tstat->num_cores /
-					 cycles_per_event; /* Million events/s*/
-
-			if (MEASURE_LATENCY) {
-				const double latency_per_hi =
-				    (double)env_time_to_cycles(latency_hi,
-							       tstat->cpu_hz) /
-				    (double)total_events;
-				const double latency_per_lo =
-				    (double)env_time_to_cycles(latency_lo,
-							       tstat->cpu_hz) /
-				    (double)total_events;
-				APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
-					   "Latency: Hi-prio=%.0f Lo-prio=%.0f \t"
-					   "@%.0f MHz(%" PRIu64 ")\n",
-					   cycles_per_event, events_per_sec,
-					   latency_per_hi, latency_per_lo,
-					   tstat->mhz,
-					   tstat->print_count++);
-			} else {
-				APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
-					   "@%.0f MHz(%" PRIu64 ")\n",
-					   cycles_per_event, events_per_sec,
-					   tstat->mhz,
-					   tstat->print_count++);
-			}
+			print_sample_statistics(tstat);
 
 			tstat->samples++;
-
 			if (tstat->samples == NUM_SAMPLES)
 				tstat->samples = 0;
 
 			tstat->reset_flag = 1;
 		}
 	}
-	cstat->events = events;
+	cstat->num_events = num_events;
 
 	dest_queue = q_ctx->next_queue;
 	test_fatal_if(queue != q_ctx->this_queue, "Queue config error");
 
 	if (MEASURE_LATENCY) {
-		if (unlikely(!tstat->reset_flag)) {
-			env_time_t diff_time;
+		if (likely(num_events < EVENTS_PER_SAMPLE) &&
+		    likely(!tstat->reset_flag))
+			update_latency(recv_time, q_ctx, perf, cstat);
 
-			diff_time = env_time_diff(recv_time, perf->send_time);
-
-			if (q_ctx->prio == EM_QUEUE_PRIO_HIGH)
-				cstat->latency_hi =
-				env_time_sum(cstat->latency_hi, diff_time);
-			else
-				cstat->latency_lo =
-				env_time_sum(cstat->latency_lo, diff_time);
-		}
 		perf->send_time = env_time_global();
 	}
 
@@ -853,14 +833,80 @@ receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 }
 
+/* Update the send-enqueue-schedule-receive latency */
+static inline void update_latency(env_time_t recv_time, queue_context_t *q_ctx,
+				  perf_event_t *perf, core_stat_t *const cstat)
+{
+	env_time_t diff_time;
+
+	diff_time = env_time_diff(recv_time, perf->send_time);
+
+	if (q_ctx->prio == EM_QUEUE_PRIO_HIGH)
+		cstat->latency_hi = env_time_sum(cstat->latency_hi, diff_time);
+	else
+		cstat->latency_lo = env_time_sum(cstat->latency_lo, diff_time);
+}
+
+/* Print statistics for one sample step */
+static void print_sample_statistics(test_status_t *const tstat)
+{
+	env_time_t latency_hi;
+	env_time_t latency_lo;
+	double cycles_per_event, events_per_sec;
+	env_time_t total_time = ENV_TIME_NULL;
+	const uint64_t total_events = (uint64_t)tstat->num_cores * EVENTS_PER_SAMPLE;
+
+	/* No real need for atomicity, only ran on last core */
+	env_atomic64_init(&tstat->ready_count);
+
+	if (MEASURE_LATENCY) {
+		latency_hi = ENV_TIME_NULL;
+		latency_lo = ENV_TIME_NULL;
+	}
+
+	for (int i = 0; i < tstat->num_cores; i++) {
+		core_stat_t *cstat = &perf_shm->core_stat[i];
+
+		total_time = env_time_sum(total_time, cstat->diff_time);
+		if (MEASURE_LATENCY) {
+			latency_hi = env_time_sum(latency_hi, cstat->latency_hi);
+			latency_lo = env_time_sum(latency_lo, cstat->latency_lo);
+		}
+	}
+
+	cycles_per_event =
+	(double)env_time_to_cycles(total_time, tstat->cpu_hz) / (double)total_events;
+	events_per_sec = tstat->mhz * tstat->num_cores / cycles_per_event;
+	if (MEASURE_LATENCY) {
+		const double latency_per_hi =
+			(double)env_time_to_cycles(latency_hi, tstat->cpu_hz) /
+			(double)total_events;
+		const double latency_per_lo =
+			(double)env_time_to_cycles(latency_lo, tstat->cpu_hz) /
+			(double)total_events;
+		APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
+			   "Latency: Hi-prio=%.0f Lo-prio=%.0f \t"
+			   "@%.0f MHz(%" PRIu64 ")\n",
+			   cycles_per_event, events_per_sec,
+			   latency_per_hi, latency_per_lo,
+			   tstat->mhz, tstat->print_count++);
+	} else {
+		APPL_PRINT("Cycles/Event: %.0f  Events/s: %.2f M\t"
+			   "@%.0f MHz(%" PRIu64 ")\n",
+			   cycles_per_event, events_per_sec,
+			   tstat->mhz, tstat->print_count++);
+	}
+}
+
 /**
  * Remap queues and move to the next test step.
  */
 static void
 next_test_step(void)
 {
-	if (perf_shm->test_status.queue_groups > MIN_NUM_QUEUE_GROUPS)
-		unschedule_and_delete_queues(NUM_QUEUES);
+	if (perf_shm->test_status.num_qgrp > MIN_NUM_QUEUE_GROUPS)
+		if (unschedule_and_delete_queues(NUM_QUEUES))
+			return; /* appl_shm->exit_flag == 1 */
 
 	create_and_link_queues(NUM_QUEUES);
 
@@ -871,10 +917,10 @@ next_test_step(void)
 }
 
 /**
- * Creates a number of EM queues, associates them with the test EO, and
- * links them.
+ * Create a given number of EM queues, associate them with the test EO, and
+ * link them.
  *
- * @param num_queues  Queue count
+ * @param num_queues  Number of queues to be created
  */
 static void
 create_and_link_queues(int num_queues)
@@ -895,7 +941,7 @@ create_and_link_queues(int num_queues)
 			prio = EM_QUEUE_PRIO_HIGH;
 
 		queue_group = perf_shm->queue_group_tbl[i %
-					  perf_shm->test_status.queue_groups];
+					  perf_shm->test_status.num_qgrp];
 
 		queue = em_queue_create("queue", EM_QUEUE_TYPE_ATOMIC,
 					prio, queue_group, NULL);
@@ -919,6 +965,8 @@ create_and_link_queues(int num_queues)
 				      "em_eo_add_queue_sync():%" PRI_STAT "\n"
 				      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
 				      ret, perf_shm->eo, queue);
+
+			/* appl_shm->exit_flag == 1 */
 			em_queue_delete(queue);
 			return;
 		}
@@ -935,16 +983,17 @@ create_and_link_queues(int num_queues)
 	q_ctx->next_queue = prev_queue;
 
 	APPL_PRINT("\nQueues: %i, Queue groups: %i\n",
-		   num_queues, perf_shm->test_status.queue_groups);
+		   num_queues, perf_shm->test_status.num_qgrp);
 }
 
 /**
- * Unschedule and delete a number of EM queues. Assumes queues are already
+ * Unschedule and delete a given number of EM queues. Assume queues are already
  * empty.
  *
- * @param num_queues  Queue count
+ * @param num_queues  Number of queues to be unscheduled and deleted
+ * @return 0 on success, -1 if appl_shm->exit_flag is set
  */
-static void
+static int
 unschedule_and_delete_queues(int num_queues)
 {
 	em_status_t ret;
@@ -956,16 +1005,30 @@ unschedule_and_delete_queues(int num_queues)
 
 		ret = em_eo_remove_queue_sync(perf_shm->eo, queue);
 		if (unlikely(ret != EM_OK)) {
+			/* When appl_shm->exit_flag == 1, the queue might have
+			 * been removed in em_eo_remove_queue_all_sync() from
+			 * eo stop() executed by another core.
+			 */
 			test_fatal_if(!appl_shm->exit_flag,
 				      "em_eo_remove_queue_sync failed:\t"
 				      "EO:%" PRI_EO " queue:%" PRI_QUEUE "",
 				      perf_shm->eo, queue);
-			return;
+			return -1; /* appl_shm->exit_flag == 1 */
 		}
 
 		ret = em_queue_delete(queue);
-		test_fatal_if(ret != EM_OK, "em_queue_delete():%" PRI_STAT "\t"
-			      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
-			      ret, perf_shm->eo, queue);
+		if (unlikely(ret != EM_OK)) {
+			/* When appl_shm->exit_flag == 1, the queue might have
+			 * been deleted already in em_eo_delete() from test_stop()
+			 * executed by another core.
+			 */
+			test_fatal_if(!appl_shm->exit_flag,
+				      "em_queue_delete():%" PRI_STAT "\t"
+				      "EO:%" PRI_EO " Queue:%" PRI_QUEUE "",
+				      ret, perf_shm->eo, queue);
+			return -1; /* appl_shm->exit_flag == 1 */
+		}
 	}
+
+	return 0;
 }

@@ -147,7 +147,6 @@ em_alloc_multi(em_event_t events[/*out*/], int num,
 void
 em_free(em_event_t event)
 {
-	bool esv_ena = esv_enabled();
 	odp_event_t odp_event;
 
 	if (unlikely(event == EM_EVENT_UNDEF)) {
@@ -159,13 +158,10 @@ em_free(em_event_t event)
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_free(&event, 1);
 
-	if (esv_ena || em_shm->opt.pool.statistics_enable) {
+	if (esv_enabled()) {
 		event_hdr_t *const ev_hdr = event_to_hdr(event);
 
-		if (esv_ena)
-			evstate_free(event, ev_hdr, EVSTATE__FREE);
-		if (em_shm->opt.pool.statistics_enable)
-			poolstat_dec_evhdr(ev_hdr);
+		evstate_free(event, ev_hdr, EVSTATE__FREE);
 	}
 
 	odp_event = event_em2odp(event);
@@ -197,18 +193,13 @@ void em_free_multi(const em_event_t events[], int num)
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_free(events, num);
 
-	bool esv_ena = esv_enabled();
 	odp_event_t odp_events[num];
 
-	if (esv_ena || em_shm->opt.pool.statistics_enable) {
+	if (esv_enabled()) {
 		event_hdr_t *ev_hdrs[num];
 
 		event_to_hdr_multi(events, ev_hdrs, num);
-		if (esv_ena)
-			evstate_free_multi(events, ev_hdrs, num,
-					   EVSTATE__FREE_MULTI);
-		if (em_shm->opt.pool.statistics_enable)
-			poolstat_dec_evhdr_multi(ev_hdrs, num);
+		evstate_free_multi(events, ev_hdrs, num, EVSTATE__FREE_MULTI);
 	}
 
 	events_em2odp(events, odp_events/*out*/, num);
@@ -741,9 +732,6 @@ void em_event_mark_free(em_event_t event)
 	event_hdr_t *const ev_hdr = event_to_hdr(event);
 
 	evstate_free(event, ev_hdr, EVSTATE__MARK_FREE);
-
-	if (em_shm->opt.pool.statistics_enable)
-		poolstat_dec_evhdr(ev_hdr);
 }
 
 void em_event_unmark_free(em_event_t event)
@@ -760,9 +748,6 @@ void em_event_unmark_free(em_event_t event)
 	event_hdr_t *const ev_hdr = event_to_hdr(event);
 
 	evstate_unmark_free(event, ev_hdr);
-
-	if (em_shm->opt.pool.statistics_enable)
-		poolstat_inc_evhdr(ev_hdr);
 }
 
 void em_event_mark_free_multi(const em_event_t events[], int num)
@@ -795,9 +780,6 @@ void em_event_mark_free_multi(const em_event_t events[], int num)
 
 	event_to_hdr_multi(events, ev_hdrs, num);
 	evstate_free_multi(events, ev_hdrs, num, EVSTATE__MARK_FREE_MULTI);
-
-	if (em_shm->opt.pool.statistics_enable)
-		poolstat_dec_evhdr_multi(ev_hdrs, num);
 }
 
 void em_event_unmark_free_multi(const em_event_t events[], int num)
@@ -830,9 +812,6 @@ void em_event_unmark_free_multi(const em_event_t events[], int num)
 
 	event_to_hdr_multi(events, ev_hdrs, num);
 	evstate_unmark_free_multi(events, ev_hdrs, num);
-
-	if (em_shm->opt.pool.statistics_enable)
-		poolstat_inc_evhdr_multi(ev_hdrs, num);
 }
 
 em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)

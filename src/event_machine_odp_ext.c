@@ -81,7 +81,7 @@ void em_odp_events2odp(const em_event_t events[/*num*/],
 
 em_event_t em_odp_event2em(odp_event_t odp_event)
 {
-	em_event_t event = event_init_odp(odp_event, false/*!is_extev*/);
+	em_event_t event = event_init_odp(odp_event, false/*!is_extev*/, NULL);
 
 	return event;
 }
@@ -100,7 +100,7 @@ void em_odp_events2em(const odp_event_t odp_events[/*num*/],
 
 int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
 {
-	mpool_elem_t *pool_elem = pool_elem_get(pool);
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
 
 	if (unlikely(!pool_elem || !pool_allocated(pool_elem) ||
 		     !odp_pools || num <= 0)) {

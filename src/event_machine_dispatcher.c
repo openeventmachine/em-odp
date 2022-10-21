@@ -31,6 +31,36 @@
 #include "em_include.h"
 
 /*
+ * em_dispatch() helper: check if the user provided callback functions
+ *			 'input_poll' and 'output_drain' should be called in
+ *			 this dispatch round
+ */
+static inline bool
+check_poll_drain_round(unsigned int interval, odp_time_t poll_drain_period)
+{
+	if (interval > 1) {
+		em_locm_t *const locm = &em_locm;
+
+		locm->poll_drain_dispatch_cnt--;
+		if (locm->poll_drain_dispatch_cnt == 0) {
+			odp_time_t now = odp_time_global();
+			odp_time_t period;
+
+			period = odp_time_diff(now, locm->poll_drain_dispatch_last_run);
+			locm->poll_drain_dispatch_cnt = interval;
+
+			if (odp_time_cmp(poll_drain_period, period) < 0) {
+				locm->poll_drain_dispatch_last_run = now;
+				return true;
+			}
+		}
+	} else {
+		return true;
+	}
+	return false;
+}
+
+/*
  * em_dispatch() helper: dispatch and call the user provided callback functions
  *                       'input_poll' and 'output_drain'
  */
@@ -47,10 +77,16 @@ dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
 	int round_events;
 	uint64_t events = 0;
 	uint64_t i;
+	bool do_poll_drain_round;
+	const unsigned int poll_interval = em_shm->opt.dispatch.poll_drain_interval;
+	const odp_time_t poll_period = em_shm->opt.dispatch.poll_drain_interval_time;
 
 	for (i = 0; do_forever || i < rounds;) {
 		dispatched_events = 0;
-		if (do_input_poll)
+
+		do_poll_drain_round = check_poll_drain_round(poll_interval, poll_period);
+
+		if (do_input_poll && do_poll_drain_round)
 			rx_events = input_poll();
 
 		do {
@@ -61,7 +97,7 @@ dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
 			 round_events > 0 && (do_forever || i < rounds));
 
 		events += dispatched_events; /* inc ret value*/
-		if (do_output_drain)
+		if (do_output_drain && do_poll_drain_round)
 			(void)output_drain();
 	}
 

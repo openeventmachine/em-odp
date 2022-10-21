@@ -65,11 +65,11 @@ typedef struct queue_group_elem_t {
 	em_core_mask_t core_mask;
 	/** Queue list, all queues that belong to this queue group */
 	list_node_t queue_list;
-	/** Queue pool elem for linking free queues for queue_alloc()*/
+	/** Queue group pool elem for linking free queue groups for queue_group_alloc()*/
 	objpool_elem_t queue_group_pool_elem;
 	/** Number of queues that belong to this queue group */
 	env_atomic32_t num_queues;
-	/** is queue group deletion ongoing? true/false */
+	/** Is queue group deletion ongoing? true/false */
 	bool ongoing_delete;
 	/** Queue group elem lock */
 	env_spinlock_t lock;
@@ -81,7 +81,7 @@ COMPILE_TIME_ASSERT(sizeof(queue_group_elem_t) % ENV_CACHE_LINE_SIZE == 0,
 		    QUEUE_GROUP_ELEM_T__SIZE_ERROR);
 
 /**
- * EM queue element table
+ * EM queue group element table
  */
 typedef struct queue_group_tbl_t {
 	/** Queue group element table */

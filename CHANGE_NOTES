@@ -53,6 +53,73 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v2.9.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.9 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * Minor API change: documentation clean up and a define value increase.
+
+- EM config file options - config/em-odp.conf:
+ - Config file version number bumped up to "0.0.14", see new options below.
+
+- EM pool statistics update
+  - EM Pool statistics to rely on ODP pool statistics.
+    EM does not have to maintain pool statistics since ODP provides the
+    same (or extended) information. The EM API em_pool_info() remains the same,
+    it now uses ODP pool statistics under the hood instead.
+
+- Dispatch, init: enforce ctrl queue polling on first dispatch.
+  - The first call to em_dispatch() on each core will trigger a poll of the
+    internal unscheduled ctrl queues.
+  - See "Changed EM internal communication" in the release notes for v2.8.0
+    below for more details on EM's unscheduled ctrl queues.
+
+- EM Command Line Interface (EM CLI) update
+  - Further EM CLI commands added, use the command "help" to see all available
+    commands:
+	(<em-odp.conf>: cli.enable = true)
+        $> telnet localhost 55555
+        EM-ODP> help
+        Commands available:
+          help                 Show available commands
+          quit                 Disconnect
+          logout               Disconnect
+          exit                 Exit from current mode
+          history              Show a list of previously run commands
+          enable               Turn on privileged commands
+          ...
+          <odp-cmds>
+          ...
+          em_agrp_print        [a|i <ag id>|n <ag name>|h]
+          em_eo_print          [a|i <eo id>|n <eo name>|h]
+          em_egrp_print
+          em_info_print        [a|p|c|h]
+          em_pool_print        [a|i <pool id>|n <pool name>|h]
+          em_queue_print       [a|c|h]
+          em_qgrp_print        [a|i <qgrp id>|n <qgrp name>|h]
+          em_core_print
+  - See "EM Command Line Interface (EM CLI)" in the release notes for v2.8.0
+    below for more details on usage.
+
+- Rate limit EM's input-poll and output-drain callback functions.
+  - Config file options to control how often the user provided callback
+    functions are called (see config/em-odp.conf for full documentation):
+    - Core local interval for calling input poll and output drain functions
+      (in dispatch rounds):
+      poll_drain_interval = 1
+    - Core local interval for calling input poll and output drain functions
+      (in nanoseconds):
+      poll_drain_interval_ns = 1000000L
+    - Default values currently selected so that functionality is unchanged
+      compared to earlier releases.
+
+- EM timer updated to use new ODP APIs
+  - EM timer updated to internally use odp_timer_start() (instead of the now
+    deprecated odp_timer_set_abs())
+
+-  Test files and scripts moved into the em-odp repo (robot-tests/, scripts/)
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v2.8.0
 --------------------------------------------------------------------------------
 - Support for EM API v2.8 (em-odp/include), see API changes in

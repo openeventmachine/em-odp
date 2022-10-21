@@ -182,6 +182,7 @@ env/env_sharedmem.c \
 misc/objpool.c \
 misc/objpool.h \
 misc/list.h \
+misc/optparse.h \
 	\
 add-ons/event_timer/event_machine_timer.c \
 add-ons/event_timer/em_timer.c \

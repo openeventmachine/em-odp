@@ -345,11 +345,11 @@ typedef int (*em_output_drain_func_t)(void);
  * The function can use em_sched_context_type_current() if it needs information
  * about e.g. ordering requirements set by the parent scheduled queue.
  *
- * @param events        List of events to be sent out (ptr to array of events)
- * @param num           Number of events (positive integer)
- * @param output_queue  Output queue that the events were sent to (em_send*())
- * @param flags         Output flags/options to indicate e.g. ordering
- *                      requirement of the source context.
+ * @param events         List of events to be sent out (ptr to array of events)
+ * @param num            Number of events (positive integer)
+ * @param output_queue   Output queue that the events were sent to (em_send*())
+ * @param output_fn_args Extra arguments to indicate e.g. ordering requirement
+ *                       of the source context.
  *
  * @return number of events successfully sent (equal to num if all successful)
  */

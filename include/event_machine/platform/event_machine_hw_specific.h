@@ -79,94 +79,86 @@ em_get_type_minor(em_event_type_t type)
 }
 
 /*
- * Core mask manipulation defines, prototypes or inlined functions
+ * Core mask manipulation functions
  */
 
 /**
  * Zero the whole mask.
  *
- * @param mask          Core mask
+ * @param[out] mask  Core mask to zero (clear)
  */
-void
-em_core_mask_zero(em_core_mask_t *mask);
+void em_core_mask_zero(em_core_mask_t *mask);
 
 /**
  * Set a bit in the mask.
  *
- * @param core          Core id
- * @param mask          Core mask
+ * @param      core  Core id
+ * @param[out] mask  Core mask
  */
-void
-em_core_mask_set(int core, em_core_mask_t *mask);
+void em_core_mask_set(int core, em_core_mask_t *mask);
 
 /**
  * Clear a bit in the mask.
  *
- * @param core          Core id
- * @param mask          Core mask
+ * @param      core  Core id
+ * @param[out] mask  Core mask
  */
-void
-em_core_mask_clr(int core, em_core_mask_t *mask);
+void em_core_mask_clr(int core, em_core_mask_t *mask);
 
 /**
  * Test if a bit is set in the mask.
  *
- * @param core          Core id
- * @param mask          Core mask
+ * @param core  Core id
+ * @param mask  Core mask
  *
  * @return Non-zero if core id is set in the mask
  */
-int
-em_core_mask_isset(int core, const em_core_mask_t *mask);
+int em_core_mask_isset(int core, const em_core_mask_t *mask);
 
 /**
  * Test if the mask is all zero.
  *
- * @param mask          Core mask
+ * @param mask  Core mask
  *
  * @return Non-zero if the mask is all zero
  */
-int
-em_core_mask_iszero(const em_core_mask_t *mask);
+int em_core_mask_iszero(const em_core_mask_t *mask);
 
 /**
  * Test if two masks are equal
  *
- * @param mask1         First core mask
- * @param mask2         Second core mask
+ * @param mask1  First core mask
+ * @param mask2  Second core mask
  *
  * @return Non-zero if the two masks are equal
  */
-int
-em_core_mask_equal(const em_core_mask_t *mask1, const em_core_mask_t *mask2);
+int em_core_mask_equal(const em_core_mask_t *mask1,
+		       const em_core_mask_t *mask2);
 
 /**
  * Set a range (0...count-1) of bits in the mask.
  *
- * @param count         Number of bits to set
- * @param mask          Core mask
+ * @param      count  Number of bits to set
+ * @param[out] mask   Core mask
  */
-void
-em_core_mask_set_count(int count, em_core_mask_t *mask);
+void em_core_mask_set_count(int count, em_core_mask_t *mask);
 
 /**
  * Copy core mask
  *
- * @param dst           Destination core mask
- * @param src           Source core mask
+ * @param[out] dst  Destination core mask
+ * @param      src  Source core mask
  */
-void
-em_core_mask_copy(em_core_mask_t *dst, const em_core_mask_t *src);
+void em_core_mask_copy(em_core_mask_t *dst, const em_core_mask_t *src);
 
 /**
  * Count the number of bits set in the mask.
  *
- * @param mask          Core mask
+ * @param mask  Core mask
  *
  * @return Number of bits set
  */
-int
-em_core_mask_count(const em_core_mask_t *mask);
+int em_core_mask_count(const em_core_mask_t *mask);
 
 /**
  * Set specified bits from 'bits[]' in core mask.
@@ -179,15 +171,14 @@ em_core_mask_count(const em_core_mask_t *mask);
  * ...
  * cores 0-127: bits[0]=0xffffffffffffffff, bits[1]=0xffffffffffffffff (len=2)
  * ...
- * @param bits  Array of uint64_t:s containing the bits to set in the core mask
- * @param len   Number of array elements in bits[].
- * @param mask  Core mask to set.
+ * @param      bits  Array of uint64_t:s with the bits to set in the core mask
+ * @param      len   Number of array elements in bits[].
+ * @param[out] mask  Core mask to set.
  *
  * @note bits ar 'or'ed into mask, so any previously set bits will remain set.
- * @note implementation currently limited to a single uint64_t, i.e. len = 1.
  */
-void
-em_core_mask_set_bits(const uint64_t bits[], int len, em_core_mask_t *mask);
+void em_core_mask_set_bits(const uint64_t bits[], int len,
+			   em_core_mask_t *mask);
 
 /**
  * Get core mask, stored in a uint64_t array for the user
@@ -206,22 +197,20 @@ em_core_mask_set_bits(const uint64_t bits[], int len, em_core_mask_t *mask);
  *
  * @return The number of uint64_t:s written into bits[].
  */
-int
-em_core_mask_get_bits(uint64_t bits[/*out*/], int len,
-		      const em_core_mask_t *mask);
+int em_core_mask_get_bits(uint64_t bits[/*out*/], int len,
+			  const em_core_mask_t *mask);
 
 /**
  * Set bits in a mask according to a given string.
  *
- * @param mask_str      String containing '0xcoremask' to set
- * @param mask          Core mask to set
+ * @param      mask_str  String containing '0xcoremask' to set
+ * @param[out] mask      Core mask to set
  *
  * @return Zero (0) on success, non-zero on error.
  *
  * @note bits ar 'or'ed into mask, so any previously set bits will remain set.
  */
-int
-em_core_mask_set_str(const char *mask_str, em_core_mask_t *mask);
+int em_core_mask_set_str(const char *mask_str, em_core_mask_t *mask);
 
 /**
  * Get core mask in string format
@@ -230,58 +219,54 @@ em_core_mask_set_str(const char *mask_str, em_core_mask_t *mask);
  * @param      len       Length of 'mask_str'
  * @param      mask      Core mask to convert to string format
  */
-void
-em_core_mask_tostr(char *mask_str /*out*/, int len, const em_core_mask_t *mask);
+void em_core_mask_tostr(char *mask_str /*out*/, int len,
+			const em_core_mask_t *mask);
 
 /**
  * Return the index (position) of the Nth set bit in the core mask
  *
- * @param n         Nth set bit, note n=1 means first set bit, n=[1...MaxCores]
- * @param mask      Core mask
+ * @param n     Nth set bit, note n=1 means first set bit, n=[1...MaxCores]
+ * @param mask  Core mask
  *
  * @return  Index of the Nth set bit, <0 on error or if no such bit.
  */
-int
-em_core_mask_idx(int n, const em_core_mask_t *mask);
+int em_core_mask_idx(int n, const em_core_mask_t *mask);
 
 /**
  * Bitwise AND operation on two masks, store the result in 'dst'
  *
  * dst = src1 & src2
  *
- * @param dst           Destination core mask, result is stored here
- * @param src1          Source mask #1
- * @param src2          Source mask #2
+ * @param[out] dst   Destination core mask, result is stored here
+ * @param      src1  Source mask #1
+ * @param      src2  Source mask #2
  */
-void
-em_core_mask_and(em_core_mask_t *dst, const em_core_mask_t *src1,
-		 const em_core_mask_t *src2);
+void em_core_mask_and(em_core_mask_t *dst, const em_core_mask_t *src1,
+		      const em_core_mask_t *src2);
 
 /**
  * Bitwise OR operation on two masks, store the result in 'dst'
  *
  * dst = src1 | src2
  *
- * @param dst           Destination core mask, result is stored here
- * @param src1          Source mask #1
- * @param src2          Source mask #2
+ * @param[out] dst   Destination core mask, result is stored here
+ * @param      src1  Source mask #1
+ * @param      src2  Source mask #2
  */
-void
-em_core_mask_or(em_core_mask_t *dst, const em_core_mask_t *src1,
-		const em_core_mask_t *src2);
+void em_core_mask_or(em_core_mask_t *dst, const em_core_mask_t *src1,
+		     const em_core_mask_t *src2);
 
 /**
  * Bitwise XOR operation on two masks, store the result in 'dst'
  *
  * dst = src1 ^ src2
  *
- * @param dst           Destination core mask, result is stored here
- * @param src1          Source mask #1
- * @param src2          Source mask #2
+ * @param[out] dst   Destination core mask, result is stored here
+ * @param      src1  Source mask #1
+ * @param      src2  Source mask #2
  */
-void
-em_core_mask_xor(em_core_mask_t *dst, const em_core_mask_t *src1,
-		 const em_core_mask_t *src2);
+void em_core_mask_xor(em_core_mask_t *dst, const em_core_mask_t *src1,
+		      const em_core_mask_t *src2);
 
 #ifdef __cplusplus
 }

@@ -47,7 +47,7 @@
  * which to receive all events, including the notification events. The event
  * group fork-join mechanism does not care about the used queues. However,
  * it's basically a counter of events sent using a certain event group id.
- * In a more complex example each data event could be send from different
+ * In a more complex example each data event could be sent from different
  * EO:s to different queues and the final notification event sent yet to
  * another queue.
  */

@@ -119,6 +119,19 @@ typedef enum startup_mode {
 } startup_mode_t;
 
 /**
+ * @brief Packet input mode
+ *
+ * Enables testing different packet-IO input modes
+ */
+typedef enum pktin_mode_t {
+	DIRECT_RECV,
+	PLAIN_QUEUE,
+	SCHED_PARALLEL,
+	SCHED_ATOMIC,
+	SCHED_ORDERED,
+} pktin_mode_t;
+
+/**
  * Application configuration
  */
 typedef struct {
@@ -140,6 +153,8 @@ typedef struct {
 
 	/** Packet I/O parameters */
 	struct {
+		/** Packet input mode */
+		pktin_mode_t in_mode;
 		/** Interface count */
 		int if_count;
 		/** Interface names + placeholder for '\0' */

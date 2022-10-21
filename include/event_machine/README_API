@@ -6,6 +6,14 @@ EM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 -------------------------------------------------------------------------------
+API 2.9 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=9)
+-------------------------------------------------------------------------------
+Backwards compatible with EM 2.8 API
+
+1. API documentation clean-up.
+2. The define EM_MAX_QUEUES increased from 960 to 1024.
+
+-------------------------------------------------------------------------------
 API 2.8 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=8)
 -------------------------------------------------------------------------------
 Backwards compatible with EM 2.7 API

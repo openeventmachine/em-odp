@@ -238,44 +238,27 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 		return EM_OK; /* no statistics, return */
 
 	/* EM pool usage statistics _enabled_ - collect it: */
-	const int cores = em_core_count();
-	const int pool_idx = pool_hdl2idx(pool);
-	mpool_statistics_t pool_stat[cores];
-
-	/* copy pool-statistics from all cores and work on a local snapshot */
-	memcpy(pool_stat, em_shm->mpool_tbl.pool_stat_core,
-	       sizeof(pool_stat));
-
 	for (int i = 0; i < pool_elem->num_subpools; i++) {
 		const uint64_t num = pool_elem->pool_cfg.subpool[i].num;
 		uint64_t used = 0;
 		uint64_t free = 0;
-		uint64_t alloc_sum = 0;
-		uint64_t free_sum = 0;
 
-		for (int j = 0; j < cores; j++) {
-			free_sum += pool_stat[j].stat[pool_idx][i].free;
-			alloc_sum += pool_stat[j].stat[pool_idx][i].alloc;
-		}
+		odp_pool_stats_t odp_stats;
 
-		used = alloc_sum - free_sum;
-		if (unlikely(free_sum > alloc_sum)) {
-			/*
-			 * free-increments seen by this core before
-			 * alloc increments or unlikely wrap-around.
-			 */
-			uint64_t diff = free_sum - alloc_sum;
+		int ret = odp_pool_stats(pool_elem->odp_pool[i], &odp_stats);
 
-			if (diff <= num) /* counts close so set '0' */
-				used = 0;
-			else /* wrap, should not happen very soon... */
-				used = UINT64_MAX - diff + 1;
-		}
+		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_INFO,
+				"EM-pool:%" PRI_POOL " subpool:%d stats failed:%d",
+				pool, i, ret);
+		/* ODP inactive counters are zero, it is safe to add both: */
+		free = odp_stats.available + odp_stats.cache_available;
+		used = num - free;
+
 		/* Sanity check */
+		if (free > num)
+			free = num;
 		if (used > num)
 			used = num;
-
-		free = num - used;
 
 		pool_info->subpool[i].used = used;
 		pool_info->subpool[i].free = free;

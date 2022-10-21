@@ -144,9 +144,6 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
 	ev_hdr->event_type = EM_EVENT_TYPE_PACKET;
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 
-	if (em_shm->opt.pool.statistics_enable)
-		ev_hdr->pool = EM_POOL_UNDEF; /* ev_hdr->subpool = don't care */
-
 	if (!esv_ena) {
 		ev_hdr->event = event;
 		return event;
@@ -174,8 +171,93 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
 	return event;
 }
 
+static inline void
+evhdr_init_pkt_multi(event_hdr_t *ev_hdrs[/*out*/],
+		     em_event_t events[/*in,out*/],
+		     const odp_packet_t odp_pkts[/*in*/],
+		     const int num, bool is_extev)
+{
+	const bool esv_ena = esv_enabled();
+	const void *user_ptr;
+
+	int needs_init_idx[num];
+	int needs_init_num = 0;
+	int idx;
+
+	for (int i = 0; i < num; i++) {
+		user_ptr = odp_packet_user_ptr(odp_pkts[i]);
+		if (user_ptr == PKT_USERPTR_MAGIC_NBR) {
+			/* Event already initialized by EM */
+			if (esv_ena)
+				events[i] = ev_hdrs[i]->event;
+			/* else events[i] = events[i] */
+		} else {
+			needs_init_idx[needs_init_num] = i;
+			needs_init_num++;
+		}
+	}
+
+	if (needs_init_num == 0)
+		return;
+
+	/*
+	 * ODP pkt from outside of EM - not allocated by EM & needs init
+	 */
+
+	if (!esv_ena) {
+		for (int i = 0; i < needs_init_num; i++) {
+			idx = needs_init_idx[i];
+			odp_packet_user_ptr_set(odp_pkts[idx], PKT_USERPTR_MAGIC_NBR);
+			ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
+			ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
+			ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+			ev_hdrs[idx]->event = events[idx];
+		}
+
+		return;
+	}
+
+	/*
+	 * ESV enabled:
+	 */
+	for (int i = 0; i < needs_init_num; i++) {
+		idx = needs_init_idx[i];
+		odp_packet_user_ptr_set(odp_pkts[idx], PKT_USERPTR_MAGIC_NBR);
+		ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
+		ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
+		ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+	}
+
+	if (!em_shm->opt.esv.prealloc_pools) {
+		for (int i = 0; i < needs_init_num; i++) {
+			idx = needs_init_idx[i];
+			events[idx] = evstate_init(events[idx], ev_hdrs[idx], is_extev);
+		}
+
+		return;
+	}
+
+	/*
+	 * em_shm->opt.esv.prealloc_pools == true
+	 */
+	for (int i = 0; i < needs_init_num; i++) {
+		idx = needs_init_idx[i];
+
+		odp_pool_t odp_pool = odp_packet_pool(odp_pkts[idx]);
+		em_pool_t pool = pool_odp2em(odp_pool);
+
+		if (pool == EM_POOL_UNDEF) {
+			/* External odp pkt originates from an ODP-pool */
+			events[idx] = evstate_init(events[idx], ev_hdrs[idx], is_extev);
+		} else {
+			/* External odp pkt originates from an EM-pool */
+			events[idx] = evstate_update(events[idx], ev_hdrs[idx], is_extev);
+		}
+	}
+}
+
 /**
- * Initialize external ODP events that have been input into EM.
+ * Initialize an external ODP event that have been input into EM.
  *
  * Initialize the event header if needed, i.e. if event originated from outside
  * of EM from pktio or other input and was not allocated by EM via em_alloc().
@@ -183,40 +265,44 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
  * initialized or not.
  */
 static inline em_event_t
-event_init_odp(odp_event_t odp_event, bool is_extev)
+event_init_odp(odp_event_t odp_event, bool is_extev, event_hdr_t **ev_hdr__out)
 {
-	odp_event_type_t odp_type;
-	odp_packet_t odp_pkt;
-	odp_buffer_t odp_buf;
-	em_event_t event; /* return value */
-	event_hdr_t *ev_hdr;
-
-	odp_type = odp_event_type(odp_event);
-	event = event_odp2em(odp_event);
+	const odp_event_type_t odp_type = odp_event_type(odp_event);
+	em_event_t event = event_odp2em(odp_event); /* return value */
 
 	switch (odp_type) {
-	case ODP_EVENT_PACKET:
-		odp_pkt = odp_packet_from_event(odp_event);
-		ev_hdr = odp_packet_user_area(odp_pkt);
+	case ODP_EVENT_PACKET: {
+		odp_packet_t odp_pkt = odp_packet_from_event(odp_event);
+		event_hdr_t *ev_hdr = odp_packet_user_area(odp_pkt);
+
 		/* init event-hdr if needed (also ESV-state if used) */
 		event = evhdr_init_pkt(ev_hdr, event, odp_pkt, is_extev);
-		break;
-	case ODP_EVENT_BUFFER:
-		if (esv_enabled()) {
-			/* update event handle (ESV) */
-			odp_buf = odp_buffer_from_event(odp_event);
-			ev_hdr = odp_buffer_addr(odp_buf);
+		if (ev_hdr__out)
+			*ev_hdr__out = ev_hdr;
+		return event;
+	}
+	case ODP_EVENT_BUFFER: {
+		const bool esv_ena = esv_enabled();
+
+		if (!ev_hdr__out && !esv_ena)
+			return event;
+
+		odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
+		event_hdr_t *ev_hdr = odp_buffer_addr(odp_buf);
+
+		if (esv_ena) /* update event handle (ESV) */
 			event = ev_hdr->event;
-		}
-		break;
+		if (ev_hdr__out)
+			*ev_hdr__out = ev_hdr;
+		return event;
+	}
 	default:
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_NOT_IMPLEMENTED),
 			       EM_ESCOPE_EVENT_INIT_ODP,
 			       "Unexpected odp event type:%u", odp_type);
-		break;
+		/* never reached */
+		return EM_EVENT_UNDEF;
 	}
-
-	return event;
 }
 
 /* Helper to event_init_odp_multi() */
@@ -228,11 +314,7 @@ event_init_pkt_multi(const odp_packet_t odp_pkts[/*in*/],
 	for (int i = 0; i < num; i++)
 		ev_hdrs[i] = odp_packet_user_area(odp_pkts[i]);
 
-	for (int i = 0; i < num; i++) {
-		/* init event-hdrs if needed (also ESV-state if used) */
-		events[i] = evhdr_init_pkt(ev_hdrs[i], events[i],
-					   odp_pkts[i], is_extev);
-	}
+	evhdr_init_pkt_multi(ev_hdrs, events, odp_pkts, num, is_extev);
 }
 
 /* Helper to event_init_odp_multi() */
@@ -455,16 +537,6 @@ event_alloc_buf(const mpool_elem_t *const pool_elem,
 	ev_hdr->event_type = type; /* store the event type */
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 
-	/* Pool usage statistics */
-	if (em_shm->opt.pool.statistics_enable) {
-		em_pool_t pool = pool_elem->em_pool;
-
-		ev_hdr->subpool = subpool;
-		ev_hdr->pool = pool;
-
-		poolstat_inc(pool, subpool, 1);
-	}
-
 	return ev_hdr;
 }
 
@@ -534,15 +606,7 @@ event_alloc_buf_multi(em_event_t events[/*out*/], const int num,
 			ev_hdrs[i]->align_offset = pool_elem->align_offset;
 			ev_hdrs[i]->event_type = type;
 			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
-			/* Pool usage statistics */
-			if (em_shm->opt.pool.statistics_enable) {
-				ev_hdrs[i]->subpool = subpool;
-				ev_hdrs[i]->pool = pool_elem->em_pool;
-			}
 		}
-
-		if (em_shm->opt.pool.statistics_enable)
-			poolstat_inc(pool_elem->em_pool, subpool, ret);
 
 		num_bufs += ret;
 		if (likely(num_bufs == num))
@@ -640,16 +704,6 @@ event_alloc_pkt(const mpool_elem_t *pool_elem,
 	/* ev_hdr->align_offset = needed by odp bufs only */
 	ev_hdr->event_type = type; /* store the event type */
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
-
-	/* Pool usage statistics */
-	if (em_shm->opt.pool.statistics_enable) {
-		em_pool_t pool = pool_elem->em_pool;
-
-		ev_hdr->subpool = subpool;
-		ev_hdr->pool = pool;
-
-		poolstat_inc(pool, subpool, 1);
-	}
 
 	return ev_hdr;
 
@@ -789,14 +843,7 @@ event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
 			/* ev_hdr->align_offset = needed by odp bufs only */
 			ev_hdrs[i]->event_type = type;
 			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
-			/* Pool usage statistics */
-			if (em_shm->opt.pool.statistics_enable) {
-				ev_hdrs[i]->subpool = subpool;
-				ev_hdrs[i]->pool = pool_elem->em_pool;
-			}
 		}
-		if (em_shm->opt.pool.statistics_enable)
-			poolstat_inc(pool_elem->em_pool, subpool, ret);
 
 		num_pkts += ret;
 		if (likely(num_pkts == num))
@@ -1049,10 +1096,6 @@ send_output(em_event_t event, event_hdr_t *const ev_hdr,
 		output_q_elem->output.output_conf.output_fn_args;
 	int sent;
 
-	/* decrement pool statistics before passing event out-of-EM */
-	if (em_shm->opt.pool.statistics_enable)
-		poolstat_dec_evhdr_output(ev_hdr);
-
 	if (!esv_enabled()) {
 		sent = output_fn(&event, 1, output_queue, output_fn_args);
 		if (unlikely(sent != 1))
@@ -1134,10 +1177,6 @@ send_output_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
 	const em_queue_t output_queue = output_q_elem->queue;
 	const em_output_func_t output_fn = output_q_elem->output.output_conf.output_fn;
 	void *const output_fn_args = output_q_elem->output.output_conf.output_fn_args;
-
-	/* decrement pool statistics before passing event out-of-EM */
-	if (em_shm->opt.pool.statistics_enable)
-		poolstat_dec_evhdr_multi_output(ev_hdrs, num);
 
 	if (!esv_enabled())
 		return output_fn(events, num, output_queue, output_fn_args);

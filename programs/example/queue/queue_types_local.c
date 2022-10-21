@@ -79,7 +79,7 @@
  * processed one-by-one.
  */
 #define VERIFY_ATOMIC_ACCESS  1  /* 0=False or 1=True */
-/* Call em_atomic_processing_end every ince in a while */
+/* Call em_atomic_processing_end every once in a while */
 #define CALL_ATOMIC_PROCESSING_END  1  /* 0=False or 1=True */
 
 /* Return 'TRUE' if the queue pair retains event order */

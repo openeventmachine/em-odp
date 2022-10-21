@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2021, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2022, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -42,57 +42,52 @@
 #include "cm_setup.h"
 #include "cm_pktio.h"
 
-#define PKTIO_PKT_POOL_NUM_BUFS  (10 * 1024)
-#define PKTIO_PKT_POOL_BUF_SIZE  1856
+#define PKTIO_PKT_POOL_NUM_BUFS  (32 * 1024)
+#define PKTIO_PKT_POOL_BUF_SIZE  1536
 
-static __thread pktio_shm_t *pktio_shm;
+static pktio_shm_t *pktio_shm;
 static __thread pktio_locm_t pktio_locm ODP_ALIGNED_CACHE;
 
-static inline int
-tx_drain_burst_acquire(tx_burst_t **const tx_drain_burst);
+static inline tx_burst_t *tx_drain_burst_acquire(void);
+static inline int pktin_queue_acquire(odp_pktin_queue_t **pktin_queue_ptr /*out*/);
+static inline odp_queue_t plain_queue_acquire(void);
 
-static inline int
-pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue);
-
-static inline int pktio_rx(void);
-static inline int pktio_tx_drain(void);
-
-/*
- * User provided input poll function,
- * given to EM via 'em_conf.input.input_poll_fn = input_poll;'
- * The function is of type 'em_input_poll_func_t'
- */
-int input_poll(void)
+static const char *pktin_mode_str(pktin_mode_t in_mode)
 {
-	int ev_rcv_enq;
+	const char *str;
 
-	ev_rcv_enq = pktio_rx();
+	switch (in_mode) {
+	case DIRECT_RECV:
+		str = "DIRECT_RECV";
+		break;
+	case PLAIN_QUEUE:
+		str = "PLAIN_QUEUE";
+		break;
+	case SCHED_PARALLEL:
+		str = "SCHED_PARALLEL";
+		break;
+	case SCHED_ATOMIC:
+		str = "SCHED_ATOMIC";
+		break;
+	case SCHED_ORDERED:
+		str = "SCHED_ORDERED";
+		break;
+	default:
+		str = "UNKNOWN";
+		break;
+	}
 
-	/* Add further input resources to poll if needed */
-
-	return ev_rcv_enq;
-}
-
-/*
- * User provided function to drain buffered output,
- * given to EM via 'em_conf.output.output_drain_fn = output_drain;'
- * The function is of type 'em_output_drain_func_t'
- */
-int output_drain(void)
-{
-	int ev_drain;
-
-	ev_drain = pktio_tx_drain();
-
-	/* Add further output draining functions if needed */
-
-	return ev_drain;
+	return str;
 }
 
 void pktio_mem_reserve(void)
 {
 	odp_shm_t shm;
 	uint32_t flags = 0;
+
+	/* Sanity check: em_shm should not be set yet */
+	if (unlikely(pktio_shm != NULL))
+		APPL_EXIT_FAILURE("pktio shared memory ptr set - already initialized?");
 
 #if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
 	flags |= ODP_SHM_SINGLE_VA;
@@ -120,15 +115,22 @@ void pktio_mem_reserve(void)
 	memset(pktio_shm, 0, sizeof(pktio_shm_t));
 }
 
-void pktio_mem_lookup(void)
+void pktio_mem_lookup(bool is_thread_per_core)
 {
 	odp_shm_t shm;
+	pktio_shm_t *shm_addr;
 
 	shm = odp_shm_lookup("pktio_shm");
 
-	pktio_shm = odp_shm_addr(shm);
-	if (unlikely(pktio_shm == NULL))
+	shm_addr = odp_shm_addr(shm);
+	if (unlikely(shm_addr == NULL))
 		APPL_EXIT_FAILURE("pktio shared mem addr lookup failed.");
+
+	/*
+	 * Set pktio_shm in process-per-core mode, each process has own pointer.
+	 */
+	if (!is_thread_per_core && pktio_shm != shm_addr)
+		pktio_shm = shm_addr;
 }
 
 void pktio_mem_free(void)
@@ -141,6 +143,7 @@ void pktio_mem_free(void)
 
 	if (odp_shm_free(shm) != 0)
 		APPL_EXIT_FAILURE("pktio shared mem free failed.");
+	pktio_shm = NULL;
 }
 
 /**
@@ -221,32 +224,6 @@ static void pktio_pool_create_odp(int if_count)
 void pktio_pool_create(int if_count, bool pktpool_em)
 {
 	/*
-	 * Create a ctrl pool for pktio - used for allocation of ctrl data like
-	 * Tx-burst structures (tx_burst_t) and queue handles.
-	 */
-	odp_pool_capability_t pool_capa;
-	odp_pool_param_t pool_params;
-
-	if (odp_pool_capability(&pool_capa) != 0)
-		APPL_EXIT_FAILURE("can't get odp-pool capability");
-
-	odp_pool_param_init(&pool_params);
-	pool_params.type = ODP_POOL_BUFFER;
-	pool_params.buf.num = if_count * (PKTIO_MAX_IN_QUEUES +
-					  MAX_TX_BURST_BUFS);
-	pool_params.buf.size = MAX(sizeof(odp_queue_t), sizeof(tx_burst_t *));
-	/* no cache needed, all allocated at startup */
-	pool_params.buf.cache_size = 0;
-	pool_params.stats.all = pool_capa.buf.stats.all;
-
-	pktio_shm->pools.bufpool_odp = odp_pool_create("pktio-ctrl-pool",
-						       &pool_params);
-	if (pktio_shm->pools.bufpool_odp == ODP_POOL_INVALID)
-		APPL_EXIT_FAILURE("pktio-ctrl-pool creation failed");
-
-	odp_pool_print(pktio_shm->pools.bufpool_odp);
-
-	/*
 	 * Create the pktio pkt pool used for actual input pkts.
 	 * Create the pool either as an EM- or ODP-pool.
 	 */
@@ -292,53 +269,89 @@ void pktio_pool_destroy(bool pktpool_em)
 		pktio_pool_destroy_em();
 	else
 		pktio_pool_destroy_odp();
-
-	if (odp_pool_destroy(pktio_shm->pools.bufpool_odp) != 0)
-		APPL_EXIT_FAILURE("pktio-ctrl-pool destroy failed.");
-	pktio_shm->pools.bufpool_odp = ODP_POOL_INVALID;
 }
 
 void pktio_init(const appl_conf_t *appl_conf)
 {
-	odp_queue_param_t queue_param;
-	odp_queue_t odp_queue;
-	int i;
+	pktin_mode_t in_mode = appl_conf->pktio.in_mode;
+	odp_stash_capability_t stash_capa;
+	odp_stash_param_t stash_param;
+	odp_stash_t stash;
+	int ret;
+
+	if (in_mode != DIRECT_RECV && in_mode != PLAIN_QUEUE) {
+		APPL_EXIT_FAILURE("Unsupported pktin-mode:%s(%d)\n",
+				  pktin_mode_str(in_mode), in_mode);
+	}
 
 	pktio_shm->ifs.count = appl_conf->pktio.if_count;
 	pktio_shm->ifs.num_created = 0;
 	pktio_shm->default_queue = EM_QUEUE_UNDEF;
 
+	pktio_shm->pktin.in_mode = in_mode;
+	pktio_shm->pktin.pktin_queue_stash = ODP_STASH_INVALID;
+
+	ret = odp_stash_capability(&stash_capa, ODP_STASH_TYPE_FIFO);
+	if (ret != 0)
+		APPL_EXIT_FAILURE("odp_stash_capability() fails:%d", ret);
+
 	/*
-	 * Create a queue to hold the shared pktin-queues in. Each core needs
-	 * to dequeue one pktin-queue to be able to use it to receive packets
+	 * Create a stash to hold the shared queues used in pkt input. Each core
+	 * needs to get one queue to be able to use it to receive packets.
+	 * DIRECT_RECV-mode: the stash contains pointers to odp_pktin_queue_t:s
+	 * PLAIN_QUEUE-mode: the stash contains odp_queue_t:s
 	 */
-	odp_queue_param_init(&queue_param);
-	queue_param.type = ODP_QUEUE_TYPE_PLAIN;
-	queue_param.enq_mode = ODP_QUEUE_OP_MT;
-	queue_param.deq_mode = ODP_QUEUE_OP_MT;
-	queue_param.order = ODP_QUEUE_ORDER_IGNORE;
+	odp_stash_param_init(&stash_param);
+	stash_param.type = ODP_STASH_TYPE_FIFO;
+	stash_param.put_mode = ODP_STASH_OP_MT;
+	stash_param.get_mode = ODP_STASH_OP_MT;
+	stash_param.num_obj = PKTIO_MAX_IN_QUEUES * IF_MAX_NUM;
+	if (stash_param.num_obj > stash_capa.max_num_obj)
+		APPL_EXIT_FAILURE("Unsupported odp-stash number of objects:%" PRIu64 "",
+				  stash_param.num_obj);
+	stash_param.obj_size = MAX(sizeof(odp_queue_t), sizeof(odp_pktin_queue_t *));
+	if (!POWEROF2(stash_param.obj_size) ||
+	    stash_param.obj_size != sizeof(uintptr_t) ||
+	    stash_param.obj_size > stash_capa.max_obj_size) {
+		APPL_EXIT_FAILURE("Unsupported odp-stash object handle size:%u, max:%u",
+				  stash_param.obj_size, stash_capa.max_obj_size);
+	}
+	stash_param.cache_size = 0; /* No core local caching */
 
-	odp_queue = odp_queue_create("pktin.queues-queue", &queue_param);
-	if (unlikely(odp_queue == ODP_QUEUE_INVALID))
-		APPL_EXIT_FAILURE("odp_queue_create() fails");
-	pktio_shm->pktin.queues_queue = odp_queue;
+	stash = odp_stash_create("pktin.pktin_queue_stash", &stash_param);
+	if (stash == ODP_STASH_INVALID)
+		APPL_EXIT_FAILURE("odp_stash_create() fails");
+
+	pktio_shm->pktin.pktin_queue_stash = stash;
 
 	/*
-	 * Create a queue to hold the shared tx-burst buffers,
+	 * Create a stash to hold the shared tx-burst buffers,
 	 * used when draining the available tx-burst buffers
 	 */
-	odp_queue_param_init(&queue_param);
-	queue_param.type = ODP_QUEUE_TYPE_PLAIN;
-	queue_param.enq_mode = ODP_QUEUE_OP_MT;
-	queue_param.deq_mode = ODP_QUEUE_OP_MT;
-	queue_param.order = ODP_QUEUE_ORDER_IGNORE;
+	odp_stash_param_init(&stash_param);
+	stash_param.type = ODP_STASH_TYPE_FIFO;
+	stash_param.put_mode = ODP_STASH_OP_MT;
+	stash_param.get_mode = ODP_STASH_OP_MT;
+	stash_param.num_obj = MAX_TX_BURST_BUFS * IF_MAX_NUM;
+	if (stash_param.num_obj > stash_capa.max_num_obj)
+		APPL_EXIT_FAILURE("Unsupported odp-stash number of objects:%" PRIu64 "",
+				  stash_param.num_obj);
+	stash_param.obj_size = sizeof(tx_burst_t *); /* stash pointers */
+	if (!POWEROF2(stash_param.obj_size) ||
+	    stash_param.obj_size != sizeof(uintptr_t) ||
+	    stash_param.obj_size > stash_capa.max_obj_size) {
+		APPL_EXIT_FAILURE("Unsupported odp-stash object handle size:%u",
+				  stash_param.obj_size);
+	}
+	stash_param.cache_size = 0; /* No core local caching */
 
-	odp_queue = odp_queue_create("pktout.tx-bursts-queue", &queue_param);
-	if (unlikely(odp_queue == ODP_QUEUE_INVALID))
-		APPL_EXIT_FAILURE("odp_queue_create() fails");
-	pktio_shm->pktout.tx_bursts_queue = odp_queue;
+	stash = odp_stash_create("pktout.tx-burst-stash", &stash_param);
+	if (stash == ODP_STASH_INVALID)
+		APPL_EXIT_FAILURE("odp_stash_create() fails");
+	pktio_shm->pktout.tx_burst_stash = stash;
 
-	for (i = 0; i < MAX_RX_PKT_QUEUES; i++) {
+	/* Misc inits: */
+	for (int i = 0; i < MAX_RX_PKT_QUEUES; i++) {
 		pktio_shm->rx_pkt_queues[i].pos = i;
 		pktio_shm->rx_pkt_queues[i].queue = EM_QUEUE_UNDEF;
 	}
@@ -360,8 +373,8 @@ void pktio_deinit(const appl_conf_t *appl_conf)
 {
 	(void)appl_conf;
 
-	odp_queue_destroy(pktio_shm->pktin.queues_queue);
-	odp_queue_destroy(pktio_shm->pktout.tx_bursts_queue);
+	odp_stash_destroy(pktio_shm->pktin.pktin_queue_stash);
+	odp_stash_destroy(pktio_shm->pktout.tx_burst_stash);
 
 	pktio_shm->tbl_lookup.ops.f_des(pktio_shm->tbl_lookup.tbl);
 }
@@ -373,12 +386,11 @@ static void pktio_tx_buffering_create(int if_num)
 	odp_queue_t odp_queue;
 	int pktout_idx;
 	odp_queue_t pktout_queue;
-	int ret, i;
 	char name[ODP_QUEUE_NAME_LEN];
 
 	const int pktout_num_queues = pktio_shm->pktout.num_queues[if_num];
 
-	for (i = 0; i < MAX_TX_BURST_BUFS; i++) {
+	for (int i = 0; i < MAX_TX_BURST_BUFS; i++) {
 		tx_burst = &pktio_shm->tx_burst[if_num][i];
 
 		odp_atomic_init_u64(&tx_burst->cnt, 0);
@@ -397,7 +409,7 @@ static void pktio_tx_buffering_create(int if_num)
 
 		odp_queue = odp_queue_create(name, &queue_param);
 		if (unlikely(odp_queue == ODP_QUEUE_INVALID))
-			APPL_EXIT_FAILURE("odp_queue_create() fails:if=%i(%i)",
+			APPL_EXIT_FAILURE("odp_queue_create() fails:if=%d(%d)",
 					  if_num, i);
 		tx_burst->queue = odp_queue;
 		tx_burst->if_port = if_num;
@@ -406,30 +418,14 @@ static void pktio_tx_buffering_create(int if_num)
 		pktout_queue = pktio_shm->pktout.queues[if_num][pktout_idx];
 		tx_burst->pktout_queue = pktout_queue;
 
-		odp_event_t event;
-		tx_burst_t **tx_burst_ptr;
-		odp_buffer_t buf = odp_buffer_alloc(pktio_shm->pools.bufpool_odp);
-
-		if (unlikely(buf == ODP_BUFFER_INVALID)) {
-			odp_pool_stats_t stats;
-			int ret = odp_pool_stats(pktio_shm->pools.bufpool_odp, &stats);
-
-			if (!ret) {
-				APPL_PRINT("bufpool stats{avail=%lu allocs=%lu fails=%lu}\n",
-					   stats.available, stats.alloc_ops, stats.alloc_fails);
-			}
-			APPL_EXIT_FAILURE("buf alloc fails: if_num:%d, i:%d",
-					  if_num, i);
-		}
-		if (unlikely(odp_buffer_size(buf) < sizeof(tx_burst/*ptr*/)))
-			APPL_EXIT_FAILURE("buf too small");
-
-		event = odp_buffer_to_event(buf);
-		tx_burst_ptr = odp_buffer_addr(buf);
-		*tx_burst_ptr = tx_burst;
-
-		ret = odp_queue_enq(pktio_shm->pktout.tx_bursts_queue, event);
-		if (unlikely(ret != 0))
+		/*
+		 * Store each tx burst into the tx_burst_stash, stash used when
+		 * draining the available tx-burst buffers.
+		 */
+		uintptr_t tx_burst_uintptr = (uintptr_t)tx_burst;
+		int ret = odp_stash_put_ptr(pktio_shm->pktout.tx_burst_stash,
+					    &tx_burst_uintptr, 1);
+		if (unlikely(ret != 1))
 			APPL_EXIT_FAILURE("enqueue fails");
 	}
 }
@@ -439,7 +435,7 @@ static void pktio_tx_buffering_destroy(void)
 	tx_burst_t *tx_burst;
 	int num;
 
-	while (tx_drain_burst_acquire(&tx_burst) == 0) {
+	while ((tx_burst = tx_drain_burst_acquire()) != NULL) {
 		do {
 			num = odp_queue_deq_multi(tx_burst->queue,
 						  pktio_locm.ev_burst,
@@ -452,114 +448,73 @@ static void pktio_tx_buffering_destroy(void)
 		} while (num > 0);
 
 		odp_queue_destroy(tx_burst->queue);
-		odp_event_free(pktio_locm.tx_burst_timed_event);
 	}
 }
 
 static inline void
-pktin_queue_queueing_create(int if_num)
+pktin_queue_stashing_create(int if_num, pktin_mode_t in_mode)
 {
-	odp_event_t event;
-	odp_pktin_queue_t *pktin_queue;
-	odp_buffer_t buf;
-	int num_rx;
-	int ret, i;
+	int num_rx = pktio_shm->pktin.num_queues[if_num];
+	uintptr_t uintptr;
+	int ret;
 
-	num_rx = pktio_shm->pktin.num_queues[if_num];
+	for (int i = 0; i < num_rx; i++) {
+		if (in_mode == PLAIN_QUEUE) {
+			odp_queue_t queue;
 
-	for (i = 0; i < num_rx; i++) {
-		buf = odp_buffer_alloc(pktio_shm->pools.bufpool_odp);
-		if (unlikely(buf == ODP_BUFFER_INVALID))
-			APPL_EXIT_FAILURE("buf alloc fails");
-		if (unlikely(odp_buffer_size(buf) < sizeof(odp_queue_t)))
-			APPL_EXIT_FAILURE("buf too small");
-		event = odp_buffer_to_event(buf);
-		pktin_queue = odp_buffer_addr(buf);
-		/* store the pktin-queue handle into the event payload */
-		*pktin_queue = pktio_shm->pktin.queues[if_num][i];
+			queue = pktio_shm->pktin.plain_queues[if_num][i];
+			uintptr = (uintptr_t)queue;
+		} else /* DIRECT_RECV*/ {
+			odp_pktin_queue_t *pktin_qptr;
 
-		ret = odp_queue_enq(pktio_shm->pktin.queues_queue, event);
-		if (unlikely(ret != 0))
-			APPL_EXIT_FAILURE("enqueue fails");
+			pktin_qptr = &pktio_shm->pktin.pktin_queues[if_num][i];
+			uintptr = (uintptr_t)pktin_qptr;
+		}
+
+		/*
+		 * Store the queue or the pktin_queue-ptr as an 'uintptr_t'
+		 * in the stash.
+		 */
+		ret = odp_stash_put_ptr(pktio_shm->pktin.pktin_queue_stash,
+					&uintptr, 1);
+		if (unlikely(ret != 1))
+			APPL_EXIT_FAILURE("stash-put fails:%d", ret);
 	}
 }
 
 static inline void
 pktin_queue_queueing_destroy(void)
 {
-	odp_pktin_queue_t pktin_queue;
+	if (pktio_shm->pktin.in_mode == PLAIN_QUEUE) {
+		while (plain_queue_acquire() != ODP_QUEUE_INVALID)
+			; /* empty stash */
+	} else /* DIRECT_RECV*/ {
+		odp_pktin_queue_t *pktin_queue_ptr;
 
-	while (pktin_queue_acquire(&pktin_queue) == 0)
-		odp_event_free(pktio_locm.pktin_queue_event);
+		while (pktin_queue_acquire(&pktin_queue_ptr) == 0)
+			; /* empty stash */
+	}
 }
 
-int /* if_id */
-pktio_create(const char *dev, int num_workers)
+/** Helper to pktio_create() for packet input configuration */
+static void pktin_config(const char *dev, int if_idx, odp_pktio_t pktio,
+			 const odp_pktio_capability_t *pktio_capa,
+			 int num_workers, pktin_mode_t in_mode)
 {
-	int if_idx = -1; /* return value */
-	odp_pktio_param_t pktio_param;
-	odp_pktio_t pktio;
-	odp_pktio_capability_t pktio_capa;
-	odp_pktio_config_t pktio_config;
 	odp_pktin_queue_param_t pktin_queue_param;
-	odp_pktout_queue_param_t pktout_queue_param;
-	odp_pktio_info_t info;
 	odp_pktio_op_mode_t mode_rx;
-	odp_pktio_op_mode_t mode_tx;
-	int num_rx, num_tx, max;
+	int num_rx;
 	int ret;
 
-	odp_pktio_param_init(&pktio_param);
-
-	/* DIRECT mode for Rx */
-	pktio_param.in_mode = ODP_PKTIN_MODE_DIRECT;
-	/* QUEUE mode for Tx to preserve packet order if needed */
-	pktio_param.out_mode = ODP_PKTOUT_MODE_QUEUE;
-
-	pktio = odp_pktio_open(dev, pktio_shm->pools.pktpool_odp, &pktio_param);
-	if (pktio == ODP_PKTIO_INVALID)
-		APPL_EXIT_FAILURE("pktio create failed for %s\n", dev);
-
-	if (odp_pktio_info(pktio, &info))
-		APPL_EXIT_FAILURE("pktio info failed %s", dev);
-
-	if_idx = odp_pktio_index(pktio);
-	if (if_idx < 0 || if_idx >= IF_MAX_NUM)
-		APPL_EXIT_FAILURE("pktio index:%d too large, dev:%s",
-				  if_idx, dev);
-
-	APPL_PRINT("\n%s(dev=%s):\n", __func__, dev);
-	APPL_PRINT("\tcreated pktio:%" PRIu64 " idx:%d, dev: %s, drv: %s\n",
-		   odp_pktio_to_u64(pktio), if_idx, dev, info.drv_name);
-
-	ret = odp_pktio_capability(pktio, &pktio_capa);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("pktio capability query failed: %s (%i)",
-				  dev, ret);
-
-	odp_pktio_config_init(&pktio_config);
-	pktio_config.parser.layer = ODP_PROTO_LAYER_NONE;
-	/* pktio_config.parser.layer = ODP_PROTO_LAYER_L4; */
-
-	ret = odp_pktio_config(pktio, &pktio_config);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("pktio config failed: %s (%i)",
-				  dev, ret);
+	(void)in_mode;
 
 	odp_pktin_queue_param_init(&pktin_queue_param);
-	odp_pktout_queue_param_init(&pktout_queue_param);
-
 	mode_rx = ODP_PKTIO_OP_MT_UNSAFE;
-	mode_tx = ODP_PKTIO_OP_MT;
+	num_rx = MIN((int)pktio_capa->max_input_queues, PKTIO_MAX_IN_QUEUES);
+	num_rx = MIN(num_rx, num_workers);
 
-	num_rx = MIN((int)pktio_capa.max_input_queues, PKTIO_MAX_IN_QUEUES);
-	APPL_PRINT("\tmax number of pktio %s input queues:%i, using:%i\n",
-		   dev, pktio_capa.max_input_queues, num_rx);
-
-	max = MIN((int)pktio_capa.max_output_queues, PKTIO_MAX_OUT_QUEUES);
-	num_tx = MIN(2 * num_workers, max);
-	APPL_PRINT("\tmax number of pktio %s output queues:%i, using:%i\n",
-		   dev, pktio_capa.max_output_queues, num_tx);
+	APPL_PRINT("\tmax number of pktio dev:'%s' input queues:%d, using:%d\n",
+		   dev, pktio_capa->max_input_queues, num_rx);
 
 	pktin_queue_param.hash_enable = 1;
 	pktin_queue_param.classifier_enable = 0;
@@ -567,44 +522,134 @@ pktio_create(const char *dev, int num_workers)
 	pktin_queue_param.num_queues = num_rx;
 	pktin_queue_param.op_mode = mode_rx;
 
-	pktout_queue_param.num_queues = num_tx;
-	pktout_queue_param.op_mode = mode_tx;
-
 	ret = odp_pktin_queue_config(pktio, &pktin_queue_param);
 	if (ret < 0)
-		APPL_EXIT_FAILURE("pktio input queue config failed %s (%i)",
-				  dev, ret);
-	ret = odp_pktout_queue_config(pktio, &pktout_queue_param);
-	if (ret < 0)
-		APPL_EXIT_FAILURE("pktio output queue config failed %s (%i)",
+		APPL_EXIT_FAILURE("pktio input queue config failed dev:'%s' (%d)",
 				  dev, ret);
 
-	ret = odp_pktin_queue(pktio, pktio_shm->pktin.queues[if_idx], num_rx);
-	if (ret != num_rx || ret > PKTIO_MAX_IN_QUEUES)
-		APPL_EXIT_FAILURE("pktio pktin queue query failed %s (%i)",
-				  dev, ret);
+	if (in_mode == PLAIN_QUEUE) {
+		ret = odp_pktin_event_queue(pktio, pktio_shm->pktin.plain_queues[if_idx], num_rx);
+		if (ret != num_rx)
+			APPL_EXIT_FAILURE("pktio pktin event queue query failed dev:'%s' (%d)",
+					  dev, ret);
+	} else /* DIRECT_RECV*/ {
+		ret = odp_pktin_queue(pktio, pktio_shm->pktin.pktin_queues[if_idx], num_rx);
+		if (ret != num_rx)
+			APPL_EXIT_FAILURE("pktio pktin queue query failed dev:'%s' (%d)",
+					  dev, ret);
+	}
+
 	pktio_shm->pktin.num_queues[if_idx] = num_rx;
 
 	/*
 	 * Store all pktin queues in another queue - core dequeues from this
 	 * 'rx access queues' to use an pktin queue.
 	 */
-	pktin_queue_queueing_create(if_idx);
+	pktin_queue_stashing_create(if_idx, in_mode);
+}
+
+/** Helper to pktio_create() for packet output configuration */
+static void pktout_config(const char *dev, int if_idx, odp_pktio_t pktio,
+			  const odp_pktio_capability_t *pktio_capa,
+			  int num_workers)
+{
+	odp_pktout_queue_param_t pktout_queue_param;
+	odp_pktio_op_mode_t mode_tx;
+	int num_tx, max;
+	int ret;
+
+	odp_pktout_queue_param_init(&pktout_queue_param);
+	mode_tx = ODP_PKTIO_OP_MT;
+	max = MIN((int)pktio_capa->max_output_queues, PKTIO_MAX_OUT_QUEUES);
+	num_tx = MIN(2 * num_workers, max);
+	APPL_PRINT("\tmax number of pktio dev:'%s' output queues:%d, using:%d\n",
+		   dev, pktio_capa->max_output_queues, num_tx);
+
+	pktout_queue_param.num_queues = num_tx;
+	pktout_queue_param.op_mode = mode_tx;
+
+	ret = odp_pktout_queue_config(pktio, &pktout_queue_param);
+	if (ret < 0)
+		APPL_EXIT_FAILURE("pktio output queue config failed dev:'%s' (%d)",
+				  dev, ret);
 
 	ret = odp_pktout_event_queue(pktio, pktio_shm->pktout.queues[if_idx],
 				     num_tx);
 	if (ret != num_tx || ret > PKTIO_MAX_OUT_QUEUES)
-		APPL_EXIT_FAILURE("pktio pktout queue query failed %s (%i)",
+		APPL_EXIT_FAILURE("pktio pktout queue query failed dev:'%s' (%d)",
 				  dev, ret);
 	pktio_shm->pktout.num_queues[if_idx] = num_tx;
 
 	/* Create Tx buffers */
 	pktio_tx_buffering_create(if_idx);
+}
+
+int /* if_id */
+pktio_create(const char *dev, int num_workers, pktin_mode_t in_mode)
+{
+	int if_idx = -1; /* return value */
+	odp_pktio_param_t pktio_param;
+	odp_pktio_t pktio;
+	odp_pktio_capability_t pktio_capa;
+	odp_pktio_config_t pktio_config;
+	odp_pktio_info_t info;
+	int ret;
+
+	odp_pktio_param_init(&pktio_param);
+
+	/* Packet input mode */
+	if (in_mode == DIRECT_RECV)
+		pktio_param.in_mode = ODP_PKTIN_MODE_DIRECT;
+	else if (in_mode == PLAIN_QUEUE)
+		pktio_param.in_mode = ODP_PKTIN_MODE_QUEUE;
+	else
+		APPL_EXIT_FAILURE("dev:'%s': unsupported pktin-mode:%d\n",
+				  dev, in_mode);
+
+	/* Packet output mode: QUEUE mode to preserve packet order if needed */
+	pktio_param.out_mode = ODP_PKTOUT_MODE_QUEUE;
+
+	pktio = odp_pktio_open(dev, pktio_shm->pools.pktpool_odp, &pktio_param);
+	if (pktio == ODP_PKTIO_INVALID)
+		APPL_EXIT_FAILURE("pktio create failed for dev:'%s'\n", dev);
+
+	if (odp_pktio_info(pktio, &info))
+		APPL_EXIT_FAILURE("pktio info failed dev:'%s'", dev);
+
+	if_idx = odp_pktio_index(pktio);
+	if (if_idx < 0 || if_idx >= IF_MAX_NUM)
+		APPL_EXIT_FAILURE("pktio index:%d too large, dev:'%s'",
+				  if_idx, dev);
+
+	APPL_PRINT("\n%s(dev=%s):\n", __func__, dev);
+	APPL_PRINT("\tcreated pktio:%" PRIu64 " idx:%d, dev:'%s', drv:%s\n",
+		   odp_pktio_to_u64(pktio), if_idx, dev, info.drv_name);
+
+	ret = odp_pktio_capability(pktio, &pktio_capa);
+	if (ret != 0)
+		APPL_EXIT_FAILURE("pktio capability query failed: dev:'%s' (%d)",
+				  dev, ret);
+
+	odp_pktio_config_init(&pktio_config);
+	pktio_config.parser.layer = ODP_PROTO_LAYER_NONE;
+	/* Provide hint to pktio that packet references are not used */
+	pktio_config.pktout.bit.no_packet_refs = 1;
+
+	ret = odp_pktio_config(pktio, &pktio_config);
+	if (ret != 0)
+		APPL_EXIT_FAILURE("pktio config failed: dev:'%s' (%d)",
+				  dev, ret);
+
+	/* Pktin (Rx) config */
+	pktin_config(dev, if_idx, pktio, &pktio_capa, num_workers, in_mode);
+
+	/* Pktout (Tx) config */
+	pktout_config(dev, if_idx, pktio, &pktio_capa, num_workers);
 
 	/* Start the pktio to complete configuration... */
 	ret = odp_pktio_start(pktio);
 	if (ret != 0)
-		APPL_EXIT_FAILURE("Unable to start %s", dev);
+		APPL_EXIT_FAILURE("Unable to start dev:'%s'", dev);
 	/*
 	 * ...and stop it immediately to block odp_pktin_recv() from receiving
 	 * pkts until application setup is ready.
@@ -612,10 +657,10 @@ pktio_create(const char *dev, int num_workers)
 	 */
 	ret = odp_pktio_stop(pktio);
 	if (ret != 0)
-		APPL_EXIT_FAILURE("Unable to stop %s", dev);
+		APPL_EXIT_FAILURE("Unable to stop dev:'%s'", dev);
 
-	APPL_PRINT("\tcreated pktio %s; direct input mode, queue output mode",
-		   dev);
+	APPL_PRINT("\tcreated pktio dev:'%s' - input mode:%s, output mode:QUEUE",
+		   dev, pktin_mode_str(in_mode));
 	odp_pktio_print(pktio);
 
 	pktio_shm->ifs.idx[pktio_shm->ifs.num_created] = if_idx;
@@ -675,9 +720,9 @@ void pktio_close(void)
 		int ret = odp_pktio_close(pktio);
 
 		if (unlikely(ret != 0))
-			APPL_EXIT_FAILURE("pktio close failed for if:%d",
-					  if_idx);
-			pktio_shm->ifs.pktio_hdl[if_idx] = ODP_PKTIO_INVALID;
+			APPL_EXIT_FAILURE("pktio close failed for if:%d", if_idx);
+
+		pktio_shm->ifs.pktio_hdl[if_idx] = ODP_PKTIO_INVALID;
 	}
 
 	pktin_queue_queueing_destroy();
@@ -685,152 +730,236 @@ void pktio_close(void)
 }
 
 static inline int
-pktin_queue_acquire(odp_pktin_queue_t *const pktin_queue /*out*/)
+pktin_queue_acquire(odp_pktin_queue_t **pktin_queue_ptr /*out*/)
 {
-	odp_event_t pktin_queue_event;
-	odp_buffer_t buf;
 	odp_pktin_queue_t *pktin_qptr;
+	uintptr_t pktin_qptr_uintptr;
 
-	pktin_queue_event = odp_queue_deq(pktio_shm->pktin.queues_queue);
-	if (unlikely(pktin_queue_event == ODP_EVENT_INVALID))
+	int ret = odp_stash_get_ptr(pktio_shm->pktin.pktin_queue_stash,
+				    &pktin_qptr_uintptr, 1);
+
+	if (unlikely(ret != 1))
 		return -1;
 
-	/* store event locally for reuse, i.e. enqueue it back later */
-	pktio_locm.pktin_queue_event = pktin_queue_event;
+	pktin_qptr = (odp_pktin_queue_t *)pktin_qptr_uintptr;
 
-	buf = odp_buffer_from_event(pktin_queue_event);
-	pktin_qptr = odp_buffer_addr(buf);
-	*pktin_queue = *pktin_qptr;
-
+	*pktin_queue_ptr = pktin_qptr;
 	return 0;
 }
 
 static inline void
-pktin_queue_release(void)
+pktin_queue_release(odp_pktin_queue_t *pktin_queue_ptr)
 {
-	const int ret = odp_queue_enq(pktio_shm->pktin.queues_queue,
-				      pktio_locm.pktin_queue_event);
-	if (unlikely(ret != 0))
-		APPL_EXIT_FAILURE("enqueue fails");
+	uintptr_t pktin_qptr_uintptr;
+
+	/* store the pointer as an 'uintptr_t' in the stash */
+	pktin_qptr_uintptr = (uintptr_t)pktin_queue_ptr;
+
+	int ret = odp_stash_put_ptr(pktio_shm->pktin.pktin_queue_stash,
+				    &pktin_qptr_uintptr, 1);
+	if (unlikely(ret != 1))
+		APPL_EXIT_FAILURE("stash-put fails:%d", ret);
 }
 
-static inline int
-pktio_rx(void)
+static inline odp_queue_t
+plain_queue_acquire(void)
 {
+	odp_queue_t queue;
+	uintptr_t queue_uintptr;
+
+	int ret = odp_stash_get_ptr(pktio_shm->pktin.pktin_queue_stash,
+				    &queue_uintptr, 1);
+	if (unlikely(ret != 1))
+		return ODP_QUEUE_INVALID;
+
+	queue = (odp_queue_t)queue_uintptr;
+
+	return queue;
+}
+
+static inline void
+plain_queue_release(odp_queue_t queue)
+{
+	uintptr_t queue_uintptr;
+
+	/* store the queue as an 'uintptr_t' in the stash */
+	queue_uintptr = (uintptr_t)queue;
+
+	int ret = odp_stash_put_ptr(pktio_shm->pktin.pktin_queue_stash,
+				    &queue_uintptr, 1);
+	if (unlikely(ret != 1))
+		APPL_EXIT_FAILURE("stash-put fails:%d", ret);
+}
+
+/*
+ * Helper to the pktin_pollfn_...() functions.
+ */
+static inline int /* nbr of pkts enqueued */
+pktin_lookup_enqueue(odp_packet_t pkt_tbl[], int pkts)
+{
+	const odph_table_get_value f_get = pktio_shm->tbl_lookup.ops.f_get;
 	rx_queue_burst_t *const rx_qbursts = pktio_locm.rx_qbursts;
-	odp_pktin_queue_t pktin_queue;
+	int pkts_enqueued = 0; /* return value */
+	int valid_pkts = 0;
+
+	for (int i = 0; i < pkts; i++) {
+		const odp_packet_t pkt = pkt_tbl[i];
+		void *const pkt_data = odp_packet_data(pkt);
+
+		/*
+		 * If 'pktio_config.parser.layer =
+		 *     ODP_PKTIO_PARSER_LAYER_L4;' then the following
+		 *     better checks can be used (is slower though).
+		 * if (unlikely(!odp_packet_has_udp(pkt))) {
+		 *	odp_packet_free(pkt);
+		 *	continue;
+		 * }
+		 *
+		 * pkt_data = odp_packet_data(pkt);
+		 * ip = (odph_ipv4hdr_t *)((uintptr_t)pkt_data +
+		 *			odp_packet_l3_offset(pkt));
+		 * udp = (odph_udphdr_t *)((uintptr_t)pkt_data +
+		 *			odp_packet_l4_offset(pkt));
+		 */
+
+		/* Note: no actual checks if the headers are present */
+		odph_ipv4hdr_t *const ip = (odph_ipv4hdr_t *)
+			((uintptr_t)pkt_data + sizeof(odph_ethhdr_t));
+		odph_udphdr_t *const udp = (odph_udphdr_t *)
+			((uintptr_t)ip + sizeof(odph_ipv4hdr_t));
+		/*
+		 * NOTE! network-to-CPU conversion not needed here.
+		 * Setup stores network-order in hash to avoid
+		 * conversion for every packet.
+		 */
+		pktio_locm.keys[i].ip_dst = ip->dst_addr;
+		pktio_locm.keys[i].proto = ip->proto;
+		pktio_locm.keys[i].port_dst =
+			likely(ip->proto == ODPH_IPPROTO_UDP ||
+			       ip->proto == ODPH_IPPROTO_TCP) ?
+			       udp->dst_port : 0;
+	}
+
+	for (int i = 0; i < pkts; i++) {
+		const odp_packet_t pkt = pkt_tbl[i];
+		rx_pkt_queue_t rx_pkt_queue;
+		em_queue_t queue;
+		int pos;
+
+		/* table(hash) lookup to find queue */
+		int ret = f_get(pktio_shm->tbl_lookup.tbl,
+				&pktio_locm.keys[i],
+				&rx_pkt_queue, sizeof(rx_pkt_queue_t));
+		if (likely(ret == 0)) {
+			/* found */
+			pos = rx_pkt_queue.pos;
+			queue = rx_pkt_queue.queue;
+		} else {
+			/* not found, use default queue if set */
+			pos = MAX_RX_PKT_QUEUES; /* reserved space +1*/
+			queue = pktio_shm->default_queue;
+			if (unlikely(queue == EM_QUEUE_UNDEF)) {
+				odp_packet_free(pkt);
+				continue;
+			}
+		}
+
+		pktio_locm.positions[valid_pkts++] = pos;
+		rx_qbursts[pos].sent = 0;
+		rx_qbursts[pos].queue = queue;
+		rx_qbursts[pos].pkt_tbl[rx_qbursts[pos].pkt_cnt++] = pkt;
+	}
+
+	for (int i = 0; i < valid_pkts; i++) {
+		const int pos = pktio_locm.positions[i];
+
+		if (rx_qbursts[pos].sent)
+			continue;
+
+		const int num = rx_qbursts[pos].pkt_cnt;
+		const em_queue_t queue = rx_qbursts[pos].queue;
+
+		/* Enqueue pkts into em-odp */
+		pkts_enqueued += pkt_enqueue(rx_qbursts[pos].pkt_tbl,
+					     num, queue);
+		rx_qbursts[pos].sent = 1;
+		rx_qbursts[pos].pkt_cnt = 0;
+	}
+
+	return pkts_enqueued;
+}
+
+/*
+ * User provided function to poll for packet input in DIRECT_RECV-mode,
+ * given to EM via 'em_conf.input.input_poll_fn = pktin_pollfn_direct;'
+ * The function is of type 'em_input_poll_func_t'. See .h file.
+ */
+int pktin_pollfn_direct(void)
+{
+	odp_pktin_queue_t *pktin_queue_ptr;
 	odp_packet_t pkt_tbl[MAX_PKT_BURST_RX];
 	int ret, pkts;
 	int poll_rounds = 0;
 	int pkts_enqueued = 0; /* return value */
 
-	const odph_table_get_value f_get = pktio_shm->tbl_lookup.ops.f_get;
-
 	if (unlikely(!pktio_shm->pktio_started))
 		return 0;
 
-	ret = pktin_queue_acquire(&pktin_queue);
+	ret = pktin_queue_acquire(&pktin_queue_ptr /*out*/);
 	if (unlikely(ret != 0))
 		return 0;
 
 	do {
-		int valid_pkts = 0;
-		int i;
-
-		pkts = odp_pktin_recv(pktin_queue, pkt_tbl, MAX_PKT_BURST_RX);
+		pkts = odp_pktin_recv(*pktin_queue_ptr, pkt_tbl, MAX_PKT_BURST_RX);
 		if (unlikely(pkts <= 0))
-			goto pktio_rx_end;
+			goto pktin_poll_end;
 
-		for (i = 0; i < pkts; i++) {
-			const odp_packet_t pkt = pkt_tbl[i];
-			void *const pkt_data = odp_packet_data(pkt);
-
-			/*
-			 * If 'pktio_config.parser.layer =
-			 *     ODP_PKTIO_PARSER_LAYER_L4;' then the following
-			 *     better checks can be used (is slower though).
-			 * if (unlikely(!odp_packet_has_udp(pkt))) {
-			 *	odp_packet_free(pkt);
-			 *	continue;
-			 * }
-			 *
-			 * pkt_data = odp_packet_data(pkt);
-			 * ip = (odph_ipv4hdr_t *)((uintptr_t)pkt_data +
-			 *			odp_packet_l3_offset(pkt));
-			 * udp = (odph_udphdr_t *)((uintptr_t)pkt_data +
-			 *			odp_packet_l4_offset(pkt));
-			 */
-
-			/* Note: no actual checks if the headers are present */
-			odph_ipv4hdr_t *const ip = (odph_ipv4hdr_t *)
-				((uintptr_t)pkt_data + sizeof(odph_ethhdr_t));
-			odph_udphdr_t *const udp = (odph_udphdr_t *)
-				((uintptr_t)ip + sizeof(odph_ipv4hdr_t));
-			/*
-			 * NOTE! network-to-CPU conversion not needed here.
-			 * Setup stores network-order in hash to avoid
-			 * conversion for every packet.
-			 */
-			pktio_locm.keys[i].ip_dst = ip->dst_addr;
-			pktio_locm.keys[i].proto = ip->proto;
-			pktio_locm.keys[i].port_dst =
-				likely(ip->proto == ODPH_IPPROTO_UDP ||
-				       ip->proto == ODPH_IPPROTO_TCP) ?
-				       udp->dst_port : 0;
-		}
-
-		for (i = 0; i < pkts; i++) {
-			const odp_packet_t pkt = pkt_tbl[i];
-			rx_pkt_queue_t rx_pkt_queue;
-			em_queue_t queue;
-			int pos;
-
-			/* table(hash) lookup to find queue */
-			ret = f_get(pktio_shm->tbl_lookup.tbl,
-				    &pktio_locm.keys[i],
-				    &rx_pkt_queue, sizeof(rx_pkt_queue_t));
-			if (likely(ret == 0)) {
-				/* found */
-				pos = rx_pkt_queue.pos;
-				queue = rx_pkt_queue.queue;
-			} else {
-				/* not found, use default queue if set */
-				pos = MAX_RX_PKT_QUEUES; /* reserved space +1*/
-				queue = pktio_shm->default_queue;
-				if (unlikely(queue == EM_QUEUE_UNDEF)) {
-					odp_packet_free(pkt);
-					continue;
-				}
-			}
-
-			pktio_locm.positions[valid_pkts++] = pos;
-			rx_qbursts[pos].sent = 0;
-			rx_qbursts[pos].queue = queue;
-			rx_qbursts[pos].pkt_tbl[rx_qbursts[pos].pkt_cnt++] =
-				pkt;
-		}
-
-		for (i = 0; i < valid_pkts; i++) {
-			const int pos = pktio_locm.positions[i];
-
-			if (rx_qbursts[pos].sent)
-				continue;
-
-			const int num = rx_qbursts[pos].pkt_cnt;
-			const em_queue_t queue = rx_qbursts[pos].queue;
-
-			/* Enqueue pkts into em-odp */
-			pkts_enqueued += pkt_enqueue(rx_qbursts[pos].pkt_tbl,
-						     num, queue);
-			rx_qbursts[pos].sent = 1;
-			rx_qbursts[pos].pkt_cnt = 0;
-		}
+		pkts_enqueued += pktin_lookup_enqueue(pkt_tbl, pkts);
 
 	} while (pkts == MAX_PKT_BURST_RX &&
 		 ++poll_rounds < MAX_RX_POLL_ROUNDS);
 
-pktio_rx_end:
-	pktin_queue_release();
+pktin_poll_end:
+	pktin_queue_release(pktin_queue_ptr);
+
+	return pkts_enqueued;
+}
+
+/*
+ * User provided function to poll for packet input in PLAIN_QUEUE-mode,
+ * given to EM via 'em_conf.input.input_poll_fn = pktin_pollfn_plainqueue;'
+ * The function is of type 'em_input_poll_func_t'. See .h file.
+ */
+int pktin_pollfn_plainqueue(void)
+{
+	odp_queue_t plain_queue;
+	odp_event_t ev_tbl[MAX_PKT_BURST_RX];
+	odp_packet_t pkt_tbl[MAX_PKT_BURST_RX];
+	int pkts;
+	int poll_rounds = 0;
+	int pkts_enqueued = 0; /* return value */
+
+	if (unlikely(!pktio_shm->pktio_started))
+		return 0;
+
+	plain_queue = plain_queue_acquire();
+	if (unlikely(plain_queue == ODP_QUEUE_INVALID))
+		return 0;
+
+	do {
+		pkts = odp_queue_deq_multi(plain_queue, ev_tbl, MAX_PKT_BURST_RX);
+		if (unlikely(pkts <= 0))
+			goto pktin_poll_end;
+
+		odp_packet_from_event_multi(pkt_tbl, ev_tbl, pkts);
+
+		pkts_enqueued += pktin_lookup_enqueue(pkt_tbl, pkts);
+
+	} while (pkts == MAX_PKT_BURST_RX &&
+		 ++poll_rounds < MAX_RX_POLL_ROUNDS);
+
+pktin_poll_end:
+	plain_queue_release(plain_queue);
 
 	return pkts_enqueued;
 }
@@ -927,38 +1056,37 @@ int pktio_tx(const em_event_t events[], const unsigned int num,
 	return ret;
 }
 
-static inline int
-tx_drain_burst_acquire(tx_burst_t **const tx_drain_burst)
+static inline tx_burst_t *
+tx_drain_burst_acquire(void)
 {
-	odp_event_t tx_burst_timed_event;
-	odp_buffer_t buf;
-	tx_burst_t **tx_burst_ptr;
+	tx_burst_t *tx_burst;
+	uintptr_t tx_burst_uintptr;
 
-	tx_burst_timed_event = odp_queue_deq(pktio_shm->pktout.tx_bursts_queue);
-	if (unlikely(tx_burst_timed_event == ODP_EVENT_INVALID))
-		return -1;
+	int ret = odp_stash_get_ptr(pktio_shm->pktout.tx_burst_stash,
+				    &tx_burst_uintptr, 1);
+	if (unlikely(ret != 1))
+		return NULL;
 
-	/* store event locally for reuse, i.e. enqueue it back later */
-	pktio_locm.tx_burst_timed_event = tx_burst_timed_event;
-
-	buf = odp_buffer_from_event(tx_burst_timed_event);
-	tx_burst_ptr = odp_buffer_addr(buf);
-	*tx_drain_burst = *tx_burst_ptr;
-
-	return 0;
+	tx_burst = (tx_burst_t *)tx_burst_uintptr;
+	return tx_burst;
 }
 
 static inline void
-tx_drain_burst_release(void) {
-	const int ret =
-	odp_queue_enq(pktio_shm->pktout.tx_bursts_queue,
-		      pktio_locm.tx_burst_timed_event);
+tx_drain_burst_release(tx_burst_t *tx_burst) {
+	uintptr_t tx_burst_uintptr = (uintptr_t)tx_burst;
 
-	if (unlikely(ret != 0))
-		APPL_EXIT_FAILURE("enqueue fails");
+	int ret = odp_stash_put_ptr(pktio_shm->pktout.tx_burst_stash,
+				    &tx_burst_uintptr, 1);
+	if (unlikely(ret != 1))
+		APPL_EXIT_FAILURE("stash-put fails:%d", ret);
 }
 
-static inline int pktio_tx_drain(void)
+/*
+ * User provided function to drain buffered output,
+ * given to EM via 'em_conf.output.output_drain_fn = pktout_drainfn;'
+ * The function is of type 'em_output_drain_func_t'
+ */
+int pktout_drainfn(void)
 {
 	const uint64_t curr = odp_cpu_cycles(); /* core-local timestamp */
 	const uint64_t prev = pktio_locm.tx_prev_cycles;
@@ -968,13 +1096,13 @@ static inline int pktio_tx_drain(void)
 
 	/* TX burst queue drain */
 	if (unlikely(diff > BURST_TX_DRAIN)) {
-		tx_burst_t *tx_drain_burst;
+		tx_burst_t *tx_drain_burst = tx_drain_burst_acquire();
 
-		if (tx_drain_burst_acquire(&tx_drain_burst) == 0) {
+		if (tx_drain_burst) {
 			ret = pktio_tx_burst(tx_drain_burst);
 			/* Update timestamp for next round */
 			pktio_locm.tx_prev_cycles = curr;
-			tx_drain_burst_release();
+			tx_drain_burst_release(tx_drain_burst);
 		}
 	}
 
@@ -997,7 +1125,7 @@ void pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst,
 	idx = pktio_shm->tbl_lookup.tbl_idx;
 	if (unlikely(idx != pktio_shm->rx_pkt_queues[idx].pos)) {
 		odp_ticketlock_unlock(&pktio_shm->tbl_lookup.lock);
-		APPL_EXIT_FAILURE("tbl insertion failed, idx(%i) != pos(%i)",
+		APPL_EXIT_FAILURE("tbl insertion failed, idx(%d) != pos(%d)",
 				  idx, pktio_shm->rx_pkt_queues[idx].pos);
 		return;
 	}

@@ -101,15 +101,17 @@ with the same -march/-mcpu options for best results:
 ===============================================================================
 Debug compilation
 ===============================================================================
-For debugging activities it may be useful to compile separate libs/executables
-of ODP and EM-ODP. The configuration script has to be run with different
-options, other commands as above.
+For debugging activities it may be useful to compile separate debug libs and
+executables of ODP and EM-ODP. The configuration script has to be run with
+different options, other commands as above.
 
 ODP debug configuration:
-> ../configure --prefix=<odp debug install path> CFLAGS='-O0 -g3' ...
+> ../configure --prefix=<odp debug install path> \
+  --enable-debug --enable-helper-debug CFLAGS='-O0 -g3' ...
 EM-ODP debug configuration:
 > ../configure --prefix=<em-odp debug install path> \
-  --with-odp-path=<odp install path> CFLAGS='-O0 -g3' --enable-check-level=3...
+  --with-odp-path=<odp install path> \
+  --enable-check-level=3 --enable-esv --enable-debug-print CFLAGS='-O0 -g3' ...
 
 ===============================================================================
 Packet-I/O (ODP-linux-generic + socket, dpdk or netmap based io)

@@ -88,9 +88,9 @@
  */
 #define VERIFY_PROCESSING_CONTEXT 1 /* 0=False or 1=True */
 
-/* Call em_atomic_processing_end for each event in EO-A */
+/* Call em_atomic_processing_end every once in a while in EO-A */
 #define CALL_ATOMIC_PROCESSING_END__A  1  /* 0=False or 1=True */
-/* Call em_atomic_processing_end for each event in EO-A */
+/* Call em_atomic_processing_end every once in a while in EO-B */
 #define CALL_ATOMIC_PROCESSING_END__B  1  /* 0=False or 1=True */
 
 /* Return 'TRUE' if the queue pair retains event order */

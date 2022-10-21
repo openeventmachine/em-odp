@@ -51,9 +51,10 @@ em_queue_group_create(const char *name, const em_core_mask_t *mask,
 
 	err = queue_group_check_mask(mask);
 	if (unlikely(err != EM_OK)) {
-		char mstr[EM_CORE_MASK_STRLEN];
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
 
-		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, mask);
+		em_core_mask_tostr(mstr, sizeof(mstr), mask);
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE,
 			       "Invalid mask given:%s", mstr);
 		return EM_QUEUE_GROUP_UNDEF;
@@ -85,9 +86,10 @@ em_queue_group_create_sync(const char *name, const em_core_mask_t *mask)
 
 	err = queue_group_check_mask(mask);
 	if (unlikely(err != EM_OK)) {
-		char mstr[EM_CORE_MASK_STRLEN];
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
 
-		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, mask);
+		em_core_mask_tostr(mstr, sizeof(mstr), mask);
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC,
 			       "Invalid mask given:%s", mstr);
 		return EM_QUEUE_GROUP_UNDEF;
@@ -174,9 +176,10 @@ em_queue_group_modify(em_queue_group_t queue_group,
 
 	err = queue_group_check_mask(new_mask);
 	if (unlikely(err != EM_OK)) {
-		char mstr[EM_CORE_MASK_STRLEN];
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
 
-		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, new_mask);
+		em_core_mask_tostr(mstr, sizeof(mstr), new_mask);
 		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
 				      "Queue group:%" PRI_QGRP ", invalid mask given:%s",
 				      queue_group, mstr);
@@ -212,9 +215,10 @@ em_queue_group_modify_sync(em_queue_group_t queue_group,
 
 	err = queue_group_check_mask(new_mask);
 	if (unlikely(err != EM_OK)) {
-		char mstr[EM_CORE_MASK_STRLEN];
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
 
-		em_core_mask_tostr(mstr, EM_CORE_MASK_STRLEN, new_mask);
+		em_core_mask_tostr(mstr, sizeof(mstr), new_mask);
 		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
 				      "Queue group:%" PRI_QGRP ", invalid core mask given:%s",
 				      queue_group, mstr);

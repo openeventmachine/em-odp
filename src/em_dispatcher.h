@@ -537,8 +537,11 @@ dispatch_round(void)
 	queue_elem = odp_queue_context(odp_queue);
 
 	/* Events might originate from outside of EM and need init */
-	event_init_odp_multi(odp_ev_tbl, ev_tbl/*out*/, ev_hdr_tbl/*out*/,
-			     num_events, true/*is_extev*/);
+	if (num_events == 1)
+		ev_tbl[0] = event_init_odp(odp_ev_tbl[0], true, ev_hdr_tbl/*out:1*/);
+	else
+		event_init_odp_multi(odp_ev_tbl, ev_tbl/*out*/, ev_hdr_tbl/*out*/,
+				     num_events, true/*is_extev*/);
 
 	if (unlikely(queue_elem == NULL ||
 		     queue_elem->state != EM_QUEUE_STATE_READY)) {

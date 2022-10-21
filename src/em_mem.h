@@ -207,6 +207,11 @@ typedef struct {
 	/** Is output_drain_fn executed on this core */
 	bool do_output_drain;
 
+	/** Number of dispatch rounds since previous call of poll/drain functions */
+	unsigned int poll_drain_dispatch_cnt;
+	/** Time when poll and drain functions were last called */
+	odp_time_t poll_drain_dispatch_last_run;
+
 	/** EM-core local log function */
 	em_log_func_t log_fn;
 
