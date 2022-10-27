@@ -28,7 +28,9 @@ ${KILL_TIMEOUT} =    30s
 @{RC_LIST} =    ${0}    ${-2}    ${-9}
 
 # Regex pattern that must not be matched by all test cases
-@{REGEX_NOT_MATCH} =    EM ERROR
+@{REGEX_NOT_MATCH} =
+...    EM ERROR
+...    APP ERROR
 
 # Common arguments used for all test cases
 @{CM_ARGS} =    -c    ${CORE_MASK}    -${APPLICATION_MODE}
