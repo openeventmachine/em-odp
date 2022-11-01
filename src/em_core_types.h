@@ -58,7 +58,7 @@ typedef struct {
 
 	struct {
 		/** From ODP thread ids to logical EM core ids */
-		uint8_t logic[ODP_THREAD_COUNT_MAX];
+		uint16_t logic[ODP_THREAD_COUNT_MAX];
 		/** From logical EM core ids to ODP thread ids */
 		uint8_t odp_thr[EM_MAX_CORES];
 	} thr_vs_logic;
@@ -75,7 +75,7 @@ COMPILE_TIME_ASSERT((sizeof(core_map_t) % ENV_CACHE_LINE_SIZE) == 0,
 		    CORE_MAP_T__SIZE_ERROR);
 COMPILE_TIME_ASSERT(EM_MAX_CORES - 1 <= UINT8_MAX,
 		    CORE_MAP_T__TYPE_ERROR1);
-COMPILE_TIME_ASSERT(ODP_THREAD_COUNT_MAX - 1 <= UINT8_MAX,
+COMPILE_TIME_ASSERT(ODP_THREAD_COUNT_MAX - 1 <= UINT16_MAX,
 		    CORE_MAP_T__TYPE_ERROR2);
 
 /**
