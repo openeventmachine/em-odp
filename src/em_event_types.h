@@ -63,6 +63,8 @@ COMPILE_TIME_ASSERT(sizeof(em_event_t) == sizeof(odp_event_t),
  */
 #define PKT_USERPTR_MAGIC_NBR ((void *)(intptr_t)0xA5A5)
 
+#define USER_FLAG_SET 1
+
 /**
  * Internal representation of the event handle (em_event_t) when using
  * Event State Verification (ESV)
@@ -88,7 +90,27 @@ typedef union {
 COMPILE_TIME_ASSERT(sizeof(evhdl_t) == sizeof(em_event_t), EVHDL_T_SIZE_ERROR);
 
 /**
- * Event-state counters: 'evgen', 'free_cnt' and 'send_cnt'.
+ * Stash entry for EM Atomic Groups internal stashes and Local Queue storage
+ * Stash a combo of dst-queue and event as one 64-bit value into the stash.
+ */
+typedef union {
+	uint64_t u64;
+	struct {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+		uint64_t evptr : 48;
+		uint64_t qidx  : 16;
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+		uint64_t qidx : 16;
+		uint64_t evptr : 48;
+#endif
+	};
+} stash_entry_t;
+
+COMPILE_TIME_ASSERT(sizeof(stash_entry_t) == sizeof(uint64_t),
+		    STASH_ENTRY_T_SIZE_ERROR);
+
+/**
+ * Event-state counters: 'evgen', 'ref_cnt' and 'send_cnt'.
  *
  * Updated as one single atomic var via 'evstate_cnt_t::u64'.
  */
@@ -97,13 +119,8 @@ typedef union ODP_ALIGNED(sizeof(uint64_t)) {
 	struct {
 		uint16_t evgen;
 		uint16_t rsvd;
-		union {
-			struct {
-				uint16_t free_cnt;
-				uint16_t send_cnt;
-			};
-			uint32_t free_send_cnt;
-		};
+		uint16_t ref_cnt;
+		uint16_t send_cnt;
 	};
 } evstate_cnt_t;
 
@@ -145,7 +162,7 @@ typedef struct {
  *
  * SW & I/O originated events.
  */
-typedef struct {
+typedef struct event_hdr {
 	/**
 	 * Event State Verification (ESV): event state data
 	 */
@@ -153,7 +170,7 @@ typedef struct {
 		uint8_t u8[32];
 		struct {
 			/**
-			 * Together the evstate_cnt_t counters (evgen, free_cnt
+			 * Together the evstate_cnt_t counters (evgen, ref_cnt
 			 * and send_cnt) can be used to detect invalid states
 			 * and operations on the event, e.g.:
 			 * double-free, double-send, send-after-free,
@@ -173,15 +190,58 @@ typedef struct {
 			ev_hdr_state_t state;
 		};
 	};
+
 	/**
-	 * EO-start send event buffering, event linked-list node
+	 * Event handle (this event)
 	 */
-	list_node_t start_node;
+	em_event_t event;
+
 	/**
-	 * Queue element for the associated queue
-	 * @note only used for atomic-group- or local-queues
+	 * Event size
 	 */
-	queue_elem_t *q_elem;
+	uint32_t event_size;
+
+	/**
+	 * Event type, contains major and minor parts
+	 */
+	em_event_type_t event_type;
+
+	/**
+	 * Event flags
+	 */
+	union {
+		uint16_t all;
+		struct {
+			/**
+			 * Indicate that this event has (or had) references and
+			 * some of the ESV checks must be omitted (evgen).
+			 * Will be set for the whole lifetime of event.
+			 */
+			uint16_t refs_used : 1;
+			/** reserved bits */
+			uint16_t rsvd      : 15;
+		};
+	} flags;
+
+	/**
+	 * Payload alloc alignment offset/push into free area of ev_hdr.
+	 * Only used by events based on ODP buffers that have the ev_hdr in the
+	 * beginning of the buf payload (pkts use 'user-area' for ev_hdr).
+	 * Value is copied from pool_elem->align_offset for easy access.
+	 */
+	uint16_t align_offset;
+
+	/**
+	 * Event group generation
+	 */
+	int32_t egrp_gen;
+
+	/**
+	 * Event Group handle (cannot be used by event references)
+	 */
+	em_event_group_t egrp;
+
+	/* --- CACHE LINE on systems with a 64B cache line size --- */
 
 	union {
 		uint64_t all;
@@ -200,41 +260,6 @@ typedef struct {
 			uint64_t rsvd     : 14;
 		};
 	} user_area;
-
-	/* --- CACHE LINE on systems with a 64B cache line size --- */
-
-	/**
-	 * Event handle (this event)
-	 */
-	em_event_t event ODP_ALIGNED(64);
-	/**
-	 * Queue handle
-	 * @note only used by EM chaining & EO-start send event buffering
-	 */
-	em_queue_t queue;
-	/**
-	 * Event Group handle
-	 */
-	em_event_group_t egrp;
-	/**
-	 * Event group generation
-	 */
-	int32_t egrp_gen;
-	/**
-	 * Event size
-	 */
-	uint32_t event_size;
-	/**
-	 * Payload alloc alignment offset/push into free area of ev_hdr.
-	 * Only used by events based on ODP buffers that have the ev_hdr in the
-	 * beginning of the buf payload (pkts use 'user-area' for ev_hdr).
-	 * Value is copied from pool_elem->align_offset for easy access.
-	 */
-	uint16_t align_offset;
-	/**
-	 * Event type, contains major and minor parts
-	 */
-	em_event_type_t event_type;
 
 	/**
 	 * End of event header data,
@@ -263,6 +288,35 @@ typedef struct {
 
 COMPILE_TIME_ASSERT(sizeof(event_hdr_t) <= 128, EVENT_HDR_SIZE_ERROR);
 COMPILE_TIME_ASSERT(sizeof(event_hdr_t) % 32 == 0, EVENT_HDR_SIZE_ERROR2);
+
+/**
+ * Event header used only when pre-allocating the pool during pool creation to
+ * be able to link all the event headers together into a linked list.
+ * Make sure not to overwrite the event state information in the header with the
+ * linked list information.
+ */
+typedef union event_prealloc_hdr {
+	event_hdr_t ev_hdr;
+
+	struct {
+		uint8_t u8[sizeof(event_hdr_t) - sizeof(list_node_t)];
+		/**
+		 * Pool pre-allocation: allocate and link each event in the pool into a
+		 * linked list to be able to initialize the event state into a known
+		 * state for ESV.
+		 */
+		list_node_t list_node;
+	};
+} event_prealloc_hdr_t;
+
+COMPILE_TIME_ASSERT(sizeof(event_prealloc_hdr_t) == sizeof(event_hdr_t),
+		    EVENT_PREALLOC_HDR_SIZE_ERROR);
+COMPILE_TIME_ASSERT(offsetof(event_prealloc_hdr_t, list_node) >
+		    offsetof(event_hdr_t, state) + sizeof(ev_hdr_state_t),
+		    EVENT_PREALLOC_HDR_SIZE_ERROR2);
+COMPILE_TIME_ASSERT(offsetof(event_prealloc_hdr_t, list_node) >
+		    offsetof(event_hdr_t, event) + sizeof(em_event_t),
+		    EVENT_PREALLOC_HDR_SIZE_ERROR3);
 
 #ifdef __cplusplus
 }

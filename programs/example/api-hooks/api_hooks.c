@@ -121,7 +121,7 @@ exit_cb(em_eo_t eo);
 
 static void
 alloc_hook(const em_event_t events[/*num_act*/], int num_act, int num_req,
-	   size_t size, em_event_type_t type, em_pool_t pool);
+	   uint32_t size, em_event_type_t type, em_pool_t pool);
 static void
 free_hook(const em_event_t events[], int num);
 static void
@@ -536,7 +536,7 @@ exit_cb(em_eo_t eo)
 
 static void
 alloc_hook(const em_event_t events[/*num_act*/], int num_act, int num_req,
-	   size_t size, em_event_type_t type, em_pool_t pool)
+	   uint32_t size, em_event_type_t type, em_pool_t pool)
 {
 	em_eo_t eo, eo_a, eo_b;
 	void *eo_ctx;
@@ -562,7 +562,7 @@ alloc_hook(const em_event_t events[/*num_act*/], int num_act, int num_req,
 	my_eo_ctx = eo_ctx;
 
 	APPL_PRINT("     Alloc-hook  EO:'%s'(%" PRI_EO ")\t"
-		   "sz:%zu type:0x%x pool:%" PRI_POOL "\t\t"
+		   "sz:%u type:0x%x pool:%" PRI_POOL "\t\t"
 		   "Events[%d]:",
 		   my_eo_ctx->name, eo, size, type, pool,
 		   num_act);

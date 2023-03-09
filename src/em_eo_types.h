@@ -75,8 +75,8 @@ typedef struct {
 	list_node_t queue_list;
 	/** Number of queues */
 	env_atomic32_t num_queues;
-	/** List of buffered events sent during the EO start-function */
-	list_node_t startfn_evlist;
+	/** Buffered events sent during the EO start-function */
+	odp_stash_t stash;
 	/** EO handle */
 	em_eo_t eo;
 	/** EO pool elem for linking free EOs for EO-alloc */

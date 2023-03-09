@@ -54,6 +54,15 @@ typedef struct {
 } init_t;
 
 /**
+ * Pool configuration
+ */
+typedef struct {
+	em_pool_t pool;
+	char name[EM_POOL_NAME_LEN];
+	em_pool_cfg_t cfg;
+} startup_pool_conf_t;
+
+/**
  * EM config options read from the config file.
  *
  * See the config/em-odp.conf file for description of the options.
@@ -79,6 +88,7 @@ typedef struct {
 	} queue;
 
 	struct {
+		bool order_keep;
 		unsigned int num_order_queues;
 	} event_chaining;
 
@@ -105,6 +115,10 @@ typedef struct {
 		uint64_t poll_drain_interval_ns;
 		odp_time_t poll_drain_interval_time;
 	} dispatch;
+	struct {
+		uint32_t num;
+		startup_pool_conf_t conf[EM_CONFIG_POOLS];
+	} startup_pools;
 } opt_t;
 
 em_status_t

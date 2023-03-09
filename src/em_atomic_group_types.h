@@ -52,13 +52,13 @@ typedef struct {
 	em_queue_group_t queue_group;
 	/** AG pool elem for linking free AGs for AG-alloc */
 	objpool_elem_t atomic_group_pool_elem;
-	/** Internal plain queues for events beloning to this group */
+	/** Internal stashes for events belonging to this group */
 	struct {
 		/** for high priority events */
-		odp_queue_t hi_prio;
+		odp_stash_t hi_prio;
 		/** for events of all other priority levels */
-		odp_queue_t lo_prio;
-	} internal_queue;
+		odp_stash_t lo_prio;
+	} stashes;
 
 	/** Atomic group element lock */
 	env_spinlock_t lock ENV_CACHE_LINE_ALIGNED;

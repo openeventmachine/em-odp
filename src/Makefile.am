@@ -41,6 +41,7 @@ $(top_builddir)/include/event_machine/api/event_machine_version.h
 
 emhelperincludedir = $(includedir)/event_machine/helper
 emhelperinclude_HEADERS = \
+$(top_srcdir)/include/event_machine/helper/event_machine_debug.h \
 $(top_srcdir)/include/event_machine/helper/event_machine_helper.h
 
 emaddonsincludedir = $(includedir)/event_machine/add-ons
@@ -131,6 +132,7 @@ em_error_types.h \
 	\
 em_event.c \
 em_event.h \
+em_event_inline.h \
 em_event_types.h \
 em_event_state.c \
 em_event_state.h \
@@ -171,6 +173,7 @@ em_queue_types.h \
 	\
 em_queue_group.c \
 em_queue_group.h \
+em_queue_inline.h \
 em_queue_group_types.h \
 	\
 em_sync_api_types.h \

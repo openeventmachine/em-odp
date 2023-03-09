@@ -1,4 +1,4 @@
-Copyright (c) 2013-2022, Nokia Solutions and Networks
+Copyright (c) 2013-2023, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -51,6 +51,194 @@ Examples:
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.0.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.0 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+
+- Event References
+  See em-odp/include/event_machine/README_API
+
+- Event Vectors
+  See em-odp/include/event_machine/README_API
+
+- EM debug timestamps
+  See em-odp/include/event_machine/README_API
+  - Enabled with new configure-script option '--enable-debug-timestamps':
+    (see configure.ac)
+    Override EM-define value 'EM_DEBUG_TIMESTAMP_ENABLE' to 0...2
+    --enable-debug-timestamps=0...2   Set 'EM_DEBUG_TIMESTAMP_ENABLE' to the
+                                      given value: 1=low overhead, 2=strict time
+    --enable-debug-timestamps<=yes(=1) Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
+    --enable-debug-timestamps          Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
+    --disable-debug-timestamps or
+      no option given                  Use 'EM_DEBUG_TIMESTAMP_ENABLE' value
+                                       from source code (0...2, default 0)
+
+- EM config file options - config/em-odp.conf:
+ - Config file version number bumped up to "0.0.15", see new options below.
+
+-  EM config file option: event_chaining.order_keep = false/true
+   Option description:
+     Events sent with em_send...() to an event chaining queue will be
+      passed to the user provided 'event_send_device/_multi()' functions.
+      EM can ensure that calls to these functions are:
+      1) made in order (order_keep = true)
+         or
+      2) make no extra effort to keep the order (order_keep = false),
+         e.g. if the user (or packet output) handles ordering or does not
+         care about it.
+   Note: Only meaningful when used together with (parallel-)ordered queues.
+         Order is implicitly guaranteed when sent during an atomic context and
+         never guaranteed when sent during a parallel context.
+   Only set to 'true' if queues of type EM_QUEUE_TYPE_PARALLEL_ORDERED
+   are used with event chaining, no benefit otherwise. Using 'false' lets EM
+   save on some resources.
+
+   Note! Currently only event_chaining.order_keep = false is supported.
+         Trying 'true' gives the following printout:
+         "Config option event_chaining.order_keep: true(1) currently not supported"
+
+- Env additions
+  - Return difference of cpu cycles (cycles2 - cycles1):
+    uint64_t env_cycles_diff(uint64_t cycles2, uint64_t cycles1)
+
+- Event State Verification (ESV) changes
+  The introduction of Event References has caused ESV to change a bit.
+  The ESV counters are always modified together atomically as one uint64_t,
+  as before. One of the ESV-counters, 'free_cnt', has been replaced by 'ref_cnt'
+  that stands for 'reference count', i.e. how many references exist for a
+  certain event. A newly allocated event with no further references has
+  'ref_cnt=1'. When one additional reference is created, the reference count
+  increases to 'ref_cnt=2' etc. Freeing an event, or a reference, decreases the
+  reference count. A freed event (back into the event pool) should have
+  'ref_cnt=0'.
+  The 'send_cnt' works as before, sending the event (or e.g. giving it to the
+  timer) increases the 'send_cnt' while dispatching or dequeueing decreases the
+  'send_cnt'. Also the 'evgen' count works as before but has been restricted
+  to "normal" events only, i.e. 'evgen' will not be taken into account for
+  references.
+
+  1) "Normal" ESV Error format:    (double-free error)
+  -----------------------------
+  EM ERROR:0x80000010  ESCOPE:0xFF000603
+  core:00 ecount:0(0) em_event_state.c:350 esv_error()
+  ESV: Event:0x27fffd9c7f000 state error -- counts:	send:0 ref:-1 evgen:2(3)
+  Help: OK: 'send <= ref, both >=0' AND 'hdl evgen == evgen'. Err otherwise
+    prev-state:em_free() core:00: EO:0xA-"myEO1" Q:0xB-"myQ1" u32[0]:(n/a)
+  => err-state:em_free() core:01: EO:0xC-"myEO2" Q:0xD-"myQ2" u32[0]:0x00000000
+  event:0x00027fffd9c7f000: ptr:0x7fffd9c7f000
+
+  2) Reference ESV Error format:    ("too many frees" error, here two frees)
+  ------------------------------
+  EM ERROR:0x80000010  ESCOPE:0xFF000610
+  core:00 ecount:0(0) em_event_state.c:342 esv_error()
+  ESV: RefEvent:0x27fffd9472000 state error -- counts:	send:0 ref:-1 (evgen:4 ignored for refs)
+  Help: OK: 'send <= ref, both >=0'. Err otherwise
+    prev-state:n/a (not valid for event references)
+  => err-state:em_free() core:00: EO:0xC-"myEO2" Q:0xD-"myQ2" u32[0]:0x00000000
+  event:0x00027fffd9472000: ptr:0x7fffd9472000
+
+  3) Unmark ESV Error format:
+  ---------------------------
+  EM ERROR:0x80000010  ESCOPE:0xFF000611
+  core:00 ecount:0(0) em_event_state.c:363 esv_error()
+  ESV: Event:0x27fffd9c7f100 state error - Invalid 'unmark'-API use
+    prev-state:em_free()              core:00: EO:0xA-"myEO1" Q:0xB-"myQ1" u32[0]:(n/a)
+  => err-state:em_event_unmark_free() core:00: EO:0xC-"myEO2" Q:0xD-"myQ2" u32[0]:0x00000000
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v2.10.0
+--------------------------------------------------------------------------------
+- Support for EM API v2.10 (em-odp/include), see API changes in
+  em-odp/include/event_machine/README_API.
+  * EM Idle Hooks
+  * Startup pools (changes mostly related to the EM config file)
+
+- EM Idle Hooks
+   (see include/event_machine/platform/event_machine_hooks.h for details)
+   The user can provide idle hooks to EM that will be run on each EM core when
+   there are no events to process ('to_idle' and 'while_idle' hooks).
+   Further, the 'to_active' hook will be run, if provided, when the core again
+   starts receiving events.
+   User idle hook functions can be provided via em_conf_t::idle_hooks{...}
+   when calling em_init() or via hook register functions. EM will call the
+   given hooks in the dispatcher depending on whether there are events to be
+   processed by the core.
+   Note: the 'EM_IDLE_HOOKS_ENABLE' value can be overridden by a command-line
+         option to the 'configure' script, e.g.:
+         $build> ../configure ... --enable-idle-hooks
+         The overridden value will be made available to the application via a
+         pkgconfig set define.
+   Idle hooks available:
+   - em_idle_hook_to_idle_t:
+     The 'to_idle' hook will be called by the EM dispatcher when a core is
+     entering the IDLE state i.e. when the core doesn't get any new events
+     to process.
+   - em_idle_hook_to_active_t:
+     The 'to_active' hook will be called by the EM dispatcher when a core is
+     entering the ACTIVE state i.e. when the core gets events after being idle.
+   - em_idle_hook_while_idle_t:
+     The 'while_idle' hook will be called by the EM dispatcher when a core is
+     already in the IDLE state and stays in it i.e. the core doesn't get any
+     events.
+   Register-functions:
+     em_status_t em_hooks_register_to_idle(em_idle_hook_to_idle_t func);
+     em_status_t em_hooks_unregister_to_idle(em_idle_hook_to_idle_t func);
+     em_status_t em_hooks_register_to_active(em_idle_hook_to_active_t func);
+     em_status_t em_hooks_unregister_to_active(em_idle_hook_to_active_t func);
+     em_status_t em_hooks_register_while_idle(em_idle_hook_while_idle_t func);
+     em_status_t em_hooks_unregister_while_idle(em_idle_hook_while_idle_t func);
+   Alternatively provide the idle-hook functions as arguments to em_init() at
+   start-up: em_init(em_conf_t::idle_hooks.to_idle_hook
+                                          .to_active_hook
+                                          .while_idle_hook);
+
+- Startup pools
+  (see config/em-odp.conf for more documentation and details)
+  - EM config file option: 'startup_pools'
+  Configure EM event-pools via the EM config file. These pools are created
+  during EM startup and destroyed when EM terminates (if still available).
+  When startup pools are used, EM will create them according to the
+  configuration given in the EM config file during em_init().
+  Startup pools are configured via the EM config file option: 'startup_pools'
+  The user should override the EM default config file (config/em-odp.conf) with
+  a separate runtime configuration file containing the desired application pool
+  configurations and provide it to EM via the 'EM_CONFIG_FILE' env variable:
+        $> EM_CONFIG_FILE=<path-to>/my-em.conf ./my-em-app [args]
+  If no startup pools are given, only the default pool needs to be created. In
+  this case, the default pool configuration is specified in the parameters of
+  em_init(), more specifically, in the struct em_conf_t::default_pool_cfg
+
+  Note that if the default pool is configured via the config file, it overrides
+  the default pool configuration given to em_init().
+  The priority regarding the default pool configuration is as follows:
+  +--------------+      +-------------+      +-----------------------------+
+  | Runtime.conf |  >   | em-odp.conf |   >  | em_conf_t::default_pool_cfg |
+  +--------------+      +-------------+      +-----------------------------+
+  The default pool configuration specified in runtime configuration file
+  overrides the one given in the default configuration file(em-odp.conf), which
+  overrides the one passed as a parameter to em_init().
+
+  Note that the 'startup_pools'-options are pool specific configurations given
+  directly to em_pool_create(name, pool, pool_cfg), thus overriding the global
+  config file settings such as pool.align_offset, pool.user_area_size and
+  pool.pkt_headroom that might be set in the config file.
+
+- Core: support odp-thread counts larger than 256
+
+- ESV: reduce the number of ESV state transitions for output from EM
+  Event Chaining output and output via EM output queues are both based on
+  calling a user provided function triggered from em_send() - no need to
+  toggle ESV state (between usr2em <-> em2usr) many times. Keep the ownership of
+  the event with the user until the user provided callback.
+
+- Queue: check that the EM queue context is valid
+  EM will verify that the used ODP queue context actually points to an
+  EM queue-elem and not to something else.
+  Only enabled with EM_CHECK_LEVEL=3 (configure option: --enable-check-level=3)
 
 --------------------------------------------------------------------------------
 Event Machine (EM) on ODP v2.9.0

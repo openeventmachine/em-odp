@@ -26,16 +26,17 @@ apps["event_group"]=programs/example/event_group/event_group
 apps["fractal"]=programs/example/fractal/fractal
 apps["hello"]=programs/example/hello/hello
 apps["ordered"]=programs/example/queue/ordered
-apps["queue_group"]=programs/example/queue_group/queue_group
 apps["queue_types_ag"]=programs/example/queue/queue_types_ag
 apps["queue_types_local"]=programs/example/queue/queue_types_local
+apps["queue_group"]=programs/example/queue_group/queue_group
 apps["timer_hello"]=programs/example/add-ons/timer_hello
 apps["timer_test"]=programs/example/add-ons/timer_test
 
 # Performance Apps
 apps["atomic_processing_end"]=programs/performance/atomic_processing_end
-apps["loop_multircv"]=programs/performance/loop_multircv
 apps["loop"]=programs/performance/loop
+apps["loop_multircv"]=programs/performance/loop_multircv
+apps["loop_refs"]=programs/performance/loop_refs
 apps["pairs"]=programs/performance/pairs
 apps["queue_groups"]=programs/performance/queue_groups
 apps["queues_local"]=programs/performance/queues_local
@@ -50,9 +51,9 @@ odp_conf="odp/config/odp-linux-generic.conf"
 sed -i 's/cpu_mhz\s*=.*/cpu_mhz = 2800/' "${odp_conf}"
 # - set system.cpu_mhz_max = 2800
 sed -i 's/cpu_mhz_max\s*=.*/cpu_mhz_max = 2800/' "${odp_conf}"
-# - set timer.inline = 1
+# - set timer.inline = 1: Use inline timer implementation
 sed -i 's/inline\s*=.*/inline = 1/' "${odp_conf}"
-#  - set inline_thread_type = 1
+#  - set timer.inline_thread_type = 1: Only worker threads process non-private timer pools
 sed -i 's/inline_thread_type\s*=.*/inline_thread_type = 1/' "${odp_conf}"
 
 em_conf="config/em-odp.conf"
@@ -89,6 +90,7 @@ for app in "${!apps[@]}"; do
         EM_CONFIG_FILE="${em_conf}" \
         robot \
         --variable APPLICATION:"${apps[${app}]}" \
+        --variable TASKSET_CORES:"0-1" \
         --variable CORE_MASK:"${core_masks[$i]}" \
         --variable APPLICATION_MODE:"${modes[$j]}" \
         --log NONE \

@@ -53,69 +53,47 @@ void output_queue_track(queue_elem_t *const output_q_elem);
 void output_queue_drain(const queue_elem_t *output_q_elem);
 void output_queue_buffering_drain(void);
 
-/** Convert an EM-event into an ODP-event */
-static inline odp_event_t
-event_em2odp(em_event_t event)
-{
-	/* Valid for both ESV enabled and disabled */
-	evhdl_t evhdl = {.event = event};
-
-	return (odp_event_t)(uintptr_t)evhdl.evptr;
-}
+uint32_t event_vector_tbl(em_event_t vector_event, em_event_t **event_tbl/*out*/);
+em_status_t event_vector_max_size(em_event_t vector_event, uint32_t *max_size /*out*/,
+				  em_escope_t escope);
 
 /**
- * Convert an ODP-event into an EM-event
- *
- * @note The returned EM-event does NOT contain the ESV event-generation-count
- *       evhdl_t::evgen! This must be set separately when using ESV.
+ * Convert an array of EM-events into an array of ODP-packets.
+ * The content must be known to be packets.
  */
-static inline em_event_t
-event_odp2em(odp_event_t odp_event)
-{
-	/* Valid for both ESV enabled and disabled */
-
-	/*
-	 * Setting 'evhdl.event = odp_event' is equal to
-	 *         'evhdl.evptr = odp_event, evhdl.evgen = 0'
-	 * (evhdl.evgen still needs to be set when using ESV)
-	 */
-	evhdl_t evhdl = {.event = (em_event_t)(uintptr_t)odp_event};
-
-	return evhdl.event;
-}
-
-/** Convert an array of EM-events into an array ODP-events */
 static inline void
-events_em2odp(const em_event_t events[/*in*/],
-	      odp_event_t odp_events[/*out*/], const unsigned int num)
+events_em2pkt(const em_event_t events[/*in*/],
+	      odp_packet_t odp_pkts[/*out*/], const unsigned int num)
 {
 	/* Valid for both ESV enabled and disabled */
 	const evhdl_t *const evhdls = (const evhdl_t *)events;
 
 	for (unsigned int i = 0; i < num; i++)
-		odp_events[i] = (odp_event_t)(uintptr_t)evhdls[i].evptr;
+		odp_pkts[i] = odp_packet_from_event((odp_event_t)(uintptr_t)evhdls[i].evptr);
 }
 
 /**
- * Convert an array of ODP-events into an array of EM-events
+ * Convert an array of EM-events into an array of ODP-packets in-place (i.e.
+ * convert using the same memory area for output) when the event type is known
+ * for sure to be packets. Be careful!
  *
- * @note The output EM-events do NOT contain the ESV event-generation-count
- *       evhdl_t::evgen! This must be set separately when using ESV.
+ * @return Pointer to odp packet table: odp_packet_t pkts[num]
+ *         Uses the same memory area for the output of 'pkts[num]' as for
+ *         the input 'events[num]' (thus overwrites 'events[num]' with
+ *         'pkts[num]').
  */
-static inline void
-events_odp2em(const odp_event_t odp_events[/*in*/],
-	      em_event_t events[/*out*/], const unsigned int num)
+static inline odp_packet_t *
+events_em2pkt_inplace(em_event_t events[/*in*/], const unsigned int num)
 {
 	/* Valid for both ESV enabled and disabled */
 	evhdl_t *const evhdls = (evhdl_t *)events;
+	odp_packet_t *const pkts = (odp_packet_t *)events; /* careful! */
 
-	/*
-	 * Setting 'evhdls[i].event = odp_events[i]' is equal to
-	 *         'evhdls[i].evptr = odp_events[i], evhdl[i].evgen = 0'
-	 * (evhdls[i].evgen still needs to be set when using ESV)
-	 */
+	/* Careful! Overwrites events[num] with pkts[num] */
 	for (unsigned int i = 0; i < num; i++)
-		evhdls[i].event = (em_event_t)(uintptr_t)odp_events[i];
+		pkts[i] = odp_packet_from_event((odp_event_t)(uintptr_t)evhdls[i].evptr);
+
+	return pkts;
 }
 
 /**
@@ -141,8 +119,9 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
 	 */
 	odp_packet_user_ptr_set(odp_pkt, PKT_USERPTR_MAGIC_NBR);
 	ev_hdr->user_area.all = 0; /* uarea fields init when used */
-	ev_hdr->event_type = EM_EVENT_TYPE_PACKET;
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	ev_hdr->event_type = EM_EVENT_TYPE_PACKET;
+	ev_hdr->flags.all = 0;
 
 	if (!esv_ena) {
 		ev_hdr->event = event;
@@ -171,8 +150,11 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
 	return event;
 }
 
+/**
+ * Initialize the event headers of packets allocated outside of EM.
+ */
 static inline void
-evhdr_init_pkt_multi(event_hdr_t *ev_hdrs[/*out*/],
+evhdr_init_pkt_multi(event_hdr_t *const ev_hdrs[],
 		     em_event_t events[/*in,out*/],
 		     const odp_packet_t odp_pkts[/*in*/],
 		     const int num, bool is_extev)
@@ -209,9 +191,10 @@ evhdr_init_pkt_multi(event_hdr_t *ev_hdrs[/*out*/],
 			idx = needs_init_idx[i];
 			odp_packet_user_ptr_set(odp_pkts[idx], PKT_USERPTR_MAGIC_NBR);
 			ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
-			ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
-			ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
 			ev_hdrs[idx]->event = events[idx];
+			ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+			ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
+			ev_hdrs[idx]->flags.all = 0;
 		}
 
 		return;
@@ -224,8 +207,9 @@ evhdr_init_pkt_multi(event_hdr_t *ev_hdrs[/*out*/],
 		idx = needs_init_idx[i];
 		odp_packet_user_ptr_set(odp_pkts[idx], PKT_USERPTR_MAGIC_NBR);
 		ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
-		ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
 		ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+		ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
+		ev_hdrs[idx]->flags.all = 0;
 	}
 
 	if (!em_shm->opt.esv.prealloc_pools) {
@@ -244,6 +228,147 @@ evhdr_init_pkt_multi(event_hdr_t *ev_hdrs[/*out*/],
 		idx = needs_init_idx[i];
 
 		odp_pool_t odp_pool = odp_packet_pool(odp_pkts[idx]);
+		em_pool_t pool = pool_odp2em(odp_pool);
+
+		if (pool == EM_POOL_UNDEF) {
+			/* External odp pkt originates from an ODP-pool */
+			events[idx] = evstate_init(events[idx], ev_hdrs[idx], is_extev);
+		} else {
+			/* External odp pkt originates from an EM-pool */
+			events[idx] = evstate_update(events[idx], ev_hdrs[idx], is_extev);
+		}
+	}
+}
+
+/**
+ * Initialize the event header of a packet vector allocated outside of EM.
+ */
+static inline em_event_t
+evhdr_init_pktvec(event_hdr_t *ev_hdr, em_event_t event,
+		  odp_packet_vector_t odp_pktvec, bool is_extev)
+{
+	const int user_flag = odp_packet_vector_user_flag(odp_pktvec);
+	const bool esv_ena = esv_enabled();
+
+	if (user_flag == USER_FLAG_SET) {
+		/* Event already initialized by EM */
+		if (esv_ena)
+			return ev_hdr->event;
+		else
+			return event;
+	}
+
+	/*
+	 * ODP pkt from outside of EM - not allocated by EM & needs init
+	 */
+	odp_packet_vector_user_flag_set(odp_pktvec, USER_FLAG_SET);
+	ev_hdr->user_area.all = 0; /* uarea fields init when used */
+	ev_hdr->event_type = EM_EVENT_TYPE_VECTOR;
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+
+	if (!esv_ena) {
+		ev_hdr->event = event;
+		return event;
+	}
+
+	/*
+	 * ESV enabled:
+	 */
+	if (!em_shm->opt.esv.prealloc_pools) {
+		event = evstate_init(event, ev_hdr, is_extev);
+	} else {
+		/* esv.prealloc_pools == true: */
+		odp_pool_t odp_pool = odp_packet_vector_pool(odp_pktvec);
+		em_pool_t pool = pool_odp2em(odp_pool);
+
+		if (pool == EM_POOL_UNDEF) {
+			/* External odp pkt originates from an ODP-pool */
+			event = evstate_init(event, ev_hdr, is_extev);
+		} else {
+			/* External odp pkt originates from an EM-pool */
+			event = evstate_update(event, ev_hdr, is_extev);
+		}
+	}
+
+	return event;
+}
+
+/**
+ * Initialize the event headers of packet vectors allocated outside of EM.
+ */
+static inline void
+evhdr_init_pktvec_multi(event_hdr_t *ev_hdrs[/*out*/],
+			em_event_t events[/*in,out*/],
+			const odp_packet_vector_t odp_pktvecs[/*in*/],
+			const int num, bool is_extev)
+{
+	const bool esv_ena = esv_enabled();
+
+	int needs_init_idx[num];
+	int needs_init_num = 0;
+	int idx;
+
+	for (int i = 0; i < num; i++) {
+		int user_flag = odp_packet_vector_user_flag(odp_pktvecs[i]);
+
+		if (user_flag == USER_FLAG_SET) {
+			/* Event already initialized by EM */
+			if (esv_ena)
+				events[i] = ev_hdrs[i]->event;
+			/* else events[i] = events[i] */
+		} else {
+			needs_init_idx[needs_init_num] = i;
+			needs_init_num++;
+		}
+	}
+
+	if (needs_init_num == 0)
+		return;
+
+	/*
+	 * ODP pkt vector from outside of EM - not allocated by EM & needs init
+	 */
+
+	if (!esv_ena) {
+		for (int i = 0; i < needs_init_num; i++) {
+			idx = needs_init_idx[i];
+			odp_packet_vector_user_flag_set(odp_pktvecs[idx], USER_FLAG_SET);
+			ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
+			ev_hdrs[idx]->event_type = EM_EVENT_TYPE_VECTOR;
+			ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+			ev_hdrs[idx]->event = events[idx];
+		}
+
+		return;
+	}
+
+	/*
+	 * ESV enabled:
+	 */
+	for (int i = 0; i < needs_init_num; i++) {
+		idx = needs_init_idx[i];
+		odp_packet_vector_user_flag_set(odp_pktvecs[idx], USER_FLAG_SET);
+		ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
+		ev_hdrs[idx]->event_type = EM_EVENT_TYPE_VECTOR;
+		ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+	}
+
+	if (!em_shm->opt.esv.prealloc_pools) {
+		for (int i = 0; i < needs_init_num; i++) {
+			idx = needs_init_idx[i];
+			events[idx] = evstate_init(events[idx], ev_hdrs[idx], is_extev);
+		}
+
+		return;
+	}
+
+	/*
+	 * em_shm->opt.esv.prealloc_pools == true
+	 */
+	for (int i = 0; i < needs_init_num; i++) {
+		idx = needs_init_idx[i];
+
+		odp_pool_t odp_pool = odp_packet_vector_pool(odp_pktvecs[idx]);
 		em_pool_t pool = pool_odp2em(odp_pool);
 
 		if (pool == EM_POOL_UNDEF) {
@@ -296,10 +421,21 @@ event_init_odp(odp_event_t odp_event, bool is_extev, event_hdr_t **ev_hdr__out)
 			*ev_hdr__out = ev_hdr;
 		return event;
 	}
+	case ODP_EVENT_PACKET_VECTOR: {
+		odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
+		event_hdr_t *ev_hdr = odp_packet_vector_user_area(odp_pktvec);
+
+		/* init event-hdr if needed (also ESV-state if used) */
+		event = evhdr_init_pktvec(ev_hdr, event, odp_pktvec, is_extev);
+		if (ev_hdr__out)
+			*ev_hdr__out = ev_hdr;
+		return event;
+	}
 	default:
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_NOT_IMPLEMENTED),
 			       EM_ESCOPE_EVENT_INIT_ODP,
 			       "Unexpected odp event type:%u", odp_type);
+		__builtin_unreachable();
 		/* never reached */
 		return EM_EVENT_UNDEF;
 	}
@@ -333,6 +469,18 @@ event_init_buf_multi(const odp_buffer_t odp_bufs[/*in*/],
 	}
 }
 
+/* Helper to event_init_odp_multi() */
+static inline void
+event_init_pktvec_multi(const odp_packet_vector_t odp_pktvecs[/*in*/],
+			em_event_t events[/*in,out*/], event_hdr_t *ev_hdrs[/*out*/],
+			const int num, bool is_extev)
+{
+	for (int i = 0; i < num; i++)
+		ev_hdrs[i] = odp_packet_vector_user_area(odp_pktvecs[i]);
+
+	evhdr_init_pktvec_multi(ev_hdrs, events, odp_pktvecs, num, is_extev);
+}
+
 /**
  * Convert from EM events to event headers and initialize the headers as needed.
  *
@@ -354,7 +502,8 @@ event_init_odp_multi(const odp_event_t odp_events[/*in*/],
 	do {
 		int num_type = odp_event_type_multi(&odp_events[ev], num - ev,
 						    &odp_type /*out*/);
-		if (likely(odp_type == ODP_EVENT_PACKET)) {
+		switch (odp_type) {
+		case ODP_EVENT_PACKET: {
 			odp_packet_t odp_pkts[num];
 
 			odp_packet_from_event_multi(odp_pkts /*out*/,
@@ -364,7 +513,9 @@ event_init_odp_multi(const odp_event_t odp_events[/*in*/],
 					     &events[ev] /*in,out*/,
 					     &ev_hdrs[ev] /*out*/,
 					     num_type, is_extev);
-		} else if (likely(odp_type == ODP_EVENT_BUFFER)) {
+			break;
+		}
+		case ODP_EVENT_BUFFER: {
 			odp_buffer_t odp_bufs[num];
 
 			for (int i = 0; i < num_type; i++)
@@ -374,7 +525,21 @@ event_init_odp_multi(const odp_event_t odp_events[/*in*/],
 					     &events[ev] /*in,out*/,
 					     &ev_hdrs[ev] /*out*/,
 					     num_type);
-		} else {
+			break;
+		}
+		case ODP_EVENT_PACKET_VECTOR: {
+			odp_packet_vector_t odp_pktvecs[num];
+
+			for (int i = 0; i < num_type; i++)
+				odp_pktvecs[i] = odp_packet_vector_from_event(odp_events[ev + i]);
+
+			event_init_pktvec_multi(odp_pktvecs /*in*/,
+						&events[ev] /*in,out*/,
+						&ev_hdrs[ev] /*out*/,
+						num_type, is_extev);
+			break;
+		}
+		default:
 			INTERNAL_ERROR(EM_FATAL(EM_ERR_NOT_IMPLEMENTED),
 				       EM_ESCOPE_EVENT_INIT_ODP_MULTI,
 				       "Unexpected odp event type:%u (%d events)",
@@ -384,6 +549,27 @@ event_init_odp_multi(const odp_event_t odp_events[/*in*/],
 
 		ev += num_type;
 	} while (ev < num);
+}
+
+/**
+ * @brief Convert from an event vector to event header
+ *
+ * It has to be known that the event is a vector before calling this function,
+ * otherwise use event_to_hdr().
+ *
+ * @param vector_event    EM event of major type EM_EVENT_TYPE_VECTOR
+ * @return event_hdr_t*   Pointer to the event header
+ *
+ * Does NOT initialize the event header.
+ */
+static inline event_hdr_t *
+eventvec_to_hdr(em_event_t vector_event)
+{
+	odp_event_t odp_event = event_em2odp(vector_event);
+	odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
+	event_hdr_t *ev_hdr = odp_packet_vector_user_area(odp_pktvec);
+
+	return ev_hdr;
 }
 
 /**
@@ -397,6 +583,7 @@ event_to_hdr(em_event_t event)
 	odp_event_t odp_event = event_em2odp(event);
 	odp_packet_t odp_pkt;
 	odp_buffer_t odp_buf;
+	odp_packet_vector_t odp_pktvec;
 	event_hdr_t *ev_hdr;
 
 	odp_event_type_t evtype = odp_event_type(odp_event);
@@ -409,6 +596,10 @@ event_to_hdr(em_event_t event)
 	case ODP_EVENT_BUFFER:
 		odp_buf = odp_buffer_from_event(odp_event);
 		ev_hdr = odp_buffer_addr(odp_buf);
+		break;
+	case ODP_EVENT_PACKET_VECTOR:
+		odp_pktvec = odp_packet_vector_from_event(odp_event);
+		ev_hdr = odp_packet_vector_user_area(odp_pktvec);
 		break;
 	default:
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_NOT_IMPLEMENTED),
@@ -437,8 +628,8 @@ event_to_hdr_multi(const em_event_t events[], event_hdr_t *ev_hdrs[/*out*/],
 		   const int num)
 {
 	odp_event_t odp_events[num];
-	odp_packet_t odp_pkts[num];
 	odp_buffer_t odp_buf;
+	odp_packet_vector_t odp_pktvec;
 	odp_event_type_t evtype;
 	int num_type;
 	int ev = 0; /* event & ev_hdr tbl index*/
@@ -451,17 +642,25 @@ event_to_hdr_multi(const em_event_t events[], event_hdr_t *ev_hdrs[/*out*/],
 		odp_event_type_multi(&odp_events[ev], num - ev, &evtype/*out*/);
 
 		switch (evtype) {
-		case ODP_EVENT_PACKET:
+		case ODP_EVENT_PACKET: {
+			odp_packet_t odp_pkts[num];
+
 			odp_packet_from_event_multi(odp_pkts, &odp_events[ev],
 						    num_type);
 			for (i = 0; i < num_type; i++)
 				ev_hdrs[ev + i] = odp_packet_user_area(odp_pkts[i]);
 			break;
-
+		}
 		case ODP_EVENT_BUFFER:
 			for (i = 0; i < num_type; i++) {
 				odp_buf = odp_buffer_from_event(odp_events[ev + i]);
 				ev_hdrs[ev + i] = odp_buffer_addr(odp_buf);
+			}
+			break;
+		case ODP_EVENT_PACKET_VECTOR:
+			for (i = 0; i < num_type; i++) {
+				odp_pktvec = odp_packet_vector_from_event(odp_events[ev + i]);
+				ev_hdrs[ev + i] = odp_packet_vector_user_area(odp_pktvec);
 			}
 			break;
 		default:
@@ -489,7 +688,7 @@ event_hdr_to_event(const event_hdr_t *const event_hdr)
  */
 static inline event_hdr_t *
 event_alloc_buf(const mpool_elem_t *const pool_elem,
-		size_t size, em_event_type_t type)
+		uint32_t size, em_event_type_t type)
 {
 	odp_buffer_t odp_buf = ODP_BUFFER_INVALID;
 	int subpool;
@@ -532,10 +731,11 @@ event_alloc_buf(const mpool_elem_t *const pool_elem,
 
 	ev_hdr->event = event;  /* store this event handle */
 	/* For optimization, no initialization for feature variables */
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 	ev_hdr->event_size = size; /* store requested size */
 	ev_hdr->align_offset = pool_elem->align_offset;
 	ev_hdr->event_type = type; /* store the event type */
-	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	ev_hdr->flags.all = 0;
 
 	return ev_hdr;
 }
@@ -545,7 +745,7 @@ event_alloc_buf(const mpool_elem_t *const pool_elem,
  */
 static inline int
 event_alloc_buf_multi(em_event_t events[/*out*/], const int num,
-		      const mpool_elem_t *pool_elem, size_t size,
+		      const mpool_elem_t *pool_elem, uint32_t size,
 		      em_event_type_t type)
 {
 	odp_buffer_t odp_bufs[num];
@@ -606,6 +806,7 @@ event_alloc_buf_multi(em_event_t events[/*out*/], const int num,
 			ev_hdrs[i]->align_offset = pool_elem->align_offset;
 			ev_hdrs[i]->event_type = type;
 			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
+			ev_hdrs[i]->flags.all = 0;
 		}
 
 		num_bufs += ret;
@@ -622,11 +823,11 @@ event_alloc_buf_multi(em_event_t events[/*out*/], const int num,
  */
 static inline event_hdr_t *
 event_alloc_pkt(const mpool_elem_t *pool_elem,
-		size_t size, em_event_type_t type)
+		uint32_t size, em_event_type_t type)
 {
 	const uint32_t push_len = pool_elem->align_offset;
 	uint32_t pull_len;
-	size_t alloc_size;
+	uint32_t alloc_size;
 	odp_packet_t odp_pkt = ODP_PACKET_INVALID;
 	int subpool;
 
@@ -700,10 +901,11 @@ event_alloc_pkt(const mpool_elem_t *pool_elem,
 	ev_hdr->user_area.isinit = 1;
 
 	ev_hdr->event = event;  /* store this event handle */
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 	ev_hdr->event_size = size; /* store requested size */
 	/* ev_hdr->align_offset = needed by odp bufs only */
 	ev_hdr->event_type = type; /* store the event type */
-	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	ev_hdr->flags.all = 0;
 
 	return ev_hdr;
 
@@ -717,7 +919,7 @@ err_pktalloc:
  */
 static inline int
 pktalloc_multi(odp_packet_t odp_pkts[/*out*/], int num,
-	       odp_pool_t odp_pool, size_t size,
+	       odp_pool_t odp_pool, uint32_t size,
 	       uint32_t push_len, uint32_t pull_len)
 {
 	int ret = odp_packet_alloc_multi(odp_pool, size, odp_pkts, num);
@@ -765,7 +967,7 @@ err_pktalloc_multi:
  */
 static inline int
 event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
-		      const mpool_elem_t *pool_elem, size_t size,
+		      const mpool_elem_t *pool_elem, uint32_t size,
 		      em_event_type_t type)
 {
 	const uint32_t push_len = pool_elem->align_offset;
@@ -774,7 +976,7 @@ event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
 	/* use same output-array: odp_events[] = events[] */
 	odp_event_t *const odp_events = (odp_event_t *)events;
 	event_hdr_t *ev_hdrs[num];
-	size_t alloc_size;
+	uint32_t alloc_size;
 	int subpool;
 	const bool esv_ena = esv_enabled();
 
@@ -831,6 +1033,192 @@ event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
 
 		for (i = num_pkts; i < num_pkts + ret; i++) {
 			/* For optimization, no init for feature vars */
+			ev_hdrs[i]->user_area.all = 0;
+			ev_hdrs[i]->user_area.req_size = pool_elem->user_area.req_size;
+			ev_hdrs[i]->user_area.pad_size = pool_elem->user_area.pad_size;
+			ev_hdrs[i]->user_area.isinit = 1;
+
+			if (!esv_ena)
+				ev_hdrs[i]->event = events[i];
+
+			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
+			ev_hdrs[i]->event_size = size;
+			/* ev_hdr->align_offset = needed by odp bufs only */
+			ev_hdrs[i]->event_type = type;
+			ev_hdrs[i]->flags.all = 0;
+		}
+
+		num_pkts += ret;
+		if (likely(num_pkts == num))
+			break; /* all allocated */
+		num_req -= ret;
+	}
+
+	return num_pkts; /* number of allocated pkts */
+}
+
+static inline event_hdr_t *
+event_alloc_vector(const mpool_elem_t *pool_elem,
+		   uint32_t size, em_event_type_t type)
+{
+	odp_packet_vector_t odp_pktvec = ODP_PACKET_VECTOR_INVALID;
+	int subpool;
+
+	/*
+	 * Allocate from the 'best fit' subpool, or if that is full, from the
+	 * next subpool that has pkts available of a bigger size.
+	 */
+	subpool = pool_find_subpool(pool_elem, size);
+	if (unlikely(subpool < 0))
+		return NULL;
+
+	for (; subpool < pool_elem->num_subpools; subpool++) {
+		odp_pool_t odp_pool = pool_elem->odp_pool[subpool];
+
+		if (EM_CHECK_LEVEL > 1 &&
+		    unlikely(odp_pool == ODP_POOL_INVALID))
+			return NULL;
+
+		odp_pktvec = odp_packet_vector_alloc(odp_pool);
+		if (likely(odp_pktvec != ODP_PACKET_VECTOR_INVALID))
+			break;
+	}
+
+	if (unlikely(odp_pktvec == ODP_PACKET_VECTOR_INVALID))
+		return NULL;
+
+	/* Ensure the size of the vector table is 0 after alloc */
+	odp_packet_vector_size_set(odp_pktvec, 0);
+
+	/*
+	 * Packet vector now allocated:
+	 * Init the EM event header in the odp-pkt-vector user-area.
+	 */
+
+	/*
+	 * Set the pktvec user flag to be able to recognize vectors that
+	 * EM has created vs. vectors from pkt-input that needs their
+	 * ev-hdrs to be initialized.
+	 */
+	odp_packet_vector_user_flag_set(odp_pktvec, USER_FLAG_SET);
+
+	event_hdr_t *const ev_hdr = odp_packet_vector_user_area(odp_pktvec);
+	odp_event_t odp_event = odp_packet_vector_to_event(odp_pktvec);
+	em_event_t event = event_odp2em(odp_event);
+
+	if (unlikely(ev_hdr == NULL))
+		goto err_vecalloc;
+
+	ev_hdr->user_area.all = 0;
+	ev_hdr->user_area.req_size = pool_elem->user_area.req_size;
+	ev_hdr->user_area.pad_size = pool_elem->user_area.pad_size;
+	ev_hdr->user_area.isinit = 1;
+
+	ev_hdr->event = event;  /* store this event handle */
+	ev_hdr->event_size = size; /* store requested size */
+	/* ev_hdr->align_offset = needed by odp bufs only */
+	ev_hdr->event_type = type; /* store the event type */
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+
+	return ev_hdr;
+
+err_vecalloc:
+	odp_packet_vector_free(odp_pktvec);
+	return NULL;
+}
+
+/*
+ * Helper for event_alloc_vec_multi()
+ */
+static inline int
+vecalloc_multi(odp_packet_vector_t odp_pktvecs[/*out*/], int num,
+	       odp_pool_t odp_pool)
+{
+	int i;
+
+	for (i = 0; i < num; i++) {
+		odp_pktvecs[i] = odp_packet_vector_alloc(odp_pool);
+		if (unlikely(odp_pktvecs[i] == ODP_PACKET_VECTOR_INVALID))
+			break;
+	}
+
+	const int num_vecs = i;
+
+	if (unlikely(num_vecs == 0))
+		return 0;
+
+	/*
+	 * Set the pkt vector user ptr to be able to recognize vector-events
+	 * that EM has created vs vectors from pkt-input that needs their
+	 * ev-hdrs to be initialized.
+	 */
+	for (i = 0; i < num_vecs; i++) {
+		odp_packet_vector_user_flag_set(odp_pktvecs[i], USER_FLAG_SET);
+		/* Ensure the size of the vector table is 0 after alloc */
+		odp_packet_vector_size_set(odp_pktvecs[i], 0);
+	}
+
+	return num_vecs;
+}
+
+/**
+ * Allocate & initialize multiple events based on odp-pkt-vectors.
+ */
+static inline int
+event_alloc_vector_multi(em_event_t events[/*out*/], const int num,
+			 const mpool_elem_t *pool_elem, uint32_t size,
+			 em_event_type_t type)
+{
+	odp_packet_vector_t odp_pktvecs[num];
+	/* use same output-array: odp_events[] = events[] */
+	odp_event_t *const odp_events = (odp_event_t *)events;
+	event_hdr_t *ev_hdrs[num];
+	int subpool;
+	const bool esv_ena = esv_enabled();
+
+	/*
+	 * Allocate from the 'best fit' subpool, or if that is full, from the
+	 * next subpool that has pkts available of a bigger size.
+	 */
+	subpool = pool_find_subpool(pool_elem, size);
+	if (unlikely(subpool < 0))
+		return 0;
+
+	int num_req = num;
+	int num_vecs = 0;
+	int i;
+
+	for (; subpool < pool_elem->num_subpools; subpool++) {
+		odp_pool_t odp_pool = pool_elem->odp_pool[subpool];
+
+		if (EM_CHECK_LEVEL > 1 &&
+		    unlikely(odp_pool == ODP_POOL_INVALID))
+			return 0;
+
+		int ret = vecalloc_multi(&odp_pktvecs[num_vecs], num_req,
+					 odp_pool);
+		if (unlikely(ret <= 0))
+			continue; /* try next subpool */
+
+		/*
+		 * Init 'ret' ev-hdrs from this 'subpool'=='odp-pool'.
+		 * Note: odp_events[] points&writes into events[out]
+		 */
+		for (i = num_vecs; i < num_vecs + ret; i++) {
+			odp_events[i] = odp_packet_vector_to_event(odp_pktvecs[i]);
+			ev_hdrs[i] = odp_packet_vector_user_area(odp_pktvecs[i]);
+		}
+
+		/*
+		 * Note: events[] == odp_events[] before ESV init.
+		 * Don't touch odp_events[] during this loop-round anymore.
+		 */
+		if (esv_ena)
+			evstate_alloc_multi(&events[num_vecs] /*in/out*/,
+					    &ev_hdrs[num_vecs], ret);
+
+		for (i = num_vecs; i < num_vecs + ret; i++) {
+			/* For optimization, no init for feature vars */
 			if (!esv_ena)
 				ev_hdrs[i]->event = events[i];
 
@@ -845,20 +1233,20 @@ event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
 			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
 		}
 
-		num_pkts += ret;
-		if (likely(num_pkts == num))
+		num_vecs += ret;
+		if (likely(num_vecs == num))
 			break; /* all allocated */
 		num_req -= ret;
 	}
 
-	return num_pkts; /* number of allocated pkts */
+	return num_vecs; /* number of allocated pkts */
 }
 
 /**
  * Helper for em_alloc() and em_event_clone()
  */
 static inline event_hdr_t *
-event_alloc(const mpool_elem_t *pool_elem, size_t size, em_event_type_t type)
+event_alloc(const mpool_elem_t *pool_elem, uint32_t size, em_event_type_t type)
 {
 	/*
 	 * EM event pools created with type=PKT can support:
@@ -874,6 +1262,8 @@ event_alloc(const mpool_elem_t *pool_elem, size_t size, em_event_type_t type)
 		ev_hdr = event_alloc_pkt(pool_elem, size, type);
 	else if (pool_elem->event_type == EM_EVENT_TYPE_SW)
 		ev_hdr = event_alloc_buf(pool_elem, size, type);
+	else if (pool_elem->event_type == EM_EVENT_TYPE_VECTOR)
+		ev_hdr = event_alloc_vector(pool_elem, size, type);
 
 	/* event now allocated (if !NULL): ev_hdr->event */
 
@@ -890,7 +1280,7 @@ event_alloc(const mpool_elem_t *pool_elem, size_t size, em_event_type_t type)
 /**
  * Start-up helper for pool preallocation
  */
-static inline em_event_t
+static inline event_prealloc_hdr_t *
 event_prealloc(const mpool_elem_t *pool_elem, size_t size, em_event_type_t type)
 {
 	/*
@@ -907,9 +1297,11 @@ event_prealloc(const mpool_elem_t *pool_elem, size_t size, em_event_type_t type)
 		ev_hdr = event_alloc_pkt(pool_elem, size, type);
 	else if (pool_elem->event_type == EM_EVENT_TYPE_SW)
 		ev_hdr = event_alloc_buf(pool_elem, size, type);
+	else if (pool_elem->event_type == EM_EVENT_TYPE_VECTOR)
+		ev_hdr = event_alloc_vector(pool_elem, size, type);
 
 	if (unlikely(ev_hdr == NULL))
-		return EM_EVENT_UNDEF;
+		return NULL;
 
 	/* event now allocated */
 	em_event_t event = ev_hdr->event;
@@ -917,21 +1309,77 @@ event_prealloc(const mpool_elem_t *pool_elem, size_t size, em_event_type_t type)
 	if (esv_enabled())
 		event = evstate_prealloc(event, ev_hdr);
 
-	return event;
+	event_prealloc_hdr_t *prealloc_hdr = (event_prealloc_hdr_t *)ev_hdr;
+
+	return prealloc_hdr;
 }
 
-static inline event_hdr_t *
-start_node_to_event_hdr(list_node_t *const list_node)
+static inline event_prealloc_hdr_t *
+list_node_to_prealloc_hdr(list_node_t *const list_node)
 {
-	event_hdr_t *const ev_hdr = (event_hdr_t *)(uintptr_t)
-		((uint8_t *)list_node - offsetof(event_hdr_t, start_node));
+	event_prealloc_hdr_t *const ev_hdr = (event_prealloc_hdr_t *)(uintptr_t)
+		((uint8_t *)list_node - offsetof(event_prealloc_hdr_t, list_node));
 
 	return likely(list_node != NULL) ? ev_hdr : NULL;
+}
+
+/**
+ * @brief Convert event vector table content to odp packets in-place.
+ *
+ * Convert an EM event vector table, containing em_event_t:s with
+ * esv-info (evgen), to a table of odp packets (remove handles' evgen in-place).
+ */
+static inline void
+vector_tbl2odp(odp_event_t odp_event_pktvec)
+{
+	odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event_pktvec);
+	odp_packet_t *pkt_tbl = NULL;
+	const int pkts = odp_packet_vector_tbl(pkt_vec, &pkt_tbl/*out*/);
+
+	if (likely(pkts > 0)) {
+		/* Careful! Points to same table */
+		em_event_t *event_tbl = (em_event_t *)pkt_tbl;
+
+		/* Drop ESV event generation (evgen) from event handle */
+		(void)events_em2pkt_inplace(event_tbl, pkts);
+	}
+}
+
+/**
+ * @brief Convert ODP packet vector table content to EM events.
+ *
+ * Convert an ODP packet vector table to a table of EM events.
+ * The content must be known to be raw odp packets.
+ *
+ * For recovery purposes only.
+ */
+static inline void
+vector_tbl2em(odp_event_t odp_event_pktvec)
+{
+	odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event_pktvec);
+	odp_packet_t *pkt_tbl = NULL;
+	const int pkts = odp_packet_vector_tbl(pkt_vec, &pkt_tbl/*out*/);
+
+	if (likely(pkts > 0)) {
+		em_event_t *const ev_tbl = (em_event_t *const)pkt_tbl;
+		odp_packet_t odp_pkttbl[pkts];
+		event_hdr_t *ev_hdr_tbl[pkts];
+
+		/*
+		 * Copy pkts from vector's pkt-table using events_em2pkt() that
+		 * also drops any evgen-info from the handles if present.
+		 */
+		events_em2pkt(ev_tbl/*in*/, odp_pkttbl/*out*/, pkts);
+
+		event_init_pkt_multi(odp_pkttbl /*in*/, ev_tbl /*in,out*/,
+				     ev_hdr_tbl /*out*/, pkts, false);
+	}
 }
 
 static inline em_status_t
 send_event(em_event_t event, const queue_elem_t *q_elem)
 {
+	const bool esv_ena = esv_enabled();
 	odp_event_t odp_event = event_em2odp(event);
 	odp_queue_t odp_queue = q_elem->odp_queue;
 	int ret;
@@ -946,9 +1394,23 @@ send_event(em_event_t event, const queue_elem_t *q_elem)
 		return EM_ERR_BAD_STATE;
 	}
 
+	/*
+	 * Vector: convert the event vector table to a table of odp packets
+	 * (in-place) before passing the vector and contents to the scheduler.
+	 */
+	if (esv_ena && odp_event_type(odp_event) == ODP_EVENT_PACKET_VECTOR)
+		vector_tbl2odp(odp_event);
+
+	/* Enqueue event for scheduling */
 	ret = odp_queue_enq(odp_queue, odp_event);
-	if (unlikely(EM_CHECK_LEVEL > 0 && ret != 0))
+
+	if (unlikely(EM_CHECK_LEVEL > 0 && ret != 0)) {
+		/* Restore EM vector event-table before returning vector to user */
+		if (esv_ena && odp_event_type(odp_event) == ODP_EVENT_PACKET_VECTOR)
+			vector_tbl2em(odp_event);
+
 		return EM_ERR_LIB_FAILED;
+	}
 
 	return EM_OK;
 }
@@ -957,9 +1419,9 @@ static inline int
 send_event_multi(const em_event_t events[], const int num,
 		 const queue_elem_t *q_elem)
 {
+	const bool esv_ena = esv_enabled();
 	odp_event_t odp_events[num];
 	odp_queue_t odp_queue = q_elem->odp_queue;
-	int ret;
 
 	if (unlikely(EM_CHECK_LEVEL > 1 && odp_queue == ODP_QUEUE_INVALID))
 		return 0;
@@ -971,30 +1433,55 @@ send_event_multi(const em_event_t events[], const int num,
 
 	events_em2odp(events, odp_events/*out*/, num);
 
-	ret = odp_queue_enq_multi(odp_queue, odp_events, num);
-	if (unlikely(ret < 0))
-		return 0;
+	/*
+	 * Vector: convert the event vector table to a table of odp packets
+	 * (in-place) before passing the vector and contents to the scheduler.
+	 */
+	if (esv_ena) {
+		for (int i = 0; i < num; i++) {
+			if (odp_event_type(odp_events[i]) == ODP_EVENT_PACKET_VECTOR)
+				vector_tbl2odp(odp_events[i]);
+		}
+	}
 
-	return ret;
+	/* Enqueue events for scheduling */
+	int ret = odp_queue_enq_multi(odp_queue, odp_events, num);
+
+	if (unlikely(ret != num)) {
+		int enq = ret < 0 ? 0 : ret;
+
+		/* Restore EM vector event-table before returning vector to user */
+		if (esv_ena) {
+			for (int i = enq; i < num; i++) {
+				if (odp_event_type(odp_events[i]) == ODP_EVENT_PACKET_VECTOR)
+					vector_tbl2em(odp_events[i]);
+			}
+		}
+
+		return enq;
+	}
+
+	return num;
 }
 
 static inline em_status_t
-send_local(em_event_t event, event_hdr_t *const ev_hdr,
-	   queue_elem_t *const q_elem)
+send_local(em_event_t event, queue_elem_t *const q_elem)
 {
 	em_locm_t *const locm = &em_locm;
 	const em_queue_prio_t prio = q_elem->priority;
-	odp_event_t odp_event = event_em2odp(event);
+	evhdl_t evhdl = {.event = event};
 	int ret;
 
 	if (unlikely(EM_CHECK_LEVEL > 0 &&
 		     q_elem->state != EM_QUEUE_STATE_READY))
 		return EM_ERR_BAD_STATE;
 
-	ev_hdr->q_elem = q_elem;
+	stash_entry_t entry = {.qidx = queue_hdl2idx(q_elem->queue),
+			       .evptr = evhdl.evptr};
 
-	ret = odp_queue_enq(locm->local_queues.prio[prio].queue, odp_event);
-	if (likely(ret == 0)) {
+	ret = odp_stash_put_u64(locm->local_queues.prio[prio].stash,
+				&entry.u64, 1);
+	if (likely(ret == 1)) {
 		locm->local_queues.empty = 0;
 		locm->local_queues.prio[prio].empty_prio = 0;
 		return EM_OK;
@@ -1004,30 +1491,31 @@ send_local(em_event_t event, event_hdr_t *const ev_hdr,
 }
 
 static inline int
-send_local_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
-		 const int num, queue_elem_t *const q_elem)
+send_local_multi(const em_event_t events[], const int num,
+		 queue_elem_t *const q_elem)
 {
 	em_locm_t *const locm = &em_locm;
 	const em_queue_prio_t prio = q_elem->priority;
-	odp_event_t odp_events[num];
-	int enq;
-	int i;
+	const evhdl_t *const evhdl_tbl = (const evhdl_t *const)events;
 
 	if (unlikely(EM_CHECK_LEVEL > 0 &&
 		     q_elem->state != EM_QUEUE_STATE_READY))
 		return 0;
 
-	for (i = 0; i < num; i++)
-		ev_hdrs[i]->q_elem = q_elem;
+	stash_entry_t entry_tbl[num];
+	const uint16_t qidx = queue_hdl2idx(q_elem->queue);
 
-	events_em2odp(events, odp_events, num);
+	for (int i = 0; i < num; i++) {
+		entry_tbl[i].qidx = qidx;
+		entry_tbl[i].evptr = evhdl_tbl[i].evptr;
+	}
 
-	enq = odp_queue_enq_multi(locm->local_queues.prio[prio].queue,
-				  odp_events, num);
-	if (likely(enq > 0)) {
+	int ret = odp_stash_put_u64(locm->local_queues.prio[prio].stash,
+				    &entry_tbl[0].u64, num);
+	if (likely(ret > 0)) {
 		locm->local_queues.empty = 0;
 		locm->local_queues.prio[prio].empty_prio = 0;
-		return enq;
+		return ret;
 	}
 
 	return 0;
@@ -1037,8 +1525,7 @@ send_local_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
  * Send one event to a queue of type EM_QUEUE_TYPE_OUTPUT
  */
 static inline em_status_t
-send_output(em_event_t event, event_hdr_t *const ev_hdr,
-	    queue_elem_t *const output_q_elem)
+send_output(em_event_t event, queue_elem_t *const output_q_elem)
 {
 	const em_sched_context_type_t sched_ctx_type =
 		em_locm.current.sched_context_type;
@@ -1096,33 +1583,19 @@ send_output(em_event_t event, event_hdr_t *const ev_hdr,
 		output_q_elem->output.output_conf.output_fn_args;
 	int sent;
 
-	if (!esv_enabled()) {
-		sent = output_fn(&event, 1, output_queue, output_fn_args);
-		if (unlikely(sent != 1))
-			return EM_ERR_OPERATION_FAILED;
-		return EM_OK;
-	}
-
-	/*
-	 * ESV enabled:
-	 */
-	event = evstate_em2usr(event, ev_hdr, EVSTATE__OUTPUT);
 	sent = output_fn(&event, 1, output_queue, output_fn_args);
-	if (likely(sent == 1))
-		return EM_OK; /* output success! */
+	if (unlikely(sent != 1))
+		return EM_ERR_OPERATION_FAILED;
 
-	/* revert event-state on output-error */
-	event = evstate_em2usr_revert(event, ev_hdr, EVSTATE__OUTPUT__FAIL);
-
-	return EM_ERR_OPERATION_FAILED;
+	return EM_OK;
 }
 
 /**
  * Send events to a queue of type EM_QUEUE_TYPE_OUTPUT
  */
 static inline int
-send_output_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
-		  const unsigned int num, queue_elem_t *const output_q_elem)
+send_output_multi(const em_event_t events[], const unsigned int num,
+		  queue_elem_t *const output_q_elem)
 {
 	const em_sched_context_type_t sched_ctx_type =
 		em_locm.current.sched_context_type;
@@ -1178,25 +1651,8 @@ send_output_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
 	const em_output_func_t output_fn = output_q_elem->output.output_conf.output_fn;
 	void *const output_fn_args = output_q_elem->output.output_conf.output_fn_args;
 
-	if (!esv_enabled())
-		return output_fn(events, num, output_queue, output_fn_args);
+	sent = output_fn(events, num, output_queue, output_fn_args);
 
-	/*
-	 * ESV enabled:
-	 */
-	em_event_t tmp_events[num];
-
-	/* need copy, don't change "const events[]" */
-	for (unsigned int i = 0; i < num; i++)
-		tmp_events[i] = events[i];
-	evstate_em2usr_multi(tmp_events/*in/out*/, ev_hdrs, num,
-			     EVSTATE__OUTPUT_MULTI);
-	sent = output_fn(tmp_events, num, output_queue, output_fn_args);
-
-	if (unlikely(sent < (int)num && sent >= 0))
-		evstate_em2usr_revert_multi(&tmp_events[sent]/*in/out*/,
-					    &ev_hdrs[sent], num - sent,
-					    EVSTATE__OUTPUT_MULTI__FAIL);
 	return sent;
 }
 
@@ -1227,7 +1683,21 @@ event_pointer(em_event_t event)
 				  + uarea_pad_sz - ev_hdr->align_offset);
 	}
 
-	return ev_ptr; /* NULL for unrecognized odp_etype */
+	return ev_ptr; /* NULL for unrecognized odp_etype, also for vectors */
+}
+
+static inline bool
+event_has_ref(em_event_t event)
+{
+	odp_event_t odp_event = event_em2odp(event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
+
+	if (odp_etype != ODP_EVENT_PACKET)
+		return false;
+
+	odp_packet_t odp_pkt = odp_packet_from_event(odp_event);
+
+	return odp_packet_has_ref(odp_pkt) ? true : false;
 }
 
 #ifdef __cplusplus

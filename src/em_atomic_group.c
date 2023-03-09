@@ -164,22 +164,29 @@ ag_local_processing_ended(atomic_group_elem_t *const ag_elem)
 }
 
 static inline int
-ag_internal_enq(const atomic_group_elem_t *ag_elem, const em_event_t ev_tbl[],
-		const int num_events, const em_queue_prio_t priority)
+ag_internal_enq(const atomic_group_elem_t *ag_elem, const queue_elem_t *q_elem,
+		const em_event_t ev_tbl[], const int num_events,
+		const em_queue_prio_t priority)
 {
-	odp_event_t odp_ev_tbl[num_events];
-	odp_queue_t plain_q;
+	stash_entry_t entry_tbl[num_events];
+	const evhdl_t *const evhdl_tbl = (const evhdl_t *const)ev_tbl;
+	odp_stash_t stash;
 	int ret;
 
-	events_em2odp(ev_tbl, odp_ev_tbl, num_events);
+	const uint16_t qidx = queue_hdl2idx(q_elem->queue);
+
+	for (int i = 0; i < num_events; i++) {
+		entry_tbl[i].qidx = qidx;
+		entry_tbl[i].evptr = evhdl_tbl[i].evptr;
+	}
 
 	if (priority == EM_QUEUE_PRIO_HIGHEST)
-		plain_q = ag_elem->internal_queue.hi_prio;
+		stash = ag_elem->stashes.hi_prio;
 	else
-		plain_q = ag_elem->internal_queue.lo_prio;
+		stash = ag_elem->stashes.lo_prio;
 
 	/* Enqueue events to internal queue */
-	ret = odp_queue_enq_multi(plain_q, odp_ev_tbl, num_events);
+	ret = odp_stash_put_u64(stash, &entry_tbl[0].u64, num_events);
 	if (unlikely(ret != num_events))
 		return ret > 0 ? ret : 0;
 
@@ -187,50 +194,43 @@ ag_internal_enq(const atomic_group_elem_t *ag_elem, const em_event_t ev_tbl[],
 }
 
 static inline int
-ag_internal_deq(const atomic_group_elem_t *ag_elem, em_event_t ev_tbl[/*out*/],
-		const int num_events)
+ag_internal_deq(const atomic_group_elem_t *ag_elem,
+		stash_entry_t entry_tbl[/*out*/], const int num_events)
 {
 	/*
-	 * Dequeue odp events directly into ev_tbl[].
 	 * The function call_eo_receive_fn/multi() will convert to
 	 * EM events with event-generation counts, if ESV is enabled,
 	 * before passing the events to the user EO.
 	 */
-	odp_event_t *const ag_ev_tbl = (odp_event_t *const)ev_tbl;
-	int hi_cnt;
-	int lo_cnt;
+	int32_t hi_cnt;
+	int32_t lo_cnt;
 
 	/* hi-prio events */
-	hi_cnt = odp_queue_deq_multi(ag_elem->internal_queue.hi_prio,
-				     ag_ev_tbl/*out*/, num_events);
+	hi_cnt = odp_stash_get_u64(ag_elem->stashes.hi_prio,
+				   &entry_tbl[0].u64 /*[out]*/, num_events);
 	if (hi_cnt == num_events || hi_cnt < 0)
 		return hi_cnt;
 
 	/* ...then lo-prio events */
-	lo_cnt = odp_queue_deq_multi(ag_elem->internal_queue.lo_prio,
-				     &ag_ev_tbl[hi_cnt]/*out*/,
-				     num_events - hi_cnt);
+	lo_cnt = odp_stash_get_u64(ag_elem->stashes.lo_prio,
+				   &entry_tbl[hi_cnt].u64 /*[out]*/,
+				   num_events - hi_cnt);
 	if (unlikely(lo_cnt < 0))
 		return hi_cnt;
 
 	return hi_cnt + lo_cnt;
 }
 
-void
-atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
-		      const int num_events, queue_elem_t *const q_elem)
+void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
+			   const queue_elem_t *q_elem)
 {
 	atomic_group_elem_t *const ag_elem =
 		atomic_group_elem_get(q_elem->atomic_group);
 	const em_queue_prio_t priority = q_elem->priority;
 	int enq_cnt;
 
-	/* Insert the original q_elem pointer into the event header */
-	for (int i = 0; i < num_events; i++)
-		ev_hdr_tbl[i]->q_elem = q_elem;
-
 	/* Enqueue the scheduled events into the atomic group internal queue */
-	enq_cnt = ag_internal_enq(ag_elem, ev_tbl, num_events, priority);
+	enq_cnt = ag_internal_enq(ag_elem, q_elem, ev_tbl, num_events, priority);
 
 	if (unlikely(enq_cnt < num_events)) {
 		em_free_multi(&ev_tbl[enq_cnt], num_events - enq_cnt);
@@ -263,10 +263,11 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 	 * already once and should be dispatched asap.
 	 */
 	em_event_t deq_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-	event_hdr_t *deq_hdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	event_hdr_t *deq_evhdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	stash_entry_t entry_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
 
 	do {
-		int deq_cnt = ag_internal_deq(ag_elem, deq_ev_tbl /*out*/,
+		int deq_cnt = ag_internal_deq(ag_elem, entry_tbl /*[out]*/,
 					      EM_SCHED_AG_MULTI_MAX_BURST);
 
 		if (unlikely(deq_cnt <= 0)) {
@@ -275,26 +276,31 @@ atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
 			return;
 		}
 
+		for (int i = 0; i < deq_cnt; i++)
+			deq_ev_tbl[i] = (em_event_t)(uintptr_t)entry_tbl[i].evptr;
+
 		locm->event_burst_cnt = deq_cnt;
-		event_to_hdr_multi(deq_ev_tbl, deq_hdr_tbl /*out*/, deq_cnt);
-		int tbl_idx = 0; /* index into 'deq_hdr_tbl[]' */
+		event_to_hdr_multi(deq_ev_tbl, deq_evhdr_tbl /*out*/, deq_cnt);
+		int tbl_idx = 0; /* index into ..._tbl[] */
 
 		/*
 		 * Dispatch in batches of 'batch_cnt' events.
 		 * Each batch contains events from the same atomic queue.
 		 */
 		do {
-			queue_elem_t *const batch_qelem =
-				deq_hdr_tbl[tbl_idx]->q_elem;
+			const int qidx = entry_tbl[tbl_idx].qidx;
+			const em_queue_t queue = queue_idx2hdl(qidx);
+			queue_elem_t *const batch_qelem = queue_elem_get(queue);
+
 			int batch_cnt = 1;
 
 			for (int i = tbl_idx + 1; i < deq_cnt &&
-			     deq_hdr_tbl[i]->q_elem == batch_qelem; i++) {
+			     entry_tbl[i].qidx == qidx; i++) {
 				batch_cnt++;
 			}
 
 			dispatch_events(&deq_ev_tbl[tbl_idx],
-					&deq_hdr_tbl[tbl_idx],
+					&deq_evhdr_tbl[tbl_idx],
 					batch_cnt, batch_qelem);
 			tbl_idx += batch_cnt;
 		} while (tbl_idx < deq_cnt);

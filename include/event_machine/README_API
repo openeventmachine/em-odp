@@ -6,6 +6,183 @@ EM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 -------------------------------------------------------------------------------
+API 3.0 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=0)
+-------------------------------------------------------------------------------
+
+1. Event References
+   (see include/event_machine/api/event_machine_event.h for documentation)
+   EM APIs:
+     em_event_t em_event_ref(em_event_t event);
+     bool em_event_has_ref(em_event_t event);
+
+   Normally, each event is associated with one event handle (em_event_t) - each
+   event allocation produces a new event (and associated payload data) that can
+   be processed, sent or freed. When the user EO has allocated or received an
+   event from a queue, the event payload data may be read and written as needed
+   by the application.
+   An exception to the above described scenario happens when using event
+   references.
+   An event reference is an additional event handle referring to an existing
+   event. New references are created with the em_event_ref() API call. The
+   intent of using multiple references is to avoid event copies.
+   An event that has multiple references shares its data with the other
+   reference handles and thus the (shared) data must not be modified.
+   Reading event data from a reference is allowed. Writes to the event data must
+   only be done when there is a single event handle left, i.e. when
+   em_event_has_ref(event) returns 'false'. Results are undefined if these
+   restrictions are not observed.
+   The event is freed when the last reference, including the original event,
+   is freed.
+   It is not allowed to use event references with event groups since assigning
+   an event that has references to an event group would assign all the
+   references to the event group resulting in undefined behaviour. E.g. using
+   em_send_group()/em_send_group_multi() to send a reference is wrong.
+
+2. Event Vectors
+   (see include/event_machine/api/event_machine_event.h for documentation)
+   EM APIs:
+     void em_event_vector_free(em_event_t vector_event);
+     uint32_t em_event_vector_tbl(em_event_t vector_event, em_event_t **event_tbl/*out*/);
+     uint32_t em_event_vector_size(em_event_t vector_event);
+     void em_event_vector_size_set(em_event_t vector_event, uint32_t size);
+     uint32_t em_event_vector_max_size(em_event_t vector_event);
+     em_status_t em_event_vector_info(em_event_t vector_event,
+                                      em_event_vector_info_t *vector_info/*out*/);
+     Note: Event Vectors always have the major part of their event type set to
+           'EM_EVENT_TYPE_VECTOR'.
+
+   Vector events contain a table of events.
+   All events in the event-table must be of major type EM_EVENT_TYPE_PACKET.
+   Storing events of another type into the event-table is an error and leads to
+   undefined behaviour.
+   Event vector pools are created with em_pool_create() with the pool event-type
+   set to EM_EVENT_TYPE_VECTOR. Event vectors can then be allocated from vector
+   pools by calling em_alloc(..., vector_pool).
+   To free the vector event along with all events it contains, use em_free() or
+   em_free_multi().
+   To free the vector event only, not the events it contains,
+   use em_event_vector_free().
+
+   Extension APIs for 'em-odp' (needed to set up pktio to use vectors)
+   (see include/event_machine/platform/event_machine_odp_ext.h)
+   - Get the ODP schedule group that corresponds to the given EM queue gruop
+     odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group);
+   - Map the given scheduled ODP pktin event queues to new EM queues.
+     int em_odp_pktin_event_queues2em(const odp_queue_t odp_pktin_evqueues[/*num*/],
+                                      em_queue_t queues[/*out:num*/], int num);
+
+3. Vector Pools
+   (see include/event_machine/platform/event_machine_pool.h for documentation)
+   EM pools for Event Vectors can now be created via the em_pool_create() API.
+   The pool config struct is extended to allow .event_type = EM_EVENT_TYPE_VECTOR.
+
+   Changes to pool creation via configuration struct 'em_pool_cfg_t':
+   - em_pool_cfg_t::event_type:
+     The event type determines the pool type to create, now it supports vectors.
+     Using EM_EVENT_TYPE_VECTOR here creates subpools of type 'ODP_POOL_VECTOR'.
+     This kind of EM pool can ONLY be used for creating event vectors.
+   - em_pool_cfg_t::subpool[].size:
+     (when .event_type = EM_EVENT_TYPE_VECTOR)
+     Max number of events in a vector from the subpool, i.e.
+     'number of em_event_t:s in the vector's event-table[]'.
+     EM does not initialize the vector.
+     Note! The meaning of .size is slightly different for "normal" event pools
+           vs. vector pools.
+
+4. Vector allocation and freeing
+   (see include/event_machine/api/event_machine_event.h for documentation)
+   Event vectors can be allocated from vector pools using the existing
+   APIs em_alloc() or em_alloc_multi() by providing
+   (major) type=EM_EVENT_TYPE_VECTOR and pool='vector-pool':
+     - em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool);
+     - int em_alloc_multi(em_event_t events[/*out*/], int num,
+                          uint32_t size, em_event_type_t type, em_pool_t pool);
+   Minor change to the alloc APIs for the type and meaning of the 'size' arg:
+         1) Packet & sw-buf: event size in bytes (B), size > 0.
+   *new* 2) Vector: number of event handles that should fit into
+                    the vector table of the event, size > 0.
+   The change was needed when introducing EM vector-events into to API,
+   here the event alloc-size indicates the number of events that should
+   fit into the vector and not a byte-size, so uint32_t makes more sense
+   and is also more in line with the types used during pool-creation.
+
+   Freeing a vector can be done with em_free/_multi(), which frees the vector
+   and all events it contains. Alternatively, use em_event_vector_free(), which
+   only frees the vector and not the events in the contained event table.
+
+5. Helper: EM debug timestamps
+   (see include/event_machine/helper/event_machine_debug.h for documentation)
+   Helper APIs:
+     uint64_t em_debug_timestamp(em_debug_tsp_t tsp);
+
+   Use em_debug_timestamp() to retrieve a 'per EM thread' dispatcher timestamp
+   from EM internal timestamp-points (tsp) that can be compared to the current
+   time to determine e.g. scheduling latency or other overheads.
+   Not for normal application use!
+   Disabled by default (returns 0) and can be enabled via the configure option
+   '--enable-debug-timestamps' or by changing the 'EM_DEBUG_TIMESTAMP_ENABLE'
+   define.
+   The type 'em_debug_ts_t' defines the available internal EM timestamp points,
+   see the type definition.
+
+6. Other
+   Event: rename functions for major and minor event types
+   Rename em_get_type_major() to em_event_type_major() and
+          em_get_type_minor() to em_event_type_major().
+   Create defines for the old names for backwards compatibility.
+
+   Event: em_event_get_size() - returns uint32_t instead of size_t to reflect
+                                changes in em_alloc() etc.
+   Hooks: em_api_hook_alloc_t - arg 'size' changed to uint32_t instead of size_t
+                                to reflect changes in em_alloc() etc.
+
+-------------------------------------------------------------------------------
+API 2.10 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=10)
+-------------------------------------------------------------------------------
+Backwards compatible with EM 2.9 API
+
+1. EM Idle Hooks
+   (see include/event_machine/platform/event_machine_hooks.h and
+    CHANGE_NOTES for more documentation and details)
+   EM APIs:
+     em_status_t em_hooks_register_to_idle(em_idle_hook_to_idle_t func);
+     em_status_t em_hooks_unregister_to_idle(em_idle_hook_to_idle_t func);
+     em_status_t em_hooks_register_to_active(em_idle_hook_to_active_t func);
+     em_status_t em_hooks_unregister_to_active(em_idle_hook_to_active_t func);
+     em_status_t em_hooks_register_while_idle(em_idle_hook_while_idle_t func);
+     em_status_t em_hooks_unregister_while_idle(em_idle_hook_while_idle_t func);
+   Up to 'EM_CALLBACKS_MAX' idle hooks of each type can be registered.
+
+   Alternatively, the idle hooks can be provided as arguments to em_init()
+   at start-up:
+     em_init(em_conf_t::idle_hooks.to_idle_hook
+                                  .to_active_hook
+                                  .while_idle_hook);
+   The arg 'em_conf_t conf' of em_init() has new fields in
+   em_conf_t::idle_hooks{}. The usage if em_init() and em_conf_t is backwards
+   compatible with API v2.9 since em_conf_init(&conf) will init the new fields
+   to NULL/0;
+
+   EM Idle hook functions can be registered for tracking the idle state
+   (ACTIVE/IDLE) of EM cores:
+   'To_idle' hooks are called when the core state changes from ACTIVE to IDLE.
+   'To_active' hooks are called when the core state changes from IDLE to ACTIVE.
+   'While_idle' hooks are called when the core is already in the IDLE state and
+   doesn't get any events from scheduled or local queues.
+
+   Idle hook support is only available when EM_IDLE_HOOKS_ENABLE != 0
+   (see the configure --enable-idle_hooks option)
+
+2. Startup Pools in config file
+   (see config/em-odp.conf and CHANGE_NOTES for more documentation and details)
+   Configure EM event-pools via the EM config file. These pools will be created
+   during EM startup. The changes are mostly related to the EM config file but
+   impacts how the em_conf_t::default_pool_cfg given to em_init() is used:
+     - if the default pool configuration is also given in the config file
+       through the 'startup_pools' option, it will override the default pool
+       configuration given via em_conf_t::default_pool_cfg to em_init().
+
+-------------------------------------------------------------------------------
 API 2.9 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=9)
 -------------------------------------------------------------------------------
 Backwards compatible with EM 2.8 API
@@ -237,10 +414,10 @@ types and functions requiring small changes to older code.
 
    - New Error return codes for em_tmo_set_abs() and em_tmo_set_periodic()
      related to timing errors:
-     EM_OK          success (event taken)
-     EM_ERR_TOONEAR failure, tick value is past or too close to current time
-     EM_ERR_TOOFAR  failure, tick value exceeds timer capability (too far ahead)
-     (other_codes)  other failure
+     EM_OK          success (event taken)
+     EM_ERR_TOONEAR failure, tick value is past or too close to current time
+     EM_ERR_TOOFAR  failure, tick value exceeds timer capability (too far ahead)
+     (other_codes)  other failure
      New Error return codes for em_tmo_ack():
      EM_OK            success
      EM_ERR_CANCELED  timer has been cancelled
@@ -322,7 +499,7 @@ types requiring small changes to older code.
      Inquire timer capabilities for a specific resolution or maximum timeout.
 
    - em_tmo_set_periodic(): Allow an absolute start time for periodic timeouts
-     with the new API em_tmo_set_periodic(..., em_timer_tick_t start_abs, ...)
+     with the new API em_tmo_set_periodic(..., em_timer_tick_t start_abs, ...)
      Note: Prefer the new em_tmo_set_periodic() for activating/setting periodic
            timeouts over em_tmo_set_rel().
            Use em_tmo_set_abs() or em_tmo_set_rel() for oneshot timeouts.

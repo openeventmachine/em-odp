@@ -983,7 +983,7 @@ alloc_free_per_event(em_event_t event)
 	perf_event_t *perf_event = em_event_pointer(event);
 	env_time_t send_time = perf_event->send_time;
 	int seq = perf_event->seq;
-	size_t event_size = em_event_get_size(event);
+	uint32_t event_size = em_event_get_size(event);
 
 	em_free(event);
 

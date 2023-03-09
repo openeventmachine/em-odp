@@ -75,9 +75,7 @@ int em_core_mask_equal(const em_core_mask_t *mask1, const em_core_mask_t *mask2)
 
 void em_core_mask_set_count(int count, em_core_mask_t *mask)
 {
-	int i;
-
-	for (i = 0; i < count; i++)
+	for (int i = 0; i < count; i++)
 		odp_cpumask_set(&mask->odp_cpumask, i);
 }
 

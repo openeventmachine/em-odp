@@ -45,6 +45,7 @@ void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
 	odp_pool_param_t odp_pool_defaults;
 	uint32_t buf_cache_sz;
 	uint32_t pkt_cache_sz;
+	uint32_t vec_cache_sz;
 	uint32_t cache_sz;
 
 	if (unlikely(!pool_cfg)) {
@@ -61,7 +62,9 @@ void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
 
 	buf_cache_sz = odp_pool_defaults.buf.cache_size;
 	pkt_cache_sz = odp_pool_defaults.pkt.cache_size;
+	vec_cache_sz = odp_pool_defaults.vector.cache_size;
 	cache_sz = MIN(buf_cache_sz, pkt_cache_sz);
+	cache_sz = MIN(cache_sz, vec_cache_sz);
 
 	for (int i = 0; i < EM_MAX_SUBPOOLS; i++)
 		pool_cfg->subpool[i].cache_size = cache_sz;
@@ -80,8 +83,8 @@ em_pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
 
 	if (unlikely(err)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_CREATE,
-			       "Pool create: invalid pool-config:%d:\n"
-			       "%s", err, err_str);
+			       "Pool create: invalid pool-config(%d): %s",
+			       err, err_str);
 		return EM_POOL_UNDEF;
 	}
 
@@ -245,6 +248,11 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 
 		odp_pool_stats_t odp_stats;
 
+#if ODP_VERSION_API_NUM(1, 37, 2) <= ODP_VERSION_API
+		/* avoid LTO-error: 'odp_stats.thread.first/last' may be used uninitialized */
+		odp_stats.thread.first = 0;
+		odp_stats.thread.last = 0;
+#endif
 		int ret = odp_pool_stats(pool_elem->odp_pool[i], &odp_stats);
 
 		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_INFO,

@@ -41,10 +41,10 @@ extern "C" {
 #endif
 
 /**
- * EM API-callback hooks init function (called once at startup).
+ * EM API-callback and idle hooks init function (called once at startup).
  */
 em_status_t
-hooks_init(const em_api_hooks_t *api_hooks);
+hooks_init(const em_api_hooks_t *api_hooks, const em_idle_hooks_t *idle_hooks);
 
 /**
  * Helper function for registering callback hook functions.
@@ -64,7 +64,7 @@ hook_unregister(uint8_t type, hook_fn_t hook_fn);
 
 static inline void
 call_api_hooks_alloc(const em_event_t events[], const int num_act,
-		     const int num_req, size_t size, em_event_type_t type,
+		     const int num_req, uint32_t size, em_event_type_t type,
 		     em_pool_t pool)
 {
 	const hook_tbl_t *alloc_hook_tbl = em_shm->alloc_hook_tbl;
@@ -98,13 +98,51 @@ call_api_hooks_send(const em_event_t events[], const int num,
 {
 	const hook_tbl_t *send_hook_tbl = em_shm->send_hook_tbl;
 	em_api_hook_send_t send_hook_fn;
-	int i;
 
-	for (i = 0; i < EM_CALLBACKS_MAX; i++) {
+	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
 		send_hook_fn = send_hook_tbl->tbl[i].send;
 		if (send_hook_fn == NULL)
 			return;
 		send_hook_fn(events, num, queue, event_group);
+	}
+}
+
+static inline void call_idle_hooks_to_idle(uint64_t to_idle_delay_ns)
+{
+	const hook_tbl_t *to_idle_hook_tbl = em_shm->to_idle_hook_tbl;
+	em_idle_hook_to_idle_t to_idle_hook_fn;
+
+	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
+		to_idle_hook_fn = to_idle_hook_tbl->tbl[i].to_idle;
+		if (to_idle_hook_fn == NULL)
+			return;
+		to_idle_hook_fn(to_idle_delay_ns);
+	}
+}
+
+static inline void call_idle_hooks_to_active(void)
+{
+	const hook_tbl_t *to_active_hook_tbl = em_shm->to_active_hook_tbl;
+	em_idle_hook_to_active_t to_active_hook_fn;
+
+	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
+		to_active_hook_fn = to_active_hook_tbl->tbl[i].to_active;
+		if (to_active_hook_fn == NULL)
+			return;
+		to_active_hook_fn();
+	}
+}
+
+static inline void call_idle_hooks_while_idle(void)
+{
+	const hook_tbl_t *while_idle_hook_tbl = em_shm->while_idle_hook_tbl;
+	em_idle_hook_while_idle_t while_idle_hook_fn;
+
+	for (int i = 0; i < EM_CALLBACKS_MAX; i++) {
+		while_idle_hook_fn = while_idle_hook_tbl->tbl[i].while_idle;
+		if (while_idle_hook_fn == NULL)
+			return;
+		while_idle_hook_fn();
 	}
 }
 

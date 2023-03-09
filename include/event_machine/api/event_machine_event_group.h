@@ -91,7 +91,6 @@
  * 5. the sequence can continue from step 2 for a new set of events if the
  *    event group is to be reused.
  *
- *
  * From an application (EO) point of view, an event group can get activated
  * either by entering the EO receive with an event tagged to an event group or
  * by explicitly calling em_event_group_assign. The current event group is core
@@ -121,6 +120,11 @@
  * before giving the event to an EO. This makes it possible for the application
  * to choose whether to drop those events (at the error handler) or let them be
  * processed.
+ *
+ * It is not allowed to use event references with event groups since assigning
+ * an event that has references to an event group would assign all the
+ * references to the event group resulting in undefined behaviour. E.g. using
+ * em_send_group()/em_send_group_multi() to send a reference is wrong.
  */
 
 #ifdef __cplusplus
@@ -260,6 +264,11 @@ em_event_group_t em_event_group_current(void);
  *
  * Event group is not supported with unscheduled queues.
  *
+ * It is not allowed to use event references with event groups since assigning
+ * an event that has references to an event group would assign all the
+ * references to the event group resulting in undefined behaviour. E.g. using
+ * em_send_group() to send a reference is wrong.
+ *
  * @param event         Event to send
  * @param queue         Destination queue
  * @param event_group   Event group
@@ -284,6 +293,11 @@ em_status_t em_send_group(em_event_t event, em_queue_t queue,
  * The function will not modify the given list of events.
  *
  * Event group is not supported with unscheduled queues.
+ *
+ * It is not allowed to use event references with event groups since assigning
+ * an event that has references to an event group would assign all the
+ * references to the event group resulting in undefined behaviour. E.g. using
+ * em_send_group_multi() to send references is wrong.
  *
  * @param events        List of events to send (i.e. ptr to array of events)
  * @param num		Number of events

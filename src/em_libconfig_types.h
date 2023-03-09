@@ -40,6 +40,13 @@
 extern "C" {
 #endif
 
+/** Configuration setting */
+typedef config_setting_t libconfig_setting_t;
+/** List setting */
+typedef config_setting_t libconfig_list_t;
+/** Group setting */
+typedef config_setting_t libconfig_group_t;
+
 typedef struct libconfig {
 	/** Runtime configuration given or not */
 	bool has_cfg_runtime;

@@ -122,7 +122,6 @@ void mask_em2odp(const em_core_mask_t *const em_core_mask,
 {
 	int core_count = em_core_count();
 	int odp_thread_id;
-	int i;
 
 	odp_thrmask_zero(odp_thrmask);
 
@@ -134,7 +133,7 @@ void mask_em2odp(const em_core_mask_t *const em_core_mask,
 	}
 
 	/* EM cores are consequtive 0 -> em_core_count()-1 */
-	for (i = 0; i < core_count; i++) {
+	for (int i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, em_core_mask)) {
 			odp_thread_id = logic_to_thr_core_id(i);
 			odp_thrmask_set(odp_thrmask, odp_thread_id);
@@ -147,12 +146,11 @@ void mask_em2phys(const em_core_mask_t *const em_core_mask,
 {
 	int core_count = em_core_count();
 	int cpu_id;
-	int i;
 
 	odp_cpumask_zero(odp_cpumask);
 
 	/* EM cores are consequtive 0 -> em_core_count()-1 */
-	for (i = 0; i < core_count; i++) {
+	for (int i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, em_core_mask)) {
 			cpu_id = logic_to_phys_core_id(i);
 			odp_cpumask_set(odp_cpumask, cpu_id);

@@ -57,6 +57,7 @@
 #include "cm_setup.h"
 #include "cm_pool_config.h"
 #include "cm_pktio.h"
+#include "cm_error_handler.h"
 
 /**
  * @def USAGE_FMT
@@ -77,8 +78,8 @@
 "\n"										\
 "Optional [APPL&EM-OPTIONS]\n"							\
 "  -d, --device-id <arg>        Device-id, hexadecimal (default: 0x0)\n"	\
-"  -r, --dispatch-rounds <arg>  Number of dispatch rounds (for testing)\n"	\
-"  -s, --startup-mode <arg>     Application startup mode (for testing):\n"	\
+"  -r, --dispatch-rounds <arg>  Number of dispatch rounds (default: 0=forever)\n"\
+"  -s, --startup-mode <arg>     Application startup mode:\n"	\
 "                               0: Start-up & init all EM cores before appl-setup (default)\n" \
 "                               1: Start-up & init only one EM core before appl-setup,\n" \
 "                                  the rest of the EM-cores are init only after that.\n" \
@@ -86,9 +87,19 @@
 "  -m, --pktin-mode <arg>        Select the packet-input mode to use:\n"	\
 "                                0: Direct mode: PKTIN_MODE_DIRECT (default)\n"	\
 "                                1: Plain queue mode: PKTIN_MODE_QUEUE\n"	\
+"                                2: Scheduler mode with parallel queues:\n"	\
+"                                   PKTIN_MODE_SCHED + SCHED_SYNC_PARALLEL\n"	\
+"                                3: Scheduler mode with atomic queues:\n"	\
+"                                   PKTIN_MODE_SCHED + SCHED_SYNC_ATOMIC\n"	\
+"                                4: Scheduler mode with ordered queues:\n"	\
+"                                   PKTIN_MODE_SCHED + SCHED_SYNC_ORDERED\n"	\
+"  -v, --pktin-vector            Enable vector-mode for packet-input (default: disabled)\n"\
+"                                Supported with --pktin-mode:s 2, 3, 4\n"	\
 "  -i, --eth-interface <arg(s)>  Select the ethernet interface(s) to use\n"	\
 "  -e, --pktpool-em              Packet-io pool is an EM-pool (default)\n"	\
 "  -o, --pktpool-odp             Packet-io pool is an ODP-pool\n"		\
+"  -x, --vecpool-em              Packet-io vector pool is an EM-pool (default)\n" \
+"  -y, --vecpool-odp             Packet-io vector pool is an ODP-pool\n"	  \
 "    Select EITHER -e OR -o, but not both!\n" \
 "Help\n" \
 "  -h, --help              Display help and exit.\n" \
@@ -126,14 +137,20 @@ typedef struct {
 		struct {
 			/** Packet input mode */
 			pktin_mode_t in_mode;
+			/** Packet input vectors enabled (true/false) */
+			bool pktin_vector;
 			/** Interface count */
 			int if_count;
 			/** Interface names + placeholder for '\0' */
 			char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
-			/** Pktio is setup with an EM event-pool */
+			/** Pktio is setup with an EM event-pool (true/false) */
 			bool pktpool_em;
-			/** Pktio is setup with an ODP pkt-pool */
+			/** Pktio is setup with an ODP pkt-pool (true/false) */
 			bool pktpool_odp;
+			/** Pktio is setup with an EM vector pool (if pkt-input vectors enabled) */
+			bool vecpool_em;
+			/** Pktio is setup with an ODP vector pool (if pkt-input vectors enabled) */
+			bool vecpool_odp;
 		} pktio;
 	} args_appl;
 } parse_args_t;
@@ -497,7 +514,9 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 
 	/*
 	 * Set the default pool config in em_conf, needed internally by EM
-	 * at startup.
+	 * at startup. Note that if default pool configuration is provided
+	 * in em-odp.conf at runtime through option 'startup_pools', this
+	 * default pool config will be overridden and thus ignored.
 	 */
 	em_pool_cfg_t default_pool_cfg;
 
@@ -535,15 +554,18 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 		/*
 		 * Request EM to poll input for pkts in the dispatch loop
 		 */
-		if (parsed->args_appl.pktio.in_mode == PLAIN_QUEUE)
-			em_conf->input.input_poll_fn = pktin_pollfn_plainqueue;
-		else /* DIRECT_RECV */
+		pktin_mode_t in_mode = parsed->args_appl.pktio.in_mode;
+
+		if (in_mode == DIRECT_RECV)
 			em_conf->input.input_poll_fn = pktin_pollfn_direct;
+		else if (in_mode == PLAIN_QUEUE)
+			em_conf->input.input_poll_fn = pktin_pollfn_plainqueue;
+		/* in_mode: SCHED_... use no input_poll function! */
 
 		/*
 		 * Request EM to drain buffered output in the dispatch loop
 		 */
-		em_conf->output.output_drain_fn = pktout_drainfn; /* user fn*/
+		em_conf->output.output_drain_fn = pktout_drainfn;
 	}
 
 	/*
@@ -602,11 +624,10 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 	appl_pool_1_cfg.subpool[3].num = 1024;
 	appl_pool_1_cfg.subpool[3].cache_size = 16;
 
-	em_pool_t appl_pool = em_pool_create(APPL_POOL_1_NAME, APPL_POOL_1,
+	em_pool_t appl_pool = em_pool_create(APPL_POOL_1_NAME, EM_POOL_UNDEF,
 					     &appl_pool_1_cfg);
-	if (appl_pool == EM_POOL_UNDEF || appl_pool != APPL_POOL_1)
-		APPL_EXIT_FAILURE("appl pool:%s(%" PRI_POOL ") create failed",
-				  APPL_POOL_1_NAME, APPL_POOL_1);
+	if (appl_pool == EM_POOL_UNDEF)
+		APPL_EXIT_FAILURE("appl pool:%s create failed", APPL_POOL_1_NAME);
 	appl_conf->pools[0] = appl_pool;
 	appl_conf->num_pools = 1;
 
@@ -618,6 +639,8 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 	}
 
 	appl_conf->pktio.pktpool_em = parsed->args_appl.pktio.pktpool_em;
+	appl_conf->pktio.pktin_vector = parsed->args_appl.pktio.pktin_vector;
+	appl_conf->pktio.vecpool_em = parsed->args_appl.pktio.vecpool_em;
 }
 
 static void
@@ -625,13 +648,17 @@ create_pktio(appl_conf_t *appl_conf/*in/out*/, const cpu_conf_t *cpu_conf)
 {
 	pktio_mem_reserve();
 	pktio_pool_create(appl_conf->pktio.if_count,
-			  appl_conf->pktio.pktpool_em);
+			  appl_conf->pktio.pktpool_em,
+			  appl_conf->pktio.pktin_vector,
+			  appl_conf->pktio.vecpool_em);
 	pktio_init(appl_conf);
 	/* Create a pktio instance for each interface */
 	for (int i = 0; i < appl_conf->pktio.if_count; i++) {
 		int if_id = pktio_create(appl_conf->pktio.if_name[i],
-					 cpu_conf->num_worker,
-					 appl_conf->pktio.in_mode);
+					 appl_conf->pktio.in_mode,
+					 appl_conf->pktio.pktin_vector,
+					 appl_conf->pktio.if_count,
+					 cpu_conf->num_worker);
 		if (unlikely(if_id < 0))
 			APPL_EXIT_FAILURE("Cannot create pktio if:%s",
 					  appl_conf->pktio.if_name[i]);
@@ -647,7 +674,9 @@ term_pktio(const appl_conf_t *appl_conf)
 	pktio_stop();
 	pktio_close();
 	pktio_deinit(appl_conf);
-	pktio_pool_destroy(appl_conf->pktio.pktpool_em);
+	pktio_pool_destroy(appl_conf->pktio.pktpool_em,
+			   appl_conf->pktio.pktin_vector,
+			   appl_conf->pktio.vecpool_em);
 	pktio_mem_free();
 }
 
@@ -1121,11 +1150,14 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		{"pktpool-em",       no_argument,       NULL, 'e'},
 		{"pktpool-odp",      no_argument,       NULL, 'o'},
 		{"pktin-mode",       required_argument, NULL, 'm'},
+		{"pktin-vector",     no_argument,       NULL, 'v'},
 		{"startup-mode",     required_argument, NULL, 's'},
+		{"vecpool-em",       no_argument,       NULL, 'x'},
+		{"vecpool-odp",      no_argument,       NULL, 'y'},
 		{"help",             no_argument,       NULL, 'h'},
 		{NULL, 0, NULL, 0}
 	};
-	static const char *shortopts = "+c:ptd:r:i:oem:s:h";
+	static const char *shortopts = "+c:ptd:r:i:oem:vs:xyh";
 	long device_id = -1;
 
 	/* set defaults: */
@@ -1152,7 +1184,7 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 			break;  /* No more options */
 
 		switch (opt) {
-		case 'c': {
+		case 'c': { /* --coremask */
 			char *mask_str = optarg;
 			char tmp_str[EM_CORE_MASK_STRLEN];
 			int err;
@@ -1179,15 +1211,15 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		}
 		break;
 
-		case 'p':
+		case 'p': /* --process-per-core */
 			parsed->args_em.process_per_core = 1;
 			break;
 
-		case 't':
+		case 't': /* --thread-per-core */
 			parsed->args_em.thread_per_core = 1;
 			break;
 
-		case 'd': {
+		case 'd': { /* --device-id */
 			char *endptr;
 
 			device_id = strtol(optarg, &endptr, 0);
@@ -1201,14 +1233,14 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		}
 		break;
 
-		case 'r':
+		case 'r': /* --dispatch-rounds */
 			parsed->args_appl.dispatch_rounds = atoi(optarg);
 			if (atoi(optarg) < 0)
 				APPL_EXIT_FAILURE("Invalid dispatch-rounds:%s",
 						  optarg);
 			break;
 
-		case 'i': {
+		case 'i': { /* --eth-interface */
 			int i;
 			size_t len, max;
 			char *name;
@@ -1233,15 +1265,15 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		}
 		break;
 
-		case 'e':
+		case 'e': /* --pktpool-em */
 			parsed->args_appl.pktio.pktpool_em = true;
 			break;
 
-		case 'o':
+		case 'o': /* --pktpool-odp */
 			parsed->args_appl.pktio.pktpool_odp = true;
 			break;
 
-		case 'm': {
+		case 'm': { /* --pktin-mode */
 			int mode = atoi(optarg);
 
 			if (mode == 0) {
@@ -1261,7 +1293,12 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		}
 		break;
 
-		case 's': {
+		case 'v': { /* --pktin-vector */
+			parsed->args_appl.pktio.pktin_vector = true;
+		}
+		break;
+
+		case 's': { /* --startup-mode */
 			int mode = atoi(optarg);
 
 			if (mode == 0) {
@@ -1275,14 +1312,22 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		}
 		break;
 
-		case 'h':
+		case 'x': /* --vecpool-em, only used if --pktin-vector given */
+			parsed->args_appl.pktio.vecpool_em = true;
+			break;
+
+		case 'y': /* --vecpool-odp, only used if --pktin-vector given */
+			parsed->args_appl.pktio.vecpool_odp = true;
+			break;
+
+		case 'h': /* --help */
 			usage(argv[0]);
 			exit(EXIT_SUCCESS);
 			break;
 
 		default:
 			usage(argv[0]);
-			APPL_EXIT_FAILURE("Unknown option!");
+			APPL_EXIT_FAILURE("Unknown option: %c!", opt);
 			break;
 		}
 	}
@@ -1303,29 +1348,13 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 	/* Sanity checks: */
 	if (!(parsed->args_em.process_per_core ^ parsed->args_em.thread_per_core)) {
 		usage(argv[0]);
-		APPL_EXIT_FAILURE("Select EITHER process-per-core(-p) OR thread-per-core(-t)!");
+		APPL_EXIT_FAILURE("Select EITHER:\n"
+				  "process-per-core(-p) OR thread-per-core(-t)!");
 	}
 	if (parsed->args_em.thread_per_core)
 		APPL_PRINT("  EM mode:      Thread-per-core\n");
 	else
 		APPL_PRINT("  EM mode:      Process-per-core\n");
-
-	if (parsed->args_appl.pktio.if_count > 0) {
-		if (parsed->args_appl.pktio.pktpool_em && parsed->args_appl.pktio.pktpool_odp) {
-			usage(argv[0]);
-			APPL_EXIT_FAILURE("Select EITHER pktpool-em(-e) OR pktpool-odp(-o)!");
-		}
-		if (!parsed->args_appl.pktio.pktpool_em && !parsed->args_appl.pktio.pktpool_odp)
-			parsed->args_appl.pktio.pktpool_em = true; /* default if none given */
-
-		if (parsed->args_appl.pktio.pktpool_em)
-			APPL_PRINT("  Pktio pool:   EM event-pool\n");
-		else
-			APPL_PRINT("  Pktio pool:   ODP pkt-pool\n");
-	} else {
-		parsed->args_appl.pktio.pktpool_em = false;
-		parsed->args_appl.pktio.pktpool_odp = false;
-	}
 
 	const char *startup_mode_str = "";
 
@@ -1343,6 +1372,53 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 
 	strncpy(parsed->args_appl.name, NO_PATH(argv[0]), len);
 	parsed->args_appl.name[len - 1] = '\0';
+
+	/* Packet I/O */
+	if (parsed->args_appl.pktio.if_count > 0) {
+		if (parsed->args_appl.pktio.pktpool_em && parsed->args_appl.pktio.pktpool_odp) {
+			usage(argv[0]);
+			APPL_EXIT_FAILURE("Select EITHER:\n"
+					  "pktpool-em(-e) OR pktpool-odp(-o)!");
+		}
+		if (!parsed->args_appl.pktio.pktpool_em && !parsed->args_appl.pktio.pktpool_odp)
+			parsed->args_appl.pktio.pktpool_em = true; /* default if none given */
+
+		if (parsed->args_appl.pktio.pktpool_em)
+			APPL_PRINT("  Pktio pool:   EM event-pool\n");
+		else
+			APPL_PRINT("  Pktio pool:   ODP pkt-pool\n");
+
+		APPL_PRINT("  Pktin-mode:   %s\n",
+			   pktin_mode_str(parsed->args_appl.pktio.in_mode));
+
+		if (parsed->args_appl.pktio.pktin_vector) {
+			APPL_PRINT("  Pktin-vector: Enabled\n");
+			if (parsed->args_appl.pktio.vecpool_em &&
+			    parsed->args_appl.pktio.vecpool_odp) {
+				usage(argv[0]);
+				APPL_EXIT_FAILURE("Select EITHER:\n"
+						  "vecpool-em(-x) OR vecpool-odp(-y)!");
+			}
+			if (!parsed->args_appl.pktio.vecpool_em &&
+			    !parsed->args_appl.pktio.vecpool_odp)
+				parsed->args_appl.pktio.vecpool_em = true; /* default */
+
+			if (parsed->args_appl.pktio.vecpool_em)
+				APPL_PRINT("  Vector pool:  EM vector-pool\n");
+			else
+				APPL_PRINT("  Vector pool:  ODP vector-pool\n");
+		} else {
+			APPL_PRINT("  Pktin-vector: Disabled\n");
+			parsed->args_appl.pktio.vecpool_em = false;
+			parsed->args_appl.pktio.vecpool_odp = false;
+		}
+	} else {
+		APPL_PRINT("  Pktio:        Not used\n");
+		parsed->args_appl.pktio.pktpool_em = false;
+		parsed->args_appl.pktio.pktpool_odp = false;
+		parsed->args_appl.pktio.vecpool_em = false;
+		parsed->args_appl.pktio.vecpool_odp = false;
+	}
 }
 
 /**

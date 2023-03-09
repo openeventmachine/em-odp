@@ -128,11 +128,39 @@ typedef enum pktin_mode_t {
 	PLAIN_QUEUE,
 	SCHED_PARALLEL,
 	SCHED_ATOMIC,
-	SCHED_ORDERED,
+	SCHED_ORDERED
 } pktin_mode_t;
 
 /**
- * Application configuration
+ * @brief Application packet I/O configuration
+ */
+typedef struct {
+	/** Packet input mode */
+	pktin_mode_t in_mode;
+	/** Interface count */
+	int if_count;
+	/** Interface names + placeholder for '\0' */
+	char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
+	/** Interface identifiers corresponding to 'if_name[]' */
+	int if_ids[IF_MAX_NUM];
+	/**
+	 * Pktio is setup with an EM event-pool: 'true'
+	 * Pktio is setup with an ODP pkt-pool:  'false'
+	 */
+	bool pktpool_em;
+
+	/** Packet input vectors enabled (true/false) */
+	bool pktin_vector;
+	/**
+	 * If pktin_vector:
+	 * Pktio is setup with an EM vector-pool:  'true'
+	 * Pktio is setup with an ODP vector-pool: 'false'
+	 */
+	bool vecpool_em;
+} pktio_conf_t;
+
+/**
+ * @brief  Application configuration
  */
 typedef struct {
 	/** application name */
@@ -152,21 +180,7 @@ typedef struct {
 	em_pool_t pools[APPL_POOLS_MAX];
 
 	/** Packet I/O parameters */
-	struct {
-		/** Packet input mode */
-		pktin_mode_t in_mode;
-		/** Interface count */
-		int if_count;
-		/** Interface names + placeholder for '\0' */
-		char if_name[IF_MAX_NUM][IF_NAME_LEN + 1];
-		/** Interface identifiers corresponding to 'if_name[]' */
-		int if_ids[IF_MAX_NUM];
-		/**
-		 * Pktio is setup with an EM event-pool: 'true'
-		 * Pktio is setup with an ODP pkt-pool:  'false'
-		 */
-		bool pktpool_em;
-	} pktio;
+	pktio_conf_t pktio;
 } appl_conf_t;
 
 /** Application shared memory - allocate in single chunk */

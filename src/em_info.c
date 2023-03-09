@@ -271,11 +271,9 @@ static odp_cpu_arch_isa_t detect_sw_isa(odp_cpu_arch_t cpu_arch)
 
 void print_core_map_info(void)
 {
-	int logic_core;
-
 	EM_PRINT("Core mapping: EM-core <-> phys-core <-> ODP-thread\n");
 
-	for (logic_core = 0; logic_core < em_core_count(); logic_core++) {
+	for (int logic_core = 0; logic_core < em_core_count(); logic_core++) {
 		EM_PRINT("                %2i           %2i           %2i\n",
 			 logic_core,
 			 em_core_id_get_physical(logic_core),

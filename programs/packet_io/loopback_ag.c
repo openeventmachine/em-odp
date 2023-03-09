@@ -288,6 +288,16 @@ test_start(appl_conf_t *const appl_conf)
 		      "Invalid number of interfaces given:%d - need 1-%d(MAX)",
 		      appl_conf->pktio.if_count, MAX_NUM_IF);
 
+	pktin_mode_t pktin_mode = appl_conf->pktio.in_mode;
+
+	test_fatal_if(!pktin_polled_mode(pktin_mode),
+		      "Invalid pktin-mode: %s(%i).\n"
+		      "Application:%s supports only polled pktin-modes: %s(%i), %s(%i)",
+		      pktin_mode_str(pktin_mode), pktin_mode,
+		      appl_conf->name,
+		      pktin_mode_str(DIRECT_RECV), DIRECT_RECV,
+		      pktin_mode_str(PLAIN_QUEUE), PLAIN_QUEUE);
+
 	/*
 	 * Create one EO
 	 */

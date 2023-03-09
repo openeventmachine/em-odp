@@ -54,18 +54,10 @@ atomic_group_alloc(void);
 em_status_t
 atomic_group_free(em_atomic_group_t atomic_group);
 
-int
-atomic_group_available(atomic_group_elem_t *const ag_elem);
+void atomic_group_remove_queue(queue_elem_t *const q_elem);
 
-int
-atomic_group_again(atomic_group_elem_t *const ag_elem);
-
-void
-atomic_group_remove_queue(queue_elem_t *const q_elem);
-
-void
-atomic_group_dispatch(em_event_t ev_tbl[], event_hdr_t *const ev_hdr_tbl[],
-		      const int num_events, queue_elem_t *const q_elem);
+void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
+			   const queue_elem_t *q_elem);
 
 static inline int
 atomic_group_allocated(const atomic_group_elem_t *agrp_elem)

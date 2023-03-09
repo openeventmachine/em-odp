@@ -66,31 +66,27 @@ void print_event_info(void)
 	       "\t\t------\t----\n"
 	       "esv.state_cnt:\t%3zu B\t%2zu B\n"
 	       "esv.state:\t%3zu B\t%2zu B\n"
-	       "start_node:\t%3zu B\t%2zu B\n"
-	       "q_elem:\t\t%3zu B\t%2zu B\n"
-	       "user_area info:\t%3zu B\t%2zu B\n"
 	       "event:\t\t%3zu B\t%2zu B\n"
-	       "queue:\t\t%3zu B\t%2zu B\n"
-	       "egrp:\t\t%3zu B\t%2zu B\n"
-	       "egrp_gen:\t%3zu B\t%2zu B\n"
 	       "event_size:\t%3zu B\t%2zu B\n"
-	       "align_offset:\t%3zu B\t%2zu B\n"
 	       "event_type:\t%3zu B\t%2zu B\n"
+	       "flags:\t\t%3zu B\t%2zu B\n"
+	       "align_offset:\t%3zu B\t%2zu B\n"
+	       "egrp_gen:\t%3zu B\t%2zu B\n"
+	       "egrp:\t\t%3zu B\t%2zu B\n"
+	       "user_area info:\t%3zu B\t%2zu B\n"
 	       "end_hdr_data:\t%3zu B\t%2zu B\n"
 	       "  <align adj.>\t---\t%2zu B\n"
 	       "end:\t\t%3zu B\t%2zu B\n",
 	       offsetof(event_hdr_t, state_cnt), sizeof(evhdr.state_cnt),
 	       offsetof(event_hdr_t, state), sizeof(evhdr.state),
-	       offsetof(event_hdr_t, start_node), sizeof(evhdr.start_node),
-	       offsetof(event_hdr_t, q_elem), sizeof(evhdr.q_elem),
-	       offsetof(event_hdr_t, user_area), sizeof(evhdr.user_area),
 	       offsetof(event_hdr_t, event), sizeof(evhdr.event),
-	       offsetof(event_hdr_t, queue), sizeof(evhdr.queue),
-	       offsetof(event_hdr_t, egrp), sizeof(evhdr.egrp),
-	       offsetof(event_hdr_t, egrp_gen), sizeof(evhdr.egrp_gen),
 	       offsetof(event_hdr_t, event_size), sizeof(evhdr.event_size),
-	       offsetof(event_hdr_t, align_offset), sizeof(evhdr.align_offset),
 	       offsetof(event_hdr_t, event_type), sizeof(evhdr.event_type),
+	       offsetof(event_hdr_t, flags), sizeof(evhdr.flags),
+	       offsetof(event_hdr_t, align_offset), sizeof(evhdr.align_offset),
+	       offsetof(event_hdr_t, egrp_gen), sizeof(evhdr.egrp_gen),
+	       offsetof(event_hdr_t, egrp), sizeof(evhdr.egrp),
+	       offsetof(event_hdr_t, user_area), sizeof(evhdr.user_area),
 	       offsetof(event_hdr_t, end_hdr_data), sizeof(evhdr.end_hdr_data),
 	       offsetof(event_hdr_t, end) - offsetof(event_hdr_t, end_hdr_data),
 	       offsetof(event_hdr_t, end), sizeof(evhdr.end));
@@ -132,6 +128,7 @@ em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool)
 
 	/* clone_hdr->event_type = use parent's type as is */
 	clone_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	clone_hdr->flags.all = 0;
 
 	return clone_event;
 }
@@ -179,16 +176,14 @@ output_queue_drain(const queue_elem_t *output_q_elem)
 			return;
 
 		output_num = (unsigned int)deq;
-		/* odp_deq_events[] == output_ev_tbl[], .evgen still missing */
-
-		/* decrement pool statistics before passing events out-of-EM */
+		/* odp_deq_events[] == output_ev_tbl[] */
 		if (esv_ena) {
 			event_hdr_t *ev_hdrs[output_num];
 
+			/* Restore hdls from ev_hdrs, odp-ev conv lost evgen */
 			event_to_hdr_multi(output_ev_tbl, ev_hdrs, output_num);
-			evstate_em2usr_multi(output_ev_tbl/*in/out*/,
-					     ev_hdrs, output_num,
-					     EVSTATE__OUTPUT_MULTI);
+			for (unsigned int i = 0; i < output_num; i++)
+				output_ev_tbl[i] = ev_hdrs[i]->event;
 		}
 
 		ret = output_fn(output_ev_tbl, output_num,
@@ -222,4 +217,86 @@ output_queue_buffering_drain(void)
 		track->used_queues[qidx] = NULL;
 	}
 	track->idx_cnt = 0;
+}
+
+uint32_t event_vector_tbl(em_event_t vector_event,
+			  em_event_t **event_tbl /*out*/)
+{
+	odp_event_t odp_event = event_em2odp(vector_event);
+	odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+	odp_packet_t *pkt_tbl = NULL;
+	const int pkts = odp_packet_vector_tbl(pkt_vec, &pkt_tbl/*out*/);
+
+	*event_tbl = (em_event_t *)pkt_tbl; /* Careful! Points to same table */
+
+	if (!pkts)
+		return 0;
+
+	event_hdr_t *ev_hdr_tbl[pkts];
+
+	/*
+	 * Init the event-table as needed, might contain EM events or
+	 * ODP packets depending on source.
+	 */
+	if (esv_enabled()) {
+		odp_packet_t odp_pkttbl[pkts];
+
+		/*
+		 * Drop ESV generation from event handles by converting to
+		 * odp-packets, then init as needed as EM events.
+		 */
+		events_em2pkt(*event_tbl/*in*/, odp_pkttbl/*out*/, pkts);
+
+		event_init_pkt_multi(odp_pkttbl /*in*/, *event_tbl /*in,out*/,
+				     ev_hdr_tbl /*out*/, pkts, false);
+	} else {
+		event_init_pkt_multi(pkt_tbl /*in*/, *event_tbl /*in,out*/,
+				     ev_hdr_tbl /*out*/, pkts, false);
+	}
+
+	return pkts;
+}
+
+em_status_t event_vector_max_size(em_event_t vector_event, uint32_t *max_size /*out*/,
+				  em_escope_t escope)
+{
+	odp_event_t odp_event = event_em2odp(vector_event);
+	odp_packet_vector_t pktvec = odp_packet_vector_from_event(odp_event);
+	odp_pool_t odp_pool = odp_packet_vector_pool(pktvec);
+	em_pool_t pool = pool_odp2em(odp_pool);
+
+	if (unlikely(pool == EM_POOL_UNDEF)) {
+		/*
+		 * Don't report an error if 'pool == EM_POOL_UNDEF' since that
+		 * might happen if the vector is input from pktio that is using
+		 * external (to EM) odp vector pools.
+		 */
+		*max_size = 0;
+		return EM_OK; /* EM does not have the max_size info */
+	}
+
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+	int i = 0;
+
+	if (unlikely(!pool_elem ||
+		     (EM_CHECK_LEVEL > 2 && !pool_allocated(pool_elem)))) {
+		*max_size = 0;
+		return INTERNAL_ERROR(EM_ERR_BAD_STATE, escope,
+				      "Invalid pool:%" PRI_POOL "", pool);
+	}
+
+	/* find subpool index 'i' that corresponds to 'odp_pool' */
+	for (i = 0; i < pool_elem->num_subpools && pool_elem->odp_pool[i] != odp_pool; i++)
+		; /* find subpool-index 'i' */
+	if (unlikely(i == pool_elem->num_subpools)) {
+		/* not found */
+		*max_size = 0;
+		return INTERNAL_ERROR(EM_ERR_NOT_FOUND, escope,
+				      "Subpool not found, pool:%" PRI_POOL "", pool);
+	}
+
+	/* subpool index found, store corresponding size */
+	*max_size = pool_elem->size[i];
+
+	return EM_OK;
 }

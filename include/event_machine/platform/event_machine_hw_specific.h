@@ -54,10 +54,13 @@ extern "C" {
  * @return Major event type
  */
 static inline em_event_type_t
-em_get_type_major(em_event_type_t type)
+em_event_type_major(em_event_type_t type)
 {
 	return type & 0xFF000000;
 }
+
+/* Backwards compatible naming */
+#define em_get_type_major em_event_type_major
 
 /**
  * Get the minor event type.
@@ -73,10 +76,13 @@ em_get_type_major(em_event_type_t type)
  * @return Minor event type
  */
 static inline em_event_type_t
-em_get_type_minor(em_event_type_t type)
+em_event_type_minor(em_event_type_t type)
 {
 	return type & 0x00FFFFFF;
 }
+
+/* Backwards compatible naming */
+#define em_get_type_minor em_event_type_minor
 
 /*
  * Core mask manipulation functions

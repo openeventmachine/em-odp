@@ -69,7 +69,8 @@ typedef enum em_event_type_major_e {
 	EM_EVENT_TYPE_SW     = 1 << 24, /**< Event from SW (EO)   */
 	EM_EVENT_TYPE_PACKET = 2 << 24, /**< Event from packet HW */
 	EM_EVENT_TYPE_TIMER  = 3 << 24, /**< Event from timer HW  */
-	EM_EVENT_TYPE_CRYPTO = 4 << 24  /**< Event from crypto HW */
+	EM_EVENT_TYPE_CRYPTO = 4 << 24, /**< Event from crypto HW */
+	EM_EVENT_TYPE_VECTOR = 5 << 24  /**< Event contains a (packet) vector */
 } em_event_type_major_e;
 
 /**
@@ -516,6 +517,38 @@ typedef struct {
  * EM error scope: unregister API callback hook for em_send-variants
  */
 #define EM_ESCOPE_HOOKS_UNREGISTER_SEND      (EM_ESCOPE_INTERNAL_MASK | 0x0206)
+/**
+ * @def EM_ESCOPE_HOOKS_REGISTER_TO_IDLE
+ * EM error scope: register an idle hook called when entering the idle state
+ */
+#define EM_ESCOPE_HOOKS_REGISTER_TO_IDLE     (EM_ESCOPE_INTERNAL_MASK | 0x0207)
+/**
+ * @def EM_ESCOPE_HOOKS_UNREGISTER_TO_IDLE
+ * EM error scope: unregister an idle hook called when entering the idle state
+ */
+#define EM_ESCOPE_HOOKS_UNREGISTER_TO_IDLE   (EM_ESCOPE_INTERNAL_MASK | 0x0208)
+/**
+ * @def EM_ESCOPE_HOOKS_REGISTER_TO_ACTIVE
+ * EM error scope: register an idle hook called when entering the active state
+ */
+#define EM_ESCOPE_HOOKS_REGISTER_TO_ACTIVE   (EM_ESCOPE_INTERNAL_MASK | 0x0209)
+/**
+ * @def EM_ESCOPE_HOOKS_UNREGISTER_TO_ACTIVE
+ * EM error scope: unregister an idle hook called when entering the active state
+ */
+#define EM_ESCOPE_HOOKS_UNREGISTER_TO_ACTIVE (EM_ESCOPE_INTERNAL_MASK | 0x020A)
+/**
+ * @def EM_ESCOPE_HOOKS_REGISTER_WHILE_IDLE
+ * EM error scope: register an idle hook called while staying in idle state
+ */
+#define EM_ESCOPE_HOOKS_REGISTER_WHILE_IDLE  (EM_ESCOPE_INTERNAL_MASK | 0x020B)
+/**
+ * @def EM_ESCOPE_HOOKS_UNREGISTER_WHILE_IDLE
+ * EM error scope: unregister an idle hook called while staying in idle state
+ */
+#define EM_ESCOPE_HOOKS_UNREGISTER_WHILE_IDLE	     (EM_ESCOPE_INTERNAL_MASK |\
+									0x020C)
+
 /**
  * @def EM_ESCOPE_EVENT_SEND_DEVICE
  * EM error scope: send event to another device

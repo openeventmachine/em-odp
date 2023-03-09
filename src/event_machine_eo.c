@@ -81,8 +81,8 @@ em_eo_create(const char *name,
 
 	/* EO's queue list init */
 	list_init(&eo_elem->queue_list);
-	/* EO start: event buffering list init */
-	list_init(&eo_elem->startfn_evlist);
+	/* EO start: event buffering init */
+	eo_elem->stash = ODP_STASH_INVALID;
 
 	eo_elem->state = EM_EO_STATE_CREATED;
 	eo_elem->start_func = start;
@@ -177,8 +177,8 @@ em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param)
 
 	/* EO's queue list init */
 	list_init(&eo_elem->queue_list);
-	/* EO start: event buffering list init */
-	list_init(&eo_elem->startfn_evlist);
+	/* EO start: event buffering init */
+	eo_elem->stash = ODP_STASH_INVALID;
 
 	eo_elem->state = EM_EO_STATE_CREATED;
 	eo_elem->start_func = param->start;
@@ -623,6 +623,14 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 			"Invalid notif cfg given!");
 
 	eo_elem->state = EM_EO_STATE_STARTING;
+
+	/* Create a stash to buffer events sent during EO-start */
+	eo_elem->stash = eo_start_stash_create(eo_elem->name);
+	if (unlikely(eo_elem->stash == ODP_STASH_INVALID)) {
+		ret = INTERNAL_ERROR(EM_ERR, EM_ESCOPE_EO_START,
+				     "EO:%" PRI_EO " start stash creation fails", eo);
+		goto eo_start_error;
+	}
 	/* This core is in the EO start function: buffer all sent events */
 	locm->start_eo_elem = eo_elem;
 	/*
@@ -732,6 +740,16 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 			"EO invalid state, cannot start:%d", eo_elem->state);
 
 	eo_elem->state = EM_EO_STATE_STARTING;
+
+	/* Create a stash to buffer events sent during EO-start */
+	eo_elem->stash = eo_start_stash_create(eo_elem->name);
+	if (unlikely(eo_elem->stash == ODP_STASH_INVALID)) {
+		ret = INTERNAL_ERROR(EM_ERR, EM_ESCOPE_EO_START,
+				     "EO:%" PRI_EO " start stash creation fails", eo);
+		/* roll back state to allow EO delete */
+		eo_elem->state = EM_EO_STATE_ERROR;
+		return ret;
+	}
 	/* This core is in the EO start function: buffer all sent events */
 	locm->start_eo_elem = eo_elem;
 	/*

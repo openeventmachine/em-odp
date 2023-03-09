@@ -51,6 +51,10 @@ extern "C" {
 /* Dispatcher callback function types */
 #define DISPATCH_CALLBACK_ENTER       4
 #define DISPATCH_CALLBACK_EXIT        5
+/* Idle hook function types */
+#define TO_IDLE_HOOK	6
+#define TO_ACTIVE_HOOK	7
+#define WHILE_IDLE_HOOK	8
 
 typedef void (*void_hook_t)(void);
 
@@ -60,6 +64,9 @@ typedef union {
 	em_api_hook_send_t send;
 	em_dispatch_enter_func_t disp_enter;
 	em_dispatch_exit_func_t disp_exit;
+	em_idle_hook_to_idle_t to_idle;
+	em_idle_hook_to_active_t to_active;
+	em_idle_hook_while_idle_t while_idle;
 	void_hook_t void_hook;
 } hook_fn_t;
 

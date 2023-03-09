@@ -95,6 +95,9 @@ extern "C" {
 
 #include "em_mem.h"
 
+#include "em_event_inline.h"
+#include "em_queue_inline.h"
+
 #include "em_core.h"
 #include "em_error.h"
 #include "em_eo.h"
@@ -108,9 +111,9 @@ extern "C" {
 #include "em_event_group.h"
 #include "em_daemon_eo.h"
 #include "em_atomic_group.h"
+#include "em_hooks.h"
 #include "em_dispatcher.h"
 #include "em_libconfig.h"
-#include "em_hooks.h"
 #include "em_chaining.h"
 #include "em_cli.h"
 

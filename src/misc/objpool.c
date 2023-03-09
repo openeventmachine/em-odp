@@ -38,14 +38,12 @@ objpool_node2elem(list_node_t *const list_node);
 int
 objpool_init(objpool_t *const objpool, int nbr_subpools)
 {
-	int i;
-
 	if (nbr_subpools > OBJSUBPOOLS_MAX)
 		nbr_subpools = OBJSUBPOOLS_MAX;
 
 	objpool->nbr_subpools = nbr_subpools;
 
-	for (i = 0; i < nbr_subpools; i++) {
+	for (int i = 0; i < nbr_subpools; i++) {
 		objsubpool_t *const subpool = &objpool->subpool[i];
 
 		env_spinlock_init(&subpool->lock);
@@ -74,9 +72,8 @@ objpool_elem_t *
 objpool_rem(objpool_t *const objpool, int subpool_idx)
 {
 	objpool_elem_t *elem = NULL;
-	int i;
 
-	for (i = 0; i < objpool->nbr_subpools; i++) {
+	for (int i = 0; i < objpool->nbr_subpools; i++) {
 		const int idx = (subpool_idx + i) % objpool->nbr_subpools;
 		objsubpool_t *const subpool = &objpool->subpool[idx];
 

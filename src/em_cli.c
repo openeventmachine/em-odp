@@ -908,7 +908,7 @@ static em_status_t run_em_cli(void)
 	odph_cli_param_init(&cli_param);
 	cli_param.hostname = "EM-ODP";
 	cli_param.address = em_shm->opt.cli.ip_addr;
-	cli_param.port = em_shm->opt.cli.port;
+	cli_param.port = (uint16_t)em_shm->opt.cli.port;
 
 	/* Initialize CLI helper */
 	if (odph_cli_init(&cli_param)) {

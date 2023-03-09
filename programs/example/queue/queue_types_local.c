@@ -1570,10 +1570,7 @@ print_core_stats(core_stat_t *const cstat, uint64_t print_events)
 	double cycles_per_event;
 	uint64_t print_count;
 
-	if (cstat->end_cycles > cstat->begin_cycles)
-		diff = cstat->end_cycles - cstat->begin_cycles;
-	else
-		diff = UINT64_MAX - cstat->begin_cycles + cstat->end_cycles + 1;
+	diff = env_cycles_diff(cstat->end_cycles, cstat->begin_cycles);
 
 	print_count = cstat->print_count++;
 	cycles_per_event = (double)diff / (double)print_events;

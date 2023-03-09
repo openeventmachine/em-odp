@@ -2,8 +2,8 @@ AC_PREREQ([2.69])
 ############################
 # Version
 ############################
-m4_define([em_version_api_major], [2])
-m4_define([em_version_api_minor], [9])
+m4_define([em_version_api_major], [3])
+m4_define([em_version_api_minor], [0])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -285,6 +285,38 @@ AC_ARG_ENABLE([debug-print],
 # Substitute @EM_DEBUG_PRINT@ into the pkgconfig file libemodp.pc.in
 AC_SUBST([EM_DEBUG_PRINT])
 
+#########################################################################
+# Override EM-define value 'EM_DEBUG_TIMESTAMP_ENABLE' to 0...2
+# --enable-debug-timestamps=0...2   Set 'EM_DEBUG_TIMESTAMP_ENABLE' to the given
+#                                   value (1=low overhead, 2=strict time)
+# --enable-debug-timestamps<=yes (=1)  Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
+# --enable-debug-timestamps           Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
+# --disable-debug-timestamps or
+#   no option given              Use '#define EM_DEBUG_TIMESTAMP_ENABLE 0...2' from
+#                                source code (default 0)
+debug_timestamps_info="no (EM_DEBUG_TIMESTAMP_ENABLE from source code)"
+EM_DEBUG_TIMESTAMP_ENABLE=""
+AC_ARG_ENABLE([debug-timestamps],
+	      [AS_HELP_STRING([--enable-debug-timestamps[[=VAL]]],
+			      [Override the 'EM_DEBUG_TIMESTAMP_ENABLE' define, valid
+			       values are 0...2, yes(=1) or no value(=1), 2=strict time
+			       [default=disabled, value from source code]])],
+	      [AS_IF([test "$enableval" -ge 0 -a "$enableval" -le 2 2>/dev/null],
+		     [debug_timestamps_info="yes:$enableval (EM_DEBUG_TIMESTAMP_ENABLE=$enableval)"
+		      EM_DEBUG_TIMESTAMP_ENABLE="-DEM_DEBUG_TIMESTAMP_ENABLE=$enableval"],
+
+		     [test "x$enableval" = "xyes"],
+		     [debug_timestamps_info="yes:1 (EM_DEBUG_TIMESTAMP_ENABLE=$enableval)"
+		      EM_DEBUG_TIMESTAMP_ENABLE="-DEM_DEBUG_TIMESTAMP_ENABLE=1"],
+
+		     [test "x$enableval" != "xno"],
+		     [AC_MSG_ERROR([bad value ${enableval} for --enable-debug-timestamps])]
+		)
+		EM_CPPFLAGS="$EM_CPPFLAGS $EM_DEBUG_TIMESTAMP_ENABLE"
+	      ],[])
+# Substitute @EM_DEBUG_TIMESTAMP_ENABLE@ into the pkgconfig file libemodp.pc.in
+AC_SUBST([EM_DEBUG_TIMESTAMP_ENABLE])
+
 ##########################################################################
 # Set optional libcli path
 ##########################################################################
@@ -325,6 +357,38 @@ EM_CPPFLAGS="$EM_CPPFLAGS $EM_CLI"
 # Restore old saved variables
 LIBS=$OLD_LIBS
 CPPFLAGS=$OLD_CPPFLAGS
+
+#########################################################################
+# Enable EM idle hooks
+#########################################################################
+# --enable-idle-hooks		Set 'EM_IDLE_HOOKS_ENABLE=1'
+# --disable-idle-hooks		Set 'EM_IDLE_HOOKS_ENABLE=0'
+#   no option given    		Use '#define EM_IDLE_HOOKS_ENABLE 0|1' from source code
+#
+# Note: Using the option --enable-idle-hooks OR --disable-idle-hooks will _override_
+#	the source code define value for '#define EM_IDLE_HOOKS_ENABLE 0|1'
+#
+idle_hooks_info="no (EM_IDLE_HOOKS_ENABLE from source code)"
+EM_IDLE_HOOKS_ENABLE=""
+AC_ARG_ENABLE([idle-hooks],
+	      [AS_HELP_STRING([--enable-idle-hooks],
+			      [Enable Idle Hooks
+			       [default=value from source code '#define EM_IDLE_HOOKS_ENABLE 0|1']])],
+	      [AS_IF(dnl --enable-idle-hooks[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [idle_hooks_info="$enableval (EM_IDLE_HOOKS_ENABLE=1)"
+		      EM_IDLE_HOOKS_ENABLE="-DEM_IDLE_HOOKS_ENABLE=1"],
+		     dnl --disable-idle-hooks OR --enable-idle-hooks=no:
+		     [test "x$enableval" = "xno"],
+		     [idle_hooks_info="$enableval (EM_IDLE_HOOKS_ENABLE=0)"
+		      EM_IDLE_HOOKS_ENABLE="-DEM_IDLE_HOOKS_ENABLE=0"],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value --enable-idle-hooks=${enableval}, use yes/no])]
+		)
+		EM_CPPFLAGS="$EM_CPPFLAGS $EM_IDLE_HOOKS_ENABLE"
+	      ],[])
+# Substitute @EM_IDLE_HOOKS_ENABLE@ into the pkgconfig file libemodp.pc.in
+AC_SUBST([EM_IDLE_HOOKS_ENABLE])
 
 ##########################################################################
 # Default include setup
@@ -584,5 +648,7 @@ AC_MSG_RESULT([
 	EM check level:		${check_level_info}
 	EM ESV:			${esv_info}
 	EM debug print:		${debug_print_info}
+	EM debug timestamps:	${debug_timestamps_info}
 	EM CLI:			${em_cli}
+	EM idle hooks:		${idle_hooks_info}
 	])

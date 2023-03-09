@@ -76,33 +76,14 @@ chaining_term(const event_chaining_t *event_chaining);
  * @see event_send_device()
  */
 static inline em_status_t
-send_chaining(em_event_t event, event_hdr_t *const ev_hdr,
-	      em_queue_t chaining_queue)
+send_chaining(em_event_t event, em_queue_t chaining_queue)
 {
 	const unsigned int num_outq = em_shm->event_chaining.num_output_queues;
 	const em_sched_context_type_t sched_ctx_type =
 		em_locm.current.sched_context_type;
 
-	if (num_outq == 0 || sched_ctx_type != EM_SCHED_CONTEXT_TYPE_ORDERED) {
-		if (!esv_enabled())
-			return event_send_device(event, chaining_queue);
-		/*
-		 * ESV enabled:
-		 */
-		em_status_t status;
-
-		event = evstate_em2usr(event, ev_hdr, EVSTATE__OUTPUT_CHAINING);
-		status = event_send_device(event, chaining_queue);
-		if (likely(status == EM_OK))
-			return EM_OK;
-		/* error: */
-		event = evstate_em2usr_revert(event, ev_hdr,
-					      EVSTATE__OUTPUT_CHAINING__FAIL);
-		return status;
-	}
-
-	/* store destination event-chaining queue */
-	ev_hdr->queue = chaining_queue;
+	if (num_outq == 0 || sched_ctx_type != EM_SCHED_CONTEXT_TYPE_ORDERED)
+		return event_send_device(event, chaining_queue);
 
 	/* always use the same output queue for each chaining queue */
 	const internal_queue_t iq = {.queue = chaining_queue};
@@ -114,7 +95,7 @@ send_chaining(em_event_t event, event_hdr_t *const ev_hdr,
 	output_queue = em_shm->event_chaining.output_queues[idx];
 	output_q_elem = queue_elem_get(output_queue);
 
-	return send_output(event, ev_hdr, output_q_elem);
+	return send_output(event, output_q_elem);
 }
 
 /**
@@ -123,40 +104,15 @@ send_chaining(em_event_t event, event_hdr_t *const ev_hdr,
  * @see event_send_device_multi()
  */
 static inline int
-send_chaining_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
-		    const int num, em_queue_t chaining_queue)
+send_chaining_multi(const em_event_t events[], const int num,
+		    em_queue_t chaining_queue)
 {
 	const unsigned int num_outq = em_shm->event_chaining.num_output_queues;
 	const em_sched_context_type_t sched_ctx_type =
 		em_locm.current.sched_context_type;
 
-	if (num_outq == 0 || sched_ctx_type != EM_SCHED_CONTEXT_TYPE_ORDERED) {
-		if (!esv_enabled())
-			return event_send_device_multi(events, num,
-						       chaining_queue);
-		/*
-		 * ESV enabled:
-		 */
-		em_event_t tmp_events[num];
-
-		/* need copy, don't change "const events[]" */
-		for (int i = 0; i < num; i++)
-			tmp_events[i] = events[i];
-		evstate_em2usr_multi(tmp_events/*in/out*/, ev_hdrs, num,
-				     EVSTATE__OUTPUT_CHAINING_MULTI);
-		int num_sent = event_send_device_multi(tmp_events, num,
-						       chaining_queue);
-		if (unlikely(num_sent < num && num_sent >= 0)) {
-			evstate_em2usr_revert_multi(&tmp_events[num_sent]/*in/out*/,
-						    &ev_hdrs[num_sent], num - num_sent,
-						    EVSTATE__OUTPUT_CHAINING_MULTI__FAIL);
-		}
-		return num_sent;
-	}
-
-	/* store destination event chaining queue */
-	for (int i = 0; i < num; i++)
-		ev_hdrs[i]->queue = chaining_queue;
+	if (num_outq == 0 || sched_ctx_type != EM_SCHED_CONTEXT_TYPE_ORDERED)
+		return event_send_device_multi(events, num, chaining_queue);
 
 	/* always use the same output queue for each chaining queue */
 	const internal_queue_t iq = {.queue = chaining_queue};
@@ -168,7 +124,7 @@ send_chaining_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[],
 	output_queue = em_shm->event_chaining.output_queues[idx];
 	output_q_elem = queue_elem_get(output_queue);
 
-	return send_output_multi(events, ev_hdrs, num, output_q_elem);
+	return send_output_multi(events, num, output_q_elem);
 }
 
 /**
@@ -182,7 +138,7 @@ send_chaining_egrp(em_event_t event, event_hdr_t *const ev_hdr,
 		   const event_group_elem_t *egrp_elem)
 {
 	if (!egrp_elem)
-		return send_chaining(event, ev_hdr, chaining_queue);
+		return send_chaining(event, chaining_queue);
 
 	em_event_group_t save_egrp;
 	event_group_elem_t *save_egrp_elem;
@@ -196,7 +152,7 @@ send_chaining_egrp(em_event_t event, event_hdr_t *const ev_hdr,
 	 */
 	event_group_set_local(ev_hdr->egrp, ev_hdr->egrp_gen, 1);
 
-	em_status_t stat = send_chaining(event, ev_hdr, chaining_queue);
+	em_status_t stat = send_chaining(event, chaining_queue);
 
 	event_group_count_decrement(1);
 	restore_current_evgrp(save_egrp, save_egrp_elem, save_egrp_gen);
@@ -215,7 +171,7 @@ send_chaining_egrp_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[]
 			 const event_group_elem_t *egrp_elem)
 {
 	if (!egrp_elem)
-		return send_chaining_multi(events, ev_hdrs, num, chaining_queue);
+		return send_chaining_multi(events, num, chaining_queue);
 
 	em_event_group_t save_egrp;
 	event_group_elem_t *save_egrp_elem;
@@ -232,7 +188,7 @@ send_chaining_egrp_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[]
 	 */
 	event_group_set_local(ev_hdrs[0]->egrp, ev_hdrs[0]->egrp_gen, num);
 
-	int num_sent = send_chaining_multi(events, ev_hdrs, num, chaining_queue);
+	int num_sent = send_chaining_multi(events, num, chaining_queue);
 
 	event_group_count_decrement(num);
 	restore_current_evgrp(save_egrp, save_egrp_elem, save_egrp_gen);

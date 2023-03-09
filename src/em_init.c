@@ -14,10 +14,8 @@ poll_drain_mask_check(const em_core_mask_t *logic_mask,
 	if (em_core_mask_iszero(poll_drain_mask))
 		return EM_OK;
 
-	int i;
-
 	/* check mask validity */
-	for (i = 0; i < EM_MAX_CORES; i++) {
+	for (int i = 0; i < EM_MAX_CORES; i++) {
 		if (em_core_mask_isset(i, poll_drain_mask) &&
 		    !em_core_mask_isset(i, logic_mask))
 			return EM_ERR_OPERATION_FAILED;

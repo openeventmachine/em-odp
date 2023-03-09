@@ -75,12 +75,42 @@ read_config_file(void)
 {
 	const char *conf_str;
 	int val = 0;
+	bool val_bool = false;
 	int ret;
 
+	/* Zero all options first */
+	memset(&em_shm->opt.event_chaining, 0, sizeof(em_shm->opt.event_chaining));
+
 	EM_PRINT("EM Event-Chaining config:\n");
+	/*
+	 * Option: event_chaining.order_keep - runtime enable/disable
+	 */
+	conf_str = "event_chaining.order_keep";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.event_chaining.order_keep = val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
+
+	/* Read no more options if ordering is disabled */
+	if (!em_shm->opt.event_chaining.order_keep)
+		return 0; /* Note! */
+
+	/* Temporary: Event chaining re-ordering not yet supported */
+	if (unlikely(em_shm->opt.event_chaining.order_keep)) {
+		EM_LOG(EM_LOG_ERR,
+		       "Config option %s: %s(%d) currently not supported\n",
+		       conf_str, val_bool ? "true" : "false", val_bool);
+		return -1;
+	}
 
 	/*
 	 * Option: event_chaining.num_order_queues
+	 * (only read if .order_keep == true above)
 	 */
 	conf_str = "event_chaining.num_order_queues";
 	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
@@ -104,17 +134,24 @@ read_config_file(void)
 em_status_t
 chaining_init(event_chaining_t *event_chaining)
 {
-	em_queue_conf_t queue_conf;
-	em_output_queue_conf_t output_conf;
-	em_queue_t output_queue;
-	unsigned int i;
-
 	if (read_config_file())
 		return EM_ERR_LIB_FAILED;
 
+	/* Remains '0' if  'event_chaining.order_keep = false' in config file */
 	event_chaining->num_output_queues = 0;
-	for (i = 0; i < MAX_CHAINING_OUTPUT_QUEUES; i++)
+
+	for (unsigned int i = 0; i < MAX_CHAINING_OUTPUT_QUEUES; i++)
 		event_chaining->output_queues[i] = EM_QUEUE_UNDEF;
+
+	if (!em_shm->opt.event_chaining.order_keep)
+		return EM_OK; /* don't create output queues for event chaining */
+
+	/*
+	 * Create EM output queues for event chaining, needed to maintain event
+	 * order during an ordered context
+	 */
+	em_queue_conf_t queue_conf;
+	em_output_queue_conf_t output_conf;
 
 	memset(&queue_conf, 0, sizeof(queue_conf));
 	memset(&output_conf, 0, sizeof(output_conf));
@@ -131,17 +168,18 @@ chaining_init(event_chaining_t *event_chaining)
 	const unsigned int num = em_shm->opt.event_chaining.num_order_queues;
 	unsigned char idx = 0;
 
-	for (i = 0; i < num; i++) {
+	for (unsigned int i = 0; i < num; i++) {
 		char name[EM_QUEUE_NAME_LEN];
 
 		snprintf(name, sizeof(name), "Event-Chaining-Output-%02u", idx);
 		idx++;
 		name[sizeof(name) - 1] = '\0';
 
-		output_queue = em_queue_create(name, EM_QUEUE_TYPE_OUTPUT,
-					       EM_QUEUE_PRIO_UNDEF,
-					       EM_QUEUE_GROUP_UNDEF,
-					       &queue_conf);
+		em_queue_t output_queue = em_queue_create(name,
+							  EM_QUEUE_TYPE_OUTPUT,
+							  EM_QUEUE_PRIO_UNDEF,
+							  EM_QUEUE_GROUP_UNDEF,
+							  &queue_conf);
 		if (unlikely(output_queue == EM_QUEUE_UNDEF))
 			return EM_ERR_ALLOC_FAILED;
 
@@ -155,14 +193,14 @@ chaining_init(event_chaining_t *event_chaining)
 em_status_t
 chaining_term(const event_chaining_t *event_chaining)
 {
+	/* num = 0 if  'event_chaining.order_keep = false' in config file */
 	const unsigned int num = event_chaining->num_output_queues;
-	em_queue_t output_queue;
-	em_status_t stat;
 
 	for (unsigned int i = 0; i < num; i++) {
-		output_queue = event_chaining->output_queues[i];
+		em_queue_t output_queue = event_chaining->output_queues[i];
 		/* delete the output queues associated with event chaining */
-		stat = em_queue_delete(output_queue);
+		em_status_t stat = em_queue_delete(output_queue);
+
 		if (unlikely(stat != EM_OK))
 			return stat;
 	}
@@ -172,12 +210,21 @@ chaining_term(const event_chaining_t *event_chaining)
 
 /**
  * Output-queue callback function of type 'em_output_func_t' for Event-Chaining.
+ * Only needed when sending during an ordered-context when the EM config file
+ * option is set to 'event_chaining.order_keep = true'.
  */
 int
 chaining_output(const em_event_t events[], const unsigned int num,
 		const em_queue_t output_queue, void *output_fn_args)
 {
-	em_queue_t chaining_queue;
+	/*
+	 * NOTE!
+	 * Temporary: Not supporting the EM config file option
+	 * 'event_chaining.order_keep = true' at the moment, checked during
+	 * chaining_init() -> read_config_file().
+	 * This function will thus not be called until support added.
+	 */
+	em_queue_t chaining_queue = EM_QUEUE_UNDEF;
 
 	(void)output_queue;
 	(void)output_fn_args;
@@ -186,11 +233,8 @@ chaining_output(const em_event_t events[], const unsigned int num,
 		return 0;
 
 	if (num == 1) {
-		const event_hdr_t *ev_hdr = event_to_hdr(events[0]);
-		em_status_t stat;
+		em_status_t stat = event_send_device(events[0], chaining_queue);
 
-		chaining_queue = ev_hdr->queue;
-		stat = event_send_device(events[0], chaining_queue);
 		if (unlikely(stat != EM_OK))
 			return 0;
 		return 1;
@@ -198,33 +242,15 @@ chaining_output(const em_event_t events[], const unsigned int num,
 
 	/*
 	 * num > 1:
-	 * Dispatch events in batches. Each batch contains events targeted for
-	 * the same chaining queue.
 	 */
-	event_hdr_t *ev_hdrs[num];
-	unsigned int idx = 0; /* index into 'events[]' and 'ev_hdrs[]' */
+	int ret = event_send_device_multi(events, num, chaining_queue);
 
-	event_to_hdr_multi(events, ev_hdrs, num);
-
-	do {
-		chaining_queue = ev_hdrs[idx]->queue;
-		int batch_cnt = 1;
-		int ret;
-
-		for (unsigned int i = idx + 1; i < num &&
-		     ev_hdrs[i]->queue == chaining_queue; i++) {
-			batch_cnt++;
-		}
-
-		ret = event_send_device_multi(&events[idx], batch_cnt,
-					      chaining_queue);
-		if (unlikely(ret != batch_cnt)) {
-			if (ret < 0)
-				return idx;
-			return idx + ret;
-		}
-		idx += batch_cnt;
-	} while (idx < num);
+	if (unlikely((unsigned int)ret != num)) {
+		if (ret < 0)
+			return 0;
+		else
+			return ret;
+	}
 
 	return num;
 }

@@ -50,7 +50,7 @@ for check_dir in CHECK_DIRS:
 
 
 # Run checks on all files in file_list with multiple threads
-for i in range(5):
+for i in range(15):
     t = threading.Thread(target=run_checks)
     threads.append(t)
     t.start()

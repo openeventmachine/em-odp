@@ -43,8 +43,7 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 	atomic_group_elem_t *ag_elem = NULL;
 	const char *err_str = "";
 	em_status_t error = EM_OK;
-	odp_queue_param_t queue_param;
-	unsigned int size;
+	int ret = 0;
 
 	if (unlikely(invalid_qgrp(queue_group))) {
 		error = EM_ERR_BAD_ID;
@@ -81,25 +80,52 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 		ag_elem->name[0] = '\0';
 	}
 
-	odp_queue_param_init(&queue_param);
+	/*
+	 * Create the AG internal stashes
+	 */
+	unsigned int num_obj = 0;
+	odp_stash_capability_t stash_capa;
+	odp_stash_param_t stash_param;
 
-	queue_param.type = ODP_QUEUE_TYPE_PLAIN;
-	queue_param.enq_mode = ODP_QUEUE_OP_MT;
-	/* dequeueing protected by ag_elem->lock */
-	queue_param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
-	/* Queue size: use EM default value from config file: */
-	size = em_shm->opt.queue.min_events_default;
-	if (size != 0)
-		queue_param.size = size;
-	/* else: use odp default as set by odp_queue_param_init() */
-
-	ag_elem->internal_queue.hi_prio = odp_queue_create(ag_elem->name,
-							   &queue_param);
-	ag_elem->internal_queue.lo_prio = odp_queue_create(ag_elem->name,
-							   &queue_param);
-	if (unlikely(ag_elem->internal_queue.hi_prio == ODP_QUEUE_INVALID ||
-		     ag_elem->internal_queue.lo_prio == ODP_QUEUE_INVALID))
+	ret = odp_stash_capability(&stash_capa, ODP_STASH_TYPE_FIFO);
+	if (ret != 0) {
+		error = EM_ERR_LIB_FAILED;
+		err_str = "odp_stash_capability() failed!";
 		goto error;
+	}
+
+	odp_stash_param_init(&stash_param);
+
+	stash_param.type = ODP_STASH_TYPE_FIFO;
+	stash_param.put_mode = ODP_STASH_OP_MT;
+	/* 'get' protected by ag_elem->lock */
+	stash_param.get_mode = ODP_STASH_OP_ST;
+
+	/* Stash size: use EM default queue size value from config file: */
+	num_obj = em_shm->opt.queue.min_events_default;
+	if (num_obj != 0)
+		stash_param.num_obj = num_obj;
+	/* else: use odp default as set by odp_stash_param_init() */
+
+	if (stash_param.num_obj > stash_capa.max_num_obj) {
+		EM_LOG(EM_LOG_PRINT,
+		       "%s(): req stash.num_obj(%" PRIu64 ") > capa.max_num_obj(%" PRIu64 ").\n"
+		       "      ==> using max value:%" PRIu64 "\n", __func__,
+		       stash_param.num_obj, stash_capa.max_num_obj, stash_capa.max_num_obj);
+		stash_param.num_obj = stash_capa.max_num_obj;
+	}
+
+	stash_param.obj_size = sizeof(uint64_t);
+	stash_param.cache_size = 0; /* No core local caching */
+
+	ag_elem->stashes.hi_prio = odp_stash_create(ag_elem->name, &stash_param);
+	ag_elem->stashes.lo_prio = odp_stash_create(ag_elem->name, &stash_param);
+	if (unlikely(ag_elem->stashes.hi_prio == ODP_STASH_INVALID ||
+		     ag_elem->stashes.lo_prio == ODP_STASH_INVALID)) {
+		error = EM_ERR_LIB_FAILED;
+		err_str = "odp_stash_create() failed!";
+		goto error;
+	}
 
 	return atomic_group;
 
@@ -116,35 +142,38 @@ error:
  * Flush the atomic group's internal queues and then destroy them.
  */
 static int
-ag_internal_queue_destroy(odp_queue_t plain_q)
+ag_stash_destroy(odp_stash_t stash)
 {
-	odp_event_t odp_deq_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	stash_entry_t entry_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	odp_event_t odp_evtbl[EM_SCHED_AG_MULTI_MAX_BURST];
 	em_event_t ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-	int ev_cnt = 0;
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	int32_t cnt = 0;
 	bool esv_ena = esv_enabled();
 
-	if (plain_q == ODP_QUEUE_INVALID)
+	if (stash == ODP_STASH_INVALID)
 		return -1;
 
 	do {
-		ev_cnt = odp_queue_deq_multi(plain_q, odp_deq_tbl,
-					     EM_SCHED_AG_MULTI_MAX_BURST);
-		if (ev_cnt <= 0)
+		cnt = odp_stash_get_u64(stash, &entry_tbl[0].u64 /*[out]*/,
+					EM_SCHED_AG_MULTI_MAX_BURST);
+		if (cnt <= 0)
 			break;
+		for (int32_t i = 0; i < cnt; i++)
+			odp_evtbl[i] = (odp_event_t)(uintptr_t)entry_tbl[i].evptr;
 
-		events_odp2em(odp_deq_tbl, ev_tbl/*out*/, ev_cnt);
+		events_odp2em(odp_evtbl, ev_tbl/*out*/, cnt);
 
 		if (esv_ena) {
-			event_to_hdr_multi(ev_tbl, ev_hdr_tbl/*out*/, ev_cnt);
+			event_to_hdr_multi(ev_tbl, ev_hdr_tbl/*out*/, cnt);
 			evstate_em2usr_multi(ev_tbl/*in/out*/, ev_hdr_tbl,
-					     ev_cnt, EVSTATE__AG_DELETE);
+					     cnt, EVSTATE__AG_DELETE);
 		}
 
-		em_free_multi(ev_tbl, ev_cnt);
-	} while (ev_cnt > 0);
+		em_free_multi(ev_tbl, cnt);
+	} while (cnt > 0);
 
-	return odp_queue_destroy(plain_q);
+	return odp_stash_destroy(stash);
 }
 
 em_status_t
@@ -173,8 +202,8 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 	}
 
 	/* Flush the atomic group's internal queues and destroy them */
-	err  = ag_internal_queue_destroy(ag_elem->internal_queue.hi_prio);
-	err |= ag_internal_queue_destroy(ag_elem->internal_queue.lo_prio);
+	err  = ag_stash_destroy(ag_elem->stashes.hi_prio);
+	err |= ag_stash_destroy(ag_elem->stashes.lo_prio);
 
 	ag_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
 	ag_elem->name[0] = '\0';

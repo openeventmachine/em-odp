@@ -70,11 +70,9 @@ eo_start_local_req(eo_elem_t *const eo_elem,
 em_status_t
 eo_start_sync_local_req(eo_elem_t *const eo_elem);
 
-int
-eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue,
-		       em_event_group_t event_group);
-void
-eo_start_send_buffered_events(eo_elem_t *const eo_elem);
+int eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue);
+
+void eo_start_send_buffered_events(eo_elem_t *const eo_elem);
 
 em_status_t
 eo_stop_local_req(eo_elem_t *const eo_elem,
@@ -99,6 +97,8 @@ eo_count(void);
 
 size_t eo_get_name(const eo_elem_t *const eo_elem,
 		   char name[/*out*/], const size_t maxlen);
+
+odp_stash_t eo_start_stash_create(const char *name);
 
 static inline int
 eo_allocated(const eo_elem_t *const eo_elem)

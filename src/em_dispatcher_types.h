@@ -41,6 +41,18 @@
 extern "C" {
 #endif
 
+/**
+ * The idle state of a core
+ */
+typedef enum {
+	/** Undefined */
+	IDLE_STATE_UNDEF = 0,
+	/** Core is idle */
+	IDLE_STATE_IDLE = 1,
+	/** Core is active, processing event */
+	IDLE_STATE_ACTIVE = 2
+} idle_state_t;
+
 #ifdef __cplusplus
 }
 #endif

@@ -191,8 +191,11 @@ extern "C" {
  * @subsection sub_3 Helper
  * - event_machine_helper.h
  *   - optional helper routines
+ * - event_machine_debug.h
+ *   - optional debug helpers (only for debug use)
  *
  * @example hello.c
+ * @example api_hooks.c
  * @example dispatcher_callback.c
  * @example error.c
  * @example event_group.c
@@ -209,12 +212,17 @@ extern "C" {
  * @example timer_test.c
  * performance:
  * @example atomic_processing_end.c
+ * @example loop.c
+ * @example loop_multircv.c
+ * @example loop_refs.c
  * @example pairs.c
  * @example queue_groups.c
  * @example queues.c
- * @example queues_unscheduled.c
  * @example queues_local.c
+ * @example queues_unscheduled.c
+ * @example scheduling_latency.c
  * @example send_multi.c
+ * @example timer_test_periodic.c
  */
 
 /* EM version */

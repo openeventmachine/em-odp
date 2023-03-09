@@ -44,14 +44,15 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 	em_error((error), (escope), __FILE__, __func__,	__LINE__,	 \
 		 (format), ## __VA_ARGS__)
 
-#define test_fatal_if(cond, format, ...) {				\
-		if (unlikely((cond))) {					\
-			em_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead,	\
-				 __FILE__, __func__, __LINE__,		\
-				 (format), ## __VA_ARGS__);		\
-			__builtin_unreachable();			\
-		}							\
-}
+#define test_fatal_if(cond, format, ...) \
+	do { \
+		if (unlikely((cond))) { \
+			em_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead, \
+				 __FILE__, __func__, __LINE__, \
+				 (format), ## __VA_ARGS__); \
+			__builtin_unreachable(); \
+		} \
+	} while (0)
 
 #ifdef __cplusplus
 }

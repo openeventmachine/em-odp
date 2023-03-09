@@ -96,7 +96,6 @@ em_status_t daemon_eo_queues_create(void)
 	em_queue_conf_t unsch_conf;
 
 	const char *err_str = "";
-	int i;
 
 	EM_DBG("%s()\n", __func__);
 
@@ -123,7 +122,7 @@ em_status_t daemon_eo_queues_create(void)
 	memset(&unsch_conf, 0, sizeof(unsch_conf));
 	unsch_conf.flags |= EM_QUEUE_FLAG_DEQ_NOT_MTSAFE;
 
-	for (i = 0; i < num_cores; i++) {
+	for (int i = 0; i < num_cores; i++) {
 		em_queue_t queue_req;
 
 		queue_req = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
@@ -171,9 +170,15 @@ daemon_eo_stop(void *eo_ctx, em_eo_t eo)
 
 	/* Cannot use API funcs - internal ctrl events might not work */
 	stat = queue_disable_all(eo_elem);
-	stat |= eo_delete_queue_all(eo_elem);
+	if (unlikely(stat != EM_OK))
+		return DAEMON_ERROR(stat, "daemon-eo disable queues");
+	stat = eo_delete_queue_all(eo_elem);
+	if (unlikely(stat != EM_OK))
+		return DAEMON_ERROR(stat, "daemon-eo delete queues");
 	/* Finally delete the daemon-eo, API func is ok here */
-	stat |= em_eo_delete(eo);
+	stat = em_eo_delete(eo);
+	if (unlikely(stat != EM_OK))
+		return DAEMON_ERROR(stat, "daemon-eo delete");
 
 	const int num_cores = em_core_count();
 	em_queue_t unsched_queue;

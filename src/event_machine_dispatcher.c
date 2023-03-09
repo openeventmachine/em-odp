@@ -76,12 +76,11 @@ dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
 	int dispatched_events;
 	int round_events;
 	uint64_t events = 0;
-	uint64_t i;
 	bool do_poll_drain_round;
 	const unsigned int poll_interval = em_shm->opt.dispatch.poll_drain_interval;
 	const odp_time_t poll_period = em_shm->opt.dispatch.poll_drain_interval_time;
 
-	for (i = 0; do_forever || i < rounds;) {
+	for (uint64_t i = 0; do_forever || i < rounds;) {
 		dispatched_events = 0;
 
 		do_poll_drain_round = check_poll_drain_round(poll_interval, poll_period);
@@ -112,13 +111,12 @@ dispatch_no_userfn(uint64_t rounds)
 {
 	const bool do_forever = rounds == 0 ? true : false;
 	uint64_t events = 0;
-	uint64_t i;
 
 	if (do_forever) {
 		for (;/*ever*/;)
 			dispatch_round();
 	} else {
-		for (i = 0; i < rounds; i++)
+		for (uint64_t i = 0; i < rounds; i++)
 			events += dispatch_round();
 	}
 

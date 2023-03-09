@@ -42,6 +42,8 @@
 extern "C" {
 #endif
 
+#include <event_machine/helper/event_machine_debug.h>
+
 /**
  * EM shared memory data
  *
@@ -104,6 +106,12 @@ typedef struct {
 	hook_tbl_t *free_hook_tbl;
 	/** Send-hook functions currently in use */
 	hook_tbl_t *send_hook_tbl;
+	/** To_idle hook functions currently in use */
+	hook_tbl_t *to_idle_hook_tbl;
+	/** To_active hook functions currently in use */
+	hook_tbl_t *to_active_hook_tbl;
+	/** While_idle hook functions currently in use */
+	hook_tbl_t *while_idle_hook_tbl;
 
 	/** Dispatch enter callback storage, many sets of callback-tables */
 	hook_storage_t dispatch_enter_cb_storage ENV_CACHE_LINE_ALIGNED;
@@ -115,6 +123,12 @@ typedef struct {
 	hook_storage_t free_hook_storage ENV_CACHE_LINE_ALIGNED;
 	/** Send-hook function storage, many sets of hook-tables */
 	hook_storage_t send_hook_storage ENV_CACHE_LINE_ALIGNED;
+	/** To_idle hook functions storage, many sets of hook-tables */
+	hook_storage_t to_idle_hook_storage;
+	/** To_active hook functions storage, many sets of hook-tables */
+	hook_storage_t to_active_hook_storage;
+	/** While_idle hook functions storage, many sets of hook-tables */
+	hook_storage_t while_idle_hook_storage;
 
 	/** Current number of allocated EOs */
 	env_atomic32_t eo_count ENV_CACHE_LINE_ALIGNED;
@@ -220,6 +234,12 @@ typedef struct {
 
 	/** Synchronous API */
 	sync_api_t sync_api;
+
+	/** Idle state of the core, used when calling idle hooks */
+	idle_state_t idle_state;
+
+	/** dispatcher debug timestamps (ns) */
+	uint64_t debug_ts[EM_DEBUG_TSP_LAST];
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;

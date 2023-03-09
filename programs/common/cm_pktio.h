@@ -62,7 +62,7 @@ extern "C" {
 /**
  * @def MAX_PKT_BURST_RX
  * @brief Maximum number of packets received from a pktio input queue
- *        in one burst
+ *        in one burst in polled pktin-mode (DIRECT_RECV, PLAIN_QUEUE)
  */
 #define MAX_PKT_BURST_RX  32
 
@@ -198,6 +198,15 @@ typedef struct {
 		 *  2. Direct ODP pkt pool when using '--pktpool-odp' option
 		 */
 		odp_pool_t pktpool_odp;
+
+		/** EM vector pool for pktio, only used with '--pktin-vector' option */
+		em_pool_t vecpool_em;
+		/** ODP vector pool for pktio:
+		 *  1. Subpool of 'vecpool_em' when using '--vecpool-em' option
+		 *     or
+		 *  2. Direct ODP vector pool when using '--vecpool-odp' option
+		 */
+		odp_pool_t vecpool_odp;
 	} pools;
 
 	/** Packet I/O Interfaces */
@@ -225,6 +234,11 @@ typedef struct {
 
 		/** plain event queues used in PLAIN_QUEUE-mode, per interface */
 		odp_queue_t plain_queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
+
+		/** scheduled event queues used in SCHED_...-mode, per interface */
+		odp_queue_t sched_queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
+		/** scheduled EM event queues created from sched_queues[][] above */
+		em_queue_t sched_em_queues[IF_MAX_NUM][PKTIO_MAX_IN_QUEUES];
 
 		/** A queue that contains pointers to the shared
 		 *  pktin_queues[][] in DIRECT_RECV-mode or to the shared
@@ -291,6 +305,7 @@ typedef struct {
  * pktio_mem_lookup() function before using any further pktio resources.
  */
 void pktio_mem_reserve(void);
+
 /**
  * Lookup shared memory for pktio
  *
@@ -303,17 +318,23 @@ void pktio_mem_lookup(bool is_thread_per_core);
 
 void pktio_mem_free(void);
 
-void pktio_pool_create(int if_count, bool pktpool_em);
-void pktio_pool_destroy(bool pktpool_em);
+void pktio_pool_create(int if_count, bool pktpool_em,
+		       bool pktin_vector, bool vecpool_em);
+void pktio_pool_destroy(bool pktpool_em, bool pktin_vector, bool vecpool_em);
 
 void pktio_init(const appl_conf_t *appl_conf);
 void pktio_deinit(const appl_conf_t *appl_conf);
 
-int pktio_create(const char *dev, int num_workers, pktin_mode_t in_mode);
+int pktio_create(const char *dev, pktin_mode_t in_mode, bool pktin_vector,
+		 int if_count, int num_workers);
 void pktio_start(void);
 void pktio_halt(void);
 void pktio_stop(void);
 void pktio_close(void);
+
+const char *pktin_mode_str(pktin_mode_t in_mode);
+bool pktin_polled_mode(pktin_mode_t in_mode);
+bool pktin_sched_mode(pktin_mode_t in_mode);
 
 /**
  * @brief Poll input resources for pkts/events in DIRECT_RECV-mode
@@ -496,6 +517,18 @@ pktio_get_dst(em_event_t event, uint8_t *proto__out,
 }
 
 static inline void
+pktio_swap_eth_addrs(em_event_t event)
+{
+	odp_packet_t pkt = pktio_odp_packet_get(event);
+
+	odph_ethhdr_t *const eth = odp_packet_data(pkt);
+	const odph_ethaddr_t eth_tmp_addr = eth->dst;
+
+	eth->dst = eth->src;
+	eth->src = eth_tmp_addr;
+}
+
+static inline void
 pktio_swap_addrs(em_event_t event)
 {
 	odp_packet_t pkt = pktio_odp_packet_get(event);
@@ -508,6 +541,7 @@ pktio_swap_addrs(em_event_t event)
 	odp_u16be_t udp_tmp_port;
 
 	/*
+	 * Needs odp_pktio_config_t::parser.layer = ODP_PROTO_LAYER_L2
 	 * if (odp_packet_has_eth(pkt)) {
 	 *	eth = (odph_ethhdr_t *)odp_packet_l2_ptr(pkt, NULL);
 	 *	eth_tmp_addr = eth->dst;
@@ -515,6 +549,7 @@ pktio_swap_addrs(em_event_t event)
 	 *	eth->src = eth_tmp_addr;
 	 * }
 	 *
+	 * Needs odp_pktio_config_t::parser.layer = ODP_PROTO_LAYER_L3
 	 * if (odp_packet_has_ipv4(pkt)) {
 	 *	ip = (odph_ipv4hdr_t *)odp_packet_l3_ptr(pkt, NULL);
 	 *	ip_tmp_addr = ip->src_addr;
@@ -522,6 +557,7 @@ pktio_swap_addrs(em_event_t event)
 	 *	ip->dst_addr = ip_tmp_addr;
 	 * }
 	 *
+	 * Needs odp_pktio_config_t::parser.layer = ODP_PROTO_LAYER_L4
 	 * if (odp_packet_has_udp(pkt)) {
 	 *	udp = (odph_udphdr_t *)odp_packet_l4_ptr(pkt, NULL);
 	 *	udp_tmp_port = udp->src_port;

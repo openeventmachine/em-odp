@@ -543,11 +543,7 @@ print_result(perf_stat_t *const perf_stat)
 	hz = env_core_hz();
 	mhz = ((double)hz) / 1000000.0;
 
-	if (perf_stat->end_cycles > perf_stat->begin_cycles)
-		diff = perf_stat->end_cycles - perf_stat->begin_cycles;
-	else
-		diff = UINT64_MAX - perf_stat->begin_cycles +
-			perf_stat->end_cycles + 1;
+	diff = env_cycles_diff(perf_stat->end_cycles, perf_stat->begin_cycles);
 
 	print_count = perf_stat->print_count;
 	cycles_per_event = ((double)diff) / ((double)perf_stat->events);

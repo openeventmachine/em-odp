@@ -160,5 +160,7 @@ em_status_t dispatch_init_local(void)
 	locm->poll_drain_dispatch_cnt = em_shm->opt.dispatch.poll_drain_interval;
 	locm->poll_drain_dispatch_last_run = now;
 
+	locm->idle_state = IDLE_STATE_ACTIVE;
+
 	return EM_OK;
 }
