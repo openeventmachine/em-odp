@@ -840,11 +840,7 @@ print_result(test_stat_t *const test_stat)
 	double cycles_per_event;
 	uint64_t print_count;
 
-	if (likely(test_stat->end_cycles > test_stat->begin_cycles))
-		diff = test_stat->end_cycles - test_stat->begin_cycles;
-	else
-		diff = UINT64_MAX - test_stat->begin_cycles +
-		       test_stat->end_cycles + 1;
+	diff = env_cycles_diff(test_stat->end_cycles, test_stat->begin_cycles);
 
 	print_count = test_stat->print_count;
 	cycles_per_event = ((double)diff) / ((double)test_stat->num_events);

@@ -34,9 +34,7 @@
 
 em_status_t timer_init(timer_storage_t *const tmrs)
 {
-	int i;
-
-	for (i = 0; i < EM_ODP_MAX_TIMERS; i++)
+	for (int i = 0; i < EM_ODP_MAX_TIMERS; i++)
 		tmrs->timer[i].idx = i;
 
 	odp_ticketlock_init(&tmrs->timer_lock);

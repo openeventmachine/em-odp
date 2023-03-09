@@ -250,18 +250,23 @@ em_status_t my_error_handler(em_eo_t eo, em_status_t error,
 			     em_escope_t escope, va_list args)
 {
 	if (escope == 0xDEAD) { /* test_fatal_if */
-		char *file = va_arg(args, char*);
-		const char *func = va_arg(args, const char*);
-		const int line = va_arg(args, const int);
-		const char *format = va_arg(args, const char*);
+		va_list my_args;
+
+		va_copy(my_args, args);
+
+		char *file = va_arg(my_args, char*);
+		const char *func = va_arg(my_args, const char*);
+		const int line = va_arg(my_args, const int);
+		const char *format = va_arg(my_args, const char*);
 		const char *base = basename(file);
 
 		#pragma GCC diagnostic push
 		#pragma GCC diagnostic ignored "-Wformat-nonliteral"
 			fprintf(stderr, "FATAL - %s:%d, %s():\n",
 				base, line, func);
-			vfprintf(stderr, format, args);
+			vfprintf(stderr, format, my_args);
 		#pragma GCC diagnostic pop
+		va_end(my_args);
 	}
 	return test_error_handler(eo, error, escope, args);
 }

@@ -43,7 +43,7 @@ static inline int
 pack_hook_tbl(hook_tbl_t hook_tbl[], unsigned int idx);
 
 em_status_t
-hooks_init(const em_api_hooks_t *api_hooks)
+hooks_init(const em_api_hooks_t *api_hooks, const em_idle_hooks_t *idle_hooks)
 {
 	em_status_t stat = EM_OK;
 
@@ -54,6 +54,10 @@ hooks_init(const em_api_hooks_t *api_hooks)
 	memset(&em_shm->alloc_hook_storage, 0, sizeof(hook_storage_t));
 	memset(&em_shm->free_hook_storage, 0, sizeof(hook_storage_t));
 	memset(&em_shm->send_hook_storage, 0, sizeof(hook_storage_t));
+
+	memset(&em_shm->to_idle_hook_storage, 0, sizeof(hook_storage_t));
+	memset(&em_shm->to_active_hook_storage, 0, sizeof(hook_storage_t));
+	memset(&em_shm->while_idle_hook_storage, 0, sizeof(hook_storage_t));
 
 	em_shm->dispatch_enter_cb_tbl =
 		&em_shm->dispatch_enter_cb_storage.hook_tbl_storage[0];
@@ -66,17 +70,32 @@ hooks_init(const em_api_hooks_t *api_hooks)
 	em_shm->send_hook_tbl =
 		&em_shm->send_hook_storage.hook_tbl_storage[0];
 
+	em_shm->to_idle_hook_tbl =
+		&em_shm->to_idle_hook_storage.hook_tbl_storage[0];
+	em_shm->to_active_hook_tbl =
+		&em_shm->to_active_hook_storage.hook_tbl_storage[0];
+	em_shm->while_idle_hook_tbl =
+		&em_shm->while_idle_hook_storage.hook_tbl_storage[0];
+
 	em_shm->dispatch_enter_cb_storage.idx = 0;
 	em_shm->dispatch_exit_cb_storage.idx = 0;
 	em_shm->alloc_hook_storage.idx = 0;
 	em_shm->free_hook_storage.idx = 0;
 	em_shm->send_hook_storage.idx = 0;
 
+	em_shm->to_idle_hook_storage.idx = 0;
+	em_shm->to_active_hook_storage.idx = 0;
+	em_shm->while_idle_hook_storage.idx = 0;
+
 	env_spinlock_init(&em_shm->dispatch_enter_cb_storage.lock);
 	env_spinlock_init(&em_shm->dispatch_exit_cb_storage.lock);
 	env_spinlock_init(&em_shm->alloc_hook_storage.lock);
 	env_spinlock_init(&em_shm->free_hook_storage.lock);
 	env_spinlock_init(&em_shm->send_hook_storage.lock);
+
+	env_spinlock_init(&em_shm->to_idle_hook_storage.lock);
+	env_spinlock_init(&em_shm->to_active_hook_storage.lock);
+	env_spinlock_init(&em_shm->while_idle_hook_storage.lock);
 
 	if (EM_API_HOOKS_ENABLE) {
 		if (api_hooks->alloc_hook) {
@@ -91,6 +110,24 @@ hooks_init(const em_api_hooks_t *api_hooks)
 		}
 		if (api_hooks->send_hook) {
 			stat = em_hooks_register_send(api_hooks->send_hook);
+			if (unlikely(stat != EM_OK))
+				return stat;
+		}
+	}
+
+	if (EM_IDLE_HOOKS_ENABLE) {
+		if (idle_hooks->to_idle_hook) {
+			stat = em_hooks_register_to_idle(idle_hooks->to_idle_hook);
+			if (unlikely(stat != EM_OK))
+				return stat;
+		}
+		if (idle_hooks->to_active_hook) {
+			stat = em_hooks_register_to_active(idle_hooks->to_active_hook);
+			if (unlikely(stat != EM_OK))
+				return stat;
+		}
+		if (idle_hooks->while_idle_hook) {
+			stat = em_hooks_register_while_idle(idle_hooks->while_idle_hook);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
@@ -241,6 +278,18 @@ get_hook_tbl(const uint8_t hook_type, hook_storage_t **hook_storage /*out*/)
 		*hook_storage = &em_shm->dispatch_exit_cb_storage;
 		active_tbl_ptr = &em_shm->dispatch_exit_cb_tbl;
 		break;
+	case TO_IDLE_HOOK:
+		*hook_storage = &em_shm->to_idle_hook_storage;
+		active_tbl_ptr = &em_shm->to_idle_hook_tbl;
+		break;
+	case TO_ACTIVE_HOOK:
+		*hook_storage = &em_shm->to_active_hook_storage;
+		active_tbl_ptr = &em_shm->to_active_hook_tbl;
+		break;
+	case WHILE_IDLE_HOOK:
+		*hook_storage = &em_shm->while_idle_hook_storage;
+		active_tbl_ptr = &em_shm->while_idle_hook_tbl;
+		break;
 	default:
 		return NULL;
 	}
@@ -252,13 +301,12 @@ static inline int
 pack_hook_tbl(hook_tbl_t *const hook_tbl, unsigned int idx)
 {
 	hook_fn_t *const fn_tbl = hook_tbl->tbl;
-	unsigned int i;
 
 	if (unlikely(idx >= EM_CALLBACKS_MAX ||
 		     fn_tbl[idx].void_hook != NULL))
 		return -1;
 
-	for (i = idx; i < EM_CALLBACKS_MAX - 1; i++) {
+	for (unsigned int i = idx; i < EM_CALLBACKS_MAX - 1; i++) {
 		if (fn_tbl[i + 1].void_hook != NULL) {
 			fn_tbl[i].void_hook = fn_tbl[i + 1].void_hook;
 			fn_tbl[i + 1].void_hook = NULL;

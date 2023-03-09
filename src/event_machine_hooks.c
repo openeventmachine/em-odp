@@ -144,3 +144,111 @@ em_hooks_unregister_send(em_api_hook_send_t func)
 
 	return EM_OK;
 }
+
+em_status_t
+em_hooks_register_to_idle(em_idle_hook_to_idle_t func)
+{
+	hook_fn_t hook_fn;
+	em_status_t stat;
+
+	RETURN_ERROR_IF(!EM_IDLE_HOOKS_ENABLE, EM_ERR_NOT_IMPLEMENTED,
+			EM_ESCOPE_HOOKS_REGISTER_TO_IDLE,
+			"EM IDLE callback hooks disabled");
+
+	hook_fn.to_idle = func;
+	stat = hook_register(TO_IDLE_HOOK, hook_fn);
+	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_HOOKS_REGISTER_TO_IDLE,
+			"To_idle hook register failed");
+
+	return EM_OK;
+}
+
+em_status_t
+em_hooks_unregister_to_idle(em_idle_hook_to_idle_t func)
+{
+	hook_fn_t hook_fn;
+	em_status_t stat;
+
+	RETURN_ERROR_IF(!EM_IDLE_HOOKS_ENABLE, EM_ERR_NOT_IMPLEMENTED,
+			EM_ESCOPE_HOOKS_UNREGISTER_TO_IDLE,
+			"EM IDLE callback hooks disabled");
+
+	hook_fn.to_idle = func;
+	stat = hook_unregister(TO_IDLE_HOOK, hook_fn);
+	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_HOOKS_UNREGISTER_TO_IDLE,
+			"To_idle hook unregister failed");
+
+	return EM_OK;
+}
+
+em_status_t
+em_hooks_register_to_active(em_idle_hook_to_active_t func)
+{
+	hook_fn_t hook_fn;
+	em_status_t stat;
+
+	RETURN_ERROR_IF(!EM_IDLE_HOOKS_ENABLE, EM_ERR_NOT_IMPLEMENTED,
+			EM_ESCOPE_HOOKS_REGISTER_TO_ACTIVE,
+			"EM IDLE callback hooks disabled");
+
+	hook_fn.to_active = func;
+	stat = hook_register(TO_ACTIVE_HOOK, hook_fn);
+	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_HOOKS_REGISTER_TO_ACTIVE,
+			"To_active hook register failed");
+
+	return EM_OK;
+}
+
+em_status_t
+em_hooks_unregister_to_active(em_idle_hook_to_active_t func)
+{
+	hook_fn_t hook_fn;
+	em_status_t stat;
+
+	RETURN_ERROR_IF(!EM_IDLE_HOOKS_ENABLE, EM_ERR_NOT_IMPLEMENTED,
+			EM_ESCOPE_HOOKS_UNREGISTER_TO_ACTIVE,
+			"EM IDLE callback hooks disabled");
+
+	hook_fn.to_active = func;
+	stat = hook_unregister(TO_ACTIVE_HOOK, hook_fn);
+	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_HOOKS_UNREGISTER_TO_ACTIVE,
+			"To_active hook unregister failed");
+
+	return EM_OK;
+}
+
+em_status_t
+em_hooks_register_while_idle(em_idle_hook_while_idle_t func)
+{
+	hook_fn_t hook_fn;
+	em_status_t stat;
+
+	RETURN_ERROR_IF(!EM_IDLE_HOOKS_ENABLE, EM_ERR_NOT_IMPLEMENTED,
+			EM_ESCOPE_HOOKS_REGISTER_WHILE_IDLE,
+			"EM IDLE callback hooks disabled");
+
+	hook_fn.while_idle = func;
+	stat = hook_register(WHILE_IDLE_HOOK, hook_fn);
+	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_HOOKS_REGISTER_WHILE_IDLE,
+			"While_idle hook register failed");
+
+	return EM_OK;
+}
+
+em_status_t
+em_hooks_unregister_while_idle(em_idle_hook_while_idle_t func)
+{
+	hook_fn_t hook_fn;
+	em_status_t stat;
+
+	RETURN_ERROR_IF(!EM_IDLE_HOOKS_ENABLE, EM_ERR_NOT_IMPLEMENTED,
+			EM_ESCOPE_HOOKS_UNREGISTER_WHILE_IDLE,
+			"EM IDLE callback hooks disabled");
+
+	hook_fn.while_idle = func;
+	stat = hook_unregister(WHILE_IDLE_HOOK, hook_fn);
+	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_HOOKS_UNREGISTER_WHILE_IDLE,
+			"While_idle hook unregister failed");
+
+	return EM_OK;
+}

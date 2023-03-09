@@ -54,10 +54,179 @@ em_queue_t em_odp_queue_em(odp_queue_t queue)
 {
 	const queue_elem_t *queue_elem = odp_queue_context(queue);
 
-	if (unlikely(queue_elem == NULL))
+	/* verify that the odp context is an EM queue elem */
+	if (unlikely(!queue_elem ||
+		     queue_elem->valid_check != QUEUE_ELEM_VALID))
 		return EM_QUEUE_UNDEF;
 
 	return queue_elem->queue;
+}
+
+/**
+ * @brief Helper to em_odp_pktin_event_queues2em()
+ *
+ * @param odp_queue  ODP pktin-queue to convert to an EM-queue.
+ *                   The given ODP queue handle must have been returned by
+ *                   odp_pktin_event_queue().
+ * @return em_queue_t: New EM queue mapped to use the ODP pktin event queue
+ */
+static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
+{
+	em_queue_t queue = EM_QUEUE_UNDEF; /* return value */
+	const char *err_str = "";
+	odp_queue_info_t odp_qinfo;
+	int ret = 0;
+
+	if (unlikely(odp_queue == ODP_QUEUE_INVALID)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
+			       "Bad arg: ODP queue invalid!");
+		return EM_QUEUE_UNDEF;
+	}
+
+	queue = em_odp_queue_em(odp_queue);
+	if (unlikely(queue != EM_QUEUE_UNDEF)) {
+		/* The given ODP queue is already associated with an EM queue */
+		return queue;
+	}
+
+	ret = odp_queue_info(odp_queue, &odp_qinfo);
+	if (unlikely(ret || odp_qinfo.param.type != ODP_QUEUE_TYPE_SCHED)) {
+		err_str = "odp_queue_info(): unsuitable odp queue";
+		goto err_return;
+	}
+
+	/*
+	 * Determine EM queue priority:
+	 */
+	odp_schedule_prio_t odp_prio = odp_schedule_default_prio();
+	em_queue_prio_t prio = EM_QUEUE_PRIO_UNDEF;
+	int num_prio = em_queue_get_num_prio(NULL);
+
+	for (int i = 0; i < num_prio; i++) {
+		prio_em2odp(i, &odp_prio/*out*/);
+		if (odp_prio == odp_qinfo.param.sched.prio) {
+			prio = i;
+			break;
+		}
+	}
+	if (unlikely(prio == EM_QUEUE_PRIO_UNDEF)) {
+		err_str = "Can't convert ODP qprio to EM qprio";
+		goto err_return;
+	}
+
+	/*
+	 * Determine scheduled EM queue type
+	 */
+	em_queue_type_t queue_type = EM_QUEUE_TYPE_UNDEF;
+
+	ret = scheduled_queue_type_odp2em(odp_qinfo.param.sched.sync,
+					  &queue_type /*out*/);
+	if (unlikely(ret)) {
+		err_str = "Can't convert ODP qtype to EM qtype";
+		goto err_return;
+	}
+
+	/*
+	 * Determine EM queue group
+	 */
+	em_queue_group_t queue_group;
+	const queue_group_elem_t *qgrp_elem;
+
+	queue_group = em_queue_group_get_first(NULL);
+	while (queue_group != EM_QUEUE_GROUP_UNDEF) {
+		qgrp_elem = queue_group_elem_get(queue_group);
+		if (qgrp_elem &&
+		    qgrp_elem->odp_sched_group == odp_qinfo.param.sched.group)
+			break; /* found match! */
+		queue_group = em_queue_group_get_next();
+	}
+	if (unlikely(queue_group == EM_QUEUE_GROUP_UNDEF)) {
+		err_str = "No matching EM Queue Group found";
+		goto err_return;
+	}
+
+	/*
+	 * Set EM queue name based on the ODP queue name
+	 */
+	char q_name[ODP_QUEUE_NAME_LEN];
+
+	snprintf(q_name, sizeof(q_name), "EM:%s", odp_qinfo.name);
+	q_name[ODP_QUEUE_NAME_LEN - 1] = '\0';
+
+	/*
+	 * Set up the EM queue based on gathered info
+	 */
+	queue_setup_t setup = {.name = q_name,
+			       .type = queue_type,
+			       .prio = prio,
+			       .atomic_group = EM_ATOMIC_GROUP_UNDEF,
+			       .queue_group = queue_group,
+			       .conf = NULL};
+
+	queue = queue_alloc(EM_QUEUE_UNDEF, &err_str);
+	if (unlikely(queue == EM_QUEUE_UNDEF))
+		goto err_return; /* err_str set by queue_alloc() */
+
+	queue_elem_t *q_elem = queue_elem_get(queue);
+
+	if (unlikely(!q_elem)) {
+		err_str = "Queue elem NULL!";
+		goto err_return;
+	}
+
+	/* Set common queue-elem fields based on 'setup' */
+	queue_setup_common(q_elem, &setup);
+	/* Set queue-elem fields for a pktin event queue */
+	q_elem->odp_queue = odp_queue;
+	q_elem->is_pktin = true;
+	q_elem->scheduled = EM_TRUE;
+	q_elem->state = EM_QUEUE_STATE_INIT;
+
+	/*
+	 * Note: The ODP queue context points to the EM queue elem.
+	 * The EM queue context set by the user using the API function
+	 * em_queue_set_context() is accessed through the queue_elem_t::context
+	 * and retrieved with em_queue_get_context() or passed by EM to the
+	 * EO-receive function for scheduled queues.
+	 *
+	 * Set the odp context data length (in bytes) for potential prefetching.
+	 * The ODP implementation may use this value as a hint for the number
+	 * of context data bytes to prefetch.
+	 */
+	ret = odp_queue_context_set(odp_queue, q_elem, sizeof(*q_elem));
+	if (unlikely(ret)) {
+		err_str = "odp_queue_context_set() failed";
+		goto err_return;
+	}
+
+	return queue; /* success */
+
+err_return:
+	INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_ODP_EXT,
+		       "%s (ret=%d)", err_str, ret);
+	if (EM_DEBUG_PRINT && odp_queue != ODP_QUEUE_INVALID)
+		odp_queue_print(odp_queue);
+	if (queue != EM_QUEUE_UNDEF)
+		queue_free(queue);
+	return EM_QUEUE_UNDEF;
+}
+
+int em_odp_pktin_event_queues2em(const odp_queue_t odp_pktin_event_queues[/*num*/],
+				 em_queue_t queues[/*out:num*/], int num)
+{
+	int i;
+
+	for (i = 0; i < num; i++) {
+		queues[i] = pktin_event_queue2em(odp_pktin_event_queues[i]);
+		if (unlikely(queues[i] == EM_QUEUE_UNDEF)) {
+			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_ODP_EXT,
+				       "Cannot create EM-Q using pktin-queue:%d (hdl:%" PRIu64 ")",
+				       i, odp_queue_to_u64(odp_pktin_event_queues[i]));
+			break;
+		}
+	}
+
+	return i;
 }
 
 uint32_t em_odp_event_hdr_size(void)
@@ -111,9 +280,8 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
 	}
 
 	int num_subpools = MIN(num, pool_elem->num_subpools);
-	int i;
 
-	for (i = 0; i < num_subpools; i++)
+	for (int i = 0; i < num_subpools; i++)
 		odp_pools[i] = pool_elem->odp_pool[i];
 
 	/* return the number of odp-pools filled into 'odp_pools[]' */
@@ -162,20 +330,17 @@ int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue)
 		if (q_elem == NULL) {
 			/* Send directly out via event chaining */
 			if (likely(queue_external(queue)))
-				sent = send_chaining_multi(event_tbl, evhdr_tbl,
-							   num, queue);
+				sent = send_chaining_multi(event_tbl, num, queue);
 		} else if (q_elem->type == EM_QUEUE_TYPE_UNSCHEDULED) {
 			/* Enqueue into an unscheduled em-odp queue */
 			sent = odp_queue_enq_multi(q_elem->odp_queue,
 						   odp_event_tbl, num);
 		} else if (q_elem->type ==  EM_QUEUE_TYPE_LOCAL) {
 			/* Send into an local em-odp queue */
-			sent = send_local_multi(event_tbl, evhdr_tbl,
-						num, q_elem);
+			sent = send_local_multi(event_tbl, num, q_elem);
 		} else if (q_elem->type ==  EM_QUEUE_TYPE_OUTPUT) {
 			/* Send directly out via an output em-odp queue */
-			sent = send_output_multi(event_tbl, evhdr_tbl,
-						 num, q_elem);
+			sent = send_output_multi(event_tbl, num, q_elem);
 		}
 	}
 
@@ -189,4 +354,16 @@ int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue)
 	}
 
 	return sent;
+}
+
+odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group)
+{
+	const queue_group_elem_t *qgrp_elem =
+		queue_group_elem_get(queue_group);
+
+	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
+			EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
+			"Invalid queue group:%" PRI_QGRP "", queue_group);
+
+	return qgrp_elem->odp_sched_group;
 }

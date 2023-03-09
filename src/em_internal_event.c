@@ -276,7 +276,6 @@ internal_done_w_notif_req(int event_group_count,
 	internal_event_t *i_event;
 	em_notif_t i_notif;
 	em_status_t err;
-	int i;
 
 	event = em_alloc(sizeof(internal_event_t), EM_EVENT_TYPE_SW,
 			 EM_POOL_DEFAULT);
@@ -303,7 +302,7 @@ internal_done_w_notif_req(int event_group_count,
 	i_event->done.f_done_arg_ptr = f_done_arg_ptr;
 	i_event->done.num_notif = num_notif;
 
-	for (i = 0; i < num_notif; i++) {
+	for (int i = 0; i < num_notif; i++) {
 		i_event->done.notif_tbl[i].event = notif_tbl[i].event;
 		i_event->done.notif_tbl[i].queue = notif_tbl[i].queue;
 		i_event->done.notif_tbl[i].egroup = notif_tbl[i].egroup;
@@ -362,11 +361,10 @@ void evgrp_abort_delete(em_event_group_t event_group)
 em_status_t
 send_notifs(const int num_notif, const em_notif_t notif_tbl[])
 {
-	int i;
 	em_status_t err;
 	em_status_t ret = EM_OK;
 
-	for (i = 0; i < num_notif; i++) {
+	for (int i = 0; i < num_notif; i++) {
 		const em_event_t event = notif_tbl[i].event;
 		const em_queue_t queue = notif_tbl[i].queue;
 		const em_event_group_t egrp = notif_tbl[i].egroup;
@@ -418,7 +416,6 @@ em_status_t
 check_notif_tbl(const int num_notif, const em_notif_t notif_tbl[])
 {
 	em_status_t err;
-	int i;
 
 	if (unlikely((unsigned int)num_notif > EM_EVENT_GROUP_MAX_NOTIF))
 		return EM_ERR_TOO_LARGE;
@@ -426,7 +423,7 @@ check_notif_tbl(const int num_notif, const em_notif_t notif_tbl[])
 	if (unlikely(num_notif > 0 && notif_tbl == NULL))
 		return EM_ERR_BAD_POINTER;
 
-	for (i = 0; i < num_notif; i++) {
+	for (int i = 0; i < num_notif; i++) {
 		err = check_notif(&notif_tbl[i]);
 		if (unlikely(err != EM_OK))
 			return err;

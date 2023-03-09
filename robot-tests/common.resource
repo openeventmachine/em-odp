@@ -41,6 +41,25 @@ Kill Any Hanging Applications
     [Documentation]    Kill any hanging applications
     Terminate All Processes    kill=true
 
+Check Pool Statistics
+    [Documentation]    Check if pool statistics printed just before program exit
+    ...    match given regax pattern.
+
+    # output: the output from an EM-ODP program
+    [Arguments]    ${output}
+
+    # Match only the pool statistic printed just before program exit
+    ${last_pool_statistic} =    Get Regexp Matches    ${output.stdout}
+    ...    ^Status before delete:(.|\n)*Done - exit$(?m)
+
+    # Should have only one match
+    ${num_match} =    Get Length    ${last_pool_statistic}
+    Should Be Equal As Integers    ${num_match}    1
+
+    FOR    ${line}    IN    @{POOL_STATISTICS_MATCH}
+        Should Match Regexp    ${last_pool_statistic}[0]    ${line}
+    END
+
 Run EM-ODP Test
     [Documentation]    Run em-odp application in the background, send SIGINT
     ...    signal to the application process after sleeping the given sleep_time,
@@ -56,7 +75,7 @@ Run EM-ODP Test
     Log To Console    \n
 
     # Run application with given arguments
-    ${app_handle} =    Process.Start Process    ${APPLICATION}
+    ${app_handle} =    Process.Start Process  taskset  -c  ${TASKSET_CORES}  ${APPLICATION}
     ...    @{CM_ARGS}
     ...    stderr=STDOUT
     ...    shell=True
@@ -91,6 +110,4 @@ Run EM-ODP Test
         Should Not Match Regexp    ${output.stdout}    ${line}
     END
 
-    FOR    ${line}    IN    @{POOL_STATISTICS_MATCH}
-        Should Match Regexp    ${output.stdout}    ${line}
-    END
+    Check Pool Statistics    output=${output}

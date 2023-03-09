@@ -36,6 +36,9 @@
 #include "em_include.h"
 #include "include/em_libconfig_config.h"
 
+#define SETTING_NAME_LEN 64
+#define SETTING_PATH_LEN 256
+
 int em_libconfig_init_global(libconfig_t *libconfig)
 {
 	const char *filename;
@@ -224,6 +227,277 @@ int em_libconfig_lookup_array(const libconfig_t *libconfig, const char *path,
 
 	/* Number of elements copied */
 	return num_out;
+}
+
+void em_libconfig_lookup(const libconfig_t *libconfig, const char *path,
+			 libconfig_setting_t **setting_default/*out*/,
+			 libconfig_setting_t **setting_runtime/*out*/)
+{
+	*setting_default = config_lookup(&libconfig->cfg_default, path);
+	*setting_runtime = config_lookup(&libconfig->cfg_runtime, path);
+}
+
+int em_libconfig_setting_lookup_int(const libconfig_setting_t *setting,
+				    const char *name, int *value/*out*/)
+{
+	return config_setting_lookup_int(setting, name, value);
+}
+
+const libconfig_list_t *
+em_libconfig_setting_get_list(const libconfig_setting_t *setting, const char *name)
+{
+	const libconfig_list_t *list_setting;
+
+	list_setting = config_setting_get_member(setting, name);
+
+	if (list_setting && config_setting_is_list(list_setting))
+		return list_setting;
+
+	return NULL;
+}
+
+int em_libconfig_list_length(const libconfig_list_t *list)
+{
+	return config_setting_length(list);
+}
+
+static uint32_t path_get_depth(const char *path, char delim)
+{
+	const char *p = path;
+	uint32_t depth = 1; /*Depth is 1 when path contains no delimiter*/
+
+	while (*p) {
+		if (*p == delim)
+			depth++;
+		p++;
+	}
+
+	return depth;
+}
+
+/* Get second last setting and the last setting name specified in path from the
+ * list element at index. More specifically, for path 'a.b.c.d', this function
+ * gets second last setting 'c' from list element at index and the last setting
+ * name 'd'.
+ */
+static int setting_get_child(const config_setting_t *parent, const char *path,
+			     const char *delim, const uint32_t depth,
+			     char *name/*out*/, config_setting_t **child/*out*/)
+{
+	char *saveptr; /*Used internally by strtok_r()*/
+	const char *member_name;
+	char path_cp[SETTING_PATH_LEN];
+
+	/* strtok requires non const char pointer */
+	strncpy(path_cp, path, SETTING_PATH_LEN - 1);
+	path_cp[SETTING_PATH_LEN - 1] = '\0';
+
+	/* Get second last setting */
+	member_name = strtok_r(path_cp, delim, &saveptr);
+	for (uint32_t i = 0; i < depth - 1; i++) {
+		*child = config_setting_get_member(parent, member_name);
+
+		if (!(*child))
+			return -1;
+
+		parent = *child;
+		member_name = strtok_r(NULL, delim, &saveptr);
+	}
+
+	/* Get last setting name */
+	strncpy(name, member_name, SETTING_NAME_LEN - 1);
+	name[SETTING_NAME_LEN - 1] = '\0';
+	return 0;
+}
+
+/* Get second last setting and the last setting name specified in path from the
+ * list element at index. More specifically, for path 'a.b.c.d', this function
+ * gets second last setting 'c' from list element at index and the last setting
+ * name 'd'.
+ *
+ * name[out]	Pointer where last setting name will be stored
+ * setting[out]	Ponter where second last setting will be stored
+ */
+static int list_get_setting(const libconfig_list_t *list, int index,
+			    const char *path, char *name/*out*/,
+			    config_setting_t **setting/*out*/)
+{
+	uint32_t depth;
+	config_setting_t *element;
+	char delim[] = ".";
+
+	element = config_setting_get_elem(list, index);
+	if (!element) {
+		EM_LOG(EM_LOG_ERR, "List element %d does not exist\n", index);
+		return -1;
+	}
+
+	depth = path_get_depth(path, delim[0]);
+	if (depth < 2) {/*Only one level of setting in path, e.g., 'a'*/
+		*setting = element;
+		strncpy(name, path, SETTING_NAME_LEN - 1);
+		name[SETTING_NAME_LEN - 1] = '\0';
+		return 0;
+	}
+
+	/*Get second last setting and the last setting name*/
+	return setting_get_child(element, path, delim, depth, name, setting);
+}
+
+libconfig_group_t *em_libconfig_list_lookup_group(const libconfig_list_t *list,
+						  int index, const char *path)
+{
+	char name[SETTING_NAME_LEN];
+	config_setting_t *setting;
+	libconfig_group_t *group;
+
+	if (list_get_setting(list, index, path, name, &setting) < 0)
+		return NULL;
+
+	group = config_setting_get_member(setting, name);
+	if (group && config_setting_is_group(group))
+		return group;
+
+	return NULL;
+}
+
+int em_libconfig_list_lookup_int(const libconfig_list_t *list, int index,
+				 const char *path, int *value/*out*/)
+{
+	char name[SETTING_NAME_LEN];
+	config_setting_t *setting;
+	const config_setting_t *member;
+
+	if (list_get_setting(list, index, path, name, &setting) < 0)
+		return -1; /*Parent setting not found*/
+
+	member = config_setting_get_member(setting, name);
+	if (!member) /*Setting not found*/
+		return -1;
+
+	return config_setting_lookup_int(setting, name, value);
+}
+
+int em_libconfig_list_lookup_bool(const libconfig_list_t *list, int index,
+				  const char *path, bool *value/*out*/)
+{
+	int cfg_value;
+	char name[SETTING_NAME_LEN];
+	config_setting_t *setting;
+	const config_setting_t *member;
+
+	if (list_get_setting(list, index, path, name, &setting) < 0)
+		return -1; /*Parent setting not found*/
+
+	member = config_setting_get_member(setting, name);
+	if (!member) /*Setting not found*/
+		return -1;
+
+	if (!config_setting_lookup_bool(setting, name, &cfg_value))
+		return 0;
+
+	*value = cfg_value ? true : false;
+	return 1;
+}
+
+int em_libconfig_list_lookup_string(const libconfig_list_t *list, int index,
+				    const char *path, const char **value/*out*/)
+{
+	char name[SETTING_NAME_LEN];
+	config_setting_t *setting;
+	const config_setting_t *member;
+
+	if (list_get_setting(list, index, path, name, &setting) < 0)
+		return -1; /*Parent setting not found*/
+
+	member = config_setting_get_member(setting, name);
+	if (!member) /*Setting not found*/
+		return -1;
+
+	return config_setting_lookup_string(setting, name, value);
+}
+
+/* Get second last setting and the last setting name specified in path from
+ * the given group. More specifically, for path 'a.b.c.d', this function
+ * gets second last setting 'c' from group and the last setting name 'd'.
+ *
+ * name[out]	Pointer where last setting name will be stored
+ * setting[out]	Ponter where second last setting will be stored
+ */
+static int group_get_setting(libconfig_list_t *group, const char *path,
+			     char *name/*out*/, config_setting_t **setting/*out*/)
+{
+	uint32_t depth;
+	char delim[] = ".";
+
+	depth = path_get_depth(path, delim[0]);
+	if (depth < 2) {/*No child setting*/
+		*setting = group;
+		strncpy(name, path, SETTING_NAME_LEN - 1);
+		name[SETTING_NAME_LEN - 1] = '\0';
+		return 0;
+	}
+
+	/*Get child setting*/
+	return setting_get_child(group, path, delim, depth, name, setting);
+}
+
+libconfig_group_t
+*em_libconfig_group_lookup_group(libconfig_group_t *group, const char *path)
+{
+	char name[SETTING_NAME_LEN];
+	config_setting_t *setting;
+	libconfig_group_t *group_out;
+
+	if (group_get_setting(group, path, name, &setting) < 0)
+		return NULL;
+
+	group_out = config_setting_get_member(setting, name);
+	if (group_out && config_setting_is_group(group_out))
+		return group_out;
+
+	return NULL;
+}
+
+libconfig_list_t
+*em_libconfig_group_lookup_list(libconfig_group_t *group, const char *path)
+{
+	libconfig_list_t *list;
+	config_setting_t *setting;
+	char name[SETTING_NAME_LEN];
+
+	if (group_get_setting(group, path, name, &setting) < 0)
+		return NULL;
+
+	list = config_setting_get_member(setting, name);
+	if (list && config_setting_is_list(list))
+		return list;
+
+	return NULL;
+}
+
+int em_libconfig_group_lookup_int(const libconfig_group_t *group,
+				  const char *name, int *value/*out*/)
+{
+	return config_setting_lookup_int(group, name, value);
+}
+
+int em_libconfig_group_lookup_bool(const libconfig_group_t *group,
+				   const char *name, bool *value/*out*/)
+{
+	int cfg_value;
+
+	if (!config_setting_lookup_bool(group, name, &cfg_value))
+		return 0;
+
+	*value = cfg_value ? true : false;
+	return 1;
+}
+
+int em_libconfig_group_lookup_string(const libconfig_group_t *group,
+				     const char *name, const char **value/*out*/)
+{
+	return config_setting_lookup_string(group, name, value);
 }
 
 static int lookup_int(const config_t *cfg,

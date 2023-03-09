@@ -33,18 +33,6 @@
 #define EM_Q_BASENAME  "EM_Q_"
 
 /**
- * Queue create-params passed to queue_setup...()
- */
-typedef struct {
-	const char *name;
-	em_queue_type_t type;
-	em_queue_prio_t prio;
-	em_atomic_group_t atomic_group;
-	em_queue_group_t queue_group;
-	const em_queue_conf_t *conf;
-} queue_setup_t;
-
-/**
  * Default queue create conf to use if not provided by the user
  */
 static const em_queue_conf_t default_queue_conf = {
@@ -66,17 +54,9 @@ queue_init_prio_custom(int minp, int maxp);
 static inline int
 queue_create_check_sched(const queue_setup_t *setup, const char **err_str);
 
-static inline em_queue_t
-queue_alloc(em_queue_t queue, const char **err_str);
-
-static inline em_status_t
-queue_free(em_queue_t queue);
-
 static int
 queue_setup(queue_elem_t *q_elem, const queue_setup_t *setup,
 	    const char **err_str);
-static void
-queue_setup_common(queue_elem_t *q_elem, const queue_setup_t *setup);
 static void
 queue_setup_odp_common(const queue_setup_t *setup,
 		       odp_queue_param_t *odp_queue_param);
@@ -177,12 +157,11 @@ queue_pool_init(queue_tbl_t *const queue_tbl,
 	int qs_leftover = qs_per_pool % cores;
 	int subpool_idx = 0;
 	int add_cnt = 0;
-	int i;
 
 	if (objpool_init(&queue_pool->objpool, cores) != 0)
 		return -1;
 
-	for (i = min_qidx; i <= max_qidx; i++) {
+	for (int i = min_qidx; i <= max_qidx; i++) {
 		objpool_add(&queue_pool->objpool, subpool_idx,
 			    &queue_tbl->queue_elem[i].queue_pool_elem);
 		add_cnt++;
@@ -269,33 +248,53 @@ queue_init(queue_tbl_t *const queue_tbl,
 em_status_t
 queue_init_local(void)
 {
-	int prio;
-	int core;
-	char name[20];
-	odp_queue_param_t param;
 	em_locm_t *const locm = &em_locm;
+	odp_stash_capability_t stash_capa;
+	odp_stash_param_t stash_param;
+	unsigned int num_obj = 0;
+	int core = em_core_id();
+	char name[ODP_STASH_NAME_LEN];
 
-	core = em_core_id();
+	int ret = odp_stash_capability(&stash_capa, ODP_STASH_TYPE_FIFO);
 
-	odp_queue_param_init(&param);
-	param.type = ODP_QUEUE_TYPE_PLAIN;
-	param.enq_mode = ODP_QUEUE_OP_MT_UNSAFE;
-	param.deq_mode = ODP_QUEUE_OP_MT_UNSAFE;
-	param.order = ODP_QUEUE_ORDER_IGNORE;
-	param.size = 512;
+	if (ret != 0)
+		return EM_ERR_LIB_FAILED;
+
+	odp_stash_param_init(&stash_param);
+
+	stash_param.type = ODP_STASH_TYPE_FIFO;
+	stash_param.put_mode = ODP_STASH_OP_ST;
+	stash_param.get_mode = ODP_STASH_OP_ST;
+
+	/* Stash size: use EM default queue size value from config file: */
+	num_obj = em_shm->opt.queue.min_events_default;
+	if (num_obj != 0)
+		stash_param.num_obj = num_obj;
+	/* else: use odp default as set by odp_stash_param_init() */
+
+	if (stash_param.num_obj > stash_capa.max_num_obj) {
+		EM_LOG(EM_LOG_PRINT,
+		       "%s(): req stash.num_obj(%" PRIu64 ") > capa.max_num_obj(%" PRIu64 ").\n"
+		       "      ==> using max value:%" PRIu64 "\n", __func__,
+		       stash_param.num_obj, stash_capa.max_num_obj, stash_capa.max_num_obj);
+		stash_param.num_obj = stash_capa.max_num_obj;
+	}
+
+	stash_param.obj_size = sizeof(uint64_t);
+	stash_param.cache_size = 0; /* No core local caching */
 
 	locm->local_queues.empty = 1;
 
-	for (prio = 0; prio < EM_QUEUE_PRIO_NUM; prio++) {
+	for (int prio = 0; prio < EM_QUEUE_PRIO_NUM; prio++) {
 		snprintf(name, sizeof(name),
 			 "local-q:c%02d:prio%d", core, prio);
 		name[sizeof(name) - 1] = '\0';
 
 		locm->local_queues.prio[prio].empty_prio = 1;
-		locm->local_queues.prio[prio].queue =
-			odp_queue_create(name, &param);
-		if (unlikely(locm->local_queues.prio[prio].queue ==
-			     ODP_QUEUE_INVALID))
+		locm->local_queues.prio[prio].stash =
+			odp_stash_create(name, &stash_param);
+		if (unlikely(locm->local_queues.prio[prio].stash ==
+			     ODP_STASH_INVALID))
 			return EM_ERR_ALLOC_FAILED;
 	}
 
@@ -313,23 +312,31 @@ queue_init_local(void)
 em_status_t
 queue_term_local(void)
 {
-	em_event_t event;
-	event_hdr_t *ev_hdr;
+	stash_entry_t entry_tbl[EM_SCHED_MULTI_MAX_BURST];
+	em_event_t ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
 	em_status_t stat = EM_OK;
-	int ret;
-	bool esv_ena = esv_enabled();
 
-	/* flush all events */
-	while ((ev_hdr = local_queue_dequeue()) != NULL) {
-		event = event_hdr_to_event(ev_hdr);
-		if (esv_ena)
-			event = evstate_em2usr(event, ev_hdr,
-					       EVSTATE__TERM_CORE__QUEUE_LOCAL);
-		em_free(event);
+	for (;;) {
+		int num = next_local_queue_events(entry_tbl /*[out]*/,
+						  EM_SCHED_MULTI_MAX_BURST);
+		if (num <= 0)
+			break;
+
+		for (int i = 0; i < num; i++)
+			ev_tbl[i] = (em_event_t)(uintptr_t)entry_tbl[i].evptr;
+
+		event_to_hdr_multi(ev_tbl, ev_hdr_tbl, num);
+
+		if (esv_enabled())
+			evstate_em2usr_multi(ev_tbl, ev_hdr_tbl, num,
+					     EVSTATE__TERM_CORE__QUEUE_LOCAL);
+		em_free_multi(ev_tbl, num);
 	}
 
 	for (int prio = 0; prio < EM_QUEUE_PRIO_NUM; prio++) {
-		ret = odp_queue_destroy(em_locm.local_queues.prio[prio].queue);
+		int ret = odp_stash_destroy(em_locm.local_queues.prio[prio].stash);
+
 		if (unlikely(ret != 0))
 			stat = EM_ERR_LIB_FAILED;
 	}
@@ -346,8 +353,7 @@ queue_term_local(void)
  * @return EM queue handle
  * @retval EM_QUEUE_UNDEF on failure
  */
-static inline em_queue_t
-queue_alloc(em_queue_t queue, const char **err_str)
+em_queue_t queue_alloc(em_queue_t queue, const char **err_str)
 {
 	queue_elem_t *queue_elem;
 	objpool_elem_t *queue_pool_elem;
@@ -399,8 +405,7 @@ queue_alloc(em_queue_t queue, const char **err_str)
 	return queue_elem->queue;
 }
 
-static inline em_status_t
-queue_free(em_queue_t queue)
+em_status_t queue_free(em_queue_t queue)
 {
 	queue_elem_t *const queue_elem = queue_elem_get(queue);
 	objpool_t *objpool;
@@ -644,7 +649,8 @@ queue_delete(queue_elem_t *const queue_elem)
 		}
 	}
 
-	if (queue_elem->odp_queue != ODP_QUEUE_INVALID) {
+	if (queue_elem->odp_queue != ODP_QUEUE_INVALID &&
+	    !queue_elem->is_pktin) {
 		int err = odp_queue_destroy(queue_elem->odp_queue);
 
 		RETURN_ERROR_IF(err, EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_DELETE,
@@ -709,11 +715,14 @@ queue_setup(queue_elem_t *q_elem, const queue_setup_t *setup,
  *
  * Set EM queue params common to all EM queues based on EM config
  */
-static void
-queue_setup_common(queue_elem_t *q_elem /*out*/, const queue_setup_t *setup)
+void queue_setup_common(queue_elem_t *q_elem /*out*/,
+			const queue_setup_t *setup)
 {
 	const em_queue_t queue = q_elem->queue;
 	char *const qname = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
+
+	/* checks that the odp queue context points to an EM queue elem */
+	q_elem->valid_check = QUEUE_ELEM_VALID;
 
 	/* Store queue name */
 	if (setup->name)
@@ -728,10 +737,10 @@ queue_setup_common(queue_elem_t *q_elem /*out*/, const queue_setup_t *setup)
 	q_elem->priority = setup->prio;
 	q_elem->queue_group = setup->queue_group;
 	q_elem->atomic_group = setup->atomic_group;
-	/* q_elem->conf = not stored, configured later */
 
 	/* Clear the rest */
 	q_elem->odp_queue = ODP_QUEUE_INVALID;
+	q_elem->is_pktin = false;
 	q_elem->scheduled = EM_FALSE;
 	q_elem->state = EM_QUEUE_STATE_INVALID;
 	q_elem->context = NULL;
@@ -1049,8 +1058,8 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 		void *args_storage;
 
 		/* alloc an event to copy the given fn-args into */
-		args_event = em_alloc(output_conf->args_len, EM_EVENT_TYPE_SW,
-				      EM_POOL_DEFAULT);
+		args_event = em_alloc((uint32_t)output_conf->args_len,
+				      EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
 		if (unlikely(args_event == EM_EVENT_UNDEF)) {
 			*err_str = "Q-setup-output: alloc output_fn_args fails";
 			return -2;

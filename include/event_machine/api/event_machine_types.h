@@ -80,7 +80,7 @@ EM_HANDLE_T(em_event_t);
  * The only event type with defined content is EM_EVENT_TYPE_SW with
  * minor type 0, which needs to be portable (direct pointer to data).
  *
- * @see em_get_type_major(), em_get_type_minor(), em_receive_func_t()
+ * @see em_event_type_major(), em_event_type_minor(), em_receive_func_t()
  */
 typedef uint32_t em_event_type_t;
 
@@ -489,6 +489,14 @@ typedef uint32_t em_escope_t;
 #define EM_ESCOPE_EVENT_UAREA_ID_GET              (EM_ESCOPE_API_MASK | 0x0616)
 #define EM_ESCOPE_EVENT_UAREA_ID_SET              (EM_ESCOPE_API_MASK | 0x0617)
 #define EM_ESCOPE_EVENT_UAREA_INFO                (EM_ESCOPE_API_MASK | 0x0618)
+#define EM_ESCOPE_EVENT_REF                       (EM_ESCOPE_API_MASK | 0x0619)
+#define EM_ESCOPE_EVENT_HAS_REF                   (EM_ESCOPE_API_MASK | 0x061A)
+#define EM_ESCOPE_EVENT_VECTOR_FREE               (EM_ESCOPE_API_MASK | 0x061B)
+#define EM_ESCOPE_EVENT_VECTOR_TBL                (EM_ESCOPE_API_MASK | 0x061C)
+#define EM_ESCOPE_EVENT_VECTOR_SIZE               (EM_ESCOPE_API_MASK | 0x061D)
+#define EM_ESCOPE_EVENT_VECTOR_SIZE_SET           (EM_ESCOPE_API_MASK | 0x061E)
+#define EM_ESCOPE_EVENT_VECTOR_MAX_SIZE           (EM_ESCOPE_API_MASK | 0x061F)
+#define EM_ESCOPE_EVENT_VECTOR_INFO               (EM_ESCOPE_API_MASK | 0x0620)
 
 /* EM API escopes: Queue Group */
 #define EM_ESCOPE_QUEUE_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0701)

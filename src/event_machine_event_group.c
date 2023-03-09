@@ -93,7 +93,6 @@ em_status_t
 em_event_group_apply(em_event_group_t event_group, int count,
 		     int num_notif, const em_notif_t notif_tbl[])
 {
-	int i;
 	uint64_t egrp_count;
 	em_status_t ret;
 
@@ -134,7 +133,7 @@ em_event_group_apply(em_event_group_t event_group, int count,
 	egrp_elem->ready = 0;
 	egrp_elem->num_notif = num_notif;
 
-	for (i = 0; i < num_notif; i++) {
+	for (int i = 0; i < num_notif; i++) {
 		egrp_elem->notif_tbl[i].event = notif_tbl[i].event;
 		egrp_elem->notif_tbl[i].queue = notif_tbl[i].queue;
 		egrp_elem->notif_tbl[i].egroup = notif_tbl[i].egroup;
@@ -295,23 +294,15 @@ em_send_group(em_event_t event, em_queue_t queue,
 			EM_ERR_BAD_STATE, EM_ESCOPE_SEND_GROUP,
 			"Invalid event group:%" PRI_EGRP "", event_group);
 
-	/* Buffer events sent from EO-start to scheduled queues */
-	if (unlikely(!is_external &&
-		     q_elem->scheduled && em_locm.start_eo_elem)) {
-		/*
-		 * em_send_group() called from within an EO-start function:
-		 * all events sent to scheduled queues will be buffered
-		 * and sent when the EO-start operation completes.
-		 */
-		int num = eo_start_buffer_events(&event, 1, queue, event_group);
-
-		stat = num == 1 ? EM_OK : EM_ERR_OPERATION_FAILED;
-		if (EM_CHECK_LEVEL == 0)
-			return stat;
-		RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND_GROUP,
-				"send-group from EO-start failed");
-		return EM_OK;
-	}
+	/*
+	 * Verify that event references are not used with event groups.
+	 * Cannot save the event group into an event header shared between
+	 * all the references.
+	 */
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 2 && event_group != EM_EVENT_GROUP_UNDEF &&
+			event_has_ref(event),
+			EM_ERR_BAD_CONTEXT, EM_ESCOPE_SEND_GROUP,
+			"Event has references: can't use references with event groups");
 
 	/* Store the event group information in the event header */
 	if (egrp_elem) {
@@ -322,11 +313,29 @@ em_send_group(em_event_t event, em_queue_t queue,
 		ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 	}
 
+	/* Buffer events sent from EO-start to scheduled queues */
+	if (unlikely(!is_external &&
+		     q_elem->scheduled && em_locm.start_eo_elem)) {
+		/*
+		 * em_send_group() called from within an EO-start function:
+		 * all events sent to scheduled queues will be buffered
+		 * and sent when the EO-start operation completes.
+		 */
+		if (esv_enabled())
+			evstate_usr2em(event, ev_hdr, EVSTATE__SEND_EGRP);
+
+		int num = eo_start_buffer_events(&event, 1, queue);
+
+		stat = num == 1 ? EM_OK : EM_ERR_OPERATION_FAILED;
+		if (EM_CHECK_LEVEL == 0)
+			return stat;
+		RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND_GROUP,
+				"send-group from EO-start failed");
+		return EM_OK;
+	}
+
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_send(&event, 1, queue, event_group);
-
-	if (esv_enabled())
-		evstate_usr2em(event, ev_hdr, EVSTATE__SEND_EGRP);
 
 	if (is_external) {
 		/*
@@ -334,21 +343,21 @@ em_send_group(em_event_t event, em_queue_t queue,
 		 * user-provided function 'event_send_device()'
 		 */
 		stat = send_chaining_egrp(event, ev_hdr, queue, egrp_elem);
+
 		if (EM_CHECK_LEVEL == 0)
 			return stat;
-		if (unlikely(stat != EM_OK)) {
-			stat = INTERNAL_ERROR(stat, EM_ESCOPE_SEND_GROUP,
-					      "send_chaining_egrp: Q:%" PRI_QUEUE "",
-					      queue);
-			goto send_group_err;
-		}
 
+		RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_SEND_GROUP,
+				"send_chaining_egrp: Q:%" PRI_QUEUE "", queue);
 		return EM_OK;
 	}
 
 	/*
 	 * Normal send to a queue on this device
 	 */
+	if (esv_enabled())
+		evstate_usr2em(event, ev_hdr, EVSTATE__SEND_EGRP);
+
 	switch (q_elem->type) {
 	case EM_QUEUE_TYPE_ATOMIC:
 	case EM_QUEUE_TYPE_PARALLEL:
@@ -359,7 +368,7 @@ em_send_group(em_event_t event, em_queue_t queue,
 		stat = queue_unsched_enqueue(event, q_elem);
 		break;
 	case EM_QUEUE_TYPE_LOCAL:
-		stat = send_local(event, ev_hdr, q_elem);
+		stat = send_local(event, q_elem);
 		break;
 	default:
 		stat = EM_ERR_NOT_FOUND;
@@ -371,17 +380,15 @@ em_send_group(em_event_t event, em_queue_t queue,
 
 	if (unlikely(stat != EM_OK)) {
 		stat = INTERNAL_ERROR(stat, EM_ESCOPE_SEND_GROUP,
-				      "Q:%" PRI_QUEUE " type:%" PRI_QTYPE "",
+				      "send egrp: Q:%" PRI_QUEUE " type:%" PRI_QTYPE "",
 				      queue, q_elem->type);
-		goto send_group_err;
+		if (esv_enabled())
+			evstate_usr2em_revert(event, ev_hdr,
+					      EVSTATE__SEND_EGRP__FAIL);
+		return stat;
 	}
 
 	return EM_OK;
-
-send_group_err:
-	if (esv_enabled())
-		evstate_usr2em_revert(event, ev_hdr, EVSTATE__SEND_EGRP__FAIL);
-	return stat;
 }
 
 /*
@@ -438,7 +445,6 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 	bool is_external = false; /* set by check_args */
 	queue_elem_t *q_elem = NULL; /* set by check_args */
 	int num_sent;
-	int i;
 
 	/*
 	 * Check all args.
@@ -454,6 +460,37 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		return 0;
 	}
 
+	/*
+	 * Verify that event references are not used with event groups.
+	 * Cannot save the event group into an event header shared between
+	 * all the references
+	 */
+	if (unlikely(EM_CHECK_LEVEL > 2 && event_group != EM_EVENT_GROUP_UNDEF)) {
+		for (int i = 0; i < num; i++) {
+			if (likely(!event_has_ref(events[i])))
+				continue;
+
+			INTERNAL_ERROR(EM_ERR_BAD_CONTEXT, EM_ESCOPE_SEND_GROUP_MULTI,
+				       "event[%d] has references: can't use with event groups", i);
+			return 0;
+		}
+	}
+
+	event_hdr_t *ev_hdrs[num];
+
+	event_to_hdr_multi(events, ev_hdrs, num);
+
+	/* Store the event group information in the event header */
+	for (int i = 0; i < num; i++)
+		ev_hdrs[i]->egrp = event_group; /* can be EM_EVENT_GROUP_UNDEF*/
+
+	if (EM_EVENT_GROUP_SAFE_MODE && egrp_elem) {
+		uint64_t egrp_gen = event_group_gen_get(egrp_elem);
+
+		for (int i = 0; i < num; i++)
+			ev_hdrs[i]->egrp_gen = egrp_gen;
+	}
+
 	/* Buffer events sent from EO-start to scheduled queues */
 	if (unlikely(!is_external &&
 		     q_elem->scheduled && em_locm.start_eo_elem)) {
@@ -462,7 +499,10 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		 * function: all events sent to scheduled queues will be
 		 * buffered and sent when the EO-start operation completes.
 		 */
-		num_sent = eo_start_buffer_events(events, num, queue, event_group);
+		if (esv_enabled())
+			evstate_usr2em_multi(events, ev_hdrs, num,
+					     EVSTATE__SEND_EGRP_MULTI);
+		num_sent = eo_start_buffer_events(events, num, queue);
 		if (EM_CHECK_LEVEL > 0 && unlikely(num_sent != num)) {
 			INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_SEND_GROUP_MULTI,
 				       "send-egrp-multi EO-start:req:%d sent:%d",
@@ -471,27 +511,8 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		return num_sent;
 	}
 
-	event_hdr_t *ev_hdrs[num];
-
-	event_to_hdr_multi(events, ev_hdrs, num);
-
-	/* Store the event group information in the event header */
-	for (i = 0; i < num; i++)
-		ev_hdrs[i]->egrp = event_group; /* can be EM_EVENT_GROUP_UNDEF*/
-
-	if (EM_EVENT_GROUP_SAFE_MODE && egrp_elem) {
-		uint64_t egrp_gen = event_group_gen_get(egrp_elem);
-
-		for (i = 0; i < num; i++)
-			ev_hdrs[i]->egrp_gen = egrp_gen;
-	}
-
 	if (EM_API_HOOKS_ENABLE)
 		call_api_hooks_send(events, num, queue, event_group);
-
-	if (esv_enabled())
-		evstate_usr2em_multi(events, ev_hdrs, num,
-				     EVSTATE__SEND_EGRP_MULTI);
 
 	if (is_external) {
 		/*
@@ -501,10 +522,10 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		num_sent = send_chaining_egrp_multi(events, ev_hdrs, num,
 						    queue, egrp_elem);
 		if (EM_CHECK_LEVEL > 0 && unlikely(num_sent != num)) {
-			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_SEND_GROUP_MULTI,
+			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
+				       EM_ESCOPE_SEND_GROUP_MULTI,
 				       "send_chaining_egrp_multi: req:%d, sent:%d",
 				       num, num_sent);
-			goto send_group_multi_err;
 		}
 
 		return num_sent;
@@ -513,6 +534,10 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 	/*
 	 * Normal send to a queue on this device
 	 */
+	if (esv_enabled())
+		evstate_usr2em_multi(events, ev_hdrs, num,
+				     EVSTATE__SEND_EGRP_MULTI);
+
 	switch (q_elem->type) {
 	case EM_QUEUE_TYPE_ATOMIC:
 	case EM_QUEUE_TYPE_PARALLEL:
@@ -520,7 +545,7 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		num_sent = send_event_multi(events, num, q_elem);
 		break;
 	case EM_QUEUE_TYPE_LOCAL:
-		num_sent = send_local_multi(events, ev_hdrs, num, q_elem);
+		num_sent = send_local_multi(events, num, q_elem);
 		break;
 	default:
 		num_sent = 0;
@@ -531,17 +556,13 @@ em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_SEND_GROUP_MULTI,
 			       "send-egrp-multi failed: req:%d, sent:%d",
 			       num, num_sent);
-		goto send_group_multi_err;
+		if (esv_enabled())
+			evstate_usr2em_revert_multi(&events[num_sent],
+						    &ev_hdrs[num_sent],
+						    num - num_sent,
+						    EVSTATE__SEND_EGRP_MULTI__FAIL);
 	}
 
-	return num_sent;
-
-send_group_multi_err:
-	if (esv_enabled()) {
-		evstate_usr2em_revert_multi(&events[num_sent], &ev_hdrs[num_sent],
-					    num - num_sent,
-					    EVSTATE__SEND_EGRP_MULTI__FAIL);
-	}
 	return num_sent;
 }
 
@@ -671,12 +692,10 @@ em_event_group_get_notif(em_event_group_t event_group,
 	}
 
 	if (!egrp_elem->ready) {
-		int i;
-
 		num_notif = max_notif < egrp_elem->num_notif ?
 			    max_notif : egrp_elem->num_notif;
 
-		for (i = 0; i < num_notif; i++) {
+		for (int i = 0; i < num_notif; i++) {
 			notif_tbl[i].event = egrp_elem->notif_tbl[i].event;
 			notif_tbl[i].queue = egrp_elem->notif_tbl[i].queue;
 			notif_tbl[i].egroup = egrp_elem->notif_tbl[i].egroup;

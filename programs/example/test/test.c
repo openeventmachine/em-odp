@@ -465,7 +465,7 @@ setup_test_events(em_queue_t queues[], const int nbr_queues)
 		for (j = 0; j < nbr_queues; j++) {
 			em_event_t event;
 			test_event_t *test_event;
-			const size_t event_size = sizeof(test_event_t);
+			const uint32_t event_size = sizeof(test_event_t);
 
 			event = em_alloc(event_size, EM_EVENT_TYPE_SW,
 					 EM_POOL_DEFAULT);
@@ -477,7 +477,7 @@ setup_test_events(em_queue_t queues[], const int nbr_queues)
 
 			/* Print event size info for the first alloc */
 			if (i == 0 && j == 0)
-				printf("%s(): size:em_alloc(%zu)=actual:%zu\n",
+				printf("%s(): size:em_alloc(%u)=actual:%u\n",
 				       __func__, event_size,
 				       em_event_get_size(event));
 

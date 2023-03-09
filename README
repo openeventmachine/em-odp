@@ -1,4 +1,4 @@
-Copyright (c) 2013-2022, Nokia Solutions and Networks
+Copyright (c) 2013-2023, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -84,6 +84,45 @@ runtime config files:
   ./programs/example/hello/hello -c 0xe -t
 
 Stop by pressing Ctrl-C.
+
+===============================================================================
+ODP configuration changes for EM (em-odp)
+===============================================================================
+The ODP configuration file lets the user tweak ODP settings.
+For odp-linux, some settings are better modified when using EM (em-odp), read
+about config file usage here: <odp>/config/README
+
+Either change the default values in the config files and recompile or
+override the defaults by providing your own config files at startup:
+> ODP_CONFIG_FILE=my-odp.conf EM_CONFIG_FILE=my-em.conf \
+  ./programs/example/hello/hello -c 0xe -t
+
+odp-linux default configuration file: <odp>/config/odp-linux-generic.conf
+Usually EM work better with the following config changes:
+
+- Timer: Use inline timer implementation with EM.
+    timer.inline = 0 -> 1
+
+- Scheduler:
+  - Priority level spread, the optimal value is typically the number of threads
+    using the scheduler:
+      sched_basic.prio_spread = 4 -> 'number of EM cores used'
+
+  - Disable ODP automatically updated schedule groups, EM does not need them.
+    (These options are actually DEPRECATED so prefer using the ODP API function
+     odp_schedule_config() instead)
+      sched_basic.group_enable: {all     = 1 -> 0
+                                 worker  = 1 -> 0
+                                 control = 1 -> 0}
+
+  - Ordered queue reorder stash size. ODP might drop events if the
+    stash/queue becomes full, causing EM ESV failure since event(s) dropped
+    outside of EM can't be tracked, thus disable this.
+      sched_basic.order_stash_size = 512 -> 0
+
+- Stash: Disable strict stash size.
+  Rely on stash 'put' return value to determine operation status.
+     stash.strict_size = 1 -> 0
 
 ===============================================================================
 CPU Architecture specific options

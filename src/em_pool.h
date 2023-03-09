@@ -104,22 +104,17 @@ pool_allocated(const mpool_elem_t *const mpool_elem)
 }
 
 static inline int
-pool_find_subpool(const mpool_elem_t *const pool_elem, size_t size)
+pool_find_subpool(const mpool_elem_t *const pool_elem, uint32_t size)
 {
-	int subpool = 0;
+	int subpool;
 
-	if (EM_MAX_SUBPOOLS > 1) { /* Compile time option */
-		int i;
-		/* Find the optimal subpool to allocate the event from */
-		for (i = 0; i < pool_elem->num_subpools &&
-		     size > pool_elem->size[i]; i++)
-			;
+	/* Find the optimal subpool to allocate the event from */
+	for (subpool = 0; subpool < pool_elem->num_subpools &&
+	     size > pool_elem->size[subpool]; subpool++)
+		;
 
-		if (unlikely(i >= pool_elem->num_subpools))
-			return -1;
-
-		subpool = i;
-	}
+	if (unlikely(subpool >= pool_elem->num_subpools))
+		return -1;
 
 	return subpool;
 }

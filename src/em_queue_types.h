@@ -76,12 +76,26 @@ COMPILE_TIME_ASSERT(MAX_INTERNAL_QUEUES - 1 >= EM_MAX_CORES,
 COMPILE_TIME_ASSERT(_FIRST_DYN_QUEUE > _LAST_INTERNAL_QUEUE,
 		    FIRST_DYN_QUEUE_ERROR);
 
+#define QUEUE_ELEM_VALID ((uint32_t)0xABBACAFE)
+
 /* Verify that the byte order is defined for 'internal_queue_t' */
 #if \
 (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__) && \
 (__BYTE_ORDER__ != __ORDER_BIG_ENDIAN__)
 #error __BYTE_ORDER__ not defined!
 #endif
+
+/**
+ * Queue create-params passed to queue_setup...()
+ */
+typedef struct {
+	const char *name;
+	em_queue_type_t type;
+	em_queue_prio_t prio;
+	em_atomic_group_t atomic_group;
+	em_queue_group_t queue_group;
+	const em_queue_conf_t *conf;
+} queue_setup_t;
 
 /**
  * Internal represenation of the EM queue handle
@@ -160,10 +174,26 @@ typedef struct q_elem_output_ {
  * EM queue element
  */
 typedef struct queue_elem_t {
+	/**
+	 * Check that contents is an EM queue elem.
+	 *
+	 * EM will verify that the ODP queue context actually points to an
+	 * EM queue elem and not to something else:
+	 *     queue_elem_t *q_elem = odp_queue_context(odp_queue);
+	 *     if (!q_elem || q_elem->valid_check != QUEUE_ELEM_VALID)
+	 *             EM_ERROR(...);
+	 * Keep first.
+	 */
+	uint32_t valid_check;
+
 	/** Queue handle */
 	em_queue_t queue;
+
 	/** Associated ODP queue handle */
 	odp_queue_t odp_queue;
+	/** Is this an ODP pktin event queue (true/false)? */
+	bool is_pktin;
+
 	/** Queue priority */
 	em_queue_prio_t priority;
 	/** Atomic, parallel, ordered, unscheduled, local, output */
@@ -240,7 +270,7 @@ typedef struct local_queues_t {
 	int empty;
 	struct {
 		int empty_prio;
-		odp_queue_t queue;
+		odp_stash_t stash;
 	} prio[EM_QUEUE_PRIO_NUM];
 } local_queues_t;
 

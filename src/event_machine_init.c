@@ -177,13 +177,14 @@ em_init(const em_conf_t *conf)
 	}
 
 	/* Initialize EM callbacks/hooks */
-	stat = hooks_init(&conf->api_hooks);
+	stat = hooks_init(&conf->api_hooks, &conf->idle_hooks);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"hooks_init() failed:%" PRI_STAT "", stat);
 
 	/*
-	 * Initialize the EM buffer pools and create the EM_DEFAULT_POOL based
-	 * on config.
+	 * Initialize the EM buffer pools and create the EM_DEFAULT_POOL.
+	 * Create also startup pools if configured in the runtime config
+	 * file through option 'startup_pools'.
 	 */
 	stat = pool_init(&em_shm->mpool_tbl, &em_shm->mpool_pool,
 			 &conf->default_pool_cfg);
@@ -320,6 +321,11 @@ em_init_core(void)
 
 	/* This is an EM-core that will participate in EM event dispatching */
 	locm->is_external_thr = false;
+
+	/* Initialize debug timestamps to 1 if enabled to differentiate from disabled */
+	if (EM_DEBUG_TIMESTAMP_ENABLE)
+		for (int i = 0; i < EM_DEBUG_TSP_LAST; i++)
+			locm->debug_ts[i] = 1;
 
 	env_spinlock_lock(&em_shm->init.lock);
 	init_count = ++em_shm->init.em_init_core_cnt;

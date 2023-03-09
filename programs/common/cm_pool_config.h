@@ -42,7 +42,6 @@ extern "C" {
  * The name of the default EM event pool is EM_POOL_DEFAULT_NAME (="default")
  */
 
-#define APPL_POOL_1  ((em_pool_t)2)
 #define APPL_POOL_1_NAME "appl_pool_1"
 
 /*

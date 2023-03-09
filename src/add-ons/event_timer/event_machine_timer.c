@@ -100,6 +100,7 @@ static inline em_status_t handle_ack_noskip(em_event_t next_tmo_ev,
 
 	if (unlikely(err != EM_OK))
 		err = INTERNAL_ERROR(err, EM_ESCOPE_TMO_ACK, "Tmo ACK: noskip em_send fail");
+
 	return err; /* EM_OK or send-failure */
 }
 
@@ -131,7 +132,7 @@ static inline bool check_tmo_flags(em_tmo_flag_t flags)
 
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_flag_t inv_flags = ~(EM_TMO_FLAG_ONESHOT | EM_TMO_FLAG_PERIODIC |
-					  EM_TMO_FLAG_NOSKIP);
+					    EM_TMO_FLAG_NOSKIP);
 		if (unlikely(flags & inv_flags))
 			return false;
 	}
@@ -425,7 +426,7 @@ em_status_t em_timer_delete(em_timer_t tmr)
 	/* take lock before checking so nothing can change */
 	if (unlikely(!is_timer_valid(tmr))) {
 		odp_ticketlock_unlock(&tmrs->timer_lock);
-		return INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_DELETE,
+		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_DELETE,
 				      "Invalid timer:%" PRI_TMR "", tmr);
 	}
 
@@ -451,19 +452,16 @@ em_timer_tick_t em_timer_current_tick(em_timer_t tmr)
 
 em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 {
-	int i = TMR_H2I(tmr);
-	odp_timer_pool_t odptmr;
 	const queue_elem_t *const q_elem = queue_elem_get(queue);
-	odp_buffer_t tmo_buf;
 
 	if (EM_CHECK_LEVEL > 0) {
 		if (unlikely(!is_timer_valid(tmr))) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_CREATE,
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CREATE,
 				       "Invalid timer:%" PRI_TMR "", tmr);
 			return EM_TMO_UNDEF;
 		}
 		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_CREATE,
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CREATE,
 				       "Tmr:%" PRI_TMR ": inv.Q:%" PRI_QUEUE "",
 				       tmr, queue);
 			return EM_TMO_UNDEF;
@@ -482,7 +480,9 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 		}
 	}
 
-	tmo_buf = odp_buffer_alloc(em_shm->timers.timer[i].tmo_pool);
+	int i = TMR_H2I(tmr);
+	odp_buffer_t tmo_buf = odp_buffer_alloc(em_shm->timers.timer[i].tmo_pool);
+
 	if (unlikely(tmo_buf == ODP_BUFFER_INVALID)) {
 		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_TMO_CREATE,
 			       "Tmr:%" PRI_TMR ": tmo pool exhausted", tmr);
@@ -490,13 +490,13 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 	}
 
 	em_timer_timeout_t *tmo = odp_buffer_addr(tmo_buf);
+	odp_timer_pool_t odptmr = em_shm->timers.timer[i].odp_tmr_pool;
 
-	odptmr = em_shm->timers.timer[i].odp_tmr_pool;
 	tmo->odp_timer = odp_timer_alloc(odptmr, q_elem->odp_queue, NULL);
 	if (unlikely(tmo->odp_timer == ODP_TIMER_INVALID)) {
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_CREATE,
-			       "Tmr:%" PRI_TMR ": odp_timer_alloc() failed",
-			       tmr);
+			       "Tmr:%" PRI_TMR ": odp_timer_alloc() failed", tmr);
+		odp_buffer_free(tmo_buf); /* free tmo buf before return */
 		return EM_TMO_UNDEF;
 	}
 
@@ -510,26 +510,34 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue)
 		memset(&tmo->stats, 0, sizeof(em_tmo_stats_t));
 	odp_atomic_init_u32(&tmo->state, EM_TMO_STATE_IDLE);
 	TMR_DBG_PRINT("ODP tmo %ld allocated\n", (unsigned long)tmo->odp_timer);
+
 	return tmo;
 }
 
 em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 {
 	if (EM_CHECK_LEVEL > 0) {
-		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF, EM_ERR_BAD_ID,
-				EM_ESCOPE_TMO_DELETE, "Invalid tmo");
-		RETURN_ERROR_IF(cur_event == NULL, EM_ERR_BAD_POINTER,
-				EM_ESCOPE_TMO_DELETE, "NULL pointer given");
+		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF || cur_event == NULL,
+				EM_ERR_BAD_ARG, EM_ESCOPE_TMO_DELETE,
+				"Invalid args: tmo:%" PRI_TMO " cur_event:%p",
+				tmo, cur_event);
 	}
 	if (EM_CHECK_LEVEL > 1) {
+		/* check that tmo buf is valid before accessing other struct members */
+		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
+				EM_ERR_BAD_ID, EM_ESCOPE_TMO_DELETE,
+				"Invalid tmo buffer");
+
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
 		RETURN_ERROR_IF(tmo_state == EM_TMO_STATE_UNKNOWN,
 				EM_ERR_BAD_STATE, EM_ESCOPE_TMO_DELETE,
 				"Invalid tmo state:%d", tmo_state);
-		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
+	}
+	if (EM_CHECK_LEVEL > 2) {
+		RETURN_ERROR_IF(tmo->odp_timer == ODP_TIMER_INVALID,
 				EM_ERR_BAD_ID, EM_ESCOPE_TMO_DELETE,
-				"Invalid tmo buffer");
+				"Invalid tmo odp_timer");
 	}
 
 	TMR_DBG_PRINT("ODP tmo %ld\n", (unsigned long)tmo->odp_timer);
@@ -537,19 +545,23 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_UNKNOWN);
 
 	odp_event_t odp_evt = odp_timer_free(tmo->odp_timer);
-	em_event_t tmo_ev = EM_EVENT_UNDEF;
-
-	if (odp_evt != ODP_EVENT_INVALID)
-		tmo_ev = event_odp2em(odp_evt);
-
 	odp_buffer_t tmp = tmo->odp_buffer;
+	em_event_t tmo_ev = EM_EVENT_UNDEF;
 
 	tmo->odp_timer = ODP_TIMER_INVALID;
 	tmo->odp_buffer = ODP_BUFFER_INVALID;
 	odp_buffer_free(tmp);
 
-	if (esv_enabled() && tmo_ev != EM_EVENT_UNDEF)
-		tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev), EVSTATE__TMO_DELETE);
+	if (odp_evt != ODP_EVENT_INVALID) {
+		RETURN_ERROR_IF(EM_CHECK_LEVEL > 2 && !odp_event_is_valid(odp_evt),
+				EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
+				"Invalid tmo event");
+
+		tmo_ev = event_odp2em(odp_evt);
+		if (esv_enabled())
+			tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev),
+						EVSTATE__TMO_DELETE);
+	}
 
 	*cur_event = tmo_ev;
 	return EM_OK;
@@ -558,25 +570,30 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 			   em_event_t tmo_ev)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF || tmo_ev == EM_EVENT_UNDEF,
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_ABS,
-				"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
-				tmo, tmo_ev);
-		RETURN_ERROR_IF(tmo->flags & EM_TMO_FLAG_PERIODIC,
-				EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_SET_ABS,
-				"Cannot set periodic tmo, use _set_periodic()");
-	}
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
+			(tmo == EM_TMO_UNDEF || tmo_ev == EM_EVENT_UNDEF),
+			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_SET_ABS,
+			"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
+			tmo, tmo_ev);
+	/* check that tmo buf is valid before accessing other struct members */
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer),
+			EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_ABS,
+			"Invalid tmo buffer");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
+			(tmo->flags & EM_TMO_FLAG_PERIODIC),
+			EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_SET_ABS,
+			"Cannot set periodic tmo, use _set_periodic()");
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
 		RETURN_ERROR_IF(tmo_state == EM_TMO_STATE_UNKNOWN,
 				EM_ERR_BAD_STATE, EM_ESCOPE_TMO_SET_ABS,
 				"Invalid tmo state:%d", tmo_state);
-		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_ABS,
-				"Invalid tmo buffer");
 	}
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 2 &&
+			tmo->odp_timer == ODP_TIMER_INVALID,
+			EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_ABS,
+			"Invalid tmo odp_timer");
 
 	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(tmo_ev);
@@ -599,9 +616,9 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 		odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_IDLE);
 		if (esv_ena)
 			evstate_usr2em_revert(tmo_ev, ev_hdr, EVSTATE__TMO_SET_ABS__FAIL);
-		if (ret == ODP_TIMER_TOOLATE)
+		if (ret == ODP_TIMER_TOO_FAR)
 			return EM_ERR_TOOFAR;
-		else if (ret == ODP_TIMER_TOOEARLY)
+		else if (ret == ODP_TIMER_TOO_NEAR)
 			return EM_ERR_TOONEAR;
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_ABS,
 				      "odp_timer_start():%d", ret);
@@ -615,19 +632,21 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 {
 	if (EM_CHECK_LEVEL > 0) {
 		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF || tmo_ev == EM_EVENT_UNDEF,
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_REL,
+				EM_ERR_BAD_ARG, EM_ESCOPE_TMO_SET_REL,
 				"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
 				tmo, tmo_ev);
 	}
 	if (EM_CHECK_LEVEL > 1) {
+		/* check that tmo buf is valid before accessing other struct members */
+		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
+				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_REL,
+				"Invalid tmo buffer");
+
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
 		RETURN_ERROR_IF(tmo_state == EM_TMO_STATE_UNKNOWN,
 				EM_ERR_BAD_STATE, EM_ESCOPE_TMO_SET_REL,
 				"Invalid tmo state:%d", tmo_state);
-		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_REL,
-				"Invalid tmo buffer");
 	}
 
 	event_hdr_t *ev_hdr = NULL;
@@ -658,7 +677,7 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 		if (esv_ena)
 			evstate_usr2em_revert(tmo_ev, ev_hdr, EVSTATE__TMO_SET_REL__FAIL);
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_SET_REL,
-				      "odp_timer_set_rel():%d", ret);
+				      "odp_timer_start():%d", ret);
 	}
 	TMR_DBG_PRINT("OK\n");
 	return EM_OK;
@@ -669,24 +688,24 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 				em_timer_tick_t period,
 				em_event_t tmo_ev)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF || tmo_ev == EM_EVENT_UNDEF,
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_PERIODIC,
-				"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
-				tmo, tmo_ev);
-		RETURN_ERROR_IF(!(tmo->flags & EM_TMO_FLAG_PERIODIC),
-				EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_SET_PERIODIC,
-				"Not periodic tmo");
-	}
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
+			(tmo == EM_TMO_UNDEF || tmo_ev == EM_EVENT_UNDEF),
+			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_SET_PERIODIC,
+			"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
+			tmo, tmo_ev);
+	/* check that tmo buf is valid before accessing other struct members */
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer),
+			EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_PERIODIC,
+			"Invalid tmo buffer");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && !(tmo->flags & EM_TMO_FLAG_PERIODIC),
+			EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_SET_PERIODIC,
+			"Not periodic tmo");
 	if (EM_CHECK_LEVEL > 1) {
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
 		RETURN_ERROR_IF(tmo_state == EM_TMO_STATE_UNKNOWN,
 				EM_ERR_BAD_STATE, EM_ESCOPE_TMO_SET_PERIODIC,
 				"Invalid tmo state:%d", tmo_state);
-		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_SET_PERIODIC,
-				"Invalid tmo buffer");
 	}
 
 	event_hdr_t *ev_hdr = NULL;
@@ -722,9 +741,9 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 		TMR_DBG_PRINT("diff to tmo %ld\n",
 			      (int64_t)tmo->last_tick -
 			      (int64_t)odp_timer_current_tick(tmo->odp_timer_pool));
-		if (ret == ODP_TIMER_TOOLATE)
+		if (ret == ODP_TIMER_TOO_FAR)
 			return EM_ERR_TOOFAR;
-		else if (ret == ODP_TIMER_TOOEARLY)
+		else if (ret == ODP_TIMER_TOO_NEAR)
 			return EM_ERR_TOONEAR;
 		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
 				      EM_ESCOPE_TMO_SET_PERIODIC,
@@ -736,20 +755,25 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 {
 	if (EM_CHECK_LEVEL > 0) {
-		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF, EM_ERR_BAD_ID,
-				EM_ESCOPE_TMO_CANCEL, "Invalid tmo");
-		RETURN_ERROR_IF(cur_event == NULL, EM_ERR_BAD_POINTER,
-				EM_ESCOPE_TMO_CANCEL, "NULL pointer");
+		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF || cur_event == NULL,
+				EM_ERR_BAD_ARG, EM_ESCOPE_TMO_CANCEL,
+				"Invalid args: tmo:%" PRI_TMO " cur_event:%p",
+				tmo, cur_event);
 	}
 	if (EM_CHECK_LEVEL > 1) {
+		/* check that tmo buf is valid before accessing other struct members */
+		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
+				EM_ERR_BAD_ID, EM_ESCOPE_TMO_CANCEL,
+				"Invalid tmo buffer");
+
 		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
 		RETURN_ERROR_IF(tmo_state == EM_TMO_STATE_UNKNOWN,
 				EM_ERR_BAD_STATE, EM_ESCOPE_TMO_CANCEL,
 				"Invalid tmo state:%d", tmo_state);
-		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
+		RETURN_ERROR_IF(tmo->odp_timer == ODP_TIMER_INVALID,
 				EM_ERR_BAD_ID, EM_ESCOPE_TMO_CANCEL,
-				"Invalid tmo buffer");
+				"Invalid tmo odp_timer");
 	}
 
 	TMR_DBG_PRINT("ODP tmo %ld\n", (unsigned long)tmo->odp_timer);
@@ -771,6 +795,16 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 		return EM_ERR_BAD_STATE; /* too late to cancel or already canceled */
 	}
 
+	/*
+	 * Cancel successful (ret == 0): odp_ev contains the canceled tmo event
+	 */
+
+	if (EM_CHECK_LEVEL > 2) {
+		RETURN_ERROR_IF(!odp_event_is_valid(odp_ev),
+				EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_CANCEL,
+				"Invalid tmo event");
+	}
+
 	em_event_t tmo_ev = event_odp2em(odp_ev);
 
 	if (esv_enabled())
@@ -782,16 +816,18 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 
 em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF ||
-				next_tmo_ev == EM_EVENT_UNDEF,
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_ACK,
-				"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
-				tmo, next_tmo_ev);
-		RETURN_ERROR_IF(!(tmo->flags & EM_TMO_FLAG_PERIODIC),
-				EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_ACK,
-				"Tmo ACK: Not a periodic tmo");
-	}
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
+			(tmo == EM_TMO_UNDEF || next_tmo_ev == EM_EVENT_UNDEF),
+			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_ACK,
+			"Inv.args: tmo:%" PRI_TMO " ev:%" PRI_EVENT "",
+			tmo, next_tmo_ev);
+	/* check that tmo buf is valid before accessing other struct members */
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer),
+			EM_ERR_BAD_ID, EM_ESCOPE_TMO_ACK,
+			"Tmo ACK: invalid tmo buffer");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && !(tmo->flags & EM_TMO_FLAG_PERIODIC),
+			EM_ERR_BAD_CONTEXT, EM_ESCOPE_TMO_ACK,
+			"Tmo ACK: Not a periodic tmo");
 
 	if (EM_TIMER_TMO_STATS)
 		tmo->stats.num_acks++;
@@ -807,12 +843,6 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 	RETURN_ERROR_IF(tmo_state != EM_TMO_STATE_ACTIVE,
 			EM_ERR_BAD_STATE, EM_ESCOPE_TMO_ACK,
 			"Tmo ACK: invalid tmo state:%d", tmo_state);
-
-	if (EM_CHECK_LEVEL > 1) {
-		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
-				EM_ERR_BAD_ID, EM_ESCOPE_TMO_ACK,
-				"Tmo ACK: invalid tmo buffer");
-	}
 
 	event_hdr_t *ev_hdr = NULL;
 	odp_event_t odp_ev = event_em2odp(next_tmo_ev);
@@ -844,10 +874,10 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 		ret = odp_timer_start(tmo->odp_timer, &startp);
 		/*
 		 * Calling ack() was delayed over next period if 'ret' is
-		 * ODP_TIMER_TOOEARLY, i.e. now in past. Other errors
+		 * ODP_TIMER_TOO_NEAR, i.e. now in past. Other errors
 		 * should not happen, fatal for this tmo
 		 */
-		if (likely(ret != ODP_TIMER_TOOEARLY)) {
+		if (likely(ret != ODP_TIMER_TOO_NEAR)) {
 			if (ret != ODP_TIMER_SUCCESS) {
 				TMR_DBG_PRINT("ODP return %d\n"
 					      "tmo tgt/tick now %lu/%lu\n",
@@ -857,7 +887,7 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev)
 			break;
 		}
 
-		/* ODP_TIMER_TOOEARLY: ack() delayed beyond next time slot */
+		/* ODP_TIMER_TOO_NEAR: ack() delayed beyond next time slot */
 		if (EM_TIMER_TMO_STATS)
 			tmo->stats.num_late_ack++;
 		TMR_DBG_PRINT("late, tgt/now %lu/%lu\n", tmo->last_tick,
@@ -923,7 +953,7 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)
 
 	if (EM_CHECK_LEVEL > 0)
 		RETURN_ERROR_IF(!is_timer_valid(tmr) || tmr_attr == NULL,
-				EM_ERR_BAD_ID, EM_ESCOPE_TIMER_GET_ATTR,
+				EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_GET_ATTR,
 				"Inv.args: timer:%" PRI_TMR " tmr_attr:%p",
 				tmr, tmr_attr);
 
@@ -950,7 +980,7 @@ uint64_t em_timer_get_freq(em_timer_t tmr)
 	const timer_storage_t *const tmrs = &em_shm->timers;
 
 	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_GET_FREQ,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_GET_FREQ,
 			       "Invalid timer:%" PRI_TMR "", tmr);
 		return 0;
 	}
@@ -964,11 +994,12 @@ uint64_t em_timer_tick_to_ns(em_timer_t tmr, em_timer_tick_t ticks)
 	const timer_storage_t *const tmrs = &em_shm->timers;
 
 	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_TICK_TO_NS,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_TICK_TO_NS,
 			       "Invalid timer:%" PRI_TMR "", tmr);
 		return 0;
 	}
-	return odp_timer_tick_to_ns(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool, (uint64_t)ticks);
+
+	return odp_timer_tick_to_ns(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool, ticks);
 }
 
 em_timer_tick_t em_timer_ns_to_tick(em_timer_t tmr, uint64_t ns)
@@ -976,39 +1007,40 @@ em_timer_tick_t em_timer_ns_to_tick(em_timer_t tmr, uint64_t ns)
 	const timer_storage_t *const tmrs = &em_shm->timers;
 
 	if (EM_CHECK_LEVEL > 0 && !is_timer_valid(tmr)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TIMER_NS_TO_TICK,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_NS_TO_TICK,
 			       "Invalid timer:%" PRI_TMR "", tmr);
 		return 0;
 	}
-	return (em_timer_tick_t)odp_timer_ns_to_tick(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool, ns);
+
+	return odp_timer_ns_to_tick(tmrs->timer[TMR_H2I(tmr)].odp_tmr_pool, ns);
 }
 
 em_tmo_state_t em_tmo_get_state(em_tmo_t tmo)
 {
 	if (EM_CHECK_LEVEL > 0 && unlikely(tmo == EM_TMO_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATE, "Invalid tmo");
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_GET_STATE, "Invalid tmo");
 		return EM_TMO_STATE_UNKNOWN;
 	}
 	if (EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATE, "Invalid tmo buffer");
 		return EM_TMO_STATE_UNKNOWN;
 	}
+
 	return odp_atomic_load_acq_u32(&tmo->state);
 }
 
 em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat)
 {
-	if (EM_CHECK_LEVEL > 0) {
-		if (unlikely(tmo == EM_TMO_UNDEF)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATS, "Invalid tmo");
-			return EM_ERR_BAD_ID;
-		}
-		if (unlikely(tmo->odp_timer == ODP_TIMER_INVALID)) {
-			INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_TMO_GET_STATS,
-				       "tmo deleted?");
-			return EM_ERR_BAD_STATE;
-		}
-	}
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && tmo == EM_TMO_UNDEF,
+			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_GET_STATS,
+			"Invalid tmo");
+	/* check that tmo buf is valid before accessing other struct members */
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer),
+			EM_ERR_BAD_ID, EM_ESCOPE_TMO_GET_STATS,
+			"Invalid tmo buffer");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && tmo->odp_timer == ODP_TIMER_INVALID,
+			EM_ERR_BAD_STATE, EM_ESCOPE_TMO_GET_STATS,
+			"tmo deleted?");
 
 	if (EM_TIMER_TMO_STATS) {
 		if (stat)
@@ -1016,5 +1048,6 @@ em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat)
 	} else {
 		return EM_ERR_NOT_IMPLEMENTED;
 	}
+
 	return EM_OK;
 }

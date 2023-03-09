@@ -26,13 +26,13 @@ Test Emcli
     [TAGS]    ${core_mask}    ${application_mode}
 
     # Run hello application with given arguments
-    ${app_handle} =    Process.Start Process    ${APPLICATION}
+    ${app_handle} =    Process.Start Process  taskset  -c  ${TASKSET_CORES}  ${APPLICATION}
     ...    @{CM_ARGS}
     ...    stderr=STDOUT
     ...    shell=True
     ...    stdout=${TEMPDIR}/stdout.txt
 
-    Sleep    6s
+    Sleep    10s
     Process Should Be Running    ${app_handle}
 
     # Open telnet connection
@@ -80,9 +80,7 @@ Test Emcli
         Should Not Match Regexp    ${output.stdout}    ${line}
     END
 
-    FOR    ${line}    IN    @{POOL_STATISTICS_MATCH}
-        Should Match Regexp    ${output.stdout}    ${line}
-    END
+    Check Pool Statistics    output=${output}
 
 
 *** Keywords ***
@@ -258,7 +256,7 @@ Test Pool Print
 
     # em_pool_print --name appl_pool_1
     ${name_regex} =    Catenate    SEPARATOR=
-    ...    ^\\s{2}0x2\\s+appl_pool_1\\s+pkt\\s+00\\s+00\\s+04\\s+
+    ...    ^\\s{2}0x[A-Fa-f0-9]+\\s+appl_pool_1\\s+pkt\\s+00\\s+00\\s+04\\s+
     ...    0:\\[sz=256 n=16384\\(\\d+\\/\\d+\\) \\$=128\\]\\s+
     ...    1:\\[sz=512 n=1024\\(\\d+\\/\\d+\\) \\$=64\\]\\s+
     ...    2:\\[sz=1024 n=1024\\(\\d+\\/\\d+\\) \\$=32\\]\\s+

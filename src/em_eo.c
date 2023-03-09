@@ -108,7 +108,7 @@ eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool)
 		/* Initialize empty EO-queue list */
 		env_spinlock_init(&eo_elem->lock);
 		list_init(&eo_elem->queue_list);
-		list_init(&eo_elem->startfn_evlist);
+		eo_elem->stash = ODP_STASH_INVALID;
 	}
 
 	ret = objpool_init(&eo_pool->objpool, cores);
@@ -406,30 +406,32 @@ eo_start_sync_done_callback(void *args)
  * possible to reliably send events from the start-functions to the
  * EO's own queues.
  */
-int
-eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue,
-		       em_event_group_t event_group)
+int eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue)
 {
-	event_hdr_t *ev_hdrs[num];
 	eo_elem_t *const eo_elem = em_locm.start_eo_elem;
-	int i;
+	const uint16_t qidx = queue_hdl2idx(queue);
+	const evhdl_t *const evhdl_tbl = (const evhdl_t *const)events;
+	stash_entry_t entry_tbl[num];
 
 	if (unlikely(eo_elem == NULL))
 		return 0;
 
-	event_to_hdr_multi(events, ev_hdrs, num);
-
 	env_spinlock_lock(&eo_elem->lock);
 
-	for (i = 0; i < num; i++) {
-		ev_hdrs[i]->egrp = event_group;
-		ev_hdrs[i]->queue = queue;
-		list_add(&eo_elem->startfn_evlist, &ev_hdrs[i]->start_node);
+	for (int i = 0; i < num; i++) {
+		entry_tbl[i].qidx = qidx;
+		entry_tbl[i].evptr = evhdl_tbl[i].evptr; /* ESV evgen dropped */
 	}
+
+	/* Enqueue events to internal queue */
+	int ret = odp_stash_put_u64(eo_elem->stash, &entry_tbl[0].u64, num);
+
+	if (unlikely(ret < 0))
+		ret = 0;
 
 	env_spinlock_unlock(&eo_elem->lock);
 
-	return num;
+	return ret;
 }
 
 /**
@@ -440,26 +442,13 @@ eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue,
  * possible to reliably send events from the start-functions to the
  * EO's own queues.
  */
-void
-eo_start_send_buffered_events(eo_elem_t *const eo_elem)
+void eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 {
-	list_node_t *pos;
-	list_node_t *start_node;
-	const event_hdr_t *ev_hdr;
-	const event_hdr_t *tmp_hdr;
-	em_event_t event;
-	em_event_t tmp_event;
-	em_queue_t queue;
-	em_queue_t tmp_queue;
-	em_event_group_t event_group;
-	em_event_group_t tmp_evgrp;
-	unsigned int ev_cnt;
-	unsigned int num_sent;
-	unsigned int i;
 	/* max events to send in a burst */
 	const unsigned int max_ev = 32;
-	/* event burst storage, taken from stack, keep size reasonable */
-	em_event_t events[max_ev];
+	stash_entry_t entry_tbl[max_ev];
+	em_event_t ev_tbl[max_ev];
+	event_hdr_t *ev_hdr_tbl[max_ev];
 
 	env_spinlock_lock(&eo_elem->lock);
 
@@ -469,61 +458,75 @@ eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 	 * This is startup: we can use some extra cycles to create the
 	 * event-arrays to send in bursts.
 	 */
-	while (!list_is_empty(&eo_elem->startfn_evlist)) {
-		/*
-		 * The first event of the burst determines the destination queue
-		 * and the event group to use in em_send_group_multi() later on.
-		 */
-		start_node = list_rem_first(&eo_elem->startfn_evlist);
-		ev_hdr = start_node_to_event_hdr(start_node);
-		event_group = ev_hdr->egrp;
-		queue = ev_hdr->queue;
-		event = event_hdr_to_event(ev_hdr);
-		ev_cnt = 1;
+	int err = 0;
+	int num = 0;
 
-		/* count events sent to the same queue with same event group */
-		list_for_each(&eo_elem->startfn_evlist, pos, start_node) {
-			tmp_hdr = start_node_to_event_hdr(start_node);
-			tmp_evgrp = tmp_hdr->egrp;
-			tmp_queue = tmp_hdr->queue;
-			if (tmp_evgrp != event_group ||
-			    tmp_queue != queue)
-				break;
-			/* increment the event burst count and break on max */
-			ev_cnt++;
-			if (ev_cnt == max_ev)
-				break;
+	do {
+		num = odp_stash_get_u64(eo_elem->stash, &entry_tbl[0].u64 /*[out]*/, max_ev);
+		if (num <= 0) {
+			if (unlikely(num < 0))
+				INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
+					       "odp_stash_get_u64() fails: %d", num);
+			goto buffered_send_exit;
 		}
+
+		for (int i = 0; i < num; i++)
+			ev_tbl[i] = (em_event_t)(uintptr_t)entry_tbl[i].evptr;
+
+		event_to_hdr_multi(ev_tbl, ev_hdr_tbl, num);
+
+		if (esv_enabled())
+			evstate_em2usr_multi(ev_tbl/*in/out*/, ev_hdr_tbl, num,
+					     EVSTATE__EO_START_SEND_BUFFERED);
+
+		int tbl_idx = 0; /* index into ..._tbl[] */
 
 		/*
-		 * fill the array of events to be sent to the same queue
-		 *	note: ev_cnt <= max_ev
+		 * Dispatch in batches of 'batch_cnt' events.
+		 * Each batch contains events from the same queue & evgrp.
 		 */
-		events[0] = event;
-		for (i = 1; i < ev_cnt; i++) {
-			start_node = list_rem_first(&eo_elem->startfn_evlist);
-			tmp_hdr = start_node_to_event_hdr(start_node);
-			tmp_event = event_hdr_to_event(tmp_hdr);
-			events[i] = tmp_event;
-		}
-		/* send events with same destination queue and event group */
-		if (event_group == EM_EVENT_GROUP_UNDEF)
-			num_sent = em_send_multi(events, ev_cnt, queue);
-		else
-			num_sent = em_send_group_multi(events, ev_cnt, queue,
-						       event_group);
-		if (unlikely(num_sent != ev_cnt)) {
-			/* User's eo-start saw successful em_send, free here */
-			for (i = num_sent; i < ev_cnt; i++)
-				em_free(events[i]);
-			INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
-				       "Q:%" PRI_QUEUE " req:%u sent:%u",
-				       queue, ev_cnt, num_sent);
-		}
-	}
+		do {
+			const int qidx = entry_tbl[tbl_idx].qidx;
+			const em_queue_t queue = queue_idx2hdl(qidx);
+			const em_event_group_t event_group = ev_hdr_tbl[tbl_idx]->egrp;
+			int num_sent = 0;
+			int batch_cnt = 1;
 
-	list_init(&eo_elem->startfn_evlist); /* reset list for this eo_elem */
+			for (int i = tbl_idx + 1; i < num &&
+			     entry_tbl[i].qidx == qidx &&
+			     ev_hdr_tbl[i]->egrp == event_group; i++) {
+				batch_cnt++;
+			}
+
+			/* send events with same destination queue and event group */
+			if (event_group == EM_EVENT_GROUP_UNDEF)
+				num_sent = em_send_multi(&ev_tbl[tbl_idx], batch_cnt, queue);
+			else
+				num_sent = em_send_group_multi(&ev_tbl[tbl_idx], batch_cnt, queue,
+							       event_group);
+			if (unlikely(num_sent != batch_cnt)) {
+				/* User's eo-start saw successful em_send, free here */
+				for (int i = num_sent; i < batch_cnt; i++)
+					em_free(ev_tbl[i]);
+				INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
+					       "Q:%" PRI_QUEUE " req:%u sent:%u",
+					       queue, batch_cnt, num_sent);
+			}
+
+			tbl_idx += batch_cnt;
+		} while (tbl_idx < num);
+	} while (num > 0);
+
+buffered_send_exit:
+	err = odp_stash_destroy(eo_elem->stash);
+
+	eo_elem->stash = ODP_STASH_INVALID;
 	env_spinlock_unlock(&eo_elem->lock);
+
+	if (unlikely(err)) {
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
+			       "odp_stash_destroy() fails: %d", err);
+	}
 }
 
 em_status_t
@@ -1374,4 +1377,49 @@ void eo_queue_info_print(em_eo_t eo)
 	 */
 	eo_q_info_str[len] = '\0';
 	EM_PRINT(EO_Q_INFO_HDR_FMT, eo, eo_elem->name, q_num, eo_q_info_str);
+}
+
+/**
+ * @brief Create a stash used to buffer events sent during EO-start
+ */
+odp_stash_t eo_start_stash_create(const char *name)
+{
+	unsigned int num_obj = 0;
+	odp_stash_capability_t stash_capa;
+	odp_stash_param_t stash_param;
+	odp_stash_t stash = ODP_STASH_INVALID;
+
+	int ret = odp_stash_capability(&stash_capa, ODP_STASH_TYPE_FIFO);
+
+	if (ret != 0)
+		return ODP_STASH_INVALID;
+
+	odp_stash_param_init(&stash_param);
+
+	stash_param.type = ODP_STASH_TYPE_FIFO;
+	stash_param.put_mode = ODP_STASH_OP_MT;
+	stash_param.get_mode = ODP_STASH_OP_MT;
+
+	/* Stash size: use EM default queue size value from config file: */
+	num_obj = em_shm->opt.queue.min_events_default;
+	if (num_obj != 0)
+		stash_param.num_obj = num_obj;
+	/* else: use odp default as set by odp_stash_param_init() */
+
+	if (stash_param.num_obj > stash_capa.max_num_obj) {
+		EM_LOG(EM_LOG_PRINT,
+		       "%s(): req stash.num_obj(%" PRIu64 ") > capa.max_num_obj(%" PRIu64 ").\n"
+		       "      ==> using max value:%" PRIu64 "\n", __func__,
+		       stash_param.num_obj, stash_capa.max_num_obj, stash_capa.max_num_obj);
+		stash_param.num_obj = stash_capa.max_num_obj;
+	}
+
+	stash_param.obj_size = sizeof(uint64_t);
+	stash_param.cache_size = 0; /* No core local caching */
+
+	stash = odp_stash_create(name, &stash_param);
+	if (unlikely(stash == ODP_STASH_INVALID))
+		return ODP_STASH_INVALID;
+
+	return stash;
 }

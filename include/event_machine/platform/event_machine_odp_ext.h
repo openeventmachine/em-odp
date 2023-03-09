@@ -30,8 +30,9 @@
 
 /**
  * @file
- *
- * Event Machine ODP API extensions
+ * @defgroup em_odp_ext Conversions & extensions
+ *  Event Machine ODP API extensions and conversion functions between EM and ODP
+ * @{
  */
 
 #ifndef EVENT_MACHINE_ODP_EXT_H
@@ -50,6 +51,8 @@ extern "C" {
 /**
  * Get the associated ODP queue.
  *
+ * The given EM queue must have been created with em_queue_create...() APIs.
+ *
  * @param queue  EM queue
  *
  * @return odp queue if successful, ODP_QUEUE_INVALID on error
@@ -59,6 +62,8 @@ odp_queue_t em_odp_queue_odp(em_queue_t queue);
 /**
  * Get the associated EM queue.
  *
+ * The associated EM queue must have been created with em_queue_create...() APIs
+ *
  * @param queue  ODP queue
  *
  * @return em queue if successful, EM_QUEUE_UNDEF on error
@@ -66,12 +71,82 @@ odp_queue_t em_odp_queue_odp(em_queue_t queue);
 em_queue_t em_odp_queue_em(odp_queue_t queue);
 
 /**
- * Get EM event header size.
+ * @brief Map the given scheduled ODP pktin event queues to new EM queues.
  *
- * Needed when user has to configure separate pool for packet I/O and allocate
- * EM events from there.
+ * Creates new EM queues and maps them to use the given scheduled ODP pktin
+ * event queues.
+ * Enables direct scheduling of packets as EM events via EM queues.
+ * EM queues based on scheduled ODP pktin queues are a bit special in how they
+ * are created and how they are deleted:
+ *   - creation is done via this function by providing the already set up
+ *     scheduled ODP pktin event queues to use.
+ *   - deletion of one of the returned EM queues will not delete the underlying
+ *     ODP pktin event queue. The ODP queues in question are deleted when
+ *     the ODP pktio is terminated.
+ * The scheduled ODP pktin event queues must have been set up with an
+ * ODP schedule group that belongs to an existing EM queue group. Also the used
+ * priority must mappable to an EM priority.
  *
- * @return em event header size.
+ * Setup example:
+ * @code
+ *	// Configure ODP pktin queues
+ *	odp_pktin_queue_param_t pktin_queue_param;
+ *	odp_pktin_queue_param_init(&pktin_queue_param);
+ *	pktin_queue_param.num_queues = num;
+ *	pktin_queue_param.queue_param.type = ODP_QUEUE_TYPE_SCHED;
+ *	pktin_queue_param.queue_param.sched.prio = ODP prio mappable to EM prio
+ *	pktin_queue_param.queue_param.sched.sync = PARALLEL | ATOMIC | ORDERED;
+ *	pktin_queue_param.queue_param.sched.group = em_odp_qgrp2odp(EM qgroup);
+ *	...
+ *	ret = odp_pktin_queue_config(pktio, &pktin_queue_param);
+ *	if (ret < 0)
+ *		error(...);
+ *
+ *	// Obtain ODP pktin event queues used for scheduled packet input
+ *	odp_queue_t pktin_sched_queues[num];
+ *	ret = odp_pktin_event_queue(pktio, pktin_sched_queues['out'], num);
+ *	if (ret != num)
+ *		error(...);
+ *
+ *	// Create EM queues mapped to the scheduled ODP pktin event queues
+ *	em_queue_t queues_em[num];
+ *	ret = em_odp_pktin_event_queues2em(pktin_sched_queues['in'],
+ *					   queues_em['out'], num);
+ *	if (ret != num)
+ *		error(...);
+ *
+ *	// Add the EM queues to an EM EO and once the EO has been started it
+ *	// will receive pktio events directly from the scheduler.
+ *	for (int i = 0; i < num; i++)
+ *		err = em_eo_add_queue_sync(eo, queues_em);
+ * @endcode
+ *
+ * @param[in]  odp_pktin_evqueues  Array of ODP pktin event queues to convert to
+ *                                 EM-queues. The array must contain 'num' valid
+ *                                 ODP-queue handles (as returned by the
+ *                                 odp_pktin_event_queue() function).
+ * @param[out] queues              Output array into which the corresponding
+ *                                 EM-queue handles are written.
+ *                                 Array must fit 'num' entries.
+ * @param      num                 Number of entries in 'odp_pktin_evqueues[]'
+ *                                 and 'queues[]'.
+ * @return int  Number of EM queues created that correspond to the given
+ *              ODP pktin event queues
+ * @retval <0 on failure
+ */
+int em_odp_pktin_event_queues2em(const odp_queue_t odp_pktin_evqueues[/*num*/],
+				 em_queue_t queues[/*out:num*/], int num);
+
+/**
+ * Get the EM event header size.
+ *
+ * Needed e.g. when configuring a separate ODP packet pool and have pktio
+ * allocate events usable by EM from there:
+ * @code
+ *	odp_pool_param_t::pkt.uarea_size = em_odp_event_hdr_size();
+ * @endcode
+ *
+ * @return EM event header size.
  */
 uint32_t em_odp_event_hdr_size(void);
 
@@ -90,7 +165,7 @@ odp_event_t em_odp_event2odp(em_event_t event);
  * @param      events      Array of EM-events to convert to ODP-events.
  *                         The 'events[]' array must contain 'num' valid
  *                         event handles.
- * @param[out] odp_events  Output array into which the ocrresponding ODP-event
+ * @param[out] odp_events  Output array into which the corresponding ODP-event
  *                         handles are written. Array must fit 'num' entries.
  * @param      num         Number of entries in 'events[]' and 'odp_events[]'.
  */
@@ -114,7 +189,7 @@ em_event_t em_odp_event2em(odp_event_t odp_event);
  * @param      odp_events  Array of ODP-events to convert to EM-events.
  *                         The 'odp_events[]' array must contain 'num' valid
  *                         ODP-event handles.
- * @param[out] events      Output array into which the ocrresponding EM-event
+ * @param[out] events      Output array into which the corresponding EM-event
  *                         handles are written. Array must fit 'num' entries.
  * @param      num         Number of entries in 'odp_events[]' and 'events[]'.
  */
@@ -169,6 +244,14 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num);
 em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
 
 /**
+ * @brief Get the ODP schedule group that corresponds to the given EM queue gruop
+ *
+ * @param queue_group
+ * @return odp_schedule_group_t
+ */
+odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group);
+
+/**
  * Enqueue external packets into EM (packets are from outside of EM, i.e not
  * allocated by EM using em_alloc/_multi())
  *
@@ -182,6 +265,9 @@ em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
  */
 int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue);
 
+/**
+ * @}
+ */
 #ifdef __cplusplus
 }
 #endif

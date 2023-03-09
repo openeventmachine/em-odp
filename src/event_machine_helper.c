@@ -32,6 +32,8 @@
 #include <libgen.h> /* basename() */
 #include <unistd.h> /* ssize_t */
 #include "em_include.h"
+#include <odp_api.h>
+#include <event_machine/helper/event_machine_debug.h>
 
 int
 em_error_format_string(char *str, size_t size, em_eo_t eo, em_status_t error,
@@ -102,10 +104,8 @@ em_core_mask_get_physical(em_core_mask_t *phys, const em_core_mask_t *logic)
 	if (em_core_mask_equal(logic, &em_shm->core_map.logic_mask)) {
 		em_core_mask_copy(phys, &em_shm->core_map.phys_mask);
 	} else {
-		int i;
-
 		em_core_mask_zero(phys);
-		for (i = 0; i < EM_MAX_CORES; i++) {
+		for (int i = 0; i < EM_MAX_CORES; i++) {
 			int phys_core;
 
 			if (em_core_mask_isset(i, logic)) {
@@ -114,4 +114,15 @@ em_core_mask_get_physical(em_core_mask_t *phys, const em_core_mask_t *logic)
 			}
 		}
 	}
+}
+
+uint64_t em_debug_timestamp(em_debug_tsp_t tsp)
+{
+	if (EM_DEBUG_TIMESTAMP_ENABLE == 0)
+		return 0;
+
+	if (unlikely(tsp >= EM_DEBUG_TSP_LAST || tsp < 0))
+		return 0;
+	else
+		return em_locm.debug_ts[tsp];
 }

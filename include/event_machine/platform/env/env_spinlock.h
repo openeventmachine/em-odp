@@ -43,31 +43,31 @@ typedef odp_spinlock_t env_spinlock_t;
 static inline void
 env_spinlock_init(env_spinlock_t *const lock)
 {
-	odp_spinlock_init((odp_spinlock_t *)lock);
+	odp_spinlock_init(lock);
 }
 
 static inline void
 env_spinlock_lock(env_spinlock_t *const lock)
 {
-	odp_spinlock_lock((odp_spinlock_t *)lock);
+	odp_spinlock_lock(lock);
 }
 
 static inline int
 env_spinlock_trylock(env_spinlock_t *const lock)
 {
-	return odp_spinlock_trylock((odp_spinlock_t *)lock);
+	return odp_spinlock_trylock(lock);
 }
 
 static inline int
 env_spinlock_is_locked(env_spinlock_t *const lock)
 {
-	return odp_spinlock_is_locked((odp_spinlock_t *)lock);
+	return odp_spinlock_is_locked(lock);
 }
 
 static inline void
 env_spinlock_unlock(env_spinlock_t *const lock)
 {
-	odp_spinlock_unlock((odp_spinlock_t *)lock);
+	odp_spinlock_unlock(lock);
 }
 
 #pragma GCC visibility pop

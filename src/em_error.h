@@ -40,19 +40,20 @@
 /**
  * Internal error reporting macro
  */
-#define INTERNAL_ERROR(error, escope, fmt, ...)		\
-	internal_error((error), (escope), __FILE__, __func__,	\
+#define INTERNAL_ERROR(error, escope, fmt, ...) \
+	internal_error((error), (escope), __FILE__, __func__, \
 			__LINE__, fmt, ## __VA_ARGS__)
 
 /**
  * Internal macro for return on error
  */
-#define RETURN_ERROR_IF(cond, error, escope, fmt, ...) {	  \
-	if (unlikely((cond))) {					  \
-		return INTERNAL_ERROR((error), (escope),	  \
-				      fmt, ## __VA_ARGS__);  \
-	}							  \
-}
+#define RETURN_ERROR_IF(cond, error, escope, fmt, ...) \
+	do { \
+		if (unlikely((cond))) { \
+			return INTERNAL_ERROR((error), (escope), \
+				      fmt, ## __VA_ARGS__); \
+		} \
+	} while (0)
 
 #define EM_LOG(level, fmt, ...) \
 	do { \
@@ -70,10 +71,11 @@
 /*
  * Print debug message to log (only if EM_DEBUG_PRINT is set)
  */
-#define EM_DBG(fmt, ...) {				\
-	if (EM_DEBUG_PRINT == 1)			\
-		EM_LOG(EM_LOG_DBG, fmt, ##__VA_ARGS__); \
-}
+#define EM_DBG(fmt, ...) \
+	do { \
+		if (EM_DEBUG_PRINT == 1) \
+			EM_LOG(EM_LOG_DBG, fmt, ##__VA_ARGS__); \
+	} while (0)
 
 /**
  * EM internal error

@@ -45,8 +45,14 @@
  *
  * Note that EM should always provide at least one pool, i.e. 'EM_POOL_DEFAULT'
  * that can be used for event allocation. The default pool creation is platform
- * specific: it can e.g. be done in 'em_init(conf)' with an appropriate
- * default pool config passed via the 'conf' (em_conf_t) parameter.
+ * specific: it can e.g. be done in 'em_init(conf)' with an appropriate default
+ * pool configuration, which is either given in the runtime config file through
+ * 'startup_pools' option or passed via the 'conf' (em_conf_t) parameter of
+ * em_init().
+ *
+ * In addition to the default pool, startup pools configured in the runtime
+ * config file through option 'startup_pools' are also created during em_init().
+ *
  * Further event pools should be created explicitly with em_pool_create().
  *
  * Event pool APIs for pool deletion, lookup, iteration etc. are listed below.
@@ -93,12 +99,17 @@ typedef struct {
 	 *      type EM_EVENT_TYPE_PACKET.
 	 *    - EM_EVENT_TYPE_PACKET creates subpools of type 'ODP_POOL_PACKET'
 	 *      This kind of EM pool can be used for events of all kinds.
+	 *    - EM_EVENT_TYPE_VECTOR creates subpools of type 'ODP_POOL_VECTOR'
+	 *      This kind of EM pool can ONLY be used for creating event vectors
 	 * @note Only major types are considered here, setting minor is error
 	 */
 	em_event_type_t event_type;
 	/**
 	 * Alignment offset in bytes for the event payload start address
 	 * (for all events allocated from this EM pool).
+	 *
+	 * Only valid for pools with event_type EM_EVENT_TYPE_SW or
+	 * EM_EVENT_TYPE_PACKET (i.e. ignored for EM_EVENT_TYPE_VECTOR pools).
 	 *
 	 * The default EM event payload start address alignment is a
 	 * power-of-two that is at minimum 32 bytes (i.e. 32 B, 64 B, 128 B etc.
@@ -116,15 +127,17 @@ typedef struct {
 	struct {
 		/**
 		 * Select: Use pool-specific align-offset 'value' from below or
-		 *         use the global default value from the config file.
-		 * false: Use value from the config file (default).
+		 *         use the global default value 'pool.align_offset'
+		 *         from the config file.
+		 * false: Use 'pool.align_offset' from the config file (default)
 		 *  true: Use pool-specific value set below.
 		 */
 		bool in_use;
 		/**
 		 * Pool-specific event payload alignment offset value in bytes
 		 * (only evaluated if 'in_use=true').
-		 * Overrides the config file value for this pool.
+		 * Overrides the config file value 'pool.align_offset' for this
+		 * pool.
 		 * The given 'value' must be a small power-of-two: 2, 4, or 8
 		 * 0: Explicitly set 'No align offset' for the pool.
 		 */
@@ -146,15 +159,16 @@ typedef struct {
 	struct {
 		/**
 		 * Select: Use pool-specific event user area 'size' from below
-		 *         or use the global default value from the config file.
-		 * false: Use user area size from the config file (default).
+		 *         or use the global default value 'pool.user_area_size'
+		 *         from the config file.
+		 * false: Use 'pool.user_area_size' from config file (default).
 		 *  true: Use pool-specific size set below.
 		 */
 		bool in_use;
 		/**
 		 * Pool-specific event user area size in bytes (only evaluated
 		 * if 'in_use=true').
-		 * Overrides the config file default size for this pool.
+		 * Overrides the config file 'pool.user_area_size' for this pool
 		 * 0: Explicitly set 'No user area' for the pool.
 		 */
 		size_t size;
@@ -175,9 +189,10 @@ typedef struct {
 		struct {
 			/**
 			 * Select: Use pool-specific packet headroom value from
-			 *         below or use the global default value from
-			 *         the config file.
-			 * false: Use value from the config file (default).
+			 *         below or use the global default value
+			 *         'pool.pkt_headroom' from the config file.
+			 * false: Use 'pool.pkt_headroom' from the config file
+			 *        (default).
 			 *  true: Use pool-specific value set below.
 			 */
 			bool in_use;
@@ -185,25 +200,36 @@ typedef struct {
 			 * Pool-specific packet minimum headroom in bytes,
 			 * each packet must have at least this much headroom.
 			 * (only evaluated if 'in_use=true').
-			 * Overrides the config file value for this pool.
-			 * 0: Explicitly set 'No align offset' for the pool.
+			 * Overrides the config file value 'pool.pkt_headroom'
+			 * for this pool.
+			 * 0: Explicitly set 'No headroom' for the pool.
 			 */
 			uint32_t value;
 		} headroom;
 	} pkt;
 
 	/**
-	 * Number of subpools within one EM pool, max=EM_MAX_SUBPOOLS
+	 * Number of subpools within one EM pool, min=1, max=EM_MAX_SUBPOOLS
 	 */
 	int num_subpools;
+	/**
+	 * Subpool params array: .subpool[num_subpools]
+	 */
 	struct {
 		/**
-		 * Event payload size of the subpool (size > 0).
-		 * EM does not initialize the payload data.
+		 * .event_type = EM_EVENT_TYPE_SW or EM_EVENT_TYPE_PACKET:
+		 *     Event payload size of the subpool (size > 0), bytes(B).
+		 *     EM does not initialize the payload data.
+		 * .event_type = EM_EVENT_TYPE_VECTOR:
+		 *     Max number of events in a vector from the subpool, i.e.
+		 *     'number of em_event_t:s in the vector's event-table[]'.
+		 *     EM does not initialize the vector.
 		 */
 		uint32_t size;
+
 		/** Number of events in the subpool (num > 0) */
 		uint32_t num;
+
 		/**
 		 * Maximum number of locally cached subpool events per EM-core.
 		 *

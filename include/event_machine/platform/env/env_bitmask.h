@@ -135,9 +135,7 @@ static inline int env_bitmask_equal(const env_bitmask_t *mask1,
  */
 static inline void env_bitmask_set_count(int count, env_bitmask_t *mask)
 {
-	int i;
-
-	for (i = 0; i < count; i++)
+	for (int i = 0; i < count; i++)
 		odp_cpumask_set(&mask->odp_cpumask, i);
 }
 

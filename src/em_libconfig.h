@@ -122,6 +122,147 @@ int em_libconfig_lookup_ext_int(const libconfig_t *libconfig,
 				const char *name, int *value /*out*/);
 
 /**
+ * Read setting specified by 'path' from both default and runtime config.
+ *
+ * @param      libconfig	Pointer to shared libconfig data
+ * @param      path		Path to setting
+ * @param[out] setting_default	Pointer where setting from default conf file will be stored
+ * @param[out] setting_runtime	Pointer where setting from runtime conf file will be stored
+ */
+void em_libconfig_lookup(const libconfig_t *libconfig, const char *path,
+			 libconfig_setting_t **setting_default/*out*/,
+			 libconfig_setting_t **setting_runtime/*out*/);
+
+/**
+ * Read an integer named 'name' from a setting.
+ *
+ * @param      setting		Pointer to the setting where integer is read
+ * @param      name		Value name
+ * @param[out] value		Pointer where read integer value will be stored
+ * @return int			1 on success, 0 otherwise
+ */
+int em_libconfig_setting_lookup_int(const libconfig_setting_t *setting,
+				    const char *name, int *value/*out*/);
+
+/**
+ * Fetch a list named 'name' from a setting.
+ *
+ * @param      setting		Pointer to the setting where list is fetched
+ * @param      name		List name
+ * @return			Requested list on success, NULL otherwise
+ */
+const libconfig_list_t
+*em_libconfig_setting_get_list(const libconfig_setting_t *setting, const char *name);
+
+/**
+ * Return the number of elements in a list.
+ *
+ * @param list		Pointer to list
+ * @return int		The number of elements in a list
+ */
+int em_libconfig_list_length(const libconfig_list_t *list);
+
+/**
+ * Get a group setting from a list.
+ *
+ * @param list		Pointer to list where group is fetched
+ * @param index		Index to list element
+ * @param path		Path to the group setting
+ * @return		Requested group on success, NULL otherwise
+ */
+libconfig_group_t *em_libconfig_list_lookup_group(const libconfig_list_t *list,
+						  int index, const char *path);
+
+/**
+ * Read an integer from a list.
+ *
+ * @param list		Pointer to list where integer is read
+ * @param index		Index to list element
+ * @param path		Path to integer value
+ * @param value[out]	Pointer where read value will be stored
+ * @return int		1 on success, 0 wrong type, -1 not found
+ */
+int em_libconfig_list_lookup_int(const libconfig_list_t *list, int index,
+				 const char *path, int *value/*out*/);
+
+/**
+ * Read a bool from a list.
+ *
+ * @param list		Pointer to list
+ * @param index		Index to list element
+ * @param path		Path to boolean value
+ * @param value[out]	Pointer where read value will be stored
+ * @return int		1 on success, 0 wrong type, -1 not found
+ */
+int em_libconfig_list_lookup_bool(const libconfig_list_t *list, int index,
+				  const char *path, bool *value/*out*/);
+
+/**
+ * Read string from a list.
+ *
+ * @param list		Pointer to list
+ * @param index		Index to list element
+ * @param path		Path to string value
+ * @param value[out]	Pointer where read value will be stored
+ * @return int		1 on success, 0 wrong type, -1 not found
+ */
+int em_libconfig_list_lookup_string(const libconfig_list_t *list, int index,
+				    const char *path, const char **value/*out*/);
+
+/**
+ * Get a group setting from a group.
+ *
+ * @param group		Pointer to group
+ * @param path		Path to the group to be fetched
+ * @return		Requested group on success, NULL otherwise
+ */
+libconfig_group_t
+*em_libconfig_group_lookup_group(libconfig_group_t *group, const char *path);
+
+/**
+ * Fetch a list from a group.
+ *
+ * @param group		Pointer to group
+ * @param path		Path to the list to be fetched
+ * @return		Requested list on success, NULL otherwise
+ */
+libconfig_list_t
+*em_libconfig_group_lookup_list(libconfig_list_t *group, const char *path);
+
+/**
+ * Read an integer from a group.
+ *
+ * @param group		Pointer to group
+ * @param name		Name of integer value
+ * @param value[out]	Pointer where read value will be stored
+ * @return int		1 on success, 0 otherwise
+ */
+int em_libconfig_group_lookup_int(const libconfig_group_t *group,
+				  const char *name, int *value/*out*/);
+
+/**
+ * Read a bool from a group.
+ *
+ * @param group		Pointer to group
+ * @param name		Name of boolean value
+ * @param value[out]	Pointer where read value will be stored
+ * @return int		1 on success, 0 otherwise
+ */
+int em_libconfig_group_lookup_bool(const libconfig_group_t *group,
+				   const char *name, bool *value/*out*/);
+
+/**
+ * Read string from a group.
+ *
+ * @param group		Pointer to group
+ * @param name		Name of the string to be fetched
+ * @param value[out]	Pointer where read value will be stored
+ * @return int		1 on success, 0 otherwise
+ */
+int em_libconfig_group_lookup_string(const libconfig_group_t *group,
+				     const char *name, const char **value/*out*/);
+
+/**
  * Prints default config and runtime config (if given).
  *
  * @param      libconfig	Pointer to shared libconfig data

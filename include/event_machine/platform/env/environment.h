@@ -102,6 +102,19 @@ static inline uint64_t env_get_cycle(void)
 	return odp_cpu_cycles();
 }
 
+/**
+ * Returns difference of cpu cycles (cycles2 - cycles1).
+ *
+ * @param cycles2	Second cycle count
+ * @param cycles1	First cycle count
+ *
+ * @return Difference between given cpu cycles
+ */
+static inline uint64_t env_cycles_diff(uint64_t cycles2, uint64_t cycles1)
+{
+	return odp_cpu_cycles_diff(cycles2, cycles1);
+}
+
 static inline void env_sync_mem(void)
 {
 	odp_mb_full();

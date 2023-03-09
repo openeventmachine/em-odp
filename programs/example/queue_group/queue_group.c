@@ -913,7 +913,7 @@ receive_event_data(app_eo_ctx_t *eo_ctx, em_event_t event,
  */
 static void await_exit_ack(void)
 {
-	env_time_t t_max = env_time_global_from_ns(10 * 1000000000ULL); /*10s*/
+	env_time_t t_max = env_time_global_from_ns(20 * 1000000000ULL); /*20s*/
 	env_time_t t_now = ENV_TIME_NULL;
 	env_time_t t_start = env_time_global();
 	env_time_t t_end = env_time_sum(t_start, t_max);

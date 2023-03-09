@@ -35,8 +35,8 @@
 
 /**
  * @file
- * @defgroup em_hooks API-hooks
- *  Event Machine API-callback hooks.
+ * @defgroup em_hooks API-hooks and Idle hooks
+ *  Event Machine API-callback hooks and Idle hooks.
  * @{
  *
  * EM API-callback hook functions can be registered for a selected set of
@@ -53,6 +53,25 @@
  * can be registered for a given EM API. The calling order of multiple
  * registered API hook functions is the order of registration. If the same
  * function is registered twice then it will be called twice.
+ *
+ * EM Idle callback hook functions can be registered for tracking the idle state
+ * (ACTIVE/IDLE) of EM cores. Idle hooks can be used e.g. to gather application
+ * load statistics. The idle hooks are called by the EM dispatcher depending on
+ * whether the core gets events from scheduled or local queues. A core is in the
+ * ACTIVE state when it gets events from these queues. A core is in the IDLE
+ * state when it didn't get any events from these queues.
+ * To_idle hooks are called when a core state changes from ACTIVE to IDLE.
+ * To_active hooks are called when a core state changes from IDLE to ACTIVE.
+ * While_idle hooks are called when a core is already in the IDLE state and it
+ * doesn't get any events from scheduled or local queues. While_idle hooks can
+ * be called several times when a core is in the IDLE state.
+ * The user should not make any assumptions of the current idle state of the
+ * core when registering new idle hooks.
+ * The idle hook support is only available when EM_IDLE_HOOKS_ENABLE != 0.
+ * Multiple idle hook functions (up to the number 'EM_CALLBACKS_MAX') can be
+ * registered for each idle hook type. The calling order of multiple registered
+ * idle hook functions is the order of registration. If the same function is
+ * registered twice then it will be called twice.
  *
  * Do not include this file from the application, event_machine.h will
  * do it for you.
@@ -92,7 +111,7 @@ extern "C" {
  * @see em_alloc(), em_alloc_multi() and em_hooks_register_alloc()
  */
 typedef void (*em_api_hook_alloc_t)(const em_event_t events[/*num_act*/],
-				    int num_act, int num_req, size_t size,
+				    int num_act, int num_req, uint32_t size,
 				    em_event_type_t type, em_pool_t pool);
 
 /**
@@ -141,6 +160,40 @@ typedef void (*em_api_hook_send_t)(const em_event_t events[], int num,
 				   em_event_group_t event_group);
 
 /**
+ * To idle hook
+ *
+ * The to_idle hook will be called by the EM dispatcher when a core is entering
+ * the IDLE state i.e. when the core doesn't get any new events to be processed.
+ * The to_idle hook is called only when there previously has been events to
+ * process and the state changes from active to idle.
+ *
+ * @param to_idle_delay_ns	The delay in nanoseconds that a core was waiting
+ *				for scheduled events before calling to_idle hook
+ */
+typedef void (*em_idle_hook_to_idle_t)(uint64_t to_idle_delay_ns);
+
+/**
+ * To active hook
+ *
+ * The to_active hook will be called by the EM dispatcher when a core is
+ * entering the ACTIVE state i.e. when the core gets events after being idle.
+ * The to_active hook is called only when the core previously has been in the
+ * IDLE state and the state changes to active. To_active hooks are called before
+ * the EO processes the events.
+ */
+typedef void (*em_idle_hook_to_active_t)(void);
+
+/**
+ * While idle hook
+ *
+ * The while_idle hook will be called by the EM dispatcher when a core is
+ * already in the IDLE state and stays in it i.e. the core doesn't get any
+ * events. The while_idle hook can be called several times until the core state
+ * changes to active i.e. the core again gets events for processing.
+ */
+typedef void (*em_idle_hook_while_idle_t)(void);
+
+/**
  * API-callback hooks provided by the user at start-up (init)
  *
  * EM API functions will call an API hook if given by the user through this
@@ -178,6 +231,41 @@ typedef struct {
 	 */
 	em_api_hook_send_t send_hook;
 } em_api_hooks_t;
+
+/**
+ * Idle hooks given by the user via this struct to the em_init() will be called
+ * by the EM dispatcher on each core.
+ *
+ * The EM dispatcher will call:
+ * -	to_idle_hook when a core doesn't get any more events from scheduled or
+ *	local queues after the core has been active
+ * -	to_active_hook when a core gets events after being idle
+ * -	while_idle_hook when a core continues being idle
+ *
+ * Not all the idle hooks need to be provided, use NULL for unsused idle hooks.
+ *
+ * @note Notice that doing heavy processing in the hooks might significantly
+ *	 impact performance.
+ *
+ * @note Only used if EM_IDLE_HOOKS_ENABLE != 0
+ */
+typedef struct {
+	/**
+	 * Idle hook called when entering the idle state
+	 * Initialize to NULL if unused.
+	 */
+	em_idle_hook_to_idle_t to_idle_hook;
+	/**
+	 * Idle hook called when entering the active state
+	 * Initialize to NULL if unused.
+	 */
+	em_idle_hook_to_active_t to_active_hook;
+	/**
+	 * Idle hook called while remaining in the idle state
+	 * Initialize to NULL if unused.
+	 */
+	em_idle_hook_while_idle_t while_idle_hook;
+} em_idle_hooks_t;
 
 /**
  * Register an API-callback hook for em_alloc().
@@ -277,6 +365,91 @@ em_hooks_register_send(em_api_hook_send_t func);
  */
 em_status_t
 em_hooks_unregister_send(em_api_hook_send_t func);
+
+/**
+ * Register an idle hook that will be called when entering the idle state.
+ *
+ * To_idle hooks will be called by the EM dispatcher when a core enters the idle
+ * state, i.e. when no further events are available from scheduled or local
+ * queues for processing. The to_idle hooks will be called only if the core
+ * previously was in the active state.
+ *
+ * Multiple to_idle hook functions (up to the number 'EM_CALLBACKS_MAX') can be
+ * registered. The order of calling multiple registered hook functions is the
+ * order of registration. If the same function is registered twice it will be
+ * called twice.
+ *
+ * @param func	Idle hook function
+ * @return EM_OK if idle hook registration succeeded
+ */
+em_status_t
+em_hooks_register_to_idle(em_idle_hook_to_idle_t func);
+
+/**
+ * Unregister a to_idle hook.
+ *
+ * @param func   Idle hook function
+ * @return EM_OK if idle hook unregistration succeeded
+ */
+em_status_t
+em_hooks_unregister_to_idle(em_idle_hook_to_idle_t func);
+
+/**
+ * Register an idle hook that will be called when a core is entering the active
+ * state.
+ *
+ * To_active hooks will be called by the EM dispatcher when a core enters the
+ * active state, i.e. it received events from scheduled or local queues after
+ * being in the idle state. The to_active hooks will be called before the actual
+ * event processing is started and only if the core previously was in the idle
+ * state.
+ *
+ * Multiple to_active hook functions (up to the number 'EM_CALLBACKS_MAX') can
+ * be registered. The order of calling multiple registered hook functions is the
+ * order of registration. If the same function is registered twice it will be
+ * called twice.
+ *
+ * @param func	Idle hook function
+ * @return EM_OK if idle hook registration succeeded
+ */
+em_status_t
+em_hooks_register_to_active(em_idle_hook_to_active_t func);
+
+/**
+ * Unregister a to_active hook
+ *
+ * @param func   Idle hook function
+ * @return EM_OK if idle hook unregistration succeeded
+ */
+em_status_t
+em_hooks_unregister_to_active(em_idle_hook_to_active_t func);
+
+/**
+ * Register an idle hook that will be called while staying in the idle state.
+ *
+ * While_idle hooks will be called by the EM dispatcher while a core remains in
+ * the idle state, i.e. the core didn't get any events from scheduled or local
+ * queues for processing while already being in the idle state.
+ *
+ * Multiple while_idle hook functions (up to the number 'EM_CALLBACKS_MAX') can
+ * be registered. The order of calling multiple registered hook functions is the
+ * order of registration. If the same function is registered twice it will be
+ * called twice.
+ *
+ * @param func	Idle hook function
+ * @return EM_OK if idle hook registration succeeded
+ */
+em_status_t
+em_hooks_register_while_idle(em_idle_hook_while_idle_t func);
+
+/**
+ * Unregister a while_idle hook
+ *
+ * @param func   Idle hook function
+ * @return EM_OK if idle hook unregistration succeeded
+ */
+em_status_t
+em_hooks_unregister_while_idle(em_idle_hook_while_idle_t func);
 
 /**
  * @}

@@ -736,6 +736,9 @@ do_dummy_work(unsigned int work_loops)
 		/* Dummy workload after releasing atomic context */
 		workbuf_event = em_alloc(sizeof(perf_event_t),
 					 EM_EVENT_TYPE_SW, perf_shm->pool);
+		test_fatal_if(workbuf_event == EM_EVENT_UNDEF,
+			      "em_alloc(pool:%" PRI_POOL ") of buf:%u of tot:%u failed!",
+			      perf_shm->pool, i, work_loops);
 		workbuf = em_event_pointer(workbuf_event);
 		from = &workbuf->data[DATA_SIZE / 2];
 		to = &workbuf->data[0];
@@ -753,11 +756,7 @@ calc_result(perf_stat_t *const perf_stat, const uint64_t events)
 	uint64_t diff;
 	double cycles_per_event;
 
-	if (perf_stat->end_cycles > perf_stat->begin_cycles)
-		diff = perf_stat->end_cycles - perf_stat->begin_cycles;
-	else
-		diff = UINT64_MAX - perf_stat->begin_cycles +
-			perf_stat->end_cycles + 1;
+	diff = env_cycles_diff(perf_stat->end_cycles, perf_stat->begin_cycles);
 
 	cycles_per_event = ((double)diff) / ((double)events);
 

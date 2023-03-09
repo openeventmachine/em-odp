@@ -152,6 +152,10 @@ typedef struct {
 	 * Pool configuration for the EM default pool (EM_POOL_DEFAULT).
 	 * Default value is set by em_pool_cfg_init() and needs to be changed
 	 * by the user.
+	 *
+	 * Note that if the default pool configuration is also given in the
+	 * config file through option 'startup_pools', it will override this
+	 * default pool configuration.
 	 */
 	em_pool_cfg_t default_pool_cfg;
 
@@ -213,6 +217,12 @@ typedef struct {
 	 */
 	em_api_hooks_t api_hooks;
 
+	/**
+	 * User provided idle callback hooks.
+	 * Set only the needed hooks to avoid performance degradation.
+	 * Only used if EM_IDLE_HOOKS_ENABLE != 0
+	 */
+	em_idle_hooks_t idle_hooks;
 } em_conf_t;
 
 /**

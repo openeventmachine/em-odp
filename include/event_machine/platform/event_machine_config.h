@@ -182,13 +182,32 @@ extern "C" {
 #define EM_API_HOOKS_ENABLE  1
 
 /**
+ * @def EM_IDLE_HOOKS_ENABLE
+ * Enable the usage of EM idle hooks
+ *
+ * User provided idle hook functions can be provided via em_conf_t::idle_hooks
+ * when calling em_init() or via their register functions. EM will call the
+ * given hooks in the dispatcher depending on whether there are events to be
+ * processed by the core.
+ *
+ * @note em-odp: the 'EM_IDLE_HOOKS_ENABLE' value can be overridden by a
+ *               command-line option to the 'configure' script, e.g.:
+ *               $build> ../configure ... --enable-idle-hooks
+ *               The overridden value will be made available to the application
+ *               via a pkgconfig set define.
+ */
+#ifndef EM_IDLE_HOOKS_ENABLE
+#define EM_IDLE_HOOKS_ENABLE  0
+#endif
+
+/**
  * @def EM_CALLBACKS_MAX
  * Maximum number of EM callbacks/hooks that can be registered.
  *
  * The user may register up to the number 'EM_CALLBACKS_MAX' of each
  * callback/hook. API-hooks, such as the alloc-, free- and send-hook, or
- * dispatcher callbacks, such as the enter- and exit-callbacks, can be
- * registered each up to this limit.
+ * dispatcher callbacks, such as the enter- and exit-callbacks as well as
+ * idle-hooks can be registered each up to this limit.
  */
 #define EM_CALLBACKS_MAX  8
 
@@ -260,6 +279,29 @@ extern "C" {
  * receive function. Impacts performance when event groups are used.
  */
 #define EM_EVENT_GROUP_SAFE_MODE  1
+
+/**
+ * @def EM_DEBUG_TIMESTAMPS
+ * Enable Debug Timestamps for timing analysis. This may reduce performance
+ * but allows to trace dispatcher timings. Timestamps are per dispatcher (thread
+ * local).
+ *
+ * '0': disabled (default)
+ * '1': enabled, lower overhead but potentially inaccurate (no HW barriers)
+ * '2': enabled, strict version with full HW barriers
+ *
+ * @note em-odp: the 'EM_DEBUG_TIMESTAMPS' value can be overridden by a command-line
+ *               option to the 'configure' script, e.g.:
+ *               $build> ../configure ... --enable-debug-timestamps=N
+ *               The overridden value will be made available to the application
+ *               via a pkgconfig set define. Use value 1 for lower overhead timestamps
+ *		 and value 2 for strict timestamp with HW barriers.
+ *
+ * @see event_machine_helper.h
+ */
+#ifndef EM_DEBUG_TIMESTAMP_ENABLE
+#define EM_DEBUG_TIMESTAMP_ENABLE  0
+#endif
 
 #ifdef __cplusplus
 }
