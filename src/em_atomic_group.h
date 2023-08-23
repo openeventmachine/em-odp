@@ -56,7 +56,7 @@ atomic_group_free(em_atomic_group_t atomic_group);
 
 void atomic_group_remove_queue(queue_elem_t *const q_elem);
 
-void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
+void atomic_group_dispatch(odp_event_t odp_evtbl[], const int num_events,
 			   const queue_elem_t *q_elem);
 
 static inline int
@@ -117,10 +117,11 @@ static inline void
 atomic_group_release(void)
 {
 	em_locm_t *const locm = &em_locm;
-	atomic_group_elem_t *const agrp_elem =
-		atomic_group_elem_get(locm->current.sched_q_elem->atomic_group);
+	const queue_elem_t *q_elem = locm->current.sched_q_elem;
+	em_atomic_group_t atomic_group = q_elem->agrp.atomic_group;
+	atomic_group_elem_t *const agrp_elem = atomic_group_elem_get(atomic_group);
 
-	locm->atomic_group_released = 1;
+	locm->atomic_group_released = true;
 	env_spinlock_unlock(&agrp_elem->lock);
 }
 
@@ -132,6 +133,8 @@ void print_atomic_group_info(void);
 
 /** Print information about all queues of the given atomic group */
 void print_atomic_group_queues(em_atomic_group_t ag);
+
+void print_ag_elem_info(void);
 
 #ifdef __cplusplus
 }

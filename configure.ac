@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [0])
+m4_define([em_version_api_minor], [2])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -169,6 +169,14 @@ EM_CHECK_CFLAG([-Wformat-security])
 EM_CHECK_CFLAG([-Wundef])
 EM_CHECK_CFLAG([-Wwrite-strings])
 EM_CHECK_CFLAG([-Wno-vla]) # Allow variable-length arrays (vla), for clang.
+
+# GCC 10,11 sometimes gets confused about object sizes and gives bogus warnings.
+# Make the affected warnings generate only warnings, not errors.
+AS_IF([test "$GCC" == yes],
+      AS_IF([test `$CC -dumpversion | cut -d '.' -f 1` -ge 10],
+	    EM_CHECK_CFLAG([-Wno-error=array-bounds])
+      )
+)
 
 EM_CFLAGS="$EM_CFLAGS -std=c11"
 

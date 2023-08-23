@@ -37,27 +37,106 @@
 
 #include "em_include.h"
 
-static void
-i_event__internal_done(const internal_event_t *i_ev);
+/* doc in header file */
+em_status_t create_ctrl_queues(void)
+{
+	const int num_cores = em_core_count();
+	char q_name[EM_QUEUE_NAME_LEN];
+	em_queue_t shared_unsched_queue;
+	em_queue_t queue;
+	em_queue_conf_t unsch_conf;
 
-/**
- * Sends an internal control event to each core set in 'mask'.
- *
- * When all cores set in 'mask' has processed the event an additional
- * internal 'done' msg is sent to synchronize - this done-event can then
- * trigger any notifications for the user that the operation was completed.
- * Processing of the 'done' event will also call the 'f_done_callback'
- * function if given.
- *
- * @return 0 on success, otherwise return the number of ctrl events that could
- *         not be sent due to error
- */
-int
-send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
-		      void (*f_done_callback)(void *arg_ptr),
-		      void *f_done_arg_ptr,
-		      int num_notif, const em_notif_t notif_tbl[],
-		      bool sync_operation)
+	const char *err_str = "";
+
+	EM_DBG("%s()\n", __func__);
+
+	/*
+	 * Create shared internal unsched queue used for internal EM messaging.
+	 * Cannot use em_queue_create_static() here since the requested handle
+	 * 'SHARED_INTERNAL_UNSCHED_QUEUE' lies outside of the normal static
+	 * range.
+	 */
+	shared_unsched_queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
+	queue = queue_create("EMctrl-unschedQ-shared", EM_QUEUE_TYPE_UNSCHEDULED,
+			     EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF,
+			     shared_unsched_queue, EM_ATOMIC_GROUP_UNDEF,
+			     NULL /* use default queue config */, &err_str);
+	if (queue == EM_QUEUE_UNDEF || queue != shared_unsched_queue)
+		return EM_FATAL(EM_ERR_NOT_FREE);
+
+	/*
+	 * Create static internal per-core UNSCHEDULED queues used for
+	 * internal EM messaging. Cannot use em_queue_create_static()
+	 * here since the requested handles lies outside of the normal
+	 * static range.
+	 */
+	memset(&unsch_conf, 0, sizeof(unsch_conf));
+	unsch_conf.flags |= EM_QUEUE_FLAG_DEQ_NOT_MTSAFE;
+
+	for (int i = 0; i < num_cores; i++) {
+		em_queue_t queue_req;
+
+		queue_req = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
+		snprintf(q_name, sizeof(q_name), "EMctrl-unschedQ-core%d", i);
+		q_name[EM_QUEUE_NAME_LEN - 1] = '\0';
+
+		queue = queue_create(q_name, EM_QUEUE_TYPE_UNSCHEDULED,
+				     EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF,
+				     queue_req, EM_ATOMIC_GROUP_UNDEF,
+				     &unsch_conf, /* request deq-not-mtsafe */
+				     &err_str);
+		if (unlikely(queue == EM_QUEUE_UNDEF || queue != queue_req))
+			return EM_FATAL(EM_ERR_NOT_FREE);
+	}
+
+	return EM_OK;
+}
+
+/* doc in header file */
+em_status_t delete_ctrl_queues(void)
+{
+	const int num_cores = em_core_count();
+	em_queue_t unsched_queue;
+	em_event_t unsched_event;
+	em_status_t stat;
+
+	unsched_queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
+	for (;/* flush unsched queue */;) {
+		unsched_event = em_queue_dequeue(unsched_queue);
+		if (unsched_event == EM_EVENT_UNDEF)
+			break;
+		em_free(unsched_event);
+	}
+	stat = em_queue_delete(unsched_queue);
+	if (unlikely(stat != EM_OK))
+		return INTERNAL_ERROR(stat, EM_ESCOPE_DELETE_CTRL_QUEUES,
+				      "shared unschedQ delete");
+
+	for (int i = 0; i < num_cores; i++) {
+		unsched_queue = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
+
+		for (;/* flush unsched queue */;) {
+			unsched_event = em_queue_dequeue(unsched_queue);
+			if (unsched_event == EM_EVENT_UNDEF)
+				break;
+			em_free(unsched_event);
+		}
+
+		stat = em_queue_delete(unsched_queue);
+		if (unlikely(stat != EM_OK))
+			return INTERNAL_ERROR(stat, EM_ESCOPE_DELETE_CTRL_QUEUES,
+					      "core unschedQ:%d delete", i);
+	}
+
+	return stat;
+}
+
+/* doc in header file */
+int send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
+			  void (*f_done_callback)(void *arg_ptr),
+			  void *f_done_arg_ptr,
+			  int num_notif, const em_notif_t notif_tbl[],
+			  bool sync_operation)
 {
 	em_status_t err;
 	em_event_group_t event_group = EM_EVENT_GROUP_UNDEF;
@@ -150,10 +229,45 @@ err_free_resources:
 }
 
 /**
- * Receive function for handling internal ctrl events, called by the daemon EO
+ * Handle the internal 'done' event
  */
-void internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
-			    em_queue_t queue, void *q_ctx)
+static void i_event__internal_done(const internal_event_t *i_ev)
+{
+	int num_notif;
+	em_status_t ret;
+
+	/* Release the event group, we are done with it */
+	ret = em_event_group_delete(i_ev->done.event_group);
+
+	if (unlikely(ret != EM_OK))
+		INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_INTERNAL_DONE,
+			       "Event group %" PRI_EGRP " delete failed (ret=%u)",
+			       i_ev->done.event_group, ret);
+
+	/* Call the callback function, performs custom actions at 'done' */
+	if (i_ev->done.f_done_callback != NULL)
+		i_ev->done.f_done_callback(i_ev->done.f_done_arg_ptr);
+
+	/*
+	 * Send notification events if requested by the caller.
+	 */
+	num_notif = i_ev->done.num_notif;
+
+	if (num_notif > 0) {
+		ret = send_notifs(num_notif, i_ev->done.notif_tbl);
+		if (unlikely(ret != EM_OK))
+			INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_INTERNAL_DONE,
+				       "em_send() of notifs(%d) failed",
+				       num_notif);
+	}
+}
+
+/**
+ * Handle internal ctrl events
+ */
+static inline void
+internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
+		       em_queue_t queue, void *q_ctx)
 {
 	/* currently unused args */
 	(void)eo_ctx;
@@ -217,59 +331,12 @@ void internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type
 	em_free(event);
 }
 
-/**
- * Handle the internal 'done' event
- */
-static void
-i_event__internal_done(const internal_event_t *i_ev)
-{
-	int num_notif;
-	em_status_t ret;
-
-	/* Release the event group, we are done with it */
-	ret = em_event_group_delete(i_ev->done.event_group);
-
-	if (unlikely(ret != EM_OK))
-		INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_INTERNAL_DONE,
-			       "Event group %" PRI_EGRP " delete failed (ret=%u)",
-			       i_ev->done.event_group, ret);
-
-	/* Call the callback function, performs custom actions at 'done' */
-	if (i_ev->done.f_done_callback != NULL)
-		i_ev->done.f_done_callback(i_ev->done.f_done_arg_ptr);
-
-	/*
-	 * Send notification events if requested by the caller.
-	 */
-	num_notif = i_ev->done.num_notif;
-
-	if (num_notif > 0) {
-		ret = send_notifs(num_notif, i_ev->done.notif_tbl);
-		if (unlikely(ret != EM_OK))
-			INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_INTERNAL_DONE,
-				       "em_send() of notifs(%d) failed",
-				       num_notif);
-	}
-}
-
-/**
- * Helper func: Allocate & set up the internal 'done' event with
- * function callbacks and notification events. Creates the needed event group
- * and applies the event group count. A successful setup returns the event group
- * ready for use with em_send_group().
- *
- * @return An event group successfully 'applied' with count and notifications.
- * @retval EM_EVENT_GROUP_UNDEF on error
- *
- * @see evgrp_abort_delete() below for deleting the event group returned by this
- *      function.
- */
-em_event_group_t
-internal_done_w_notif_req(int event_group_count,
-			  void (*f_done_callback)(void *arg_ptr),
-			  void  *f_done_arg_ptr,
-			  int num_notif, const em_notif_t notif_tbl[],
-			  bool sync_operation)
+/* doc in header file */
+em_event_group_t internal_done_w_notif_req(int event_group_count,
+					   void (*f_done_callback)(void *arg_ptr),
+					   void  *f_done_arg_ptr,
+					   int num_notif, const em_notif_t notif_tbl[],
+					   bool sync_operation)
 {
 	em_event_group_t event_group;
 	em_event_t event;
@@ -335,10 +402,7 @@ internal_done_w_notif_req(int event_group_count,
 	return event_group;
 }
 
-/**
- * @brief internal_done_w_notif_req() 'companion' to abort and delete the
- *        event group created by the mentioned function.
- */
+/* doc in header file */
 void evgrp_abort_delete(em_event_group_t event_group)
 {
 	em_notif_t free_notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
@@ -355,11 +419,8 @@ void evgrp_abort_delete(em_event_group_t event_group)
 	(void)em_event_group_delete(event_group);
 }
 
-/**
- * Helper func to send notifications events
- */
-em_status_t
-send_notifs(const int num_notif, const em_notif_t notif_tbl[])
+/* doc in header file */
+em_status_t send_notifs(const int num_notif, const em_notif_t notif_tbl[])
 {
 	em_status_t err;
 	em_status_t ret = EM_OK;
@@ -385,8 +446,8 @@ send_notifs(const int num_notif, const em_notif_t notif_tbl[])
 	return ret;
 }
 
-em_status_t
-check_notif(const em_notif_t *const notif)
+/* doc in header file */
+em_status_t check_notif(const em_notif_t *const notif)
 {
 	if (unlikely(notif == NULL || notif->event == EM_EVENT_UNDEF))
 		return EM_ERR_BAD_POINTER;
@@ -412,8 +473,8 @@ check_notif(const em_notif_t *const notif)
 	return EM_OK;
 }
 
-em_status_t
-check_notif_tbl(const int num_notif, const em_notif_t notif_tbl[])
+/* doc in header file */
+em_status_t check_notif_tbl(const int num_notif, const em_notif_t notif_tbl[])
 {
 	em_status_t err;
 
@@ -475,6 +536,7 @@ handle_ctrl_events(em_queue_t unsched_queue,
 	}
 }
 
+/* doc in header file */
 void poll_unsched_ctrl_queue(void)
 {
 	em_locm_t *const locm = &em_locm;

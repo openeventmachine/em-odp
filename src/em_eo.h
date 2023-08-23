@@ -98,7 +98,7 @@ eo_count(void);
 size_t eo_get_name(const eo_elem_t *const eo_elem,
 		   char name[/*out*/], const size_t maxlen);
 
-odp_stash_t eo_start_stash_create(const char *name);
+odp_stash_t eo_start_stash_create(void);
 
 static inline int
 eo_allocated(const eo_elem_t *const eo_elem)
@@ -155,7 +155,7 @@ eo_current(void)
 	if (unlikely(q_elem == NULL))
 		return EM_EO_UNDEF;
 
-	return q_elem->eo;
+	return (em_eo_t)(uintptr_t)q_elem->eo;
 }
 
 /**

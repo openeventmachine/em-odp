@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -68,7 +68,7 @@ em_queue_create_static(const char *name, em_queue_type_t type,
 	RETURN_ERROR_IF(iq.device_id != em_shm->conf.device_id ||
 			iq.queue_id < EM_QUEUE_STATIC_MIN ||
 			iq.queue_id > EM_QUEUE_STATIC_MAX,
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_CREATE_STATIC,
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_CREATE_STATIC,
 			"Invalid static queue requested:%" PRI_QUEUE "",
 			queue);
 
@@ -83,14 +83,13 @@ em_queue_create_static(const char *name, em_queue_type_t type,
 	return EM_OK;
 }
 
-em_status_t
-em_queue_delete(em_queue_t queue)
+em_status_t em_queue_delete(em_queue_t queue)
 {
 	queue_elem_t *const q_elem = queue_elem_get(queue);
 	em_status_t status;
 
 	RETURN_ERROR_IF(q_elem == NULL || !queue_allocated(q_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DELETE,
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_DELETE,
 			"Invalid queue:%" PRI_QUEUE "", queue);
 
 	status = queue_delete(q_elem);
@@ -101,41 +100,46 @@ em_queue_delete(em_queue_t queue)
 	return status;
 }
 
-em_status_t
-em_queue_set_context(em_queue_t queue, const void *context)
+em_status_t em_queue_set_context(em_queue_t queue, const void *context)
 {
 	queue_elem_t *const queue_elem = queue_elem_get(queue);
 
-	RETURN_ERROR_IF(queue_elem == NULL || !queue_allocated(queue_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_SET_CONTEXT,
-			"Invalid queue:%" PRI_QUEUE "", queue);
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(queue_elem == NULL || !queue_allocated(queue_elem),
+				EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_SET_CONTEXT,
+				"Invalid queue:%" PRI_QUEUE "", queue);
 
 	queue_elem->context = (void *)(uintptr_t)context;
 
 	return EM_OK;
 }
 
-void *
-em_queue_get_context(em_queue_t queue)
+void *em_queue_get_context(em_queue_t queue)
 {
 	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
-	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_CONTEXT,
+	if (EM_CHECK_LEVEL > 0 && unlikely(queue_elem == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_CONTEXT,
 			       "Invalid queue:%" PRI_QUEUE "", queue);
+		return NULL;
+	}
+
+	if (unlikely(EM_CHECK_LEVEL >= 2 && !queue_allocated(queue_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_QUEUE_GET_CONTEXT,
+			       "Queue:%" PRI_QUEUE " not created!", queue);
 		return NULL;
 	}
 
 	return queue_elem->context;
 }
 
-size_t
-em_queue_get_name(em_queue_t queue, char *name, size_t maxlen)
+size_t em_queue_get_name(em_queue_t queue, char *name, size_t maxlen)
 {
 	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
-	if (unlikely(name == NULL || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_GET_NAME,
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(name == NULL || maxlen == 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_NAME,
 			       "Invalid ptr or maxlen (name=0x%" PRIx64 ", maxlen=%zu)",
 			       name, maxlen);
 		return 0;
@@ -143,8 +147,9 @@ em_queue_get_name(em_queue_t queue, char *name, size_t maxlen)
 
 	name[0] = '\0';
 
-	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_NAME,
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_NAME,
 			       "Invalid queue:%" PRI_QUEUE "", queue);
 		return 0;
 	}
@@ -152,8 +157,7 @@ em_queue_get_name(em_queue_t queue, char *name, size_t maxlen)
 	return queue_get_name(queue_elem, name, maxlen);
 }
 
-em_queue_t
-em_queue_find(const char *name)
+em_queue_t em_queue_find(const char *name)
 {
 	if (name && *name) {
 		/* this might be worth optimizing if maaany queues */
@@ -162,21 +166,22 @@ em_queue_find(const char *name)
 				&em_shm->queue_tbl.queue_elem[i];
 
 			if (queue_allocated(q_elem) &&
-			    !strncmp(name, em_shm->queue_tbl.name[i],
-				     EM_QUEUE_NAME_LEN))
-				return em_shm->queue_tbl.queue_elem[i].queue;
+			    !strncmp(name, em_shm->queue_tbl.name[i], EM_QUEUE_NAME_LEN)) {
+				return (em_queue_t)(uintptr_t)
+					em_shm->queue_tbl.queue_elem[i].queue;
+			}
 		}
 	}
 	return EM_QUEUE_UNDEF;
 }
 
-em_queue_prio_t
-em_queue_get_priority(em_queue_t queue)
+em_queue_prio_t em_queue_get_priority(em_queue_t queue)
 {
 	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
-	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_PRIORITY,
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_PRIORITY,
 			       "Invalid queue:%" PRI_QUEUE "", queue);
 		return EM_QUEUE_PRIO_UNDEF;
 	}
@@ -184,13 +189,13 @@ em_queue_get_priority(em_queue_t queue)
 	return queue_elem->priority;
 }
 
-em_queue_type_t
-em_queue_get_type(em_queue_t queue)
+em_queue_type_t em_queue_get_type(em_queue_t queue)
 {
 	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
-	if (unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_TYPE,
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(queue_elem == NULL || !queue_allocated(queue_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_TYPE,
 			       "Invalid queue-id:%" PRI_QUEUE "", queue);
 		return EM_QUEUE_TYPE_UNDEF;
 	}
@@ -198,13 +203,13 @@ em_queue_get_type(em_queue_t queue)
 	return queue_elem->type;
 }
 
-em_queue_group_t
-em_queue_get_group(em_queue_t queue)
+em_queue_group_t em_queue_get_group(em_queue_t queue)
 {
 	const queue_elem_t *q_elem = queue_elem_get(queue);
 
-	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_GET_GROUP,
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GET_GROUP,
 			       "Invalid queue-id:%" PRI_QUEUE "", queue);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
@@ -220,13 +225,20 @@ em_event_t em_queue_dequeue(em_queue_t queue)
 	const queue_elem_t *q_elem = queue_elem_get(queue);
 	em_event_t event;
 
-	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE,
+	if (unlikely(EM_CHECK_LEVEL > 0 && !q_elem)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_DEQUEUE,
 			       "Invalid EM queue:%" PRI_QUEUE "", queue);
 		return EM_EVENT_UNDEF;
 	}
 
-	if (unlikely(q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)) {
+	if (unlikely(EM_CHECK_LEVEL >= 2 && !queue_allocated(q_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_QUEUE_DEQUEUE,
+			       "Queue:%" PRI_QUEUE " not created", queue);
+		return EM_EVENT_UNDEF;
+	}
+
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)) {
 		INTERNAL_ERROR(EM_ERR_BAD_CONTEXT, EM_ESCOPE_QUEUE_DEQUEUE,
 			       "Queue is not unscheduled, cannot dequeue!");
 		return EM_EVENT_UNDEF;
@@ -242,18 +254,25 @@ int em_queue_dequeue_multi(em_queue_t queue,
 	const queue_elem_t *q_elem = queue_elem_get(queue);
 	int ret;
 
-	if (unlikely(q_elem == NULL || !queue_allocated(q_elem) ||
-		     events == NULL || num < 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(!q_elem || !events || num < 0)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
 			       "Inv.args: Q:%" PRI_QUEUE " events[]:%p num:%d",
 			       queue, events, num);
+		return 0;
+	}
+
+	if (unlikely(EM_CHECK_LEVEL >= 2 && !queue_allocated(q_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_QUEUE_DEQUEUE,
+			       "Queue:%" PRI_QUEUE " not created", queue);
 		return 0;
 	}
 
 	if (unlikely(num == 0))
 		return 0;
 
-	if (unlikely(q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)) {
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)) {
 		INTERNAL_ERROR(EM_ERR_BAD_CONTEXT,
 			       EM_ESCOPE_QUEUE_DEQUEUE_MULTI,
 			       "Queue is not unscheduled, cannot dequeue!");
@@ -271,14 +290,12 @@ int em_queue_dequeue_multi(em_queue_t queue,
 	return ret;
 }
 
-em_queue_t
-em_queue_current(void)
+em_queue_t em_queue_current(void)
 {
 	return queue_current();
 }
 
-em_queue_t
-em_queue_get_first(unsigned int *num)
+em_queue_t em_queue_get_first(unsigned int *num)
 {
 	const queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
 	const unsigned int queue_cnt = queue_count();
@@ -303,8 +320,7 @@ em_queue_get_first(unsigned int *num)
 	return queue_idx2hdl(_queue_tbl_iter_idx);
 }
 
-em_queue_t
-em_queue_get_next(void)
+em_queue_t em_queue_get_next(void)
 {
 	if (_queue_tbl_iter_idx >= EM_MAX_QUEUES - 1)
 		return EM_QUEUE_UNDEF;

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -51,10 +51,10 @@ em_atomic_processing_end(void)
 		     q_elem->type != EM_QUEUE_TYPE_ATOMIC))
 		return;
 
-	if (q_elem->atomic_group == EM_ATOMIC_GROUP_UNDEF)
-		odp_schedule_release_atomic();
-	else
+	if (q_elem->flags.in_atomic_group)
 		atomic_group_release();
+	else
+		odp_schedule_release_atomic();
 
 	/*
 	 * Mark that em_atomic_processing_end() has been called
@@ -72,12 +72,14 @@ em_ordered_processing_end(void)
 		return;
 
 	const queue_elem_t *q_elem = locm->current.q_elem;
+	em_queue_t queue;
 	em_queue_type_t qtype;
 
 	if (unlikely(q_elem == NULL))
 		return;
 
-	qtype = em_queue_get_type(q_elem->queue);
+	queue = (em_queue_t)(uintptr_t)q_elem->queue;
+	qtype = em_queue_get_type(queue);
 	if (unlikely(qtype != EM_QUEUE_TYPE_PARALLEL_ORDERED))
 		return;
 
@@ -108,7 +110,7 @@ em_sched_context_type_current(em_queue_t *queue)
 	}
 
 	if (queue != NULL)
-		*queue = locm->current.sched_q_elem->queue;
+		*queue = (em_queue_t)(uintptr_t)locm->current.sched_q_elem->queue;
 
 	return locm->current.sched_context_type;
 }

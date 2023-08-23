@@ -877,22 +877,8 @@ pktio_create(const char *dev, pktin_mode_t in_mode, bool pktin_vector,
 	/* Pktout (Tx) config */
 	pktout_config(dev, if_idx, pktio, &pktio_capa, num_workers);
 
-	/* Start the pktio to complete configuration... */
-	ret = odp_pktio_start(pktio);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("Unable to start dev:'%s'", dev);
-	/*
-	 * ...and stop it immediately to block odp_pktin_recv() from receiving
-	 * pkts until application setup is ready.
-	 * The application will start pktio when ready through pktio_start().
-	 */
-	ret = odp_pktio_stop(pktio);
-	if (ret != 0)
-		APPL_EXIT_FAILURE("Unable to stop dev:'%s'", dev);
-
 	APPL_PRINT("\tcreated pktio dev:'%s' - input mode:%s, output mode:QUEUE",
 		   dev, pktin_mode_str(in_mode));
-	odp_pktio_print(pktio);
 
 	pktio_shm->ifs.idx[pktio_shm->ifs.num_created] = if_idx;
 	pktio_shm->ifs.pktio_hdl[if_idx] = pktio;
@@ -1112,8 +1098,8 @@ pktin_lookup_enqueue(odp_packet_t pkt_tbl[], int pkts)
 		const em_queue_t queue = rx_qbursts[pos].queue;
 
 		/* Enqueue pkts into em-odp */
-		pkts_enqueued += pkt_enqueue(rx_qbursts[pos].pkt_tbl,
-					     num, queue);
+		pkts_enqueued += em_odp_pkt_enqueue(rx_qbursts[pos].pkt_tbl,
+						    num, queue);
 		rx_qbursts[pos].sent = 1;
 		rx_qbursts[pos].pkt_cnt = 0;
 	}

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2018, Nokia Solutions and Networks
+ *   Copyright (c) 2018-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -69,7 +69,7 @@ em_init(const em_conf_t *conf)
 	em_status_t stat;
 	int ret;
 
-	RETURN_ERROR_IF(!conf, EM_FATAL(EM_ERR_BAD_POINTER), EM_ESCOPE_INIT,
+	RETURN_ERROR_IF(!conf, EM_FATAL(EM_ERR_BAD_ARG), EM_ESCOPE_INIT,
 			"Conf pointer NULL!");
 
 	stat = early_log_init(conf->log.log_fn, conf->log.vlog_fn);
@@ -219,11 +219,9 @@ em_init(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"eo_init() failed:%" PRI_STAT "", stat);
 
-	stat = daemon_eo_queues_create();
+	stat = create_ctrl_queues();
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-			"daemon_eo_queues_create() failed:%" PRI_STAT "", stat);
-
-	daemon_eo_create();
+			"create_ctrl_queues() failed:%" PRI_STAT "", stat);
 
 	/* timer add-on */
 	if (conf->event_timer) {
@@ -387,17 +385,11 @@ em_term(const em_conf_t *conf)
 em_status_t
 em_term_core(void)
 {
-	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
-	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	odp_queue_t odp_queue;
 	em_status_t stat = EM_OK;
 	em_status_t ret_stat = EM_OK;
-	bool esv_ena = esv_enabled();
-	int num_events;
 
 	if (em_core_id() == 0)
-		daemon_eo_shutdown();
+		delete_ctrl_queues();
 
 	/* Stop timer add-on. Just a NOP if timer was not enabled (config) */
 	stat = timer_term_local();
@@ -428,13 +420,21 @@ em_term_core(void)
 	 * Scheduler paused during return from em_dispatch()
 	 */
 	odp_schedule_resume();
+
+	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	odp_queue_t odp_queue;
+	int num_events;
+
 	/* run loop twice: first with sched enabled and then paused */
 	for (int i = 0; i < 2; i++) {
 		do {
 			num_events =
 			odp_schedule_multi_no_wait(&odp_queue, odp_ev_tbl,
 						   EM_SCHED_MULTI_MAX_BURST);
-			if (num_events <= 0)
+			/* the check 'num_events > EM_SCHED_MULTI_MAX_BURST' avoids a gcc warning */
+			if (num_events <= 0 || num_events > EM_SCHED_MULTI_MAX_BURST)
 				break;
 			/*
 			 * Events might originate from outside of EM and need init.
@@ -442,10 +442,6 @@ em_term_core(void)
 			event_init_odp_multi(odp_ev_tbl, em_ev_tbl/*out*/,
 					     ev_hdr_tbl/*out*/, num_events,
 					     true/*is_extev*/);
-			if (esv_ena)
-				evstate_em2usr_multi(em_ev_tbl, ev_hdr_tbl,
-						     num_events, EVSTATE__TERM);
-
 			em_free_multi(em_ev_tbl, num_events);
 		} while (num_events > 0);
 

@@ -53,9 +53,6 @@ em_status_t event_init(void)
 
 void print_event_info(void)
 {
-	/* for sizeof() only: */
-	event_hdr_t evhdr = {0};
-
 	EM_PRINT("\n"
 		 "EM Events\n"
 		 "---------\n"
@@ -66,30 +63,32 @@ void print_event_info(void)
 	       "\t\t------\t----\n"
 	       "esv.state_cnt:\t%3zu B\t%2zu B\n"
 	       "esv.state:\t%3zu B\t%2zu B\n"
+	       "flags:\t\t%3zu B\t%2zu B\n"
+	       "event_type:\t%3zu B\t%2zu B\n"
 	       "event:\t\t%3zu B\t%2zu B\n"
 	       "event_size:\t%3zu B\t%2zu B\n"
-	       "event_type:\t%3zu B\t%2zu B\n"
-	       "flags:\t\t%3zu B\t%2zu B\n"
-	       "align_offset:\t%3zu B\t%2zu B\n"
 	       "egrp_gen:\t%3zu B\t%2zu B\n"
 	       "egrp:\t\t%3zu B\t%2zu B\n"
 	       "user_area info:\t%3zu B\t%2zu B\n"
+	       "align_offset:\t%3zu B\t%2zu B\n"
+	       "tmo:\t\t%3zu B\t%2zu B\n"
 	       "end_hdr_data:\t%3zu B\t%2zu B\n"
-	       "  <align adj.>\t---\t%2zu B\n"
+	       "  <pad>\t\t%3zu B\n"
 	       "end:\t\t%3zu B\t%2zu B\n",
-	       offsetof(event_hdr_t, state_cnt), sizeof(evhdr.state_cnt),
-	       offsetof(event_hdr_t, state), sizeof(evhdr.state),
-	       offsetof(event_hdr_t, event), sizeof(evhdr.event),
-	       offsetof(event_hdr_t, event_size), sizeof(evhdr.event_size),
-	       offsetof(event_hdr_t, event_type), sizeof(evhdr.event_type),
-	       offsetof(event_hdr_t, flags), sizeof(evhdr.flags),
-	       offsetof(event_hdr_t, align_offset), sizeof(evhdr.align_offset),
-	       offsetof(event_hdr_t, egrp_gen), sizeof(evhdr.egrp_gen),
-	       offsetof(event_hdr_t, egrp), sizeof(evhdr.egrp),
-	       offsetof(event_hdr_t, user_area), sizeof(evhdr.user_area),
-	       offsetof(event_hdr_t, end_hdr_data), sizeof(evhdr.end_hdr_data),
+	       offsetof(event_hdr_t, state_cnt), sizeof_field(event_hdr_t, state_cnt),
+	       offsetof(event_hdr_t, state), sizeof_field(event_hdr_t, state),
+	       offsetof(event_hdr_t, flags), sizeof_field(event_hdr_t, flags),
+	       offsetof(event_hdr_t, event_type), sizeof_field(event_hdr_t, event_type),
+	       offsetof(event_hdr_t, event), sizeof_field(event_hdr_t, event),
+	       offsetof(event_hdr_t, event_size), sizeof_field(event_hdr_t, event_size),
+	       offsetof(event_hdr_t, egrp_gen), sizeof_field(event_hdr_t, egrp_gen),
+	       offsetof(event_hdr_t, egrp), sizeof_field(event_hdr_t, egrp),
+	       offsetof(event_hdr_t, user_area), sizeof_field(event_hdr_t, user_area),
+	       offsetof(event_hdr_t, align_offset), sizeof_field(event_hdr_t, align_offset),
+	       offsetof(event_hdr_t, tmo), sizeof_field(event_hdr_t, tmo),
+	       offsetof(event_hdr_t, end_hdr_data), sizeof_field(event_hdr_t, end_hdr_data),
 	       offsetof(event_hdr_t, end) - offsetof(event_hdr_t, end_hdr_data),
-	       offsetof(event_hdr_t, end), sizeof(evhdr.end));
+	       offsetof(event_hdr_t, end), sizeof_field(event_hdr_t, end));
 
 	       EM_PRINT("\n");
 }
@@ -111,7 +110,7 @@ em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool)
 	if (unlikely(clone_pkt == ODP_PACKET_INVALID))
 		return EM_EVENT_UNDEF;
 
-	odp_packet_user_ptr_set(clone_pkt, PKT_USERPTR_MAGIC_NBR);
+	odp_packet_user_flag_set(clone_pkt, USER_FLAG_SET);
 
 	odp_event_t odp_clone_event = odp_packet_to_event(clone_pkt);
 	event_hdr_t *clone_hdr = odp_packet_user_area(clone_pkt);
@@ -138,7 +137,8 @@ output_queue_track(queue_elem_t *const output_q_elem)
 {
 	output_queue_track_t *const track =
 		&em_locm.output_queue_track;
-	const int qidx = queue_hdl2idx(output_q_elem->queue);
+	em_queue_t queue = (em_queue_t)(uintptr_t)output_q_elem->queue;
+	const int qidx = queue_hdl2idx(queue);
 
 	if (track->used_queues[qidx] == NULL) {
 		track->used_queues[qidx] = output_q_elem;
@@ -149,7 +149,7 @@ output_queue_track(queue_elem_t *const output_q_elem)
 void
 output_queue_drain(const queue_elem_t *output_q_elem)
 {
-	const em_queue_t output_queue = output_q_elem->queue;
+	const em_queue_t output_queue = (em_queue_t)(uintptr_t)output_q_elem->queue;
 	const em_output_func_t output_fn =
 		output_q_elem->output.output_conf.output_fn;
 	void *const output_fn_args =

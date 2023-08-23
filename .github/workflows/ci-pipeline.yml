@@ -48,6 +48,7 @@ jobs:
   Build-Run-on-Ubuntu-Runner:
     runs-on: ubuntu-20.04
     strategy:
+      fail-fast: false
       matrix:
         cc: [gcc, clang]
     env:

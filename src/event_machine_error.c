@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -34,7 +34,7 @@ em_status_t
 em_register_error_handler(em_error_handler_t handler)
 {
 	RETURN_ERROR_IF(!em_shm->error_handler.initialized,
-			EM_ERR_BAD_CONTEXT, EM_ESCOPE_REGISTER_ERROR_HANDLER,
+			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_REGISTER_ERROR_HANDLER,
 			"Error Handling not initialized!");
 
 	env_spinlock_lock(&em_shm->error_handler.lock);
@@ -50,7 +50,7 @@ em_status_t
 em_unregister_error_handler(void)
 {
 	RETURN_ERROR_IF(!em_shm->error_handler.initialized,
-			EM_ERR_BAD_CONTEXT, EM_ESCOPE_UNREGISTER_ERROR_HANDLER,
+			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_UNREGISTER_ERROR_HANDLER,
 			"Error Handling not initialized!");
 
 	env_spinlock_lock(&em_shm->error_handler.lock);

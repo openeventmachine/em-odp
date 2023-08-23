@@ -61,7 +61,7 @@
 
 #include "timer_test_periodic.h"
 
-#define VERSION "WIP v0.9"
+#define VERSION "v1.0"
 struct {
 	int num_periodic;
 	uint64_t res_ns;
@@ -562,19 +562,19 @@ void show_global_stats(app_eo_ctx_t *eo_ctx)
 	APPL_PRINT("\nTOTAL STATS:\n");
 	APPL_PRINT("  Num tmo:           %lu\n", eo_ctx->global_stat.num_tmo);
 	APPL_PRINT("  Num late ack:      %lu", eo_ctx->global_stat.num_late);
-	APPL_PRINT(" (%lu%%)\n",
+	APPL_PRINT(" (%lu %%)\n",
 		   (eo_ctx->global_stat.num_late * 100) / eo_ctx->global_stat.num_tmo);
-	APPL_PRINT("  Max early arrival: %.1fus %s\n",
+	APPL_PRINT("  Max early arrival: %.1f us %s\n",
 		   ((double)eo_ctx->global_stat.max_early_ns) / 1000.0,
 		   (uint64_t)llabs(eo_ctx->global_stat.max_early_ns) > g_options.res_ns ? "!" : "");
-	APPL_PRINT("  Max diff from tgt: %.1fus (res %.1fus) %s\n",
+	APPL_PRINT("  Max diff from tgt: %.1f us (res %.1f us) %s\n",
 		   ((double)eo_ctx->global_stat.max_dev_ns) / 1000.0,
 		   (double)g_options.res_ns / 1000.0,
 		   (uint64_t)llabs(eo_ctx->global_stat.max_dev_ns) > (2 * g_options.res_ns) ?
 		   ">2x res!" : "");
-	APPL_PRINT("  Max CPU load:      %d%%\n", eo_ctx->global_stat.max_cpu);
+	APPL_PRINT("  Max CPU load:      %d %%\n", eo_ctx->global_stat.max_cpu);
 	if (eo_ctx->global_stat.max_dispatch)
-		APPL_PRINT("  Max EO rcv time:   %luns\n", eo_ctx->global_stat.max_dispatch);
+		APPL_PRINT("  Max EO rcv time:   %lu ns\n", eo_ctx->global_stat.max_dispatch);
 	APPL_PRINT("\n");
 }
 
@@ -698,7 +698,7 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 
 		if (perc > 100)
 			perc = 100;
-		APPL_PRINT("STAT_CORE [%d]: %d tmos, %d jobs, EO used %.1f%% CPU time\n",
+		APPL_PRINT("STAT_CORE [%d]: %d tmos, %d jobs, EO used %.1f %% CPU time\n",
 			   c, cdat->count, cdat->jobs, perc);
 		if (perc > eo_ctx->global_stat.max_cpu)
 			eo_ctx->global_stat.max_cpu = round(perc);
@@ -710,7 +710,7 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 		int64_t max_early = 0;
 		int num = do_one_tmo(id, eo_ctx, &min_ts, &max_ts, &first_ts, &tgt_max, &max_early);
 
-		APPL_PRINT("STAT-TMO [%d]: %d tmos (tmr#%d), period %luns (",
+		APPL_PRINT("STAT-TMO [%d]: %d tmos (tmr#%d), period %lu ns (",
 			   id, num, tmo_data->tidx, tmo_data->period_ns);
 		if (num > 1) {
 			int64_t maxdiff = (int64_t)time_to_ns(max_ts) -
@@ -719,10 +719,10 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 			int64_t mindiff = (int64_t)time_to_ns(min_ts) -
 					  (int64_t)tmo_data->period_ns;
 
-			APPL_PRINT("%lu ticks), interval %ldns ... +%ldns",
+			APPL_PRINT("%lu ticks), interval %ld ns ... +%ld ns",
 				   tmo_data->ticks, mindiff, maxdiff);
-			APPL_PRINT(" (%ldus ... +%ldus)\n", mindiff / 1000, maxdiff / 1000);
-			APPL_PRINT("  - Max diff from target %.2fus\n", (double)tgt_max / 1000);
+			APPL_PRINT(" (%ld us ... +%ld us)\n", mindiff / 1000, maxdiff / 1000);
+			APPL_PRINT("  - Max diff from target %.2f us\n", (double)tgt_max / 1000);
 			if (llabs(tgt_max) > llabs(eo_ctx->global_stat.max_dev_ns))
 				eo_ctx->global_stat.max_dev_ns = tgt_max;
 			if (max_early < eo_ctx->global_stat.max_early_ns)
@@ -776,7 +776,7 @@ void timing_statistics(app_eo_ctx_t *eo_ctx)
 	}
 
 	APPL_PRINT("%d dispatcher enter-exit samples\n", num);
-	APPL_PRINT("PROF-DISPATCH rcv time: min %luns, max %luns, avg %luns\n",
+	APPL_PRINT("PROF-DISPATCH rcv time: min %lu ns, max %lu ns, avg %lu ns\n",
 		   min, max, num > 0 ? avg / num : 0);
 
 	if (max > eo_ctx->global_stat.max_dispatch)
@@ -803,7 +803,7 @@ void profile_statistics(e_op op, int cores, app_eo_ctx_t *eo_ctx)
 		}
 	}
 	if (num)
-		APPL_PRINT("%s: %lu samples: min %luns, max %luns, avg %luns\n",
+		APPL_PRINT("%s: %lu samples: min %lu ns, max %lu ns, avg %lu ns\n",
 			   op_labels[op], num, min, max, avg / num);
 }
 
@@ -1028,6 +1028,9 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (!add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count, msg->tidx))
 			send_stop(eo_ctx); /* triggers state change */
 
+		if (unlikely(em_tmo_get_type(event, NULL, false) != EM_TMO_TYPE_PERIODIC))
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Unexpected, event is not tmo\n");
+
 		if (g_options.work_prop) {
 			uint64_t work = random_work_ns(&eo_ctx->cdat[core].rng);
 
@@ -1105,13 +1108,14 @@ void analyze_measure(app_eo_ctx_t *eo_ctx, uint64_t linuxns, uint64_t tmrtick,
 	linux_t2 = linux_t2 - linuxns;
 	time_t2 = time_diff(time_t2, timetick);
 	tmr_t2 = tmr_t2 - tmrtick;
-	APPL_PRINT("%lu timer ticks in %luns (linux time) ", tmr_t2, linux_t2);
+	APPL_PRINT("%lu timer ticks in %lu ns (linux time) ", tmr_t2, linux_t2);
 	double hz = 1000000000 /
 		    ((double)linux_t2 / (double)tmr_t2);
-	APPL_PRINT("=> %.1fHz (%.1fMHz). Timer reports %luHz\n", hz, hz / 1000000, eo_ctx->test_hz);
+	APPL_PRINT("=> %.1f Hz (%.1f MHz). Timer reports %lu Hz\n",
+		   hz, hz / 1000000, eo_ctx->test_hz);
 	eo_ctx->meas_test_hz = round(hz);
 	hz = 1000000000 / ((double)linux_t2 / (double)time_t2.u64);
-	APPL_PRINT("Timestamp measured: %.1fHz (%.1fMHz)\n", hz, hz / 1000000);
+	APPL_PRINT("Timestamp measured: %.1f Hz (%.1f MHz)\n", hz, hz / 1000000);
 	eo_ctx->meas_time_hz = round(hz);
 
 	if (g_options.cpucycles == 1) /* use measured */
@@ -1663,10 +1667,10 @@ void test_start(appl_conf_t *const appl_conf)
 
 	APPL_PRINT("Timer capability for clksrc %d:\n", g_options.clock_src);
 	APPL_PRINT(" maximum timers: %d\n", capa.max_timers);
-	APPL_PRINT(" max_res %luns %luhz min_tmo %lu max_tmo %lu\n",
+	APPL_PRINT(" max_res %lu ns %lu hz min_tmo %lu max_tmo %lu\n",
 		   capa.max_res.res_ns, capa.max_res.res_hz,
 		   capa.max_res.min_tmo, capa.max_res.max_tmo);
-	APPL_PRINT(" max_tmo %luns %luhz min_tmo %lu max_tmo %lu\n",
+	APPL_PRINT(" max_tmo %lu ns %lu hz min_tmo %lu max_tmo %lu\n",
 		   capa.max_tmo.res_ns, capa.max_tmo.res_hz,
 		   capa.max_tmo.min_tmo, capa.max_tmo.max_tmo);
 
@@ -1683,12 +1687,12 @@ void test_start(appl_conf_t *const appl_conf)
 	}
 
 	APPL_PRINT("Asking timer capability for clksrc %d:\n", g_options.clock_src);
-	APPL_PRINT("%luns %luhz min_tmo %lu max_tmo %lu\n",
+	APPL_PRINT("%lu ns %lu hz min_tmo %lu max_tmo %lu\n",
 		   res_capa.res_ns, res_capa.res_hz,
 		   res_capa.min_tmo, res_capa.max_tmo);
 	stat = em_timer_res_capability(&res_capa, g_options.clock_src);
 	APPL_PRINT("-> Timer res_capability:\n");
-	APPL_PRINT("max_res %luns %luhz min_tmo %lu max_tmo %lu\n",
+	APPL_PRINT("max_res %lu ns %lu hz min_tmo %lu max_tmo %lu\n",
 		   res_capa.res_ns, res_capa.res_hz,
 		   res_capa.min_tmo, res_capa.max_tmo);
 	test_fatal_if(stat != EM_OK, "Given resolution is not supported (ret %d)\n", stat);
@@ -1822,13 +1826,13 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 		APPL_PRINT(" resolution:   %lu Hz (%f MHz)\n", g_options.res_hz,
 			   (double)g_options.res_hz / 1000000);
 	} else {
-		APPL_PRINT(" resolution:   %lu ns (%fs)\n", g_options.res_ns,
+		APPL_PRINT(" resolution:   %lu ns (%f s)\n", g_options.res_ns,
 			   (double)g_options.res_ns / 1000000000);
 	}
 	if (g_options.period_ns == 0)
 		APPL_PRINT(" period:       random\n");
 	else
-		APPL_PRINT(" period:       %lu ns (%fs%s)\n", g_options.period_ns,
+		APPL_PRINT(" period:       %lu ns (%f s%s)\n", g_options.period_ns,
 			   (double)g_options.period_ns / 1000000000,
 			   g_options.period_ns == 0 ? " (random)" : "");
 	if (g_options.first_ns == -1)
@@ -1837,9 +1841,9 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 		APPL_PRINT(" first period: %ld ns (%fs%s)\n", g_options.first_ns,
 			   (double)g_options.first_ns / 1000000000,
 			   g_options.first_ns == 0 ? " (=period)" : "");
-	APPL_PRINT(" max period:   %luns (%fs)\n", g_options.max_period_ns,
+	APPL_PRINT(" max period:   %lu ns (%f s)\n", g_options.max_period_ns,
 		   (double)g_options.max_period_ns / 1000000000);
-	APPL_PRINT(" min period:   %luns (%fs)\n", g_options.min_period_ns,
+	APPL_PRINT(" min period:   %lu ns (%f s)\n", g_options.min_period_ns,
 		   (double)g_options.min_period_ns / 1000000000);
 	APPL_PRINT(" csv:          %s\n",
 		   g_options.csv == NULL ? "(no)" : g_options.csv);
@@ -1852,7 +1856,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	APPL_PRINT(" dispatch prof:%s\n", g_options.dispatch ? "yes" : "no");
 	APPL_PRINT(" time stamps:  %s\n", g_options.cpucycles ?
 		   "CPU cycles" : "odp_time()");
-	APPL_PRINT(" work propability:%u%%\n", g_options.work_prop);
+	APPL_PRINT(" work propability:%u %%\n", g_options.work_prop);
 	if (g_options.work_prop) {
 		APPL_PRINT(" min_work:     %luns\n", g_options.min_work_ns);
 		APPL_PRINT(" max_work:     %luns\n", g_options.max_work_ns);
@@ -1860,9 +1864,9 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	APPL_PRINT(" bg events:    %u\n", g_options.bg_events);
 	eo_ctx->bg_data = NULL;
 	if (g_options.bg_events) {
-		APPL_PRINT(" bg work:      %luus\n", g_options.bg_time_ns / 1000);
-		APPL_PRINT(" bg data:      %ukiB\n", g_options.bg_size / 1024);
-		APPL_PRINT(" bg chunk:     %ukiB (%u blks)\n",
+		APPL_PRINT(" bg work:      %lu us\n", g_options.bg_time_ns / 1000);
+		APPL_PRINT(" bg data:      %u kiB\n", g_options.bg_size / 1024);
+		APPL_PRINT(" bg chunk:     %u kiB (%u blks)\n",
 			   g_options.bg_chunk / 1024,
 			   g_options.bg_size / g_options.bg_chunk);
 		APPL_PRINT(" bg trace:     %s\n", g_options.jobs ? "yes" : "no");
@@ -1874,7 +1878,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	}
 	APPL_PRINT(" memzero:      ");
 	if (g_options.mz_mb)
-		APPL_PRINT("%uMB %severy %lums\n",
+		APPL_PRINT("%u MB %severy %lu ms\n",
 			   g_options.mz_mb,
 			   g_options.mz_huge ? "(mmap huge) " : "",
 			   g_options.mz_ns / 1000000UL);
@@ -1926,7 +1930,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	period = ts.tv_nsec + (ts.tv_sec * 1000000000ULL);
 	eo_ctx->linux_hz = 1000000000ULL / period;
 	APPL_PRINT("Linux reports clock running at %" PRIu64 " hz\n", eo_ctx->linux_hz);
-	APPL_PRINT("ODP says time_global runs at %luHz\n", odp_time_global_res());
+	APPL_PRINT("ODP says time_global runs at %lu Hz\n", odp_time_global_res());
 	if (!g_options.cpucycles)
 		eo_ctx->time_hz = odp_time_global_res();
 

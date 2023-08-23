@@ -76,7 +76,7 @@ COMPILE_TIME_ASSERT(MAX_INTERNAL_QUEUES - 1 >= EM_MAX_CORES,
 COMPILE_TIME_ASSERT(_FIRST_DYN_QUEUE > _LAST_INTERNAL_QUEUE,
 		    FIRST_DYN_QUEUE_ERROR);
 
-#define QUEUE_ELEM_VALID ((uint32_t)0xABBACAFE)
+#define QUEUE_ELEM_VALID ((uint16_t)0xCAFE)
 
 /* Verify that the byte order is defined for 'internal_queue_t' */
 #if \
@@ -127,7 +127,7 @@ COMPILE_TIME_ASSERT(UINT16_MAX >= EM_MAX_QUEUES,
 COMPILE_TIME_ASSERT(sizeof(internal_queue_t) == sizeof(em_queue_t),
 		    INTERNAL_QUEUE_T_SIZE_ERROR);
 
-/*
+/**
  * Queue state
  */
 typedef enum queue_state {
@@ -149,13 +149,22 @@ typedef enum queue_state {
 	 * Non-scheduled queue (UNSCHED, OUTPUT) state use the UNSCHEDULED-state.
 	 */
 	/* Use separete value for unscheduled queues to catch illegal usage */
-	EM_QUEUE_STATE_UNSCHEDULED = 999
-} queue_state_t;
+	EM_QUEUE_STATE_UNSCHEDULED = 255
+} queue_state_e;
+/**
+ * Queue state, packed into uint8_t.
+ *
+ * The 'enum queue_state' or queue_state_e will always fit into an uint8_t.
+ * Save space in the queue_elem_t by using this instead.
+ */
+typedef uint8_t queue_state_t;
 
 /**
  * Atomic-group queue specific part of the queue element
  */
 typedef struct q_elem_atomic_group_ {
+	/** The atomic group handle (if any) of this queue */
+	em_atomic_group_t atomic_group;
 	/** List node for linking queue elems belonging to an atomic group */
 	list_node_t agrp_node;
 } q_elem_atomic_group_t;
@@ -164,9 +173,11 @@ typedef struct q_elem_atomic_group_ {
  * Output queue specific part of the queue element
  */
 typedef struct q_elem_output_ {
+	/** Output Queue config, incl. output_fn(..., output_fn_args) */
 	em_output_queue_conf_t output_conf;
-	/* Copied output_fn_args content of length 'args_len' stored in event */
+	/** Copied output_fn_args content of length 'args_len' stored in event */
 	em_event_t output_fn_args_event;
+	/** Lock for output queues during an ordered-context */
 	env_spinlock_t lock;
 } q_elem_output_t;
 
@@ -184,49 +195,68 @@ typedef struct queue_elem_t {
 	 *             EM_ERROR(...);
 	 * Keep first.
 	 */
-	uint32_t valid_check;
+	uint16_t valid_check;
+
+	union {
+		uint8_t all;
+		struct {
+			/* true:receive_multi_func(), false:receive_func() */
+			uint8_t use_multi_rcv   : 1;
+			/** set if queue is scheduled, i.e. atomic, parallel or ordered */
+			uint8_t scheduled       : 1;
+			/** Does this queue belong to an EM Atomic Group (true/false)? */
+			uint8_t in_atomic_group : 1;
+			/** Is this an ODP pktin event queue (true/false)? */
+			uint8_t is_pktin        : 1;
+			/** reserved bits */
+			uint8_t rsvd            : 4;
+		};
+	} flags;
+
+	/** Queue state */
+	queue_state_t state; /* queue_state_e */
+
+	/** Queue priority */
+	uint8_t priority; /* em_queue_prio_t */
+
+	/** Atomic, parallel, ordered, unscheduled, local, output */
+	uint8_t type; /* em_queue_type_t */
+
+	/** Max number of events passed to the EO's multi-event receive function */
+	uint16_t max_events; /* only used if flags.use_multi_rcv == true */
+
+	/** EM EO that this queue belongs to */
+	uint16_t eo; /* em_eo_t */
 
 	/** Queue handle */
-	em_queue_t queue;
+	uint32_t queue; /* em_queue_t */
 
 	/** Associated ODP queue handle */
 	odp_queue_t odp_queue;
-	/** Is this an ODP pktin event queue (true/false)? */
-	bool is_pktin;
 
-	/** Queue priority */
-	em_queue_prio_t priority;
-	/** Atomic, parallel, ordered, unscheduled, local, output */
-	em_queue_type_t type;
-	/** set if queue is scheduled, i.e. atomic, parallel or ordered */
-	uint32_t scheduled;
-	/** Queue state */
-	queue_state_t state;
-	/** Queue group handle of this queue */
-	em_queue_group_t queue_group;
-	/** The atomic group handle (if any) of this queue */
-	em_atomic_group_t atomic_group;
 	/** User defined queue context (can be NULL) */
 	void *context;
 
-	/** EM EO that this queue belongs to */
-	em_eo_t eo;
-	/** Associated eo element */
-	eo_elem_t *eo_elem;
+	union {
+		/** Copy of the event receive function for better performance */
+		em_receive_func_t receive_func;
+		/** Copy of the multi-event receive function for better performance */
+		em_receive_multi_func_t receive_multi_func;
+	};
+
 	/** Copy of the user defined eo context (or NULL) for performance */
 	void *eo_ctx;
-
-	int use_multi_rcv; /* true:receive_multi_func(), false:receive_func() */
-	int max_events;
-	/** Copy of the event receive function for better performance */
-	em_receive_func_t receive_func;
-	/** Copy of the multi-event receive function for better performance */
-	em_receive_multi_func_t receive_multi_func;
 
 	union {
 		q_elem_atomic_group_t agrp;
 		q_elem_output_t output;
 	};
+
+	/** Associated eo element */
+	eo_elem_t *eo_elem;
+
+	/** Queue group handle of this queue */
+	em_queue_group_t queue_group;
 
 	/** List node for linking queue elems belonging to an EO */
 	list_node_t queue_node;

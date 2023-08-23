@@ -44,8 +44,6 @@ extern "C" {
 #define EVENT_CACHE_FLUSH 32
 
 typedef struct {
-	/** Atomic group name */
-	char name[EM_ATOMIC_GROUP_NAME_LEN];
 	/** The atomic group ID (handle) */
 	em_atomic_group_t atomic_group;
 	/** Queue group that the atomic group belongs to */
@@ -62,10 +60,15 @@ typedef struct {
 
 	/** Atomic group element lock */
 	env_spinlock_t lock ENV_CACHE_LINE_ALIGNED;
-	/** List of queues (q_elems) that belong to this atomic group */
-	list_node_t qlist_head;
 	/** Number of queues that belong to this atomic group */
 	env_atomic32_t num_queues;
+
+	/** List of queues (q_elems) that belong to this atomic group */
+	list_node_t qlist_head;
+	/** Atomic group name */
+	char name[EM_ATOMIC_GROUP_NAME_LEN];
+
+	char end[0] ENV_CACHE_LINE_ALIGNED;
 } atomic_group_elem_t ENV_CACHE_LINE_ALIGNED;
 
 /**

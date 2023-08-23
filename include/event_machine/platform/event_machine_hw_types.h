@@ -239,44 +239,56 @@ typedef struct {
  * Error/Status codes
  */
 typedef enum em_status_e {
-	/** Illegal context */
-	EM_ERR_BAD_CONTEXT      = 1,
+	/** Invalid argument */
+	EM_ERR_BAD_ARG          = 1,
 	/** Illegal state */
 	EM_ERR_BAD_STATE        = 2,
 	/** ID not from a valid range */
 	EM_ERR_BAD_ID           = 3,
-	/** Invalid argument */
-	EM_ERR_BAD_ARG          = 4,
-	/** Resource allocation failed */
-	EM_ERR_ALLOC_FAILED     = 5,
-	/** Resource already reserved by someone else */
-	EM_ERR_NOT_FREE         = 6,
-	/** Resource not found */
-	EM_ERR_NOT_FOUND        = 7,
-	/** Value over the limit */
-	EM_ERR_TOO_LARGE        = 8,
-	/** Value under the limit */
-	EM_ERR_TOO_SMALL        = 9,
-	/** Operation failed */
-	EM_ERR_OPERATION_FAILED = 10,
-	/** Failure in a library function */
-	EM_ERR_LIB_FAILED       = 11,
-	/** Implementation missing (placeholder) */
-	EM_ERR_NOT_IMPLEMENTED  = 12,
+	/** Invalid type */
+	EM_ERR_BAD_TYPE         = 4,
+	/** Illegal context */
+	EM_ERR_BAD_CONTEXT      = 5,
 	/** Pointer from bad memory area (e.g. NULL) */
-	EM_ERR_BAD_POINTER      = 13,
-	/** Operation timeout (e.g. waiting on a lock) */
-	EM_ERR_TIMEOUT          = 14,
+	EM_ERR_BAD_POINTER      = 6,
+
+	/** Resource not created */
+	EM_ERR_NOT_CREATED      = 7,
+	/** Resource already reserved by someone else */
+	EM_ERR_NOT_FREE         = 8,
+	/** Resource not found */
+	EM_ERR_NOT_FOUND        = 9,
 	/** Not properly initialiazed (e.g. not using provided initializer) */
-	EM_ERR_NOT_INITIALIZED  = 15,
+	EM_ERR_NOT_INITIALIZED  = 10,
+	/** Implementation missing (placeholder) */
+	EM_ERR_NOT_IMPLEMENTED  = 11,
+	/** Feature or value combination is not supported */
+	EM_ERR_NOT_SUPPORTED	= 12,
+
+	/** Resource allocation failed */
+	EM_ERR_ALLOC_FAILED     = 13,
+	/** Operation failed */
+	EM_ERR_OPERATION_FAILED = 14,
+	/** Failure in a library function */
+	EM_ERR_LIB_FAILED       = 15,
+
+	/** Value over the limit */
+	EM_ERR_TOO_LARGE        = 16,
+	/** Value under the limit */
+	EM_ERR_TOO_SMALL        = 17,
+
 	/** ESV (reserved): Invalid event state detected, e.g. double-free */
-	EM_ERR_EVENT_STATE      = 16,
+	EM_ERR_EVENT_STATE      = 18,
+
+	/** Operation timeout (e.g. waiting on a lock) */
+	EM_ERR_TIMEOUT          = 19,
+
 	/** Operation is too near current time or in past */
-	EM_ERR_TOONEAR		= 17,
+	EM_ERR_TOONEAR		= 20,
 	/** Time target too far, e.g. timeout exceeds maximum supported value */
-	EM_ERR_TOOFAR		= 18,
+	EM_ERR_TOOFAR		= 21,
 	/** Timeout was canceled, e.g. periodic timer */
-	EM_ERR_CANCELED		= 19,
+	EM_ERR_CANCELED		= 22,
 
 	/** Other error. This is the last error code (for bounds checking) */
 	EM_ERR
@@ -371,14 +383,14 @@ typedef struct {
 	 */
 	em_output_func_t output_fn;
 	/**
+	 * Extra output-function argument that will be passed.
+	 */
+	void *output_fn_args;
+	/**
 	 * Size of the argument-data passed via 'output_fn_args'.
 	 * 'output_fn_args' is ignored, if 'args_len' is 0.
 	 **/
 	size_t args_len;
-	/**
-	 * Extra output-function argument that will be passed.
-	 */
-	void *output_fn_args;
 } em_output_queue_conf_t;
 
 /**
@@ -488,6 +500,26 @@ typedef struct {
  */
 #define EM_ESCOPE_POOL_INFO                  (EM_ESCOPE_INTERNAL_MASK | 0x0108)
 /**
+ * @def EM_ESCOPE_POOL_STATS
+ * EM error scope: event pool statistics
+ */
+#define EM_ESCOPE_POOL_STATS                  (EM_ESCOPE_INTERNAL_MASK | 0x0109)
+/**
+ * @def EM_ESCOPE_POOL_STATS_RESET
+ * EM error scope: event pool statistics
+ */
+#define EM_ESCOPE_POOL_STATS_RESET            (EM_ESCOPE_INTERNAL_MASK | 0x010A)
+/**
+ * @def EM_ESCOPE_POOL_SUBPOOL_STATS
+ * EM error scope: event pool subpool statistics
+ */
+#define EM_ESCOPE_POOL_SUBPOOL_STATS          (EM_ESCOPE_INTERNAL_MASK | 0x010B)
+/**
+ * @def EM_ESCOPE_POOL_SUBPOOL_STATS_RESET
+ * EM error scope: event pool subpool statistics
+ */
+#define EM_ESCOPE_POOL_SUBPOOL_STATS_RESET    (EM_ESCOPE_INTERNAL_MASK | 0x010C)
+/**
  * @def EM_ESCOPE_HOOKS_REGISTER_ALLOC
  * EM error scope: register API callback hook for em_alloc()
  */
@@ -561,12 +593,6 @@ typedef struct {
 #define EM_ESCOPE_EVENT_SEND_DEVICE_MULTI    (EM_ESCOPE_INTERNAL_MASK | 0x0302)
 
 /**
- * @def EM_ESCOPE_DAEMON
- * EM internal escope: EO Daemon
- */
-#define EM_ESCOPE_DAEMON                     (EM_ESCOPE_INTERNAL_MASK | 0x0401)
-
-/**
  * @def EM_ESCOPE_EVENT_GROUP_UPDATE
  * EM internal esope: Update the event group count
  */
@@ -604,11 +630,13 @@ typedef struct {
 #define EM_ESCOPE_EVENT_INTERNAL_DONE        (EM_ESCOPE_INTERNAL_MASK | 0x080C)
 #define EM_ESCOPE_EVENT_INTERNAL_LFUNC_CALL  (EM_ESCOPE_INTERNAL_MASK | 0x080D)
 #define EM_ESCOPE_INTERNAL_DONE_W_NOTIF_REQ  (EM_ESCOPE_INTERNAL_MASK | 0x080E)
-#define EM_ESCOPE_POLL_UNSCHED_CTRL_QUEUE    (EM_ESCOPE_INTERNAL_MASK | 0x080F)
-#define EM_ESCOPE_EVENT_TO_HDR               (EM_ESCOPE_INTERNAL_MASK | 0x0810)
-#define EM_ESCOPE_EVENT_TO_HDR_MULTI         (EM_ESCOPE_INTERNAL_MASK | 0x0812)
-#define EM_ESCOPE_EVENT_INIT_ODP             (EM_ESCOPE_INTERNAL_MASK | 0x0813)
-#define EM_ESCOPE_EVENT_INIT_ODP_MULTI       (EM_ESCOPE_INTERNAL_MASK | 0x0814)
+#define EM_ESCOPE_CREATE_CTRL_QUEUES         (EM_ESCOPE_INTERNAL_MASK | 0x080F)
+#define EM_ESCOPE_DELETE_CTRL_QUEUES         (EM_ESCOPE_INTERNAL_MASK | 0x0810)
+#define EM_ESCOPE_POLL_UNSCHED_CTRL_QUEUE    (EM_ESCOPE_INTERNAL_MASK | 0x0811)
+#define EM_ESCOPE_EVENT_TO_HDR               (EM_ESCOPE_INTERNAL_MASK | 0x0812)
+#define EM_ESCOPE_EVENT_TO_HDR_MULTI         (EM_ESCOPE_INTERNAL_MASK | 0x0813)
+#define EM_ESCOPE_EVENT_INIT_ODP             (EM_ESCOPE_INTERNAL_MASK | 0x0814)
+#define EM_ESCOPE_EVENT_INIT_ODP_MULTI       (EM_ESCOPE_INTERNAL_MASK | 0x0815)
 
 /**
  * @def EM_ESCOPE_ODP_EXT

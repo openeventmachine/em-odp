@@ -1,6 +1,7 @@
 include $(top_srcdir)/programs/Makefile.inc
 
 noinst_PROGRAMS = atomic_processing_end \
+		  bench_event \
 		  pairs \
 		  loop \
 		  loop_multircv \
@@ -11,10 +12,15 @@ noinst_PROGRAMS = atomic_processing_end \
 		  queues_local \
 		  send_multi \
 		  timer_test_periodic \
-		  scheduling_latency
+		  scheduling_latency \
+		  pool_perf \
+		  timer_test_ring
 
 atomic_processing_end_LDFLAGS = $(AM_LDFLAGS)
 atomic_processing_end_CFLAGS = $(AM_CFLAGS)
+
+bench_event_LDFLAGS = $(AM_LDFLAGS)
+bench_event_CFLAGS = $(AM_CFLAGS)
 
 pairs_LDFLAGS = $(AM_LDFLAGS)
 pairs_CFLAGS = $(AM_CFLAGS)
@@ -46,10 +52,17 @@ send_multi_CFLAGS = $(AM_CFLAGS)
 timer_test_periodic_LDFLAGS = $(AM_LDFLAGS) -lm
 timer_test_periodic_CFLAGS = $(AM_CFLAGS)
 
+timer_test_ring_LDFLAGS = $(AM_LDFLAGS) -lm
+timer_test_ring_CFLAGS = $(AM_CFLAGS)
+
 scheduling_latency_LDFLAGS = $(AM_LDFLAGS) -lm
 scheduling_latency_CFLAGS = $(AM_CFLAGS)
 
+pool_perf_LDFLAGS = $(AM_LDFLAGS) -lm
+pool_perf_CFLAGS = $(AM_CFLAGS)
+
 dist_atomic_processing_end_SOURCES = atomic_processing_end.c
+dist_bench_event_SOURCES = bench_event.c
 dist_pairs_SOURCES = pairs.c
 dist_loop_SOURCES = loop.c
 dist_loop_multircv_SOURCES = loop_multircv.c
@@ -60,4 +73,6 @@ dist_queues_unscheduled_SOURCES = queues_unscheduled.c
 dist_queues_local_SOURCES = queues_local.c
 dist_send_multi_SOURCES = send_multi.c
 dist_timer_test_periodic_SOURCES = timer_test_periodic.c timer_test_periodic.h
-scheduling_latency_SOURCES = scheduling_latency.c scheduling_latency.h
+dist_timer_test_ring_SOURCES = timer_test_ring.c timer_test_ring.h
+dist_scheduling_latency_SOURCES = scheduling_latency.c scheduling_latency.h
+dist_pool_perf_SOURCES = pool_perf.c pool_perf.h

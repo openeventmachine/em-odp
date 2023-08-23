@@ -214,7 +214,8 @@ void em_free(em_event_t event);
  * Free multiple events.
  *
  * Similar to em_free(), but allows freeing of multiple events with one
- * function call.
+ * function call. The application must not touch the given events after a call
+ * to em_free_multi().
  *
  * @note Freeing vector events (of type EM_EVENT_VECTOR) with this API will
  *       also free the events contained in the vectors' event-table.
@@ -223,7 +224,7 @@ void em_free(em_event_t event);
  * @param[in] events  Array of events to be freed
  * @param     num     The number of events in the array 'events[]'
  */
-void em_free_multi(const em_event_t events[], int num);
+void em_free_multi(em_event_t events[], int num);
 
 /**
  * Send an event to a queue.
@@ -373,11 +374,11 @@ em_event_type_t em_event_get_type(em_event_t event);
  * contain 'num' same entries.
  *
  * @param      events  Event handles: events[num]
- * @param[out] types   Event types (output array): types[num]
- *                     (types[i] is the type of events[i])
  * @param      num     Number of events and output types.
  *                     The array 'events[]' must contain 'num' entries and the
  *                     output array 'types[]' must have room for 'num' entries.
+ * @param[out] types   Event types (output array): types[num]
+ *                     (types[i] is the type of events[i])
  *
  * @return Number of event types (0...num) written into 'types[]'.
  *         The return value (always >=0) is usually 'num' and thus '<num' is
@@ -941,7 +942,9 @@ uint32_t em_event_vector_size(em_event_t vector_event);
  * This function shall be used to set the number of events available in the
  * given vector when the application itself is producing (or updating) the
  * event vector. Only valid event handles can be stored into the vector's
- * event-table
+ * event-table. The events must be stored into the vector before setting the
+ * size, i.e. first add/remove events to/from the vector's event-table (within
+ * max-size limits) and only after that set the size.
  *
  * All events in the event-table must be of major type EM_EVENT_TYPE_PACKET.
  * Storing events of another type into the event-table is an error and leads to

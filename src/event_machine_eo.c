@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -49,14 +49,14 @@ em_eo_create(const char *name,
 	eo_elem_t *eo_elem;
 
 	if (unlikely(start == NULL || stop == NULL || receive == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EO_CREATE,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_CREATE,
 			       "Mandatory EO function pointer(s) NULL!");
 		return EM_EO_UNDEF;
 	}
 
 	eo = eo_alloc();
 	if (unlikely(eo == EM_EO_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_CREATE,
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_EO_CREATE,
 			       "EO alloc failed!");
 		return EM_EO_UNDEF;
 	}
@@ -108,7 +108,7 @@ em_eo_create(const char *name,
 void em_eo_multircv_param_init(em_eo_multircv_param_t *param)
 {
 	if (unlikely(!param)) {
-		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_ARG),
 			       EM_ESCOPE_EO_MULTIRCV_PARAM_INIT,
 			       "Param pointer NULL!");
 		return;
@@ -151,7 +151,7 @@ em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param)
 
 	eo = eo_alloc();
 	if (unlikely(eo == EM_EO_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_CREATE_MULTIRCV,
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_EO_CREATE_MULTIRCV,
 			       "EO alloc failed!");
 		return EM_EO_UNDEF;
 	}
@@ -207,11 +207,11 @@ em_eo_delete(em_eo_t eo)
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	em_status_t status;
 
-	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID, EM_ESCOPE_EO_DELETE,
+	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG, EM_ESCOPE_EO_DELETE,
 			"Invalid EO:%" PRI_EO "!", eo);
 
 	RETURN_ERROR_IF(!eo_allocated(eo_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_DELETE,
+			EM_ERR_NOT_CREATED, EM_ESCOPE_EO_DELETE,
 			"EO not allocated:%" PRI_EO "", eo);
 
 	RETURN_ERROR_IF(eo_elem->state != EM_EO_STATE_CREATED &&
@@ -238,7 +238,7 @@ em_eo_get_name(em_eo_t eo, char *name, size_t maxlen)
 	const eo_elem_t *eo_elem = eo_elem_get(eo);
 
 	if (name == NULL || maxlen == 0) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EO_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_GET_NAME,
 			       "Invalid ptr or maxlen (name=0x%" PRIx64 ", maxlen=%zu)",
 			       name, maxlen);
 		return 0;
@@ -247,14 +247,14 @@ em_eo_get_name(em_eo_t eo, char *name, size_t maxlen)
 	name[0] = '\0';
 
 	if (unlikely(eo_elem == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_GET_NAME,
-			       "Invalid EO id %" PRI_EO "", eo);
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_GET_NAME,
+			       "Invalid EO%" PRI_EO "", eo);
 		return 0;
 	}
 
 	if (unlikely(!eo_allocated(eo_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_EO_GET_NAME,
-			       "EO not allocated:%" PRI_EO "", eo);
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_EO_GET_NAME,
+			       "EO not created:%" PRI_EO "", eo);
 		return 0;
 	}
 
@@ -294,8 +294,8 @@ eo_add_queue_escope(em_eo_t eo, em_queue_t queue,
 			"Invalid args: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem) || !queue_allocated(q_elem),
-			EM_ERR_BAD_ARG, escope,
-			"Not allocated: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+			EM_ERR_NOT_CREATED, escope,
+			"Not created: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 
 	q_type = em_queue_get_type(queue);
@@ -303,7 +303,7 @@ eo_add_queue_escope(em_eo_t eo, em_queue_t queue,
 		q_type == EM_QUEUE_TYPE_PARALLEL ||
 		q_type == EM_QUEUE_TYPE_PARALLEL_ORDERED ||
 		q_type == EM_QUEUE_TYPE_LOCAL;
-	RETURN_ERROR_IF(!valid, EM_ERR_BAD_CONTEXT, escope,
+	RETURN_ERROR_IF(!valid, EM_ERR_BAD_TYPE, escope,
 			"Invalid queue type: %" PRI_QTYPE "", q_type);
 
 	if (num_notif > 0) {
@@ -359,12 +359,12 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
 	int valid;
 
 	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_REMOVE_QUEUE,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EO_REMOVE_QUEUE,
 			"Invalid args: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem) || !queue_allocated(q_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_REMOVE_QUEUE,
-			"Not allocated: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+			EM_ERR_NOT_CREATED, EM_ESCOPE_EO_REMOVE_QUEUE,
+			"Not created: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 
 	q_type = em_queue_get_type(queue);
@@ -372,7 +372,7 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
 		q_type == EM_QUEUE_TYPE_PARALLEL ||
 		q_type == EM_QUEUE_TYPE_PARALLEL_ORDERED ||
 		q_type == EM_QUEUE_TYPE_LOCAL;
-	RETURN_ERROR_IF(!valid, EM_ERR_BAD_CONTEXT, EM_ESCOPE_EO_REMOVE_QUEUE,
+	RETURN_ERROR_IF(!valid, EM_ERR_BAD_TYPE, EM_ESCOPE_EO_REMOVE_QUEUE,
 			"Invalid queue type: %" PRI_QTYPE "", q_type);
 
 	ret = check_notif_tbl(num_notif, notif_tbl);
@@ -416,12 +416,12 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 	int valid;
 
 	RETURN_ERROR_IF(eo_elem == NULL || q_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
 			"Invalid args: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem) || !queue_allocated(q_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
-			"Not allocated: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
+			EM_ERR_NOT_CREATED, EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
+			"Not created: EO:%" PRI_EO " Q:%" PRI_QUEUE "",
 			eo, queue);
 
 	q_type = em_queue_get_type(queue);
@@ -429,7 +429,7 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 		q_type == EM_QUEUE_TYPE_PARALLEL ||
 		q_type == EM_QUEUE_TYPE_PARALLEL_ORDERED ||
 		q_type == EM_QUEUE_TYPE_LOCAL;
-	RETURN_ERROR_IF(!valid, EM_ERR_BAD_CONTEXT,
+	RETURN_ERROR_IF(!valid, EM_ERR_BAD_TYPE,
 			EM_ESCOPE_EO_REMOVE_QUEUE_SYNC,
 			"Invalid queue type: %" PRI_QTYPE "", q_type);
 
@@ -489,12 +489,12 @@ em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	em_status_t ret;
 
-	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID,
+	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG,
 			EM_ESCOPE_EO_REMOVE_QUEUE_ALL,
 			"Invalid EO:%" PRI_EO "", eo);
-	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_BAD_STATE,
+	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_NOT_CREATED,
 			EM_ESCOPE_EO_REMOVE_QUEUE_ALL,
-			"Not allocated: EO:%" PRI_EO "", eo);
+			"EO:%" PRI_EO " not created", eo);
 	ret = check_notif_tbl(num_notif, notif_tbl);
 	RETURN_ERROR_IF(ret != EM_OK, ret, EM_ESCOPE_EO_REMOVE_QUEUE_ALL,
 			"Invalid notif cfg given!");
@@ -520,12 +520,12 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues)
 	eo_elem_t *const eo_elem = eo_elem_get(eo);
 	em_status_t ret;
 
-	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID,
+	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG,
 			EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC,
 			"Invalid EO:%" PRI_EO "", eo);
-	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_BAD_STATE,
+	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_NOT_CREATED,
 			EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC,
-			"Not allocated: EO:%" PRI_EO "", eo);
+			"EO:%" PRI_EO " not created", eo);
 
 	/* Mark that a sync-API call is in progress */
 	locm->sync_api.in_progress = true;
@@ -571,8 +571,8 @@ em_eo_register_error_handler(em_eo_t eo, em_error_handler_t handler)
 			EM_ERR_BAD_ARG, EM_ESCOPE_EO_REGISTER_ERROR_HANDLER,
 			"Invalid args: EO:%" PRI_EO " handler:%p", eo, handler);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_REGISTER_ERROR_HANDLER,
-			"EO:%" PRI_EO " not allocated", eo);
+			EM_ERR_NOT_CREATED, EM_ESCOPE_EO_REGISTER_ERROR_HANDLER,
+			"EO:%" PRI_EO " not created", eo);
 
 	env_spinlock_lock(&eo_elem->lock);
 	eo_elem->error_handler_func = handler;
@@ -589,9 +589,9 @@ em_eo_unregister_error_handler(em_eo_t eo)
 	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG,
 			EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER,
 			"Invalid EO id %" PRI_EO "", eo);
-	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_BAD_STATE,
+	RETURN_ERROR_IF(!eo_allocated(eo_elem), EM_ERR_NOT_CREATED,
 			EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER,
-			"EO not allocated:%" PRI_EO "", eo);
+			"EO not created:%" PRI_EO "", eo);
 
 	env_spinlock_lock(&eo_elem->lock);
 	eo_elem->error_handler_func = NULL;
@@ -610,11 +610,11 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
 
-	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID, EM_ESCOPE_EO_START,
+	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG, EM_ESCOPE_EO_START,
 			"Invalid EO id %" PRI_EO "", eo);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_START,
-			"EO not allocated:%" PRI_EO "", eo);
+			EM_ERR_NOT_CREATED, EM_ESCOPE_EO_START,
+			"EO not created:%" PRI_EO "", eo);
 	RETURN_ERROR_IF(eo_elem->state != EM_EO_STATE_CREATED,
 			EM_ERR_BAD_STATE, EM_ESCOPE_EO_START,
 			"EO invalid state, cannot start:%d", eo_elem->state);
@@ -625,7 +625,7 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 	eo_elem->state = EM_EO_STATE_STARTING;
 
 	/* Create a stash to buffer events sent during EO-start */
-	eo_elem->stash = eo_start_stash_create(eo_elem->name);
+	eo_elem->stash = eo_start_stash_create();
 	if (unlikely(eo_elem->stash == ODP_STASH_INVALID)) {
 		ret = INTERNAL_ERROR(EM_ERR, EM_ESCOPE_EO_START,
 				     "EO:%" PRI_EO " start stash creation fails", eo);
@@ -640,7 +640,7 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
 	 * 'save_q_elem'.
 	 */
 	memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
-	tmp_q_elem.eo = eo;
+	tmp_q_elem.eo = (uint16_t)(uintptr_t)eo;
 
 	locm->current.q_elem = &tmp_q_elem;
 	/* Call the global EO start function */
@@ -730,11 +730,11 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 	queue_elem_t tmp_q_elem;
 	em_status_t ret;
 
-	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ID, EM_ESCOPE_EO_START_SYNC,
+	RETURN_ERROR_IF(eo_elem == NULL, EM_ERR_BAD_ARG, EM_ESCOPE_EO_START_SYNC,
 			"Invalid EO id %" PRI_EO "", eo);
 	RETURN_ERROR_IF(!eo_allocated(eo_elem),
-			EM_ERR_BAD_STATE, EM_ESCOPE_EO_START_SYNC,
-			"EO not allocated:%" PRI_EO "", eo);
+			EM_ERR_NOT_CREATED, EM_ESCOPE_EO_START_SYNC,
+			"EO not created:%" PRI_EO "", eo);
 	RETURN_ERROR_IF(eo_elem->state != EM_EO_STATE_CREATED,
 			EM_ERR_BAD_STATE, EM_ESCOPE_EO_START_SYNC,
 			"EO invalid state, cannot start:%d", eo_elem->state);
@@ -742,7 +742,7 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 	eo_elem->state = EM_EO_STATE_STARTING;
 
 	/* Create a stash to buffer events sent during EO-start */
-	eo_elem->stash = eo_start_stash_create(eo_elem->name);
+	eo_elem->stash = eo_start_stash_create();
 	if (unlikely(eo_elem->stash == ODP_STASH_INVALID)) {
 		ret = INTERNAL_ERROR(EM_ERR, EM_ESCOPE_EO_START,
 				     "EO:%" PRI_EO " start stash creation fails", eo);
@@ -759,7 +759,7 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 	 * 'save_q_elem'.
 	 */
 	memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
-	tmp_q_elem.eo = eo;
+	tmp_q_elem.eo = (uint16_t)(uintptr_t)eo;
 	locm->current.q_elem = &tmp_q_elem;
 	/* Call the global EO start function */
 	ret = eo_elem->start_func(eo_elem->eo_ctx, eo, conf);
@@ -857,7 +857,7 @@ em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[])
 	em_status_t ret;
 
 	RETURN_ERROR_IF(eo_elem == NULL || !eo_allocated(eo_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_STOP,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EO_STOP,
 			"Invalid EO:%" PRI_EO "", eo);
 	RETURN_ERROR_IF(eo_elem->state != EM_EO_STATE_RUNNING,
 			EM_ERR_BAD_STATE, EM_ESCOPE_EO_STOP,
@@ -903,7 +903,7 @@ em_eo_stop_sync(em_eo_t eo)
 	em_status_t ret;
 
 	RETURN_ERROR_IF(eo_elem == NULL || !eo_allocated(eo_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_EO_STOP_SYNC,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EO_STOP_SYNC,
 			"Invalid EO:%" PRI_EO "", eo);
 	RETURN_ERROR_IF(eo_elem->state != EM_EO_STATE_RUNNING,
 			EM_ERR_BAD_STATE, EM_ESCOPE_EO_STOP_SYNC,
@@ -929,7 +929,7 @@ em_eo_stop_sync(em_eo_t eo)
 	 * 'save_q_elem'.
 	 */
 	memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
-	tmp_q_elem.eo = eo;
+	tmp_q_elem.eo = (uint16_t)(uintptr_t)eo;
 
 	if (eo_elem->stop_local_func != NULL) {
 		locm->current.q_elem = &tmp_q_elem;
@@ -1004,14 +1004,20 @@ em_eo_get_context(em_eo_t eo)
 	const eo_elem_t *eo_elem = eo_elem_get(eo);
 	em_eo_state_t eo_state;
 
-	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_GET_CONTEXT,
+	if (unlikely(EM_CHECK_LEVEL > 0 && eo_elem == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_GET_CONTEXT,
 			       "Invalid EO:%" PRI_EO "", eo);
 		return NULL;
 	}
 
+	if (unlikely(EM_CHECK_LEVEL >= 2 && !eo_allocated(eo_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_EO_GET_CONTEXT,
+			       "EO:%" PRI_EO " not created!", eo);
+		return NULL;
+	}
+
 	eo_state = eo_elem->state;
-	if (unlikely(eo_state < EM_EO_STATE_CREATED)) {
+	if (unlikely(EM_CHECK_LEVEL > 0 && eo_state < EM_EO_STATE_CREATED)) {
 		INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_EO_GET_CONTEXT,
 			       "Invalid EO state: EO:%" PRI_EO " state:%d",
 				eo, eo_state);
@@ -1026,9 +1032,15 @@ em_eo_get_state(em_eo_t eo)
 {
 	const eo_elem_t *eo_elem = eo_elem_get(eo);
 
-	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_GET_STATE,
+	if (unlikely(EM_CHECK_LEVEL > 0 && eo_elem == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_GET_STATE,
 			       "Invalid EO:%" PRI_EO "", eo);
+		return EM_EO_STATE_UNDEF;
+	}
+
+	if (unlikely(EM_CHECK_LEVEL >= 2 && !eo_allocated(eo_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_EO_GET_STATE,
+			       "EO:%" PRI_EO " not created", eo);
 		return EM_EO_STATE_UNDEF;
 	}
 
@@ -1083,7 +1095,7 @@ em_eo_queue_get_first(unsigned int *num, em_eo_t eo)
 	const eo_elem_t *eo_elem = eo_elem_get(eo);
 
 	if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EO_QUEUE_GET_FIRST,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_QUEUE_GET_FIRST,
 			       "Invalid EO:%" PRI_EO "", eo);
 		if (num)
 			*num = 0;
@@ -1114,7 +1126,7 @@ em_eo_queue_get_first(unsigned int *num, em_eo_t eo)
 
 	/* find first */
 	while (!queue_allocated(&queue_tbl->queue_elem[_eo_q_iter_idx]) ||
-	       queue_tbl->queue_elem[_eo_q_iter_idx].eo != _eo_q_iter_eo) {
+	       queue_tbl->queue_elem[_eo_q_iter_idx].eo != (uint16_t)(uintptr_t)_eo_q_iter_eo) {
 		_eo_q_iter_idx++;
 		if (_eo_q_iter_idx >= EM_MAX_QUEUES)
 			return EM_QUEUE_UNDEF;
@@ -1135,7 +1147,7 @@ em_eo_queue_get_next(void)
 
 	/* find next */
 	while (!queue_allocated(&queue_tbl->queue_elem[_eo_q_iter_idx]) ||
-	       queue_tbl->queue_elem[_eo_q_iter_idx].eo != _eo_q_iter_eo) {
+	       queue_tbl->queue_elem[_eo_q_iter_idx].eo != (uint16_t)(uintptr_t)_eo_q_iter_eo) {
 		_eo_q_iter_idx++;
 		if (_eo_q_iter_idx >= EM_MAX_QUEUES)
 			return EM_QUEUE_UNDEF;

@@ -55,11 +55,14 @@ EM_HANDLE_T(em_timer_t);
  * Values below 0x100 are reserved for future API.
  */
 typedef enum em_timer_flag_t {
-	/** alias for no flag/default */
-	EM_TIMER_FLAG_DEFAULT = 0,
-	/** single thread use, not multithread safe, but potentially faster */
-	EM_TIMER_FLAG_PRIVATE = 1
+	/** default */
+	EM_TIMER_FLAG_NONE = 0,
+	/** single thread use. Not multithread safe, but potentially faster */
+	EM_TIMER_FLAG_PRIVATE = 1,
+	/** is periodic ring. This does not need to be manually set, init does */
+	EM_TIMER_FLAG_RING = 2
 } em_timer_flag_t;
+#define EM_TIMER_FLAG_DEFAULT EM_TIMER_FLAG_NONE
 
 /**
  * em_tmo_t (timeout handle) needs to be defined by the EM implementation
@@ -78,8 +81,9 @@ typedef enum em_tmo_flag_t {
 	EM_TMO_FLAG_ONESHOT  = 1, /**< to select one-shot */
 	EM_TMO_FLAG_PERIODIC = 2, /**< to select periodic */
 	EM_TMO_FLAG_NOSKIP   = 4, /**< see periodic ack */
-	EM_TMO_FLAG_DEFAULT = EM_TMO_FLAG_ONESHOT /**< for default one-shot */
 } em_tmo_flag_t;
+/** default timeout is oneshot */
+#define EM_TMO_FLAG_DEFAULT EM_TMO_FLAG_ONESHOT
 
 /*
  * em_timer_clksrc_t is used to select the timer clock source in case multiple

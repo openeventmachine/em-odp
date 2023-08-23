@@ -90,14 +90,11 @@ event_group_elem_get(const em_event_group_t event_group)
 static inline uint64_t
 event_group_gen_get(const event_group_elem_t *egrp_elem)
 {
-	if (unlikely(egrp_elem != NULL)) {
-		egrp_counter_t egrp_count;
+	egrp_counter_t egrp_count;
 
-		egrp_count.all = EM_ATOMIC_GET(&egrp_elem->post.atomic);
-		return egrp_count.gen;
-	} else {
-		return 0;
-	}
+	egrp_count.all = EM_ATOMIC_GET(&egrp_elem->post.atomic);
+
+	return egrp_count.gen;
 }
 
 /**
@@ -240,7 +237,7 @@ event_group_count_decrement(const unsigned int decr)
 			notif_tbl[i].egroup = egrp_elem->notif_tbl[i].egroup;
 		}
 
-		egrp_elem->ready = 1;
+		egrp_elem->ready = true; /* ready for 'apply' */
 		ret = send_notifs(num_notif, notif_tbl);
 		if (unlikely(ret != EM_OK))
 			INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_GROUP_UPDATE,

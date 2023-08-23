@@ -55,8 +55,8 @@
 #define MAX_NUM_IF 4 /* max number of used interfaces */
 #define MAX_IF_ID  6 /* max interface identifier:[0-MAX], cnt:MAX+1 */
 
-#define NUM_PKTIN_QUEUES          EM_MAX_CORES
-#define MAX_PKTOUT_QUEUES_PER_IF  EM_MAX_CORES
+#define NUM_PKTIN_QUEUES          (2 * EM_MAX_CORES)
+#define MAX_PKTOUT_QUEUES_PER_IF       EM_MAX_CORES
 
 /**
  * EO context
@@ -194,7 +194,7 @@ void test_start(appl_conf_t *const appl_conf)
 	em_eo_t eo;
 	eo_context_t *eo_ctx;
 	em_status_t ret, start_fn_ret = EM_ERROR;
-	int if_id, i;
+	int if_id, if_qcnt, i;
 
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
@@ -248,13 +248,18 @@ void test_start(appl_conf_t *const appl_conf)
 
 	/* Store the number of pktio interfaces used */
 	eo_ctx->if_count = appl_conf->pktio.if_count;
-	/* Store the used interface ids */
+	/* Store the used interface ids, check number of pktin queues */
 	for (i = 0; i < appl_conf->pktio.if_count; i++) {
 		if_id = appl_conf->pktio.if_ids[i];
 		test_fatal_if(if_id > MAX_IF_ID,
 			      "Interface id out of range! %d > %d(MAX)",
 			      if_id, MAX_IF_ID);
 		eo_ctx->if_ids[i] = if_id;
+
+		if_qcnt = l2fwd_shm->pktio_shm->pktin.num_queues[if_id];
+		test_fatal_if(if_qcnt > NUM_PKTIN_QUEUES,
+			      "Too many Pktin Queues! %d > %s(MAX)",
+			      if_qcnt, NUM_PKTIN_QUEUES);
 	}
 
 	/* Start the EO - queues etc. created in the EO start function */
@@ -370,10 +375,12 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	int q_ctx_idx = 0;
 
 	for (int i = 0; i < if_cnt; i++) {
-		int if_qcnt = l2fwd_shm->pktio_shm->pktin.num_queues[i];
+		int if_idx = l2fwd_shm->pktio_shm->ifs.idx[i];
+		int if_qcnt = l2fwd_shm->pktio_shm->pktin.num_queues[if_idx];
 
 		for (int q = 0; q < if_qcnt; q++) {
-			em_queue_t in_queue = l2fwd_shm->pktio_shm->pktin.sched_em_queues[i][q];
+			em_queue_t in_queue =
+				l2fwd_shm->pktio_shm->pktin.sched_em_queues[if_idx][q];
 			queue_context_t *q_ctx = &l2fwd_shm->eo_q_ctx[q_ctx_idx];
 
 			q_ctx->queue = in_queue;

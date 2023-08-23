@@ -49,6 +49,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <limits.h>
+#include <stdatomic.h>
 
 #include <event_machine.h>
 #include <event_machine/add-ons/event_machine_timer.h>
@@ -57,7 +58,7 @@
 #include "cm_setup.h"
 #include "cm_error_handler.h"
 
-#define TEST_VERSION "v1.2"
+#define TEST_VERSION "v1.4"
 
 /*
  * Test app defines.
@@ -88,8 +89,6 @@
 				   * delay before calling periodic timer ack
 				   */
 #define APP_INC_DLY_MODULO	15 /* apply increasing delay to every Nth tmo*/
-
-#define COMPILER_BARRIER()    ({ __asm__ volatile("" ::: "memory"); (void)0; })
 
 #if APP_VISUAL_DEBUG
 #define VISUAL_DBG(x)		APPL_PRINT(x)
@@ -124,7 +123,7 @@ typedef struct app_tmo_data_t {
 	struct timespec	linux_appeared;
 	em_timer_tick_t canceled;	/* acts as flag, but also stores tick when done */
 	em_timer_tick_t waitevt;	/* acts as flag, but also stores tick when done */
-	char lock;			/* used when adding timestamps or cancelling */
+	atomic_flag lock;		/* used when adding timestamps or cancelling */
 	unsigned int max_dummy;
 } app_tmo_data_t;
 
@@ -139,6 +138,8 @@ const char *dot_marks = " .-#"; /* per state above */
 
 /**
  * EO context
+ *
+ * Shared data. Concurrently manipulated fields use C atomics
  */
 typedef struct app_eo_ctx_t {
 	em_tmo_t heartbeat_tmo;
@@ -148,16 +149,17 @@ typedef struct app_eo_ctx_t {
 	em_queue_t my_prio_q;
 	uint64_t hz;
 	uint64_t linux_hz;
-	app_test_state_t state;
 	uint64_t rounds;
 	int nocancel;
+
+	atomic_int state;
+	atomic_uint errors;
+	atomic_uint ack_errors;
 
 	int64_t min_diff;
 	int64_t max_diff;
 	int64_t min_diff_l;
 	int64_t max_diff_l;
-	unsigned int errors;
-	unsigned int ack_errors;
 	unsigned int max_dummy;
 	uint64_t min_tmo;
 	uint64_t res_ns;
@@ -165,17 +167,17 @@ typedef struct app_eo_ctx_t {
 	struct {
 		app_tmo_data_t tmo[APP_MAX_TMOS];
 
-		uint64_t received ENV_CACHE_LINE_ALIGNED;
-		uint64_t cancelled;
-		uint64_t cancel_fail;
+		atomic_uint_fast64_t received ENV_CACHE_LINE_ALIGNED;
+		atomic_uint_fast64_t cancelled;
+		atomic_uint_fast64_t cancel_fail;
 	} oneshot;
 
 	struct {
 		app_tmo_data_t tmo[APP_MAX_PERIODIC];
 
-		uint64_t received ENV_CACHE_LINE_ALIGNED;
-		uint64_t cancelled;
-		uint64_t cancel_fail;
+		atomic_uint_fast64_t received ENV_CACHE_LINE_ALIGNED;
+		atomic_uint_fast64_t cancelled;
+		atomic_uint_fast64_t cancel_fail;
 	} periodic;
 } app_eo_ctx_t;
 
@@ -257,7 +259,7 @@ static em_status_t eo_error_handler(em_eo_t eo, em_status_t error,
 				    em_escope_t escope, va_list args)
 {
 	VISUAL_DBG("E");
-	__atomic_fetch_add(&m_shm->eo_context.errors, 1, __ATOMIC_RELAXED);
+	atomic_fetch_add_explicit(&m_shm->eo_context.errors, 1, memory_order_relaxed);
 	return test_error_handler(eo, error, escope, args);
 }
 
@@ -275,12 +277,6 @@ static em_status_t eo_error_handler(em_eo_t eo, em_status_t error,
 void test_init(void)
 {
 	int core = em_core_id();
-
-	if (EM_TIMER_API_VERSION_MAJOR < 2 ||
-	    (EM_TIMER_API_VERSION_MAJOR == 2 && EM_TIMER_API_VERSION_MINOR < 1)) {
-		APPL_PRINT("ERROR: Timer API too old (2.1 needed)\n");
-		abort();
-	}
 
 	/* first core creates ShMem */
 	if (core == 0) {
@@ -434,11 +430,11 @@ void test_start(appl_conf_t *const appl_conf)
 	eo_ctx->linux_hz = 1000000000ULL / period;
 	APPL_PRINT("Linux reports clock running at %" PRIu64 " hz\n", eo_ctx->linux_hz);
 
-	/* start heartbeat */
+	/* start heartbeat, will later start the test */
 	period = (APP_HEARTBEAT_MS * eo_ctx->hz) / 1000;
 	test_fatal_if(period < 1, "timer resolution is too low!\n");
 
-	stat = em_tmo_set_rel(eo_ctx->heartbeat_tmo, period, event);
+	stat = em_tmo_set_periodic(eo_ctx->heartbeat_tmo, 0, period, event);
 	test_fatal_if(stat != EM_OK, "Can't activate heartbeat tmo!\n");
 
 	APPL_PRINT("%s done, test repetition interval %ds\n\n", __func__,
@@ -463,23 +459,21 @@ test_stop(appl_conf_t *const appl_conf)
 	ret = em_eo_stop_sync(eo);
 	test_fatal_if(ret != EM_OK,
 		      "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
-	ret = em_eo_delete(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 
 	ret = em_timer_delete(m_shm->tmr);
 	test_fatal_if(ret != EM_OK,
 		      "Timer:%" PRI_TMR " delete:%" PRI_STAT "",
 		      m_shm->tmr, ret);
+
+	ret = em_eo_delete(eo);
+	test_fatal_if(ret != EM_OK,
+		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
 void
 test_term(void)
 {
-	int core = em_core_id();
-
-	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
-
+	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
 	if (m_shm != NULL) {
 		env_shared_free(m_shm);
 		m_shm = NULL;
@@ -510,7 +504,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 	APPL_PRINT("System has %d timer(s)\n", num_timers);
 
 	if (APP_EXTRA_PRINTS) {
-		if (__atomic_is_lock_free(sizeof(uint64_t), 0))
+		if (__atomic_always_lock_free(sizeof(uint64_t), NULL))
 			APPL_PRINT("64b atomics are lock-free\n");
 		else
 			APPL_PRINT("64b atomics may use locks\n");
@@ -555,8 +549,6 @@ static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo)
 
 	(void)eo_ctx;
 	(void)eo;
-
-	APPL_PRINT("EO local start\n");
 
 	/* per-thread random seed */
 	m_randseed = time(NULL);
@@ -632,7 +624,6 @@ static void app_eo_receive(void *eo_context, em_event_t event,
 			if (queue != eo_ctx->my_prio_q)
 				test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 					   "tmo from wrong queue!\n");
-
 			handle_single_event(eo_ctx, event, msgin);
 			break;
 
@@ -662,30 +653,32 @@ void handle_single_event(app_eo_ctx_t *eo_ctx, em_event_t event,
 {
 	(void)event;
 
-	if (eo_ctx->state != APP_STATE_RUNNING) {
+	/* not expecting oneshot after run state */
+	if (atomic_load_explicit(&eo_ctx->state, memory_order_acquire) != APP_STATE_RUNNING) {
 		APPL_PRINT("ERR: Tmo received after test finish\n");
-		__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+		eo_ctx->errors++;
 		return;
 	}
 	if (msgin->index < 0 || msgin->index >= APP_MAX_TMOS) {
 		APPL_PRINT("ERR: tmo index out of range. Corrupted event?\n");
-		__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+		eo_ctx->errors++;
 		return;
 	}
 	if (eo_ctx->oneshot.tmo[msgin->index].appeared) {
 		APPL_PRINT("ERR: Single Tmo received twice\n");
-		__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+		eo_ctx->errors++;
 		return;
 	}
 
 	/* lock tmo to avoid race with random cancel by another core */
-	while (__atomic_test_and_set(&eo_ctx->oneshot.tmo[msgin->index].lock, __ATOMIC_ACQUIRE))
+	while (atomic_flag_test_and_set_explicit(&eo_ctx->oneshot.tmo[msgin->index].lock,
+						 memory_order_acquire))
 		;
 
 	eo_ctx->oneshot.tmo[msgin->index].appeared = em_timer_current_tick(m_shm->tmr);
 	clock_gettime(APP_LINUX_CLOCK_SRC, &eo_ctx->oneshot.tmo[msgin->index].linux_appeared);
-	__atomic_clear(&eo_ctx->oneshot.tmo[msgin->index].lock, __ATOMIC_RELEASE);
-	__atomic_fetch_add(&eo_ctx->oneshot.received, 1, __ATOMIC_RELAXED);
+	atomic_flag_clear_explicit(&eo_ctx->oneshot.tmo[msgin->index].lock, memory_order_release);
+	atomic_fetch_add_explicit(&eo_ctx->oneshot.received, 1, memory_order_relaxed);
 
 	if (!eo_ctx->nocancel)
 		random_cancel(eo_ctx);
@@ -698,45 +691,48 @@ int handle_periodic_event(app_eo_ctx_t *eo_ctx, em_event_t event,
 
 	if (msgin->index < 0 || msgin->index >= APP_MAX_PERIODIC) {
 		APPL_PRINT("ERR: Periodic tmo index out of range\n");
-		__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+		eo_ctx->errors++;
 		return reuse;
 	}
-	if (eo_ctx->state != APP_STATE_RUNNING &&
-	    eo_ctx->state != APP_STATE_STOPPING) {
+	int state = atomic_load_explicit(&eo_ctx->state, memory_order_acquire);
+
+	if (state != APP_STATE_RUNNING && state != APP_STATE_STOPPING) {
 		APPL_PRINT("ERR: Periodic tmo received after test finish\n");
-		__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+		eo_ctx->errors++;
 		return reuse;
 	}
 
-	while (__atomic_test_and_set(&eo_ctx->periodic.tmo[msgin->index].lock, __ATOMIC_ACQUIRE))
+	while (atomic_flag_test_and_set_explicit(&eo_ctx->periodic.tmo[msgin->index].lock,
+						 memory_order_acquire))
 		;
 
 	eo_ctx->periodic.tmo[msgin->index].appeared = em_timer_current_tick(m_shm->tmr);
-	__atomic_clear(&eo_ctx->periodic.tmo[msgin->index].lock, __ATOMIC_RELEASE);
-	__atomic_fetch_add(&eo_ctx->periodic.received, 1, __ATOMIC_RELAXED);
+	atomic_flag_clear_explicit(&eo_ctx->periodic.tmo[msgin->index].lock, memory_order_release);
+	atomic_fetch_add_explicit(&eo_ctx->periodic.received, 1, memory_order_relaxed);
 
-	if (eo_ctx->state == APP_STATE_STOPPING)
+	/* periodic tmo may keep coming a while after end of round */
+	if (atomic_load_explicit(&eo_ctx->state, memory_order_acquire) == APP_STATE_STOPPING)
 		return 0;
 
 	reuse = 1;
 	if (APP_INCREASING_DLY && msgin->dummy_delay) {
-		/* add delay before ack() */
+		/* add delay before ack() to test late ack */
 		dummy_processing(msgin->dummy_delay);
 		msgin->dummy_delay += APP_INCREASING_DLY;
 		eo_ctx->periodic.tmo[msgin->index].max_dummy = msgin->dummy_delay;
 	}
 	em_status_t ret = em_tmo_ack(eo_ctx->periodic.tmo[msgin->index].tmo, event);
 
-	if (ret == EM_ERR_CANCELED) { /* timer API2.1, not error */
+	if (ret == EM_ERR_CANCELED) {
 		if (!eo_ctx->periodic.tmo[msgin->index].canceled &&
 		    !eo_ctx->periodic.tmo[msgin->index].waitevt) {
-			__atomic_fetch_add(&eo_ctx->ack_errors, 1, __ATOMIC_RELAXED);
+			eo_ctx->ack_errors++;
 			reuse = 0;
 		}
 	} else {
 		if (ret != EM_OK) {
 			APPL_PRINT("em_tmo_ack error:%" PRI_STAT "\n", ret);
-			__atomic_fetch_add(&eo_ctx->ack_errors, 1, __ATOMIC_RELAXED);
+			eo_ctx->ack_errors++;
 			reuse = 0;
 		}
 	}
@@ -766,7 +762,7 @@ void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_queue_t queue)
 
 	/* reached next state change */
 	if (eo_ctx->heartbeat_count >= eo_ctx->heartbeat_target) {
-		switch (eo_ctx->state) {
+		switch (atomic_load_explicit(&eo_ctx->state, memory_order_acquire)) {
 		case APP_STATE_IDLE:
 			start_test(eo_ctx);
 			eo_ctx->heartbeat_target = eo_ctx->heartbeat_count + APP_CHECK_LIMIT;
@@ -824,7 +820,7 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 				   "Can't allocate event nr %d!", i + 1);
 
-		/* prepare as timeout */
+		/* prepare as timeout event */
 		msg = em_event_pointer(event);
 		msg->command = APP_CMD_TMO_SINGLE;
 		msg->index = i;
@@ -833,13 +829,8 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 		eo_ctx->oneshot.tmo[i].event = event;
 	}
 
-	/* barriers to make sure we're timing the right code. Some may be
-	 * unnecessary if the time functions not get inlined
-	 */
-	COMPILER_BARRIER();
 	t1 = em_timer_current_tick(m_shm->tmr);
 	clock_gettime(APP_LINUX_CLOCK_SRC, &ts1);
-	COMPILER_BARRIER();
 	/* allocate new tmos every time (could re-use) */
 	for (i = 0; i < APP_MAX_TMOS; i++) {
 		em_tmo_t tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_ONESHOT,
@@ -847,11 +838,11 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 
 		if (unlikely(tmo == EM_TMO_UNDEF))
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-				   "Can't allocate tmo nr %d!", i);
+				   "Can't allocate tmo nr %d!", i + 1);
 
 		eo_ctx->oneshot.tmo[i].tmo = tmo;
 	}
-	COMPILER_BARRIER();
+
 	t2 = em_timer_current_tick(m_shm->tmr);
 	clock_gettime(APP_LINUX_CLOCK_SRC, &ts2);
 	APPL_PRINT("Timer: Creating %d timeouts took %" PRIu64 " ns (%" PRIu64
@@ -872,13 +863,11 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 		else if (i == 1)
 			fixed = APP_TIMEOUT_MIN_US;
 
-		__atomic_clear(&eo_ctx->oneshot.tmo[i].lock, __ATOMIC_RELAXED);
 		eo_ctx->oneshot.tmo[i].howmuch = rand_timeout(&m_randseed,
 							      eo_ctx, fixed);
 		eo_ctx->oneshot.tmo[i].when = em_timer_current_tick(m_shm->tmr);
 		clock_gettime(APP_LINUX_CLOCK_SRC,
 			      &eo_ctx->oneshot.tmo[i].linux_when);
-		COMPILER_BARRIER();
 		if (em_tmo_set_rel(eo_ctx->oneshot.tmo[i].tmo,
 				   eo_ctx->oneshot.tmo[i].howmuch,
 				   eo_ctx->oneshot.tmo[i].event) != EM_OK)
@@ -888,6 +877,7 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 	if (APP_MAX_TMOS)
 		APPL_PRINT("Started single shots\n");
 
+	/* then periodic */
 	for (i = 0; i < APP_MAX_PERIODIC; i++) {
 		unsigned int fixed = 0;
 
@@ -911,7 +901,6 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 				   "Can't allocate periodic tmo nr %d!", i + 1);
 		eo_ctx->periodic.tmo[i].tmo = tmo;
-		__atomic_clear(&eo_ctx->oneshot.tmo[i].lock, __ATOMIC_RELAXED);
 
 		/* always test min and max tmo */
 		if (i == 0)
@@ -921,12 +910,12 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 		eo_ctx->periodic.tmo[i].howmuch = rand_timeout(&m_randseed,
 							       eo_ctx, fixed);
 		eo_ctx->periodic.tmo[i].when = em_timer_current_tick(m_shm->tmr);
-		if (em_tmo_set_rel(eo_ctx->periodic.tmo[i].tmo,
-				   eo_ctx->periodic.tmo[i].howmuch,
-				   eo_ctx->periodic.tmo[i].event) != EM_OK)
+		if (em_tmo_set_periodic(eo_ctx->periodic.tmo[i].tmo,
+					0,
+					eo_ctx->periodic.tmo[i].howmuch,
+					eo_ctx->periodic.tmo[i].event) != EM_OK)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-				   "Can't activate periodic tmo nr %d!\n",
-				   i + 1);
+				   "Can't activate periodic tmo nr %d!\n", i + 1);
 	}
 
 	if (APP_MAX_PERIODIC)
@@ -953,8 +942,9 @@ void start_test(app_eo_ctx_t *eo_ctx)
 		   s, eo_ctx->rounds);
 
 	eo_ctx->nocancel = 1;
-	eo_ctx->state = APP_STATE_RUNNING; /* do this _before_ starting tmo */
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);
+	/* do this before starting tmo as some could be received while still here */
+	atomic_store_explicit(&eo_ctx->state, APP_STATE_RUNNING, memory_order_release);
+
 	set_timeouts(eo_ctx);	/* timeouts start coming */
 	APPL_PRINT("Running\n");
 	eo_ctx->nocancel = 0;	/* after all timeouts are completely created */
@@ -962,17 +952,35 @@ void start_test(app_eo_ctx_t *eo_ctx)
 
 void stop_test(app_eo_ctx_t *eo_ctx)
 {
-	em_event_t event = EM_EVENT_UNDEF;
+	em_event_t event;
 
-	/* cancel periodic */
+	/* test assumes all oneshots are received,
+	 * but this will stop possible periodic timeout processing
+	 */
+	atomic_store_explicit(&eo_ctx->state, APP_STATE_STOPPING, memory_order_release);
+
+	/* cancel ongoing periodic */
 	for (int i = 0; i < APP_MAX_PERIODIC; i++) {
-		if (!eo_ctx->periodic.tmo[i].canceled) {
-			em_tmo_cancel(eo_ctx->periodic.tmo[i].tmo, &event);
-			if (event != EM_EVENT_UNDEF)
-				em_free(event);
+		event = EM_EVENT_UNDEF;
+
+		/* lock tmo to avoid race with possible unfinished random cancel */
+		while (atomic_flag_test_and_set_explicit(&eo_ctx->periodic.tmo[i].lock,
+							 memory_order_acquire))
+			;
+
+		/* double cancel is an error */
+		if (!eo_ctx->periodic.tmo[i].canceled && !eo_ctx->periodic.tmo[i].waitevt) {
+			em_status_t ret = em_tmo_cancel(eo_ctx->periodic.tmo[i].tmo, &event);
+
+			if (ret != EM_OK && ret != EM_ERR_TOONEAR) {
+				APPL_PRINT("%s: cancel returned %u!\n", __func__, ret);
+				eo_ctx->errors++;
+			}
 		}
+		atomic_flag_clear_explicit(&eo_ctx->periodic.tmo[i].lock, memory_order_release);
+		if (event != EM_EVENT_UNDEF)
+			em_free(event);
 	}
-	eo_ctx->state = APP_STATE_STOPPING;
 }
 
 void cleanup_test(app_eo_ctx_t *eo_ctx)
@@ -985,7 +993,6 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 
 	t1 = em_timer_current_tick(m_shm->tmr);
 	clock_gettime(APP_LINUX_CLOCK_SRC, &ts1);
-	COMPILER_BARRIER();
 	for (i = 0; i < APP_MAX_TMOS; i++) {
 		em_event_t evt = EM_EVENT_UNDEF;
 
@@ -1002,7 +1009,6 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 			em_free(evt);
 		}
 	}
-	COMPILER_BARRIER();
 	t2 = em_timer_current_tick(m_shm->tmr);
 	clock_gettime(APP_LINUX_CLOCK_SRC, &ts2);
 	APPL_PRINT("Timer: Deleting %d timeouts took %" PRIu64
@@ -1026,17 +1032,15 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 		if (evt != EM_EVENT_UNDEF)
 			em_free(evt);
 	}
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);
-	eo_ctx->state = APP_STATE_IDLE;
+	atomic_store_explicit(&eo_ctx->state, APP_STATE_IDLE, memory_order_release);
 }
 
 void check_test(app_eo_ctx_t *eo_ctx)
 {
 	unsigned int errors;
 
-	eo_ctx->state = APP_STATE_CHECKING;
+	atomic_store_explicit(&eo_ctx->state, APP_STATE_CHECKING, memory_order_release);
 	eo_ctx->nocancel = 1;
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 
 	APPL_PRINT("\nHeartbeat count %" PRIu64 "\n", eo_ctx->heartbeat_count);
 
@@ -1083,8 +1087,11 @@ void random_cancel(app_eo_ctx_t *eo_ctx)
 	if (idx >= APP_MAX_TMOS || idx == 0)
 		return;
 
-	/* lock tmo state before trying cancel to avoid race with receiving it */
-	while (__atomic_test_and_set(&eo_ctx->oneshot.tmo[idx].lock, __ATOMIC_ACQUIRE))
+	/* This is tricky as we're possibly canceling a timeout that might be under work
+	 * on another core, so lock tmo state before trying cancel to avoid race
+	 */
+	while (atomic_flag_test_and_set_explicit(&eo_ctx->oneshot.tmo[idx].lock,
+						 memory_order_acquire))
 		;
 
 	if (!eo_ctx->oneshot.tmo[idx].canceled && !eo_ctx->oneshot.tmo[idx].waitevt &&
@@ -1096,23 +1103,22 @@ void random_cancel(app_eo_ctx_t *eo_ctx)
 
 		retval = em_tmo_cancel(eo_ctx->oneshot.tmo[idx].tmo, &evt);
 		now = em_timer_current_tick(m_shm->tmr);
-		COMPILER_BARRIER();
 		if (retval == EM_OK) {
 			eo_ctx->oneshot.tmo[idx].canceled = now;
-			__atomic_fetch_add(&eo_ctx->oneshot.cancelled, 1, __ATOMIC_RELAXED);
+			eo_ctx->oneshot.cancelled++;
 			if (evt == EM_EVENT_UNDEF) { /* cancel ok but no event returned */
 				APPL_PRINT("ERR: cancel ok but no event!\n");
-				__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+				eo_ctx->errors++;
 			}
 			if (eo_ctx->oneshot.tmo[idx].appeared) {
 				APPL_PRINT("ERR: cancel ok after event received!\n");
-				__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+				eo_ctx->errors++;
 			}
 		} else { /* cancel fail, too late */
-			__atomic_fetch_add(&eo_ctx->oneshot.cancel_fail, 1, __ATOMIC_RELAXED);
+			eo_ctx->oneshot.cancel_fail += 1;
 			if (evt != EM_EVENT_UNDEF) { /* cancel fail but event returned */
 				APPL_PRINT("ERR: cancel fail but event return (rv %u)!\n", retval);
-				__atomic_fetch_add(&eo_ctx->errors, 1, __ATOMIC_RELAXED);
+				eo_ctx->errors++;
 			} else { /* event should appear later */
 				eo_ctx->oneshot.tmo[idx].waitevt = now;
 			}
@@ -1123,7 +1129,7 @@ void random_cancel(app_eo_ctx_t *eo_ctx)
 
 		VISUAL_DBG("c");
 	}
-	__atomic_clear(&eo_ctx->oneshot.tmo[idx].lock, __ATOMIC_RELEASE);
+	atomic_flag_clear_explicit(&eo_ctx->oneshot.tmo[idx].lock, memory_order_release);
 }
 
 em_event_t random_cancel_periodic(app_eo_ctx_t *eo_ctx)
@@ -1134,8 +1140,9 @@ em_event_t random_cancel_periodic(app_eo_ctx_t *eo_ctx)
 	if (idx >= APP_MAX_PERIODIC || idx == 0)
 		return EM_EVENT_UNDEF;
 
-	/* lock tmo state before trying cancel */
-	while (__atomic_test_and_set(&eo_ctx->periodic.tmo[idx].lock, __ATOMIC_ACQUIRE))
+	/* lock tmo state before trying cancel to avoid race on receive */
+	while (atomic_flag_test_and_set_explicit(&eo_ctx->periodic.tmo[idx].lock,
+						 memory_order_acquire))
 		;
 
 	if (!eo_ctx->periodic.tmo[idx].canceled && !eo_ctx->periodic.tmo[idx].waitevt &&
@@ -1145,9 +1152,9 @@ em_event_t random_cancel_periodic(app_eo_ctx_t *eo_ctx)
 
 		if (em_tmo_cancel(eo_ctx->periodic.tmo[idx].tmo, &evt) == EM_OK) {
 			eo_ctx->periodic.tmo[idx].canceled = em_timer_current_tick(m_shm->tmr);
-			__atomic_fetch_add(&eo_ctx->periodic.cancelled, 1, __ATOMIC_RELAXED);
+			eo_ctx->periodic.cancelled++;
 		} else {
-			__atomic_fetch_add(&eo_ctx->periodic.cancel_fail, 1, __ATOMIC_RELAXED);
+			eo_ctx->periodic.cancel_fail++;
 			if (evt == EM_EVENT_UNDEF) {/* cancel failed, event should appear */
 				eo_ctx->periodic.tmo[idx].waitevt =
 					em_timer_current_tick(m_shm->tmr);
@@ -1156,13 +1163,14 @@ em_event_t random_cancel_periodic(app_eo_ctx_t *eo_ctx)
 		eo_ctx->periodic.tmo[idx].appeared = 0;
 		VISUAL_DBG("C");
 		if (evt != EM_EVENT_UNDEF) {
-			__atomic_clear(&eo_ctx->periodic.tmo[idx].lock, __ATOMIC_RELEASE);
+			atomic_flag_clear_explicit(&eo_ctx->periodic.tmo[idx].lock,
+						   memory_order_release);
 			em_free(evt);
-			return evt; /* to skip wrong free in receive! */
+			return evt; /* to skip wrong free in receive */
 		}
 	}
 
-	__atomic_clear(&eo_ctx->periodic.tmo[idx].lock, __ATOMIC_RELEASE);
+	atomic_flag_clear_explicit(&eo_ctx->periodic.tmo[idx].lock, memory_order_release);
 	return EM_EVENT_UNDEF;
 }
 
@@ -1342,13 +1350,8 @@ static void dummy_processing(unsigned int us)
 	VISUAL_DBG("D");
 
 	clock_gettime(APP_LINUX_CLOCK_SRC, &now);
-	/* uint64_t t1 = env_get_cycle(); */
 	do {
 		clock_gettime(APP_LINUX_CLOCK_SRC, &sample);
 	} while (ts_diff_ns(&now, &sample) / 1000ULL < us);
-	/* uint64_t t2 = env_get_cycle();
-	 * printf("dummy delay: %u\n", us);
-	 * printf("%ld ticks\n", t2-t1);
-	 */
 	VISUAL_DBG("d");
 }

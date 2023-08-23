@@ -140,7 +140,7 @@ queue_current(void)
 	if (unlikely(q_elem == NULL))
 		return EM_QUEUE_UNDEF;
 
-	return q_elem->queue;
+	return (em_queue_t)(uintptr_t)q_elem->queue;
 }
 
 static inline queue_elem_t *
@@ -199,6 +199,56 @@ scheduled_queue_type_odp2em(odp_schedule_sync_t odp_schedule_sync,
 		*em_queue_type = EM_QUEUE_TYPE_UNDEF;
 		return 0;
 	}
+}
+
+static inline em_event_t
+queue_dequeue(const queue_elem_t *q_elem)
+{
+	odp_queue_t odp_queue;
+	odp_event_t odp_event;
+	em_event_t em_event;
+
+	odp_queue = q_elem->odp_queue;
+	odp_event = odp_queue_deq(odp_queue);
+	if (odp_event == ODP_EVENT_INVALID)
+		return EM_EVENT_UNDEF;
+
+	em_event = event_odp2em(odp_event);
+
+	if (esv_enabled()) {
+		event_hdr_t *ev_hdr = event_to_hdr(em_event);
+
+		em_event = evstate_em2usr(em_event, ev_hdr, EVSTATE__DEQUEUE);
+	}
+
+	return em_event;
+}
+
+static inline int
+queue_dequeue_multi(const queue_elem_t *q_elem,
+		    em_event_t events[/*out*/], int num)
+{
+	odp_queue_t odp_queue;
+	int ret;
+
+	/* use same output-array for dequeue: odp_events[] = events[] */
+	odp_event_t *const odp_events = (odp_event_t *)events;
+
+	odp_queue = q_elem->odp_queue;
+	ret = odp_queue_deq_multi(odp_queue, odp_events /*out*/, num);
+	if (ret <= 0)
+		return ret;
+
+	/* now events[] = odp_events[], events[].evgen missing, set below: */
+	if (esv_enabled()) {
+		event_hdr_t *ev_hdrs[ret];
+
+		event_to_hdr_multi(events, ev_hdrs, ret);
+		evstate_em2usr_multi(events, ev_hdrs, ret,
+				     EVSTATE__DEQUEUE_MULTI);
+	}
+
+	return ret;
 }
 
 #ifdef __cplusplus

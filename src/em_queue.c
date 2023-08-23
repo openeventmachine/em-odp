@@ -216,7 +216,7 @@ queue_init(queue_tbl_t *const queue_tbl,
 
 	/* Initialize the queue element table */
 	for (int i = 0; i < EM_MAX_QUEUES; i++)
-		queue_tbl->queue_elem[i].queue = queue_idx2hdl(i);
+		queue_tbl->queue_elem[i].queue = (uint32_t)(uintptr_t)queue_idx2hdl(i);
 
 	/* Initialize the static queue pool */
 	min = queue_id2idx(EM_QUEUE_STATIC_MIN);
@@ -312,14 +312,14 @@ queue_init_local(void)
 em_status_t
 queue_term_local(void)
 {
-	stash_entry_t entry_tbl[EM_SCHED_MULTI_MAX_BURST];
-	em_event_t ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	stash_entry_t entry_tbl[EM_QUEUE_LOCAL_MULTI_MAX_BURST];
+	em_event_t ev_tbl[EM_QUEUE_LOCAL_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_QUEUE_LOCAL_MULTI_MAX_BURST];
 	em_status_t stat = EM_OK;
 
 	for (;;) {
 		int num = next_local_queue_events(entry_tbl /*[out]*/,
-						  EM_SCHED_MULTI_MAX_BURST);
+						  EM_QUEUE_LOCAL_MULTI_MAX_BURST);
 		if (num <= 0)
 			break;
 
@@ -402,7 +402,7 @@ em_queue_t queue_alloc(em_queue_t queue, const char **err_str)
 	}
 
 	env_atomic32_inc(&em_shm->queue_count);
-	return queue_elem->queue;
+	return (em_queue_t)(uintptr_t)queue_elem->queue;
 }
 
 em_status_t queue_free(em_queue_t queue)
@@ -598,7 +598,7 @@ queue_delete(queue_elem_t *const queue_elem)
 	queue_state_t old_state;
 	queue_state_t new_state;
 	em_status_t ret;
-	em_queue_t queue = queue_elem->queue;
+	em_queue_t queue = (em_queue_t)(uintptr_t)queue_elem->queue;
 	em_queue_type_t type = queue_elem->type;
 
 	if (unlikely(!queue_allocated(queue_elem)))
@@ -650,7 +650,7 @@ queue_delete(queue_elem_t *const queue_elem)
 	}
 
 	if (queue_elem->odp_queue != ODP_QUEUE_INVALID &&
-	    !queue_elem->is_pktin) {
+	    !queue_elem->flags.is_pktin) {
 		int err = odp_queue_destroy(queue_elem->odp_queue);
 
 		RETURN_ERROR_IF(err, EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_DELETE,
@@ -718,7 +718,7 @@ queue_setup(queue_elem_t *q_elem, const queue_setup_t *setup,
 void queue_setup_common(queue_elem_t *q_elem /*out*/,
 			const queue_setup_t *setup)
 {
-	const em_queue_t queue = q_elem->queue;
+	const em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
 	char *const qname = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
 
 	/* checks that the odp queue context points to an EM queue elem */
@@ -732,25 +732,30 @@ void queue_setup_common(queue_elem_t *q_elem /*out*/,
 			 "%s%" PRI_QUEUE "", EM_Q_BASENAME, queue);
 	qname[EM_QUEUE_NAME_LEN - 1] = '\0';
 
+	q_elem->flags.all = 0;
 	/* Init q_elem fields based on setup params and clear the rest */
-	q_elem->type = setup->type;
-	q_elem->priority = setup->prio;
+	q_elem->type = (uint8_t)setup->type;
+	q_elem->priority = (uint8_t)setup->prio;
 	q_elem->queue_group = setup->queue_group;
-	q_elem->atomic_group = setup->atomic_group;
+
+	/* Does this queue belong to an EM Atomic Group? */
+	if (setup->atomic_group == EM_ATOMIC_GROUP_UNDEF) {
+		q_elem->flags.in_atomic_group = false;
+	} else {
+		q_elem->flags.in_atomic_group = true;
+		q_elem->agrp.atomic_group = setup->atomic_group;
+	}
 
 	/* Clear the rest */
 	q_elem->odp_queue = ODP_QUEUE_INVALID;
-	q_elem->is_pktin = false;
-	q_elem->scheduled = EM_FALSE;
 	q_elem->state = EM_QUEUE_STATE_INVALID;
 	q_elem->context = NULL;
-	q_elem->eo = EM_EO_UNDEF;
+	q_elem->eo = (uint16_t)(uintptr_t)EM_EO_UNDEF;
 	q_elem->eo_elem = NULL;
 	q_elem->eo_ctx = NULL;
-	q_elem->use_multi_rcv = 0;
 	q_elem->max_events = 0;
 	q_elem->receive_func = NULL;
-	q_elem->receive_multi_func = NULL;
+	q_elem->receive_multi_func = NULL; /* union */
 }
 
 /**
@@ -835,12 +840,19 @@ queue_setup_scheduled(queue_elem_t *q_elem /*in,out*/,
 		return -1;
 	}
 
-	q_elem->priority = setup->prio;
-	q_elem->type = setup->type;
+	q_elem->priority = (uint8_t)setup->prio;
+	q_elem->type = (uint8_t)setup->type;
 	q_elem->queue_group = setup->queue_group;
-	q_elem->atomic_group = setup->atomic_group;
 
-	q_elem->scheduled = EM_TRUE;
+	/* Does this queue belong to an EM Atomic Group? */
+	if (setup->atomic_group == EM_ATOMIC_GROUP_UNDEF) {
+		q_elem->flags.in_atomic_group = false;
+	} else {
+		q_elem->flags.in_atomic_group = true;
+		q_elem->agrp.atomic_group = setup->atomic_group;
+	}
+
+	q_elem->flags.scheduled = true;
 	q_elem->state = EM_QUEUE_STATE_INIT;
 
 	/*
@@ -938,9 +950,8 @@ queue_setup_unscheduled(queue_elem_t *q_elem /*in,out*/,
 	q_elem->priority = EM_QUEUE_PRIO_UNDEF;
 	q_elem->type = EM_QUEUE_TYPE_UNSCHEDULED;
 	q_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
-	q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
 	/* unscheduled queues are not scheduled */
-	q_elem->scheduled = EM_FALSE;
+	q_elem->flags.scheduled = false;
 	q_elem->state = EM_QUEUE_STATE_UNSCHEDULED;
 
 	/*
@@ -1010,12 +1021,11 @@ queue_setup_local(queue_elem_t *q_elem, const queue_setup_t *setup,
 {
 	(void)err_str;
 
-	q_elem->priority = setup->prio;
+	q_elem->priority = (uint8_t)setup->prio;
 	q_elem->type = EM_QUEUE_TYPE_LOCAL;
 	q_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
-	q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
 	/* local queues are not scheduled */
-	q_elem->scheduled = EM_FALSE;
+	q_elem->flags.scheduled = false;
 	q_elem->state = EM_QUEUE_STATE_INIT;
 
 	return 0;
@@ -1036,9 +1046,8 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 	q_elem->priority = EM_QUEUE_PRIO_UNDEF;
 	q_elem->type = EM_QUEUE_TYPE_OUTPUT;
 	q_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
-	q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
 	/* output queues are not scheduled */
-	q_elem->scheduled = EM_FALSE;
+	q_elem->flags.scheduled = false;
 	/* use unsched state for output queues  */
 	q_elem->state = EM_QUEUE_STATE_UNSCHEDULED;
 
@@ -1301,52 +1310,77 @@ queue_disable_all(eo_elem_t *const eo_elem)
 	return EM_OK;
 }
 
-em_event_t queue_dequeue(const queue_elem_t *q_elem)
+void print_queue_elem_info(void)
 {
-	odp_queue_t odp_queue;
-	odp_event_t odp_event;
-	em_event_t em_event;
+	EM_PRINT("queue-elem size: %zu B\n",
+		 sizeof(queue_elem_t));
 
-	odp_queue = q_elem->odp_queue;
-	odp_event = odp_queue_deq(odp_queue);
-	if (odp_event == ODP_EVENT_INVALID)
-		return EM_EVENT_UNDEF;
+	EM_DBG("\t\toffset\tsize\n"
+	       "\t\t------\t----\n"
+	       "valid_check:\t%3zu B\t%2zu B\n"
+	       "flags:\t\t%3zu B\t%2zu B\n"
+	       "state:\t\t%3zu B\t%2zu B\n"
+	       "priority:\t%3zu B\t%2zu B\n"
+	       "type:\t\t%3zu B\t%2zu B\n"
+	       "max_events:\t%3zu B\t%2zu B\n"
+	       "eo:\t\t%3zu B\t%2zu B\n"
+	       "queue:\t\t%3zu B\t%2zu B\n"
+	       "odp_queue:\t%3zu B\t%2zu B\n"
+	       "context:\t%3zu B\t%2zu B\n"
+	       "union {\n"
+	       "  rcv_fn:\t%3zu B\t%2zu B\n"
+	       "  rcv_multi_fn:\t%3zu B\t%2zu B\n"
+	       "}\n"
+	       "eo_ctx:\t\t%3zu B\t%2zu B\n"
+	       "union {\n"
+	       "  agrp {\t%3zu B\t%2zu B\n"
+	       "   .atomic_grp:\t%3zu B\t%2zu B\n"
+	       "   .agrp_node:\t%3zu B\t%2zu B\n"
+	       "  }\n"
+	       "  output {\t%3zu B\t%2zu B\n"
+	       "   .conf:\t%3zu B\t%2zu B\n"
+	       "   .args_event:\t%3zu B\t%2zu B\n"
+	       "   .lock:\t%3zu B\t%2zu B\n"
+	       "  }\n"
+	       "}\n"
+	       "eo_elem:\t%3zu B\t%2zu B\n"
+	       "queue_group:\t%3zu B\t%2zu B\n"
+	       "queue_node:\t%3zu B\t%2zu B\n"
+	       "qgrp_node:\t%3zu B\t%2zu B\n"
+	       "queue_pool_elem:%3zu B\t%2zu B\n"
+	       "end:\t\t%3zu B\t%2zu B\n",
+	       offsetof(queue_elem_t, valid_check), sizeof_field(queue_elem_t, valid_check),
+	       offsetof(queue_elem_t, flags), sizeof_field(queue_elem_t, flags),
+	       offsetof(queue_elem_t, state), sizeof_field(queue_elem_t, state),
+	       offsetof(queue_elem_t, priority), sizeof_field(queue_elem_t, priority),
+	       offsetof(queue_elem_t, type), sizeof_field(queue_elem_t, type),
+	       offsetof(queue_elem_t, max_events), sizeof_field(queue_elem_t, max_events),
+	       offsetof(queue_elem_t, eo), sizeof_field(queue_elem_t, eo),
+	       offsetof(queue_elem_t, queue), sizeof_field(queue_elem_t, queue),
+	       offsetof(queue_elem_t, odp_queue), sizeof_field(queue_elem_t, odp_queue),
+	       offsetof(queue_elem_t, context), sizeof_field(queue_elem_t, context),
+	       offsetof(queue_elem_t, receive_func), sizeof_field(queue_elem_t, receive_func),
+	       offsetof(queue_elem_t, receive_multi_func),
+	       sizeof_field(queue_elem_t, receive_multi_func),
+	       offsetof(queue_elem_t, eo_ctx), sizeof_field(queue_elem_t, eo_ctx),
+	       offsetof(queue_elem_t, agrp), sizeof_field(queue_elem_t, agrp),
+	       offsetof(queue_elem_t, agrp.atomic_group),
+	       sizeof_field(queue_elem_t, agrp.atomic_group),
+	       offsetof(queue_elem_t, agrp.agrp_node), sizeof_field(queue_elem_t, agrp.agrp_node),
+	       offsetof(queue_elem_t, output), sizeof_field(queue_elem_t, output),
+	       offsetof(queue_elem_t, output.output_conf),
+	       sizeof_field(queue_elem_t, output.output_conf),
+	       offsetof(queue_elem_t, output.output_fn_args_event),
+	       sizeof_field(queue_elem_t, output.output_fn_args_event),
+	       offsetof(queue_elem_t, output.lock), sizeof_field(queue_elem_t, output.lock),
+	       offsetof(queue_elem_t, eo_elem), sizeof_field(queue_elem_t, eo_elem),
+	       offsetof(queue_elem_t, queue_group), sizeof_field(queue_elem_t, queue_group),
+	       offsetof(queue_elem_t, queue_node), sizeof_field(queue_elem_t, queue_node),
+	       offsetof(queue_elem_t, qgrp_node), sizeof_field(queue_elem_t, qgrp_node),
+	       offsetof(queue_elem_t, queue_pool_elem), sizeof_field(queue_elem_t, queue_pool_elem),
+	       offsetof(queue_elem_t, end), sizeof_field(queue_elem_t, end));
 
-	em_event = event_odp2em(odp_event);
-
-	if (esv_enabled()) {
-		event_hdr_t *ev_hdr = event_to_hdr(em_event);
-
-		em_event = evstate_em2usr(em_event, ev_hdr, EVSTATE__DEQUEUE);
-	}
-
-	return em_event;
-}
-
-int queue_dequeue_multi(const queue_elem_t *q_elem,
-			em_event_t events[/*out*/], int num)
-{
-	odp_queue_t odp_queue;
-	int ret;
-
-	/* use same output-array for dequeue: odp_events[] = events[] */
-	odp_event_t *const odp_events = (odp_event_t *)events;
-
-	odp_queue = q_elem->odp_queue;
-	ret = odp_queue_deq_multi(odp_queue, odp_events /*out*/, num);
-	if (ret <= 0)
-		return ret;
-
-	/* now events[] = odp_events[], events[].evgen missing, set below: */
-	if (esv_enabled()) {
-		event_hdr_t *ev_hdrs[ret];
-
-		event_to_hdr_multi(events, ev_hdrs, ret);
-		evstate_em2usr_multi(events, ev_hdrs, ret,
-				     EVSTATE__DEQUEUE_MULTI);
-	}
-
-	return ret;
+	       EM_PRINT("\n");
 }
 
 void print_queue_capa(void)
@@ -1452,7 +1486,7 @@ queue_count(void)
 size_t queue_get_name(const queue_elem_t *const q_elem,
 		      char name[/*out*/], const size_t maxlen)
 {
-	em_queue_t queue = q_elem->queue;
+	em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
 	const char *queue_name = &em_shm->queue_tbl.name[queue_hdl2idx(queue)][0];
 	size_t len = strnlen(queue_name, EM_QUEUE_NAME_LEN - 1);
 
@@ -1649,6 +1683,12 @@ void print_queue_info(void)
 			continue;
 		}
 
+		em_atomic_group_t atomic_group = EM_ATOMIC_GROUP_UNDEF;
+		em_eo_t eo = (em_eo_t)(uintptr_t)q_elem->eo;
+
+		if (q_elem->flags.in_atomic_group)
+			atomic_group = q_elem->agrp.atomic_group;
+
 		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
 		n_print = snprintf(q_info_buf + len,
 				   q_info_buf_len - len,
@@ -1656,10 +1696,8 @@ void print_queue_info(void)
 				   q, q_name, q_elem->priority,
 				   queue_get_type_str(q_elem->type),
 				   queue_get_state_str(q_elem->state),
-				   q_elem->queue_group,
-				   q_elem->atomic_group,
-				   q_elem->eo,
-				   q_elem->use_multi_rcv ? 'Y' : 'N',
+				   q_elem->queue_group, atomic_group, eo,
+				   q_elem->flags.use_multi_rcv ? 'Y' : 'N',
 				   q_elem->max_events,
 				   q_elem->context ? 'Y' : 'N');
 

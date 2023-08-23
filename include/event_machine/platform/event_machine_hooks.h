@@ -153,7 +153,7 @@ typedef void (*em_api_hook_free_t)(const em_event_t events[], int num);
  *
  * API-callback hook functions can be called concurrently from different cores.
  *
- * @see
+ * @see em_send(), em_send_multi(), em_send_group(), em_send_group_multi()
  */
 typedef void (*em_api_hook_send_t)(const em_event_t events[], int num,
 				   em_queue_t queue,

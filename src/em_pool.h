@@ -68,6 +68,12 @@ pool_find(const char *name);
 void pool_info_print_hdr(unsigned int num_pools);
 void pool_info_print(em_pool_t pool);
 
+void pool_stats_print(em_pool_t pool);
+
+void subpools_stats_print(em_pool_t pool, const int subpools[], int num_subpools);
+
+void print_pool_elem_info(void);
+
 /** Convert pool handle to pool index */
 static inline int
 pool_hdl2idx(em_pool_t pool)

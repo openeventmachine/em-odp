@@ -69,7 +69,7 @@ typedef struct {
  */
 typedef struct {
 	struct {
-		int statistics_enable; /* true/false */
+		em_pool_stats_opt_t statistics;
 		unsigned int align_offset; /* bytes */
 		unsigned int pkt_headroom; /* bytes */
 		size_t user_area_size; /* bytes */
@@ -115,6 +115,17 @@ typedef struct {
 		uint64_t poll_drain_interval_ns;
 		odp_time_t poll_drain_interval_time;
 	} dispatch;
+
+	struct {
+		bool shared_tmo_pool_enable;
+		uint32_t shared_tmo_pool_size;
+		uint32_t tmo_pool_cache;
+		struct {
+			uint32_t timer_event_pool_size;
+			uint32_t timer_event_pool_cache;
+		} ring;
+	} timer;
+
 	struct {
 		uint32_t num;
 		startup_pool_conf_t conf[EM_CONFIG_POOLS];

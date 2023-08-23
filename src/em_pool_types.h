@@ -45,8 +45,6 @@ extern "C" {
  * EM event/memory pool
  */
 typedef struct {
-	/** EM pool handle */
-	em_pool_t em_pool;
 	/** Event type of events allocated from the pool */
 	em_event_type_t event_type;
 	/** Event alignment offset, see em-odp.conf */
@@ -54,12 +52,10 @@ typedef struct {
 	/** Event user area size */
 	struct {
 		/** Requested user area size (bytes) */
-		uint16_t req_size;
-		/** Padded size, includes space for align_offset (bytes) */
-		uint16_t pad_size;
+		uint16_t size;
 		/*
 		 * Note: Use uint16_t instead of size_t to match bitfield sizes
-		 *       of event_hdr_t::user_area.req_size/pad_size.
+		 *       of event_hdr_t::user_area.size.
 		 *       Size is max EM_EVENT_USER_AREA_MAX_SIZE bytes which
 		 *       will fit into uint16_t.
 		 */
@@ -71,8 +67,12 @@ typedef struct {
 	uint32_t size[EM_MAX_SUBPOOLS];
 	/** ODP buffer handles for the subpools  */
 	odp_pool_t odp_pool[EM_MAX_SUBPOOLS];
+	/** EM pool handle */
+	em_pool_t em_pool;
 	/** for linking free pool-entries together */
 	objpool_elem_t objpool_elem;
+	/** Pool statistic options chosen during create */
+	odp_pool_stats_opt_t stats_opt;
 	/** Pool Configuration given during create */
 	em_pool_cfg_t pool_cfg;
 	/* Pool name */

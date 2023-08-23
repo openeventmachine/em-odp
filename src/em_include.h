@@ -52,6 +52,7 @@ extern "C" {
 #include <event_machine.h>
 #include <event_machine/helper/event_machine_helper.h>
 #include <event_machine/platform/env/environment.h>
+#include <event_machine/platform/add-ons/event_machine_timer_hw_specific.h>
 
 /* ODP API */
 #include <odp_api.h>
@@ -74,7 +75,6 @@ extern "C" {
 #include "em_init.h"
 
 #include "em_atomic.h"
-#include "em_daemon_eo_types.h"
 #include "em_chaining_types.h"
 #include "em_core_types.h"
 #include "em_error_types.h"
@@ -95,21 +95,20 @@ extern "C" {
 
 #include "em_mem.h"
 
+#include "em_error.h"
+#include "em_event_state.h"
 #include "em_event_inline.h"
 #include "em_queue_inline.h"
 
 #include "em_core.h"
-#include "em_error.h"
 #include "em_eo.h"
 #include "em_internal_event.h"
 #include "em_info.h"
 #include "em_pool.h"
-#include "em_event_state.h"
 #include "em_event.h"
 #include "em_queue.h"
 #include "em_queue_group.h"
 #include "em_event_group.h"
-#include "em_daemon_eo.h"
 #include "em_atomic_group.h"
 #include "em_hooks.h"
 #include "em_dispatcher.h"

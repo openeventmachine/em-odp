@@ -269,7 +269,7 @@ void test_start(appl_conf_t *const appl_conf)
 	/* setup periodic timeout (the tick) */
 	period = eo_ctx->hz / 1000; /* ticks for 1 ms */
 	period *= APP_PERIOD_MS;
-	stat = em_tmo_set_rel(eo_ctx->periodic_tmo, period, event);
+	stat = em_tmo_set_periodic(eo_ctx->periodic_tmo, 0, period, event);
 	test_fatal_if(stat != EM_OK, "Can't activate tmo!\n");
 }
 

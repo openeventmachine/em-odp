@@ -47,6 +47,7 @@ extern "C" {
 #include <odp_api.h>
 #include <event_machine/api/event_machine_types.h>
 #include <event_machine/platform/event_machine_hw_types.h>
+#include <event_machine/add-ons/event_machine_timer.h>
 
 /**
  * Get the associated ODP queue.
@@ -236,7 +237,7 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num);
  * is an ODP pool. This function returns the EM event pool that contains the
  * given ODP pool as a subpool.
  *
- * @param odp_pool
+ * @param odp_pool  ODP pool
  *
  * @return The EM event pool that contains the subpool 'odp_pool' or
  *         EM_POOL_UNDEF if 'odp_pool' is not part of any EM event pool.
@@ -247,23 +248,62 @@ em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
  * @brief Get the ODP schedule group that corresponds to the given EM queue gruop
  *
  * @param queue_group
- * @return odp_schedule_group_t
+ *
+ * @return ODP schedule group handle
+ * @retval ODP_SCHED_GROUP_INVALID on error
  */
 odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group);
 
 /**
- * Enqueue external packets into EM (packets are from outside of EM, i.e not
- * allocated by EM using em_alloc/_multi())
+ * Enqueue external packets into EM
+ *
+ * Enqueue packets from outside of EM into EM queues for processing.
+ * This function will initialize the odp packets properly as EM events before
+ * enqueueing them into EM.
+ * The odp packets might be polled from pktio or some other external source,
+ * e.g. the em_conf_t::input.input_poll_fn() function (see em_init()) can use
+ * this API to enqueue polled packets into EM queues.
+ * Inside EM, the application must use em_send...() instead to send/enqueue
+ * events into EM queues.
  *
  * @param pkt_tbl  Array of external ODP-packets to enqueue into EM as events.
  *                 The 'pkt_tbl[]' array must contain 'num' valid ODP packet
  *                 handles.
  * @param num      The number of packets in the 'pkt_tbl[]' array, must be >0.
- * @param queue    EM queue into which to sen/enqueue the packets as EM-events.
+ * @param queue    EM queue into which to send/enqueue the packets as EM-events.
  *
  * @return The number of ODP packets successfully send/enqueued as EM-events
  */
-int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue);
+int em_odp_pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num,
+		       em_queue_t queue);
+
+/**
+ * @brief Get the odp timer_pool from EM timer handle
+ *
+ * Returns the corresponding odp timer_pool from a valid EM timer handle.
+ * This can be used for e.g. debugging.
+ *
+ * DO NOT use any odp apis directly to modify the odp timer_pool created by EM.
+ *
+ * @param tmr	em timer handle
+ *
+ * @return odp timer_pool or ODP_TIMER_POOL_INVALID on failure
+ */
+odp_timer_pool_t em_odp_timer2odp(em_timer_t tmr);
+
+/**
+ * @brief Get the odp timer from EM timeout handle
+ *
+ * Returns the corresponding odp timer from a valid EM tmo handle.
+ * This can be used for e.g. debugging.
+ *
+ * DO NOT use any odp apis directly to modify the odp timer created by EM.
+ *
+ * @param tmo	em timeout handle
+ *
+ * @return odp timer or ODP_TIMER_INVALID on failure
+ */
+odp_timer_t em_odp_tmo2odp(em_tmo_t tmo);
 
 /**
  * @}
