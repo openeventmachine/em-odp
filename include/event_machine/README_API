@@ -1,13 +1,258 @@
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 EM API Release Notes
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/CHANGE_NOTES for changed and added features.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+API 3.2 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=2)
+--------------------------------------------------------------------------------
+1. Timer: timer version updated to v2.3,
+   (see include/event_machine/add-ons/event_machine_timer.h for documentation)
+
+ - Timer Ring
+   EM APIs:
+   em_status_t em_timer_ring_attr_init(em_timer_attr_t *ring_attr,
+                                       em_timer_clksrc_t clk_src, uint64_t base_hz,
+                                       uint64_t max_mul, uint64_t res_ns);
+   em_status_t em_timer_ring_capability(em_timer_ring_param_t *ring);
+   em_timer_t em_timer_ring_create(const em_timer_attr_t *ring_attr);
+   em_status_t em_tmo_set_periodic_ring(em_tmo_t tmo, em_timer_tick_t start_abs,
+                                        uint64_t multiplier, em_event_t tmo_ev);
+
+   Alternative periodic ring timer. As it uses a different abstraction, it is
+   created and started via separate ring specific APIs. It has three main
+   differencies to the regular periodic timeouts:
+     1. Only a pre-defined read-only event type can be used and is provided
+        by the timer.
+     2. Flow control is not supported. Some implementations may have it,
+        but the specification does not quarantee any so user needs to be
+        prepared to see the same event enqueued multiple times if handling of
+        the received timeouts is not fast enough
+     3. Only a limited set of periods are supported per timer (base rate or an
+        integer multiple thereof).
+   Ring timers can be abstracted as a clock face ticking the pointer forward.
+   One cycle around is the base rate (minimum rate). The same timeout can be
+   inserted to multiple locations evenly spread within the clock face thus
+   multiplying the base rate. Starting offset can be adjusted only up to
+   one timeout period.
+   Depending on platform, this mode may provide better integration with HW and
+   thus less runtime overhead. However, as it exposes potential queue overflows
+   and race hazards (race avoidable by using an atomic queue as target) the
+   regular periodic timer is recommended as default.
+
+   Example usage:
+        em_status_t stat;
+        em_timer_ring_attr_t attr;
+
+        stat = em_timer_ring_attr_init(&attr, EM_TIMER_CLKSRC_DEFAULT,
+                                       1000 /*Hz*/, 8, 0);
+        if (stat != EM_OK) {
+                /* given arguments not supported */
+        }
+
+        /* optional: set frational frequency, e.g 1000 + 1/3 = 1000.333... Hz */
+        attr.ringparam.base_hz.numer = 1;
+        attr.ringparam.base_hz.denom = 3;
+        if (em_timer_ring_capability(&attr.ringparam) == EM_ERR_NOT_SUPPORTED) {
+                /* given (modified) ring params not supported by the timer */
+        }
+
+        em_timer_t tmr = em_timer_ring_create(&attr);
+        if (tmr == EM_TIMER_UNDEF) {
+                /* can't create timer, handle error here or via error handler */
+        }
+
+        em_queue_t dst_queue = MY_QUEUE; /* prefer atomic queue to avoid races */
+        em_tmo_t tmo = em_tmo_create(tmr, EM_TMO_FLAG_PERIODIC, dst_queue);
+        if (tmo == EM_TMO_UNDEF) {
+                /* can't create timeout */
+        }
+
+        uint64_t multiplier = 1;
+        stat = em_tmo_set_periodic_ring(tmo, 0, multiplier,
+                                        EM_EVENT_UNDEF /*for event reuse only*/);
+        if (stat != EM_OK) {
+                /* Could not start timeouts */
+        }
+
+        After the setup above, the timer ring will start sending periodic
+        timeouts into the given queue. EM will dispatch these events normally
+        and call the EO's receive function with the timeout event:
+
+        ==> EM calls the EO's receive function:
+        my_eo_receive(..., event, event_type = EM_EVENT_TYPE_TIMER,
+                      queue = MY_QUEUE, ...)
+        {
+                em_tmo_t tmo = EM_TMO_UNDEF;
+                em_tmo_type_t tmo_type = em_tmo_get_type(event, &tmo /*out*/,
+                                                         false);
+                if (tmo_type == EM_TMO_TYPE_PERIODIC) {
+                        if (event_type == EM_EVENT_TYPE_TIMER) {
+                                /* from timer ring, event read only*/
+                        } else {
+                                /* from "normal" periodic timer,
+                                   event can be modified or swapped in ack */
+                        }
+
+                        em_status_t stat = em_tmo_ack(tmo, event);
+
+                        if (stat == EM_OK) {
+                                /* ack successful, event consumed by timer */
+                                do_work();
+                                return;
+                        }
+                        if (stat == EM_ERR_CANCELED) {
+                                /* Last periodic event */
+                                /* timeout was canceled and event can be freed */
+                        } else {
+                                /* other error */
+                        }
+                }
+                ...
+        }
+
+- Timout user argument / ptr (can be used with the ring timer)
+  EM APIs:
+  em_tmo_t em_tmo_create_arg(em_timer_t tmr, em_tmo_flag_t flags,
+                             em_queue_t queue, em_tmo_args_t *args);
+  void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo);
+
+  Attach a user pointer to timer ring timeouts.
+
+- Timeout type
+  EM API:
+  em_tmo_type_t em_tmo_get_type(em_event_t event, em_tmo_t *tmo, bool reset);
+
+  where the return value of type 'em_tmo_type_t' is a new type that will
+  indicate whether the event is a timeout (EM_TMO_TYPE_ONESHOT or
+  EM_TMO_TYPE_PERIODIC) or another type of event (EM_TMO_TYPE_NONE).
+
+  typedef enum em_tmo_type_t {
+       EM_TMO_TYPE_NONE     = 0, /**< unknown or not timer-related event   */
+       EM_TMO_TYPE_ONESHOT  = 1, /**< event is oneshot timeout indication  */
+       EM_TMO_TYPE_PERIODIC = 2, /**< event is periodic timeout indication */
+  } em_tmo_type_t;
+
+- Specify that only the major event types EM_EVENT_TYPE_SW, EM_EVENT_TYPE_PACKET
+  and EM_EVENT_TYPE_TIMER can be used as timeout indication.
+
+- Convert a valid EM timer to an ODP timer_pool.
+  EM extension API:
+  odp_timer_pool_t em_odp_timer2odp(em_timer_t tmr);
+
+  This is for debugging and using potential future extra odp apis.
+
+2. Error
+ - Error codes
+   Reorganize the EM error codes better and add the new error codes
+   EM_ERR_NOT_CREATED, EM_ERR_NOT_SUPPORTED and EM_ERR_BAD_TYPE.
+
+ - Error handler arguments, documentation fix
+   Remove mention that all API function arguments would be passed
+   to the error handler - they are not.
+
+3. Separate config define for the event burst size from EM local queues
+   (EM_QUEUE_TYPE_LOCAL)
+
+   #define EM_QUEUE_LOCAL_MULTI_MAX_BURST  32
+
+   The maximum number of events from a local queue (EM_QUEUE_TYPE_LOCAL) to
+   dispatch in one burst. Allows different burst sizes from scheduled queues vs.
+   local queues.
+
+4. Misc.
+ - Extension API: Rename pkt_enqueue() to em_odp_pkt_enqueue().
+ - Remove the deprecated EM API template files.
+ - Event: removed 'const' from the em_free_multi() arg 'events[]'
+   Changed 'void em_free_multi(const em_event_t events[], int num);'
+   to 'void em_free_multi(em_event_t events[], int num);'
+   since EM might need to filter out events that can not / should not
+   be freed, e.g. active timer ring events.
+
+--------------------------------------------------------------------------------
+API 3.1 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=1)
+--------------------------------------------------------------------------------
+1. Pool Statistics
+   (see include/event_machine/platform/event_machine_pool.h for documentation)
+
+   EM APIs:
+   em_status_t em_pool_stats(em_pool_t pool, em_pool_stats_t *pool_stats/*out*/);
+   em_status_t em_pool_stats_reset(em_pool_t pool);
+   void em_pool_stats_print(em_pool_t pool);
+
+   int em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
+                             em_pool_subpool_stats_t subpool_stats[]/*out*/);
+   em_status_t em_pool_subpool_stats_reset(em_pool_t pool, const int subpools[],
+                                           int num_subpools);
+   void em_pool_subpool_stats_print(em_pool_t pool, const int subpools[],
+                                    int num_subpools);
+
+   New EM event pool statistics APIs and configuration allow the applications to
+   choose which pool statistic counters to collect and retrieve.
+   Configuration of pool statistics is done globally via the EM config file
+   (config/em-odp.conf: 'pool.statistics') or per pool through the updated
+   'em_pool_cfg_t::stats_opt' given to em_pool_create().
+   The new APIs allow the user to retrieve pool statistics on an EM event pool
+   level or, more fine grained, on a subpool level.
+   The statistics 'reset'-APIs clear some of the counters, see the details in
+   the API function documentation.
+   Additionally, 'print'-APIs have been added for easy printout of statistics.
+
+   Changes to em_pool_create() are needed to configure pool-statistics on a
+   per-pool basis (thus overriding the EM config file settings for the pool):
+     em_pool_t em_pool_create(..., const em_pool_cfg_t *pool_cfg);
+   The new 'em_pool_cfg_t::stats_opt{...}' fields controls which statistics are
+   gathered.
+   The existing em_pool_cfg_init() API can hide the 'pool_cfg' changes if the
+   user does not need updated pool statistics (note: changes to the config file
+   are still needed).
+
+   The 'pool info' APIs are unmodified and produce the same output as before,
+   event though the statistics configuration in the config file or in pool
+   creation has changed. See the APIs em_pool_info(), em_pool_info_print(),
+   em_pool_info_print_all()). To fully mimic the previous behaviour of the
+   'pool info' APIs with statistics in use, enable the pool statistics options
+   'available = true' and 'cache_available = true' via em_pool_cfg_t::stats_opt
+   or the EM config file.
+
+2. Timer
+   (see include/event_machine/add-ons/event_machine_timer.h for documentation)
+
+   em_tmo_set_rel/abs/periodic():
+   - Clarification of return value on error:
+     When the timeout tick value given to em_tmo_set_...() is in the past or is
+     too close to current time, the error code EM_ERR_TOONEAR is returned.
+     In this case EM will not call the error handler, instead it's up to the
+     application to decide whether to retry with an updated time or treat the
+     condition as an error. The given event is not consumed on error, the overship
+     remains with the caller.
+   - Starting a periodic tmo could previously be done with em_tmo_set_rel(),
+     this has been obsoleted and cannot be used any more.
+     The API em_tmo_set_periodic() must now be used instead.
+
+   em_tmo_cancel():
+   The same return value change applies also to em_tmo_cancel(): if attempted
+   too late, em_tmo_cancel() also now returns EM_ERR_TOONEAR and does not call
+   the error handler.
+   Additionally, a more strict state check has been applied and the API will
+   fail if e.g. attempted twice.
+
+3. Event Vectors
+   (see include/event_machine/api/event_machine_event.h for documentation)
+
+   Update documentation for em_event_vector_size_set():
+   Explicitly mention that a vector's event-table must be updated properly with
+   events before setting the vector size. EM always assumes that there are as
+   many valid events in the event-table as indicated by 'size':
+   "The events must be stored into the vector before setting the size,
+    i.e. first add/remove events to/from the vector's event-table (within
+    max-size limits) and only after that set the size."
+
+--------------------------------------------------------------------------------
 API 3.0 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=0)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
 1. Event References
    (see include/event_machine/api/event_machine_event.h for documentation)
@@ -136,9 +381,9 @@ API 3.0 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=0)
    Hooks: em_api_hook_alloc_t - arg 'size' changed to uint32_t instead of size_t
                                 to reflect changes in em_alloc() etc.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.10 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=10)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Backwards compatible with EM 2.9 API
 
 1. EM Idle Hooks
@@ -182,17 +427,17 @@ Backwards compatible with EM 2.9 API
        through the 'startup_pools' option, it will override the default pool
        configuration given via em_conf_t::default_pool_cfg to em_init().
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.9 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=9)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Backwards compatible with EM 2.8 API
 
 1. API documentation clean-up.
 2. The define EM_MAX_QUEUES increased from 960 to 1024.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.8 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=8)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Backwards compatible with EM 2.7 API
 
 1. Add a define for the base-name of the EM core-specific queue groups (one per
@@ -204,9 +449,9 @@ Backwards compatible with EM 2.7 API
    does not internally need these groups but will create them based on
    an EM config file option for applications relying on their existence.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.7 (EM_VERSION_API_MAJOR=2, EM_VERSION_API_MINOR=7)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Backwards compatible with EM 2.6 API
 
 1. EM version number APIs:
@@ -279,9 +524,9 @@ Backwards compatible with EM 2.6 API
      em_status_t em_event_uarea_info(em_event_t event,
                                      em_event_uarea_info_t *uarea_info /*out*/);
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.6 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=6)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Backwards compatible with EM 2.5 API
 
 1. Timer:
@@ -357,7 +602,7 @@ Backwards compatible with EM 2.5 API
       again.
       Note: Unmark-send and unmark-free are the only valid cases of using an
             event that the user no longer owns, all other such uses leads to
-	    fatal error.
+            fatal error.
     - em_event_unmark_free_multi(): Unmark multiple events previously marked as
       "free". Similar to em_event_unmark_free(), but allows to do the
       "free"-unmarking of multiple events with one function call.
@@ -400,9 +645,9 @@ Backwards compatible with EM 2.5 API
       given ODP pool as a subpool or EM_POOL_UNDEF if the ODP pool is not part
       of any EM event pool.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.5 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=5)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Not backwards compatible with previous API version, API 2.5 contains modified
 types and functions requiring small changes to older code.
 
@@ -468,9 +713,9 @@ types and functions requiring small changes to older code.
      now avoids errors related to C vs. C++ typecasting.
    - API function pointer arguments should be "const" if object is not modified
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.4 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=4)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Not backwards compatible with previous API version, API 2.4 contains modified
 types requiring small changes to older code.
 
@@ -482,7 +727,7 @@ types requiring small changes to older code.
                       em_timer_create().
      Note: timer resolution is given to em_timer_create() as either
            nanoseconds or Hertz:
-	   em_timer_attr_t::resparam.res_ns or .res_hz (new option).
+           em_timer_attr_t::resparam.res_ns or .res_hz (new option).
            The user must choose which one to use by setting the other one to 0.
 
    - em_timer_attr_init(): Mandatory initialization of timer attributes.
@@ -547,9 +792,9 @@ types requiring small changes to older code.
    Some API calls missed const qualifiers on read-only data pointers.
    Add the missing 'const' and fix the implementation accordingly.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.3 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=3)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Not backwards compatible with previous API version, API 2.3 contains modified
 types requiring small changes to older code (see 2, 4 and 5).
 
@@ -628,9 +873,9 @@ types requiring small changes to older code (see 2, 4 and 5).
    See include/event_machine/api/event_machine_event.h:
    em_event_get_type_multi() and em_event_same_type_multi()
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.2 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=2)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
   Backwards compatible with EM 2.1 API with one EXCEPTION:
   Introducing the new 'em_pool_cfg_t::align_offset{}' option into the existing
   em_pool_conf_t structure is potentially dangerous if these new fields are not
@@ -650,9 +895,9 @@ API 2.2 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=2)
    CPU clock as the timer clock source (behaviour is the same as using
    EM_TIMER_CLKSRC_DEFAULT).
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.1 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=1)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
   Backwards compatible with EM 2.0 API with one EXCEPTION:
   All fields of em_conf_t given to em_init() should be intialized properly
   (inludes the new em_conf_t::api_hooks field).
@@ -692,9 +937,9 @@ API 2.1 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=1)
     output omitting pool usage information.
     See include/event_machine/platform/event_machine_pool.h
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 2.0 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=0)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
  1. Introducing local queues for fast pipelining: EM_QUEUE_TYPE_LOCAL
     Local queues are special virtual queues bypassing the scheduler for
     fast core-local pipelining without load balancing or atomic processing.
@@ -772,9 +1017,9 @@ API 2.0 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=0)
 This is a larger enhancement release with new or modified arguments requiring
 changes to legacy code. All main features remain.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 1.4 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=4)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 1. Added an optional 'conf' argument to queue creation for attributes and
    platform specific configuration.
    See event_machine_queue.h.
@@ -782,9 +1027,9 @@ API 1.4 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=4)
    that name can be used to find the event pool handle later.
    See event_machine_hw_specific.h.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 1.3 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=3)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
  1. Enhancement and clarification of ordered queue behavior. New clarified
     ordering concept is similar to what ODP currently defines. See queue
     documentation for details.
@@ -802,9 +1047,9 @@ API 1.3 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=3)
 
 Backwards compatible.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 1.2 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=2)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
  1. Introduced a slightly modified header structure (headers by service group).
     Application only needs to include event_machine.h. Event group is now also
     part of the standard API.
@@ -826,9 +1071,9 @@ API 1.2 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=2)
 
 Backwards compatible.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 1.1 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=1)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 1. Atomic Group concept added (see event_machine_atomic_group.h)
 2. Option to send notifications to an event group added.
    See declaration of em_notif_t (moved to event_machine_hw_types.h)
@@ -844,7 +1089,7 @@ Backwards compatible with one EXCEPTION (item 2):
   EM_EVENT_GROUP_UNDEF or value 0 as .egroup should cause the legacy behaviour
   in all implementations.
 
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 API 1.0 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=0)
--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
 Initial API

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -39,17 +39,13 @@ COMPILE_TIME_ASSERT(EM_POOL_UNDEF != EM_POOL_DEFAULT,
 #endif
 COMPILE_TIME_ASSERT(EM_EVENT_USER_AREA_MAX_SIZE < UINT16_MAX,
 		    EM_ODP_EM_EVENT_USER_AREA_MAX_SIZE_ERROR);
-/*
- * Max supported value for the config file option 'pool.align_offset'.
+
+/**
+ * @def ALIGN_OFFSET_MAX
  *
- * The limitation is set by events based on odp-bufs that include the ev-hdr at
- * the beginning of the odp-buf payload - the alignment is adjusted into the end
- * of the ev-hdr.
- * Events based on odp-pkts do not have this restriction but the same limit is
- * used for all.
+ * Max supported value for the config file option 'pool.align_offset'.
  */
-#define ALIGN_OFFSET_MAX  ((int)(sizeof(event_hdr_t) - \
-				 offsetof(event_hdr_t, end_hdr_data)))
+#define ALIGN_OFFSET_MAX  ((int)(16))
 
 static inline mpool_elem_t *
 mpool_poolelem2pool(objpool_elem_t *const objpool_elem)
@@ -710,32 +706,100 @@ static int read_config_pool(void)
 	EM_PRINT("EM-pool config:\n");
 
 	/*
-	 * Option: pool.statistics_enable
+	 * Option: pool.statistics.available
 	 */
-	conf_str = "pool.statistics_enable";
+	conf_str = "pool.statistics.available";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
+	em_shm->opt.pool.statistics.available = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
 
-	if (val_bool) {
-		if (!capa->buf.stats.bit.available || !capa->pkt.stats.bit.available) {
-			EM_LOG(EM_LOG_ERR, "! %s: NOT supported by ODP - disabling!\n",
-			       conf_str);
-			val_bool = false; /* disable pool statistics, no ODP support! */
-		}
-
-		if (!capa->buf.stats.bit.cache_available || !capa->pkt.stats.bit.cache_available) {
-			EM_LOG(EM_LOG_ERR, "! %s: omit events in pool cache, no ODP support!\n",
-			       conf_str);
-		}
+	/*
+	 * Option: pool.statistics.alloc_ops
+	 */
+	conf_str = "pool.statistics.alloc_ops";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
 	}
+	em_shm->opt.pool.statistics.alloc_ops = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
 
-	/* store & print the value */
-	em_shm->opt.pool.statistics_enable = (int)val_bool;
-	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
-		 val_bool);
+	/*
+	 * Option: pool.statistics.alloc_fails
+	 */
+	conf_str = "pool.statistics.alloc_fails";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.alloc_fails = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	/*
+	 * Option: pool.statistics.free_ops
+	 */
+	conf_str = "pool.statistics.free_ops";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.free_ops = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	/*
+	 * Option: pool.statistics.total_ops
+	 */
+	conf_str = "pool.statistics.total_ops";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.total_ops = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	/*
+	 * Option: pool.statistics.cache_available
+	 */
+	conf_str = "pool.statistics.cache_available";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.cache_available = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	/*
+	 * Option: pool.statistics.cache_alloc_ops
+	 */
+	conf_str = "pool.statistics.cache_alloc_ops";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.cache_alloc_ops = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	/*
+	 * Option: pool.statistics.cache_free_ops
+	 */
+	conf_str = "pool.statistics.cache_free_ops";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.cache_free_ops = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
 
 	/*
 	 * Option: pool.align_offset
@@ -815,6 +879,159 @@ read_config_file(void)
 	return 0;
 }
 
+/* We use following static asserts and function check_em_pool_subpool_stats()
+ * to verify at both compile time and runtime that, em_pool_subpool_stats_t is
+ * exactly the same as odp_pool_stats_t except the last struct member, namely,
+ * 'em_pool_subpool_stats_t::__internal_use', whose size must also be bigger
+ * than that of 'odp_pool_stats_t::thread'. This allows us to avoid exposing ODP
+ * type in EM-ODP API (at event_machine_pool.h in this case) and allows us to
+ * type cast 'em_pool_subpool_stats_t' to 'odp_pool_stats_t', ensuring high
+ * performance (see em_pool_stats() and em_pool_subpool_stats()).
+ */
+
+ODP_STATIC_ASSERT(sizeof(odp_pool_stats_t) <= sizeof(em_pool_subpool_stats_t),
+		  "Size of odp_pool_stats_t must be smaller than that of em_pool_subpool_stats_t");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, available) ==
+		  offsetof(em_pool_subpool_stats_t, available) &&
+		  sizeof_field(odp_pool_stats_t, available) ==
+		  sizeof_field(em_pool_subpool_stats_t, available),
+		  "em_pool_subpool_stats_t.available differs from odp_pool_stats_t.available!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, alloc_ops) ==
+		  offsetof(em_pool_subpool_stats_t, alloc_ops) &&
+		  sizeof_field(odp_pool_stats_t, alloc_ops) ==
+		  sizeof_field(em_pool_subpool_stats_t, alloc_ops),
+		  "em_pool_subpool_stats_t.alloc_ops differs from odp_pool_stats_t.alloc_ops!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, alloc_fails) ==
+		  offsetof(em_pool_subpool_stats_t, alloc_fails) &&
+		  sizeof_field(odp_pool_stats_t, alloc_fails) ==
+		  sizeof_field(em_pool_subpool_stats_t, alloc_fails),
+		  "em_pool_subpool_stats_t.alloc_fails differs from odp_pool_stats_t.alloc_fails!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, free_ops) ==
+		  offsetof(em_pool_subpool_stats_t, free_ops) &&
+		  sizeof_field(odp_pool_stats_t, free_ops) ==
+		  sizeof_field(em_pool_subpool_stats_t, free_ops),
+		  "em_pool_subpool_stats_t.free_ops differs from odp_pool_stats_t.free_ops!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, total_ops) ==
+		  offsetof(em_pool_subpool_stats_t, total_ops) &&
+		  sizeof_field(odp_pool_stats_t, total_ops) ==
+		  sizeof_field(em_pool_subpool_stats_t, total_ops),
+		  "em_pool_subpool_stats_t.total_ops differs from odp_pool_stats_t.total_ops!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, cache_available) ==
+		  offsetof(em_pool_subpool_stats_t, cache_available) &&
+		  sizeof_field(odp_pool_stats_t, cache_available) ==
+		  sizeof_field(em_pool_subpool_stats_t, cache_available),
+		  "em_pool_subpool_stats_t.cache_available differs from that of odp_pool_stats_t!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, cache_alloc_ops) ==
+		  offsetof(em_pool_subpool_stats_t, cache_alloc_ops) &&
+		  sizeof_field(odp_pool_stats_t, cache_alloc_ops) ==
+		  sizeof_field(em_pool_subpool_stats_t, cache_alloc_ops),
+		  "em_pool_subpool_stats_t.cache_alloc_ops differs from that of odp_pool_stats_t!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, cache_free_ops) ==
+		  offsetof(em_pool_subpool_stats_t, cache_free_ops) &&
+		  sizeof_field(odp_pool_stats_t, cache_free_ops) ==
+		  sizeof_field(em_pool_subpool_stats_t, cache_free_ops),
+		  "em_pool_subpool_stats_t.cache_free_ops differs from that of odp_pool_stats_t!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_t, thread) ==
+		  offsetof(em_pool_subpool_stats_t, __internal_use) &&
+		  sizeof_field(odp_pool_stats_t, thread) <=
+		  sizeof_field(em_pool_subpool_stats_t, __internal_use),
+		  "em_pool_subpool_stats_t.__internal_use differs from odp_pool_stats_t.thread");
+
+#define STRUCT_ERR_STR \
+"em_pool_subpool_stats_t.%s differs from odp_pool_stats_t.%s either in size or in offset!\n"
+
+static int check_em_pool_subpool_stats(void)
+{
+	if (sizeof(odp_pool_stats_t) > sizeof(em_pool_subpool_stats_t)) {
+		EM_LOG(EM_LOG_ERR,
+		       "Size of odp_pool_stats_t bigger than that of em_pool_subpool_stats_t\n");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, available) !=
+	    offsetof(em_pool_subpool_stats_t, available) ||
+	    sizeof_field(odp_pool_stats_t, available) !=
+	    sizeof_field(em_pool_subpool_stats_t, available)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "available", "available");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, alloc_ops) !=
+	    offsetof(em_pool_subpool_stats_t, alloc_ops) ||
+	    sizeof_field(odp_pool_stats_t, alloc_ops) !=
+	    sizeof_field(em_pool_subpool_stats_t, alloc_ops)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "alloc_ops", "alloc_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, alloc_fails) !=
+	    offsetof(em_pool_subpool_stats_t, alloc_fails) ||
+	    sizeof_field(odp_pool_stats_t, alloc_fails) !=
+	    sizeof_field(em_pool_subpool_stats_t, alloc_fails)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "alloc_fails", "alloc_fails");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, free_ops) !=
+	    offsetof(em_pool_subpool_stats_t, free_ops) ||
+	    sizeof_field(odp_pool_stats_t, free_ops) !=
+	    sizeof_field(em_pool_subpool_stats_t, free_ops)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "free_ops", "free_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, total_ops) !=
+	    offsetof(em_pool_subpool_stats_t, total_ops) ||
+	    sizeof_field(odp_pool_stats_t, total_ops) !=
+	    sizeof_field(em_pool_subpool_stats_t, total_ops)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "total_ops", "total_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, cache_available) !=
+	    offsetof(em_pool_subpool_stats_t, cache_available) ||
+	    sizeof_field(odp_pool_stats_t, cache_available) !=
+	    sizeof_field(em_pool_subpool_stats_t, cache_available)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "cache_available", "cache_available");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, cache_alloc_ops) !=
+	    offsetof(em_pool_subpool_stats_t, cache_alloc_ops) ||
+	    sizeof_field(odp_pool_stats_t, cache_alloc_ops) !=
+	    sizeof_field(em_pool_subpool_stats_t, cache_alloc_ops)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "cache_alloc_ops", "cache_alloc_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, cache_free_ops) !=
+	    offsetof(em_pool_subpool_stats_t, cache_free_ops) ||
+	    sizeof_field(odp_pool_stats_t, cache_free_ops) !=
+	    sizeof_field(em_pool_subpool_stats_t, cache_free_ops)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "cache_free_ops", "cache_free_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_t, thread) !=
+	    offsetof(em_pool_subpool_stats_t, __internal_use) ||
+	    sizeof_field(odp_pool_stats_t, thread) >
+	    sizeof_field(em_pool_subpool_stats_t, __internal_use)) {
+		EM_LOG(EM_LOG_ERR, STRUCT_ERR_STR, "__internal_use", "thread");
+		return -1;
+	}
+
+	return 0;
+}
+
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	  const em_pool_cfg_t *default_pool_cfg)
@@ -825,6 +1042,10 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	startup_pool_conf_t *startup_pool_conf;
 	bool default_pool_set = false;
 	const int cores = em_core_count();
+
+	/* Return error if em_pool_subpool_stats_t differs from odp_pool_stats_t */
+	if (check_em_pool_subpool_stats())
+		return EM_ERR;
 
 	memset(mpool_tbl, 0, sizeof(mpool_tbl_t));
 	memset(mpool_pool, 0, sizeof(mpool_pool_t));
@@ -1050,7 +1271,7 @@ pool_prealloc(const mpool_elem_t *pool_elem)
 		num_tot += pool_elem->pool_cfg.subpool[i].num;
 
 	do {
-		prealloc_hdr = event_prealloc(pool_elem, size, pool_elem->event_type);
+		prealloc_hdr = event_prealloc(pool_elem, size);
 		if (likely(prealloc_hdr)) {
 			list_add(&evlist, &prealloc_hdr->list_node);
 			num++;
@@ -1182,40 +1403,30 @@ set_align(const em_pool_cfg_t *pool_cfg,
  * pool_create() helper: determine user area size.
  */
 static int
-set_uarea_size(const em_pool_cfg_t *pool_cfg, uint32_t align_offset,
-	       size_t *uarea_req_size/*out*/, size_t *uarea_pad_size/*out*/)
+set_uarea_size(const em_pool_cfg_t *pool_cfg, size_t *uarea_size/*out*/)
 {
-	size_t req_size = 0;
-	size_t pad_size = 0;
+	size_t size = 0;
 	size_t max_size = 0;
 	const odp_pool_capability_t *capa =
 		&em_shm->mpool_tbl.odp_pool_capability;
 
 	if (pool_cfg->user_area.in_use) /* use pool-cfg */
-		req_size = pool_cfg->user_area.size;
+		size = pool_cfg->user_area.size;
 	else /* use cfg-file */
-		req_size = em_shm->opt.pool.user_area_size;
+		size = em_shm->opt.pool.user_area_size;
 
-	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
-		pad_size = req_size;
-		max_size = MIN(capa->pkt.max_uarea_size,
-			       EM_EVENT_USER_AREA_MAX_SIZE);
-	} else if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR) {
-		pad_size = req_size;
-		max_size = MIN(capa->vector.max_uarea_size,
-			       EM_EVENT_USER_AREA_MAX_SIZE);
-	} else if (req_size > 0) {
-		/* EM_EVENT_TYPE_SW: bufs */
-		/* Note: contains align_offset extra space for adjustment */
-		pad_size = ROUND_UP(req_size + align_offset, 32);
-		max_size = EM_EVENT_USER_AREA_MAX_SIZE;
-	}
+	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET)
+		max_size = MIN(capa->pkt.max_uarea_size, EM_EVENT_USER_AREA_MAX_SIZE);
+	else if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR)
+		max_size = MIN(capa->vector.max_uarea_size, EM_EVENT_USER_AREA_MAX_SIZE);
+	else if (size > 0) /* EM_EVENT_TYPE_SW: bufs */
+		max_size = MIN(capa->buf.max_uarea_size, EM_EVENT_USER_AREA_MAX_SIZE);
 
-	if (req_size > max_size)
+	if (size > max_size)
 		return -1;
 
-	*uarea_req_size = req_size;
-	*uarea_pad_size = pad_size;
+	*uarea_size = size;
+
 	return 0;
 }
 
@@ -1246,7 +1457,40 @@ set_pkt_headroom(const em_pool_cfg_t *pool_cfg,
 }
 
 /** Helper to create_subpools() */
+static void set_pool_params_stats(odp_pool_stats_opt_t *param_stats /*out*/,
+				  const odp_pool_stats_opt_t *capa_stats,
+				  const em_pool_stats_opt_t *stats_opt)
+{
+	param_stats->all = 0;
+
+	if (capa_stats->bit.available)
+		param_stats->bit.available = stats_opt->available;
+
+	if (capa_stats->bit.alloc_ops)
+		param_stats->bit.alloc_ops = stats_opt->alloc_ops;
+
+	if (capa_stats->bit.alloc_fails)
+		param_stats->bit.alloc_fails = stats_opt->alloc_fails;
+
+	if (capa_stats->bit.free_ops)
+		param_stats->bit.free_ops = stats_opt->free_ops;
+
+	if (capa_stats->bit.total_ops)
+		param_stats->bit.total_ops = stats_opt->total_ops;
+
+	if (capa_stats->bit.cache_alloc_ops)
+		param_stats->bit.cache_alloc_ops = stats_opt->cache_alloc_ops;
+
+	if (capa_stats->bit.cache_available)
+		param_stats->bit.cache_available = stats_opt->cache_available;
+
+	if (capa_stats->bit.cache_free_ops)
+		param_stats->bit.cache_free_ops = stats_opt->cache_free_ops;
+}
+
+/** Helper to create_subpools() */
 static void set_pool_params_pkt(odp_pool_param_t *pool_params /* out */,
+				const em_pool_cfg_t *pool_cfg,
 				uint32_t size, uint32_t num, uint32_t cache_size,
 				uint32_t align_offset, uint32_t odp_align,
 				uint32_t uarea_size, uint32_t pkt_headroom)
@@ -1285,16 +1529,17 @@ static void set_pool_params_pkt(odp_pool_param_t *pool_params /* out */,
 	pool_params->pkt.cache_size = cache_size;
 
 	/* Pkt pool statistics */
-	pool_params->stats.all = 0;
-	if (em_shm->opt.pool.statistics_enable) {
-		if (capa->pkt.stats.bit.available)
-			pool_params->stats.bit.available = 1;
-		if (capa->pkt.stats.bit.cache_available)
-			pool_params->stats.bit.cache_available = 1;
+	if (pool_cfg->stats_opt.in_use) {
+		set_pool_params_stats(&pool_params->stats, &capa->pkt.stats,
+				      &pool_cfg->stats_opt.opt);
+	} else {
+		set_pool_params_stats(&pool_params->stats, &capa->pkt.stats,
+				      &em_shm->opt.pool.statistics);/*from cnf file*/
 	}
 }
 
 static void set_pool_params_vector(odp_pool_param_t *pool_params /* out */,
+				   const em_pool_cfg_t *pool_cfg,
 				   uint32_t size, uint32_t num,
 				   uint32_t cache_size, uint32_t uarea_size)
 {
@@ -1310,19 +1555,20 @@ static void set_pool_params_vector(odp_pool_param_t *pool_params /* out */,
 	pool_params->vector.cache_size = cache_size;
 
 	/* Vector pool statistics */
-	pool_params->stats.all = 0;
-	if (em_shm->opt.pool.statistics_enable) {
-		if (capa->vector.stats.bit.available)
-			pool_params->stats.bit.available = 1;
-		if (capa->vector.stats.bit.cache_available)
-			pool_params->stats.bit.cache_available = 1;
-	}
+	if (pool_cfg->stats_opt.in_use)
+		set_pool_params_stats(&pool_params->stats, &capa->vector.stats,
+				      &pool_cfg->stats_opt.opt);
+	else
+		set_pool_params_stats(&pool_params->stats, &capa->vector.stats,
+				      &em_shm->opt.pool.statistics);
 }
 
 /** Helper to create_subpools() */
 static void set_pool_params_buf(odp_pool_param_t *pool_params /* out */,
+				const em_pool_cfg_t *pool_cfg,
 				uint32_t size, uint32_t num, uint32_t cache_size,
-				uint32_t odp_align, uint32_t uarea_size)
+				uint32_t align_offset, uint32_t odp_align,
+				uint32_t uarea_size)
 {
 	const odp_pool_capability_t *capa = &em_shm->mpool_tbl.odp_pool_capability;
 
@@ -1330,18 +1576,20 @@ static void set_pool_params_buf(odp_pool_param_t *pool_params /* out */,
 
 	pool_params->type = ODP_POOL_BUFFER;
 	pool_params->buf.num = num;
-	pool_params->buf.size = size + sizeof(event_hdr_t) + uarea_size;
+	pool_params->buf.size = size;
+	if (align_offset)
+		pool_params->buf.size += 32 - align_offset;
 	pool_params->buf.align = odp_align;
+	pool_params->buf.uarea_size = sizeof(event_hdr_t) + uarea_size;
 	pool_params->buf.cache_size = cache_size;
 
 	/* Buf pool statistics */
-	pool_params->stats.all = 0;
-	if (em_shm->opt.pool.statistics_enable) {
-		if (capa->buf.stats.bit.available)
-			pool_params->stats.bit.available = 1;
-		if (capa->buf.stats.bit.cache_available)
-			pool_params->stats.bit.cache_available = 1;
-	}
+	if (pool_cfg->stats_opt.in_use)
+		set_pool_params_stats(&pool_params->stats, &capa->buf.stats,
+				      &pool_cfg->stats_opt.opt);
+	else
+		set_pool_params_stats(&pool_params->stats, &capa->buf.stats,
+				      &em_shm->opt.pool.statistics);
 }
 
 static int
@@ -1361,18 +1609,18 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 		uint32_t cache_size = pool_cfg->subpool[i].cache_size;
 
 		if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
-			set_pool_params_pkt(&pool_params /* out */,
+			set_pool_params_pkt(&pool_params /* out */, pool_cfg,
 					    size, num, cache_size,
 					    align_offset, odp_align,
 					    uarea_size, pkt_headroom);
 		} else if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR) {
-			set_pool_params_vector(&pool_params /* out */,
+			set_pool_params_vector(&pool_params /* out */, pool_cfg,
 					       size, num, cache_size,
 					       uarea_size);
 		} else { /* pool_cfg->event_type == EM_EVENT_TYPE_SW */
-			set_pool_params_buf(&pool_params /* out */,
+			set_pool_params_buf(&pool_params /* out */, pool_cfg,
 					    size, num, cache_size,
-					    odp_align, uarea_size);
+					    align_offset, odp_align, uarea_size);
 		}
 
 		snprintf(pool_name, sizeof(pool_name), "%" PRI_POOL ":%d-%s",
@@ -1395,6 +1643,7 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 		mpool_elem->odp_pool[i] = odp_pool;
 		mpool_elem->size[i] = pool_cfg->subpool[i].size;
 		mpool_elem->num_subpools++; /* created subpools for delete */
+		mpool_elem->stats_opt = pool_params.stats;
 
 		/* odp_pool_print(odp_pool); */
 	}
@@ -1473,22 +1722,18 @@ pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
 	 * Event user area size.
 	 * Pool-specific param overrides config file 'user_area_size' value
 	 */
-	size_t uarea_req_size = 0;
-	size_t uarea_pad_size = 0;
+	size_t uarea_size = 0;
 
-	err = set_uarea_size(&sorted_cfg, align_offset,
-			     &uarea_req_size/*out*/, &uarea_pad_size/*out*/);
+	err = set_uarea_size(&sorted_cfg, &uarea_size/*out*/);
 	if (unlikely(err)) {
 		INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_POOL_CREATE,
-			       "EM-pool:\"%s\" invalid uarea config:\n"
-			       "req.size:%zu => padded uarea size:%zu",
-			       name, uarea_req_size, uarea_pad_size);
+			       "EM-pool:\"%s\" invalid uarea config: req.size:%zu",
+			       name, uarea_size);
 		goto error;
 	}
 
 	/* store the user_area sizes, needed in alloc */
-	mpool_elem->user_area.req_size = uarea_req_size & UINT16_MAX;
-	mpool_elem->user_area.pad_size = uarea_pad_size & UINT16_MAX;
+	mpool_elem->user_area.size = uarea_size & UINT16_MAX;
 
 	/*
 	 * Set the headroom for events in EM packet pools
@@ -1513,7 +1758,7 @@ pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
 	 * Each EM subpool is an ODP pool.
 	 */
 	err = create_subpools(&sorted_cfg, align_offset, odp_align,
-			      uarea_pad_size, pkt_headroom, mpool_elem /*out*/);
+			      (uint32_t)uarea_size, pkt_headroom, mpool_elem /*out*/);
 	if (unlikely(err)) {
 		INTERNAL_ERROR(EM_FATAL(EM_ERR_ALLOC_FAILED),
 			       EM_ESCOPE_POOL_CREATE,
@@ -1545,7 +1790,7 @@ pool_delete(em_pool_t pool)
 	mpool_elem_t *const mpool_elem = pool_elem_get(pool);
 
 	if (unlikely(mpool_elem == NULL || !pool_allocated(mpool_elem)))
-		return EM_ERR_BAD_STATE;
+		return EM_ERR_BAD_ARG;
 
 	for (int i = 0; i < mpool_elem->num_subpools; i++) {
 		odp_pool_t odp_pool = mpool_elem->odp_pool[i];
@@ -1650,7 +1895,7 @@ void pool_info_print(em_pool_t pool)
 	for (int i = 0; i < pool_info.num_subpools; i++) {
 		char subpool_str[42];
 
-		if (em_shm->opt.pool.statistics_enable) {
+		if (pool_info.subpool[i].used || pool_info.subpool[i].free) {
 			snprintf(subpool_str, sizeof(subpool_str),
 				 POOL_INFO_SUBSTR_FMT, i,
 				 pool_info.subpool[i].size,
@@ -1670,4 +1915,142 @@ void pool_info_print(em_pool_t pool)
 	}
 
 	EM_PRINT("\n");
+}
+
+#define POOL_STATS_HDR_STR \
+"EM pool statistics for pool %" PRI_POOL ":\n\n"\
+"Subpool Available Alloc_ops Alloc_fails Free_ops Total_ops Cache_available" \
+" Cache_alloc_ops Cache_free_ops\n"\
+"--------------------------------------------------------------------------" \
+"-------------------------------\n%s"
+
+#define POOL_STATS_LEN 107
+#define POOL_STATS_FMT "%-8u%-10lu%-10lu%-12lu%-9lu%-10lu%-16lu%-16lu%-15lu\n"
+
+void pool_stats_print(em_pool_t pool)
+{
+	em_status_t stat;
+	em_pool_stats_t pool_stats;
+	const em_pool_subpool_stats_t *subpool_stats;
+	int len = 0;
+	int n_print = 0;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+	const int stats_str_len = EM_MAX_SUBPOOLS * POOL_STATS_LEN + 1;
+	char stats_str[stats_str_len];
+
+	if (pool_elem == NULL || !pool_allocated(pool_elem)) {
+		EM_LOG(EM_LOG_ERR, "EM-pool:%" PRI_POOL " invalid\n", pool);
+		return;
+	}
+
+	stat = em_pool_stats(pool, &pool_stats);
+	if (unlikely(stat != EM_OK)) {
+		EM_PRINT("Failed to fetch EM pool statistics\n");
+		return;
+	}
+
+	for (uint32_t i = 0; i < pool_stats.num_subpools; i++) {
+		subpool_stats = &pool_stats.subpool_stats[i];
+		n_print = snprintf(stats_str + len, stats_str_len - len,
+				   POOL_STATS_FMT,
+				   i, subpool_stats->available,
+				   subpool_stats->alloc_ops,
+				   subpool_stats->alloc_fails,
+				   subpool_stats->free_ops,
+				   subpool_stats->total_ops,
+				   subpool_stats->cache_available,
+				   subpool_stats->cache_alloc_ops,
+				   subpool_stats->cache_free_ops);
+
+		/* Not enough space to hold more subpool stats */
+		if (n_print >= stats_str_len - len)
+			break;
+
+		len += n_print;
+	}
+
+	stats_str[len] = '\0';
+	EM_PRINT(POOL_STATS_HDR_STR, pool, stats_str);
+}
+
+#define SUBPOOL_STATS_HDR_STR \
+"EM subpool statistics for pool %" PRI_POOL ":\n\n"\
+"Subpool Available Alloc_ops Alloc_fails Free_ops Total_ops Cache_available" \
+" Cache_alloc_ops Cache_free_ops\n"\
+"--------------------------------------------------------------------------" \
+"-------------------------------\n%s"
+
+void subpools_stats_print(em_pool_t pool, const int subpools[], int num_subpools)
+{
+	int num_stats;
+	em_pool_subpool_stats_t stats[num_subpools];
+	int len = 0;
+	int n_print = 0;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+	const int stats_str_len = num_subpools * POOL_STATS_LEN + 1;
+	char stats_str[stats_str_len];
+
+	if (pool_elem == NULL || !pool_allocated(pool_elem)) {
+		EM_LOG(EM_LOG_ERR, "EM-pool:%" PRI_POOL " invalid\n", pool);
+		return;
+	}
+
+	num_stats = em_pool_subpool_stats(pool, subpools, num_subpools, stats);
+	if (unlikely(!num_stats || num_stats > num_subpools)) {
+		EM_LOG(EM_LOG_ERR, "Failed to fetch subpool statistics\n");
+		return;
+	}
+
+	/* Print subpool stats */
+	for (int i = 0; i < num_stats; i++) {
+		n_print = snprintf(stats_str + len, stats_str_len - len,
+				   POOL_STATS_FMT,
+				   subpools[i], stats[i].available, stats[i].alloc_ops,
+				   stats[i].alloc_fails, stats[i].free_ops,
+				   stats[i].total_ops, stats[i].cache_available,
+				   stats[i].cache_alloc_ops, stats[i].cache_free_ops);
+
+		/* Not enough space to hold more subpool stats */
+		if (n_print >= stats_str_len - len)
+			break;
+
+		len += n_print;
+	}
+
+	stats_str[len] = '\0';
+	EM_PRINT(SUBPOOL_STATS_HDR_STR, pool, stats_str);
+}
+
+void print_pool_elem_info(void)
+{
+	EM_PRINT("\n"
+		 "pool-elem size: %zu B\n",
+		 sizeof(mpool_elem_t));
+
+	EM_DBG("\t\toffset\tsize\n"
+	       "\t\t------\t-----\n"
+	       "event_type:\t%3zu B\t%3zu B\n"
+	       "align_offset:\t%3zu B\t%3zu B\n"
+	       "user_area info:\t%3zu B\t%3zu B\n"
+	       "num_subpools:\t%3zu B\t%3zu B\n"
+	       "size[]:\t\t%3zu B\t%3zu B\n"
+	       "odp_pool[]:\t%3zu B\t%3zu B\n"
+	       "em_pool:\t%3zu B\t%3zu B\n"
+	       "objpool_elem:\t%3zu B\t%3zu B\n"
+	       "stats_opt:\t%3zu B\t%3zu B\n"
+	       "pool_cfg:\t%3zu B\t%3zu B\n"
+	       "name[]:\t\t%3zu B\t%3zu B\n",
+	       offsetof(mpool_elem_t, event_type), sizeof_field(mpool_elem_t, event_type),
+	       offsetof(mpool_elem_t, align_offset), sizeof_field(mpool_elem_t, align_offset),
+	       offsetof(mpool_elem_t, user_area), sizeof_field(mpool_elem_t, user_area),
+	       offsetof(mpool_elem_t, num_subpools), sizeof_field(mpool_elem_t, num_subpools),
+	       offsetof(mpool_elem_t, size), sizeof_field(mpool_elem_t, size),
+	       offsetof(mpool_elem_t, odp_pool), sizeof_field(mpool_elem_t, odp_pool),
+	       offsetof(mpool_elem_t, em_pool), sizeof_field(mpool_elem_t, em_pool),
+	       offsetof(mpool_elem_t, objpool_elem), sizeof_field(mpool_elem_t, objpool_elem),
+	       offsetof(mpool_elem_t, stats_opt), sizeof_field(mpool_elem_t, stats_opt),
+	       offsetof(mpool_elem_t, pool_cfg), sizeof_field(mpool_elem_t, pool_cfg),
+	       offsetof(mpool_elem_t, name), sizeof_field(mpool_elem_t, name));
+
+	       EM_PRINT("\n");
 }

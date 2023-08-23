@@ -40,56 +40,65 @@
 extern "C" {
 #endif
 
-#define EVSTATE__UNDEF                         0
-#define EVSTATE__PREALLOC                      1
-#define EVSTATE__ALLOC                         2
-#define EVSTATE__ALLOC_MULTI                   3
-#define EVSTATE__EVENT_CLONE                   4
-#define EVSTATE__EVENT_REF                     5
-#define EVSTATE__FREE                          6
-#define EVSTATE__FREE_MULTI                    7
-#define EVSTATE__EVENT_VECTOR_FREE             8
-#define EVSTATE__INIT                          9
-#define EVSTATE__INIT_MULTI                   10
-#define EVSTATE__INIT_EXTEV                   11
-#define EVSTATE__INIT_EXTEV_MULTI             12
-#define EVSTATE__UPDATE_EXTEV                 13
-#define EVSTATE__SEND                         14
-#define EVSTATE__SEND__FAIL                   15
-#define EVSTATE__SEND_EGRP                    16
-#define EVSTATE__SEND_EGRP__FAIL              17
-#define EVSTATE__SEND_MULTI                   18
-#define EVSTATE__SEND_MULTI__FAIL             19
-#define EVSTATE__SEND_EGRP_MULTI              20
-#define EVSTATE__SEND_EGRP_MULTI__FAIL        21
-#define EVSTATE__EO_START_SEND_BUFFERED       22
-#define EVSTATE__MARK_SEND                    23
-#define EVSTATE__UNMARK_SEND                  24
-#define EVSTATE__MARK_FREE                    25
-#define EVSTATE__UNMARK_FREE                  26
-#define EVSTATE__MARK_FREE_MULTI              27
-#define EVSTATE__UNMARK_FREE_MULTI            28
-#define EVSTATE__DISPATCH                     29
-#define EVSTATE__DISPATCH_MULTI               30
-#define EVSTATE__DISPATCH_SCHED__FAIL         31
-#define EVSTATE__DISPATCH_LOCAL__FAIL         32
-#define EVSTATE__DEQUEUE                      33
-#define EVSTATE__DEQUEUE_MULTI                34
-#define EVSTATE__TMO_SET_ABS                  35
-#define EVSTATE__TMO_SET_ABS__FAIL            36
-#define EVSTATE__TMO_SET_REL                  37
-#define EVSTATE__TMO_SET_REL__FAIL            38
-#define EVSTATE__TMO_SET_PERIODIC             39
-#define EVSTATE__TMO_SET_PERIODIC__FAIL       40
-#define EVSTATE__TMO_CANCEL                   41
-#define EVSTATE__TMO_ACK                      42
-#define EVSTATE__TMO_ACK__NOSKIP              43
-#define EVSTATE__TMO_ACK__FAIL                44
-#define EVSTATE__TMO_DELETE                   45
-#define EVSTATE__AG_DELETE                    46
-#define EVSTATE__TERM_CORE__QUEUE_LOCAL       47
-#define EVSTATE__TERM                         48
-#define EVSTATE__LAST                         49 /* Must be largest number! */
+/**
+ * @brief ESV API operation IDs
+ */
+typedef enum {
+	EVSTATE__UNDEF = 0, /* Must be first! */
+	EVSTATE__PREALLOC,
+	EVSTATE__ALLOC,
+	EVSTATE__ALLOC_MULTI,
+	EVSTATE__EVENT_CLONE,
+	EVSTATE__EVENT_REF,
+	EVSTATE__FREE,
+	EVSTATE__FREE_MULTI,
+	EVSTATE__EVENT_VECTOR_FREE,
+	EVSTATE__INIT,
+	EVSTATE__INIT_MULTI,
+	EVSTATE__INIT_EXTEV,
+	EVSTATE__INIT_EXTEV_MULTI,
+	EVSTATE__UPDATE_EXTEV,
+	EVSTATE__SEND,
+	EVSTATE__SEND__FAIL,
+	EVSTATE__SEND_EGRP,
+	EVSTATE__SEND_EGRP__FAIL,
+	EVSTATE__SEND_MULTI,
+	EVSTATE__SEND_MULTI__FAIL,
+	EVSTATE__SEND_EGRP_MULTI,
+	EVSTATE__SEND_EGRP_MULTI__FAIL,
+	EVSTATE__EO_START_SEND_BUFFERED,
+	EVSTATE__MARK_SEND,
+	EVSTATE__UNMARK_SEND,
+	EVSTATE__MARK_FREE,
+	EVSTATE__UNMARK_FREE,
+	EVSTATE__MARK_FREE_MULTI,
+	EVSTATE__UNMARK_FREE_MULTI,
+	EVSTATE__DISPATCH,
+	EVSTATE__DISPATCH_MULTI,
+	EVSTATE__DISPATCH_SCHED__FAIL,
+	EVSTATE__DISPATCH_LOCAL__FAIL,
+	EVSTATE__DEQUEUE,
+	EVSTATE__DEQUEUE_MULTI,
+	EVSTATE__TMO_SET_ABS,
+	EVSTATE__TMO_SET_ABS__FAIL,
+	EVSTATE__TMO_SET_REL,
+	EVSTATE__TMO_SET_REL__FAIL,
+	EVSTATE__TMO_SET_PERIODIC,
+	EVSTATE__TMO_SET_PERIODIC__FAIL,
+	EVSTATE__TMO_CANCEL,
+	EVSTATE__TMO_ACK,
+	EVSTATE__TMO_ACK__NOSKIP,
+	EVSTATE__TMO_ACK__FAIL,
+	EVSTATE__TMO_CREATE,
+	EVSTATE__TMO_DELETE,
+	EVSTATE__AG_DELETE,
+	EVSTATE__TERM_CORE__QUEUE_LOCAL,
+	EVSTATE__TERM,
+	EVSTATE__LAST /* Must be last! */
+} esv_apiop_t;
+
+/* esv_apiop_t::EVSTATE__LAST must fit into ev_hdr_state_t::uint8_t api_op */
+COMPILE_TIME_ASSERT(EVSTATE__LAST <= UINT8_MAX, EVSTATE__LAST__TOO_BIG);
 
 /**
  * Init values for the event-state counters.
@@ -99,7 +108,7 @@ extern "C" {
  * when decrementing below '0'.
  */
 /** Initial event generation value */
-#define EVGEN_INIT    ((uint16_t)1)
+#define EVGEN_INIT    ((uint16_t)0x1000)
 /** Max evgen value before resetting to 'EVGEN_INIT' to avoid wrap */
 #define EVGEN_MAX  ((uint16_t)UINT16_MAX - 0x1000)
 /** Initial send count value */
@@ -129,19 +138,15 @@ em_status_t esv_init(void);
  */
 em_event_t evstate_prealloc(const em_event_t event, event_hdr_t *const ev_hdr);
 /**
- * Set the initial event state during em_alloc()
+ * Set the initial event state during em_alloc() / em_event_clone()
  */
-em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr);
+em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr,
+			 const uint16_t api_op);
 /**
  * Set the initial state of multiple events during em_alloc_multi()
  */
 void evstate_alloc_multi(em_event_t ev_tbl[/*in/out*/],
 			 event_hdr_t *const ev_hdr_tbl[], const int num);
-/**
- * Check & update event state during em_event_clone()
- */
-em_event_t evstate_clone(const em_event_t event, event_hdr_t *const ev_hdr);
-
 /**
  * Update event state during em_event_ref()
  */
@@ -259,7 +264,8 @@ void evstate_unmark_send(const em_event_t event, event_hdr_t *const ev_hdr);
  * Wrapper function for evstate_free_revert(..., EVSTATE__UNMARK_FREE) with
  * extra error checks.
  */
-void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr);
+void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr,
+			 const uint16_t api_op);
 
 /**
  * Check & update event state for multiple events during
@@ -270,7 +276,8 @@ void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr);
  * with extra error checks.
  */
 void evstate_unmark_free_multi(const em_event_t ev_tbl[],
-			       event_hdr_t *const ev_hdr_tbl[], const int num);
+			       event_hdr_t *const ev_hdr_tbl[], const int num,
+			       const uint16_t api_op);
 
 #ifdef __cplusplus
 }

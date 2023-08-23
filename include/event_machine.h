@@ -212,6 +212,7 @@ extern "C" {
  * @example timer_test.c
  * performance:
  * @example atomic_processing_end.c
+ * @example bench_event.c
  * @example loop.c
  * @example loop_multircv.c
  * @example loop_refs.c

@@ -324,6 +324,77 @@ static void print_odp_info(void)
 		 odp_version_impl_str());
 }
 
+static void print_mem_info(void)
+{
+	EM_PRINT("EM shared mem size:     %zu B\n"
+		 "EM local mem size:       %zu B (per core)\n",
+		 sizeof(em_shm_t), sizeof(em_locm_t));
+
+	EM_DBG("\nem_locm_t:\t\t\t offset\t   size\n"
+	       "\t\t\t\t ------\t   ----\n"
+	       "current:\t\t\t%5zu B\t%5zu B\n"
+	       "idle_state:\t\t\t%5zu B\t%5zu B\n"
+	       "core_id:\t\t\t%5zu B\t%5zu B\n"
+	       "event_burst_cnt:\t\t%5zu B\t%5zu B\n"
+	       "atomic_group_released:\t\t%5zu B\t%5zu B\n"
+	       "do_input_poll:\t\t\t%5zu B\t%5zu B\n"
+	       "do_output_drain:\t\t%5zu B\t%5zu B\n"
+	       "is_external_thr:\t\t%5zu B\t%5zu B\n"
+	       "dispatch_cnt:\t\t\t%5zu B\t%5zu B\n"
+	       "dispatch_last_run:\t\t%5zu B\t%5zu B\n"
+	       "poll_drain_dispatch_cnt:\t%5zu B\t%5zu B\n"
+	       "poll_drain_dispatch_last_run:\t%5zu B\t%5zu B\n"
+	       "local_queues:\t\t\t%5zu B\t%5zu B\n"
+	       "start_eo_elem:\t\t\t%5zu B\t%5zu B\n"
+	       "error_count:\t\t\t%5zu B\t%5zu B\n"
+	       "log_fn:\t\t\t\t%5zu B\t%5zu B\n"
+	       "sync_api:\t\t\t%5zu B\t%5zu B\n"
+	       "debug_ts[]:\t\t\t%5zu B\t%5zu B\n"
+	       "output_queue_track:\t\t%5zu B\t%5zu B\n"
+	       "end:\t\t\t\t%5zu B\t%5zu B\n\n",
+	       offsetof(em_locm_t, current),
+	       sizeof_field(em_locm_t, current),
+	       offsetof(em_locm_t, idle_state),
+	       sizeof_field(em_locm_t, idle_state),
+	       offsetof(em_locm_t, core_id),
+	       sizeof_field(em_locm_t, core_id),
+	       offsetof(em_locm_t, event_burst_cnt),
+	       sizeof_field(em_locm_t, event_burst_cnt),
+	       offsetof(em_locm_t, atomic_group_released),
+	       sizeof_field(em_locm_t, atomic_group_released),
+	       offsetof(em_locm_t, do_input_poll),
+	       sizeof_field(em_locm_t, do_input_poll),
+	       offsetof(em_locm_t, do_output_drain),
+	       sizeof_field(em_locm_t, do_output_drain),
+	       offsetof(em_locm_t, is_external_thr),
+	       sizeof_field(em_locm_t, is_external_thr),
+	       offsetof(em_locm_t, dispatch_cnt),
+	       sizeof_field(em_locm_t, dispatch_cnt),
+	       offsetof(em_locm_t, dispatch_last_run),
+	       sizeof_field(em_locm_t, dispatch_last_run),
+	       offsetof(em_locm_t, poll_drain_dispatch_cnt),
+	       sizeof_field(em_locm_t, poll_drain_dispatch_cnt),
+	       offsetof(em_locm_t, poll_drain_dispatch_last_run),
+	       sizeof_field(em_locm_t, poll_drain_dispatch_last_run),
+	       offsetof(em_locm_t, local_queues),
+	       sizeof_field(em_locm_t, local_queues),
+	       offsetof(em_locm_t, start_eo_elem),
+	       sizeof_field(em_locm_t, start_eo_elem),
+	       offsetof(em_locm_t, error_count),
+	       sizeof_field(em_locm_t, error_count),
+	       offsetof(em_locm_t, log_fn),
+	       sizeof_field(em_locm_t, log_fn),
+	       offsetof(em_locm_t, sync_api),
+	       sizeof_field(em_locm_t, sync_api),
+	       offsetof(em_locm_t, debug_ts),
+	       sizeof_field(em_locm_t, debug_ts),
+	       offsetof(em_locm_t, output_queue_track),
+	       sizeof_field(em_locm_t, output_queue_track),
+	       offsetof(em_locm_t, end),
+	       sizeof_field(em_locm_t, end)
+	);
+}
+
 /**
  * Print information about EM & the environment
  */
@@ -348,9 +419,13 @@ void print_em_info(void)
 
 	print_odp_info();
 	print_cpu_arch_info();
+	print_mem_info();
 	print_core_map_info();
 	print_queue_capa();
+	print_queue_elem_info();
 	queue_group_info_print_all();
 	em_pool_info_print_all();
+	print_pool_elem_info();
+	print_ag_elem_info();
 	print_event_info();
 }

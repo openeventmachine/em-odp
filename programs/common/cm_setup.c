@@ -52,7 +52,6 @@
 
 #include <event_machine.h>
 #include <event_machine/helper/event_machine_helper.h>
-#include <event_machine/platform/env/environment.h>
 
 #include "cm_setup.h"
 #include "cm_pool_config.h"
@@ -331,10 +330,12 @@ int cm_setup(int argc, char *argv[])
 	init_appl_conf(&parsed, appl_conf);
 
 	/*
-	 * Create packet-I/O, if requested
+	 * Create and start packet-I/O, if requested
 	 */
-	if (appl_conf->pktio.if_count > 0)
+	if (appl_conf->pktio.if_count > 0) {
 		create_pktio(appl_conf/*in/out*/, &cpu_conf);
+		pktio_start();
+	}
 
 	/*
 	 * Signal handler for SIGCHLD in process-per-core mode
@@ -820,12 +821,8 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 	env_atomic64_inc(&sync->enter_count);
 	do {
 		em_dispatch(STARTUP_DISPATCH_ROUNDS);
-		if (core_id == 0) {
-			/* Start pktio if configured */
-			if (appl_conf->pktio.if_count > 0)
-				pktio_start();
+		if (core_id == 0)
 			env_atomic64_inc(&sync->enter_count);
-		}
 	} while (env_atomic64_get(&sync->enter_count) <= cores);
 }
 
@@ -937,12 +934,8 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
 	env_atomic64_inc(&sync->enter_count);
 	do {
 		em_dispatch(STARTUP_DISPATCH_ROUNDS);
-		if (core_id == 0) {
-			/* Start pktio if configured */
-			if (appl_conf->pktio.if_count > 0)
-				pktio_start();
+		if (core_id == 0)
 			env_atomic64_inc(&sync->enter_count);
-		}
 	} while (env_atomic64_get(&sync->enter_count) <= 2 * cores);
 }
 

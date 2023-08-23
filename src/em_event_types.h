@@ -45,24 +45,14 @@ COMPILE_TIME_ASSERT(sizeof(em_event_t) == sizeof(odp_event_t),
 		    EM_EVENT_SIZE_MISMATCH);
 
 /**
- * @def PKT_USERPTR_MAGIC_NBR
+ * @def USER_FLAG_SET
  *
- * Magic number used to detect whether the EM event-header has been initialized
- * by EM in events based on odp-pkt-buffers.
+ * Used to detect whether the event's event-header has been initialized by EM.
  *
- * Set the odp-pkt user-ptr to this magic number to be able to recognize
- * pkt-events that EM has created vs. pkts from pkt-input that needs their
- * ev-hdrs to be initialized before further EM processing.
- *
- *	if (odp_packet_user_ptr(odp_pkt) != PKT_USERPTR_MAGIC_NBR) {
- *		// Pkt from outside of EM, need to init ev_hdr
- *		odp_packet_user_ptr_set(odp_pkt, PKT_USERPTR_MAGIC_NBR);
- *		init_ev_hdr('ev_hdr in the user-area of the odp-pkt');
- *		...
- *	}
+ * Set the odp-pkt/vector user-flag to be able to recognize events that EM  has
+ * created vs. events from pkt-input that needs their ev-hdrs to be initialized
+ * before further EM processing.
  */
-#define PKT_USERPTR_MAGIC_NBR ((void *)(intptr_t)0xA5A5)
-
 #define USER_FLAG_SET 1
 
 /**
@@ -112,7 +102,7 @@ COMPILE_TIME_ASSERT(sizeof(stash_entry_t) == sizeof(uint64_t),
 /**
  * Event-state counters: 'evgen', 'ref_cnt' and 'send_cnt'.
  *
- * Updated as one single atomic var via 'evstate_cnt_t::u64'.
+ * Atomically updated as one single var via 'evstate_cnt_t::u64'.
  */
 typedef union ODP_ALIGNED(sizeof(uint64_t)) {
 	uint64_t u64; /* updated atomically in the event-hdr */
@@ -129,32 +119,41 @@ COMPILE_TIME_ASSERT(sizeof(evstate_cnt_t) == sizeof(uint64_t),
 		    EVSTATE_CNT_T_SIZE_ERROR);
 
 /**
- * Event-state information.
- * Not atomically updated (but evstate_cnt_t is updated atomically)
+ * Event state information, updated on valid state transitions.
+ * "Best effort" update, i.e. atomic update of state is not
+ * guaranteed in invalid simultaneous state updates.
+ *
+ * Contains the previously known good state and will be
+ * printed when detecting an invalid state transition.
  */
-typedef struct {
-	/**
-	 * Event state, updated on valid state trasitions.
-	 * "Best effort" update, i.e. atomic update of state not
-	 * guaranteed in invalid simultaneous state updates.
-	 *
-	 * Contains the previously known good state and will be
-	 * printed when detecting an invalid state transition.
-	 */
-	em_eo_t eo;
-	em_queue_t queue;
-	/**
-	 * EM API operation ID.
-	 * Identifies the previously called API func that altered state
-	 */
-	uint16_t api_op;
-	/** EM core that called API('api_op') */
-	uint16_t core;
+typedef struct ODP_PACKED {
 	/**
 	 * First 'word' of the event payload as seen
 	 * at the time of the previous state update.
 	 */
 	uint32_t payload_first;
+
+	/**
+	 * EO-index
+	 *
+	 * Obtained from the EO with eo_hdl2idx(eo) to save hdr space.
+	 */
+	int16_t eo_idx;
+
+	/**
+	 * Queue-index
+	 *
+	 * Obtained from the queue with queue_hdl2idx(queue) to save hdr space
+	 */
+	int16_t queue_idx;
+
+	/**
+	 * EM API operation ID.
+	 * Identifies the previously called API func that altered state
+	 */
+	uint8_t api_op;
+	/** EM core that called API('api_op') */
+	uint8_t core;
 } ev_hdr_state_t;
 
 /**
@@ -164,32 +163,55 @@ typedef struct {
  */
 typedef struct event_hdr {
 	/**
-	 * Event State Verification (ESV): event state data
+	 * Event State Verification (ESV) counters.
+	 *
+	 * Together the evstate_cnt_t counters (evgen, ref_cnt
+	 * and send_cnt) can be used to detect invalid states
+	 * and operations on the event, e.g.:
+	 * double-free, double-send, send-after-free,
+	 * free-after-send, usage-after-output,
+	 * usage-after-timer-tmo-set/ack/cancel/delete etc.
+	 */
+	evstate_cnt_t state_cnt;
+
+	/**
+	 * Event State Verification (ESV) state.
+	 *
+	 * Event state, updated on valid state transitions.
+	 * "Best effort" update, i.e. atomic update not
+	 * guaranteed in invalid simultaneous state-updates.
+	 *
+	 * Contains the previously known good state and will be
+	 * printed when detecting an invalid state transition.
+	 */
+	ev_hdr_state_t state;
+
+	/**
+	 * Event flags
 	 */
 	union {
-		uint8_t u8[32];
+		uint16_t all;
 		struct {
 			/**
-			 * Together the evstate_cnt_t counters (evgen, ref_cnt
-			 * and send_cnt) can be used to detect invalid states
-			 * and operations on the event, e.g.:
-			 * double-free, double-send, send-after-free,
-			 * free-after-send, usage-after-output,
-			 * usage-after-timer-tmo-set/ack/cancel/delete etc.
+			 * Indicate that this event has (or had) references and
+			 * some of the ESV checks must be omitted (evgen).
+			 * Will be set for the whole lifetime of the event.
 			 */
-			evstate_cnt_t state_cnt;
-
+			uint16_t refs_used : 1;
 			/**
-			 * Event state, updated on valid state transitions.
-			 * "Best effort" update, i.e. atomic update not
-			 * guaranteed in invalid simultaneous state-updates.
-			 *
-			 * Contains the previously known good state and will be
-			 * printed when detecting an invalid state transition.
+			 * Indicate that this event is used as tmo indication.
+			 * See em_tmo_type_t. Initially 0 = EM_TMO_TYPE_NONE
 			 */
-			ev_hdr_state_t state;
+			uint16_t tmo_type  : 2;
+			/** reserved bits */
+			uint16_t rsvd      : 13;
 		};
-	};
+	} flags;
+
+	/**
+	 * Event type, contains major and minor parts
+	 */
+	em_event_type_t event_type;
 
 	/**
 	 * Event handle (this event)
@@ -202,26 +224,28 @@ typedef struct event_hdr {
 	uint32_t event_size;
 
 	/**
-	 * Event type, contains major and minor parts
+	 * Event group generation
 	 */
-	em_event_type_t event_type;
+	int32_t egrp_gen;
 
 	/**
-	 * Event flags
+	 * Event Group handle (cannot be used by event references)
 	 */
+	em_event_group_t egrp;
+
 	union {
-		uint16_t all;
+		uint32_t all;
 		struct {
-			/**
-			 * Indicate that this event has (or had) references and
-			 * some of the ESV checks must be omitted (evgen).
-			 * Will be set for the whole lifetime of event.
-			 */
-			uint16_t refs_used : 1;
-			/** reserved bits */
-			uint16_t rsvd      : 15;
+			/** is the user area id set? */
+			uint32_t isset_id : 1;
+			/** is the uarea initialized? */
+			uint32_t isinit   : 1;
+			/** requested size (bytes), <= EM_EVENT_USER_AREA_MAX_SIZE */
+			uint32_t size     : 14;
+			/** user area id */
+			uint32_t id       : 16;
 		};
-	} flags;
+	} user_area;
 
 	/**
 	 * Payload alloc alignment offset/push into free area of ev_hdr.
@@ -232,34 +256,11 @@ typedef struct event_hdr {
 	uint16_t align_offset;
 
 	/**
-	 * Event group generation
+	 * Holds the tmo handle in case event is used as timeout indication.
+	 * Only valid if flags.tmo_type is not EM_TMO_TYPE_NONE (0).
+	 * Initialized only when used as timeout indication by timer code.
 	 */
-	int32_t egrp_gen;
-
-	/**
-	 * Event Group handle (cannot be used by event references)
-	 */
-	em_event_group_t egrp;
-
-	/* --- CACHE LINE on systems with a 64B cache line size --- */
-
-	union {
-		uint64_t all;
-		struct {
-			/** requested size (bytes) */
-			uint64_t req_size : 16;
-			/** + padding, incl. space for align_offset (bytes) */
-			uint64_t pad_size : 16;
-			/** user area id */
-			uint64_t id       : 16;
-			/** is the user area id set? */
-			uint64_t isset_id : 1;
-			/** is the uarea initialized? */
-			uint64_t isinit   : 1;
-			/** reserved bits */
-			uint64_t rsvd     : 14;
-		};
-	} user_area;
+	em_tmo_t tmo;
 
 	/**
 	 * End of event header data,
@@ -269,25 +270,13 @@ typedef struct event_hdr {
 
 	/*
 	 * ! EMPTY SPACE !
-	 * Events based on odp_buffer_t only:
-	 *   - space for alignment adjustments as set by
-	 *      a) config file option - 'pool.align_offset' or
-	 *      b) pool config param  - 'em_pool_cfg_t:align_offset{}'
-	 *   - space available:
-	 *         sizeof(event_hdr_t) - offsetof(event_hdr_t, end_hdr_data)
-	 *   - events based on odp_packet_t have their event header in the
-	 *     odp pkt user area and alignment is adjusted in the pkt headroom.
-	 *
-	 * Note: If the event user area is enabled then (for bufs) it will start
-	 *       after the event header and the align offset is not included
-	 *       in the event header but instead starts after the user area.
 	 */
 
-	void *end[0] ODP_ALIGNED(64); /* pad to next 64B boundary */
+	void *end[0] ODP_ALIGNED(8); /* pad to next 8B boundary */
 } event_hdr_t;
 
-COMPILE_TIME_ASSERT(sizeof(event_hdr_t) <= 128, EVENT_HDR_SIZE_ERROR);
-COMPILE_TIME_ASSERT(sizeof(event_hdr_t) % 32 == 0, EVENT_HDR_SIZE_ERROR2);
+COMPILE_TIME_ASSERT(sizeof(event_hdr_t) <= 64, EVENT_HDR_SIZE_ERROR);
+COMPILE_TIME_ASSERT(sizeof(event_hdr_t) % sizeof(uint64_t) == 0, EVENT_HDR_SIZE_ERROR2);
 
 /**
  * Event header used only when pre-allocating the pool during pool creation to

@@ -28,4 +28,4 @@ Test Queues Unscheduled
     [Documentation]    queues_unscheduled -c ${CORE_MASK} -${APPLICATION_MODE}
     [TAGS]    ${CORE_MASK}    ${APPLICATION_MODE}
 
-    Run EM-ODP Test    sleep_time=180    regex_match=${REGEX_MATCH}
+    Run EM-ODP Test    sleep_time=200    regex_match=${REGEX_MATCH}

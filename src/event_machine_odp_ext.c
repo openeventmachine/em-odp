@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2021, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,8 @@ odp_queue_t em_odp_queue_odp(em_queue_t queue)
 {
 	const queue_elem_t *queue_elem = queue_elem_get(queue);
 
-	if (unlikely(queue_elem == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_ODP_EXT,
+	if (EM_CHECK_LEVEL > 0 && unlikely(queue_elem == NULL)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
 			       "queue_elem ptr NULL!");
 		return ODP_QUEUE_INVALID;
 	}
@@ -55,11 +55,11 @@ em_queue_t em_odp_queue_em(odp_queue_t queue)
 	const queue_elem_t *queue_elem = odp_queue_context(queue);
 
 	/* verify that the odp context is an EM queue elem */
-	if (unlikely(!queue_elem ||
-		     queue_elem->valid_check != QUEUE_ELEM_VALID))
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(!queue_elem || queue_elem->valid_check != QUEUE_ELEM_VALID))
 		return EM_QUEUE_UNDEF;
 
-	return queue_elem->queue;
+	return (em_queue_t)(uintptr_t)queue_elem->queue;
 }
 
 /**
@@ -178,8 +178,8 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 	queue_setup_common(q_elem, &setup);
 	/* Set queue-elem fields for a pktin event queue */
 	q_elem->odp_queue = odp_queue;
-	q_elem->is_pktin = true;
-	q_elem->scheduled = EM_TRUE;
+	q_elem->flags.is_pktin = true;
+	q_elem->flags.scheduled = true;
 	q_elem->state = EM_QUEUE_STATE_INIT;
 
 	/*
@@ -271,13 +271,16 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
 {
 	const mpool_elem_t *pool_elem = pool_elem_get(pool);
 
-	if (unlikely(!pool_elem || !pool_allocated(pool_elem) ||
-		     !odp_pools || num <= 0)) {
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(!pool_elem || !odp_pools || num <= 0)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
 			       "Inv.args: pool:%" PRI_POOL " odp_pools:%p num:%d",
 			       pool, odp_pools, num);
 		return 0;
 	}
+	if (EM_CHECK_LEVEL >= 2 && unlikely(!pool_allocated(pool_elem)))
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_ODP_EXT,
+			       "Pool:%" PRI_POOL " not created", pool);
 
 	int num_subpools = MIN(num, pool_elem->num_subpools);
 
@@ -290,7 +293,7 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
 
 em_pool_t em_odp_pool2em(odp_pool_t odp_pool)
 {
-	if (unlikely(odp_pool == ODP_POOL_INVALID)) {
+	if (EM_CHECK_LEVEL > 0 && unlikely(odp_pool == ODP_POOL_INVALID)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
 			       "Inv.arg: odp_pool invalid");
 		return EM_POOL_UNDEF;
@@ -299,50 +302,48 @@ em_pool_t em_odp_pool2em(odp_pool_t odp_pool)
 	return pool_odp2em(odp_pool);
 }
 
-int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue)
+static inline int
+pkt_enqueue_scheduled(const odp_packet_t pkt_tbl[/*num*/], int num,
+		      const queue_elem_t *q_elem)
 {
-	if (unlikely(!pkt_tbl || num <= 0))
-		return 0;
-
-	queue_elem_t *const q_elem = queue_elem_get(queue);
 	odp_event_t odp_event_tbl[num];
-	int sent = 0;
 
 	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
 
-	if (q_elem != NULL && q_elem->scheduled) {
+	/*
+	 * Enqueue the events into a scheduled em-odp queue.
+	 * No need to init the ev-hdrs - init is done in dispatch.
+	 */
+	int sent = odp_queue_enq_multi(q_elem->odp_queue,
+				       odp_event_tbl, num);
+	if (unlikely(sent < num)) {
+		sent = unlikely(sent < 0) ? 0 : sent;
+		odp_packet_free_multi(&pkt_tbl[sent], num - sent);
 		/*
-		 * Enqueue the events into a scheduled em-odp queue.
-		 * No need to init the ev-hdrs - init is done in dispatch.
+		 * Event state checking: No need to adjust the event state
+		 * since the events were never enqueued into EM.
 		 */
-		sent = odp_queue_enq_multi(q_elem->odp_queue,
-					   odp_event_tbl, num);
-	} else {
-		em_event_t event_tbl[num];
-		event_hdr_t *evhdr_tbl[num];
-
-		events_odp2em(odp_event_tbl, event_tbl/*out*/, num);
-
-		/* Init the event-hdrs for incoming non-scheduled pkts */
-		event_init_pkt_multi(pkt_tbl, event_tbl/*in/out*/,
-				     evhdr_tbl/*out*/, num, true /*is_extev*/);
-
-		if (q_elem == NULL) {
-			/* Send directly out via event chaining */
-			if (likely(queue_external(queue)))
-				sent = send_chaining_multi(event_tbl, num, queue);
-		} else if (q_elem->type == EM_QUEUE_TYPE_UNSCHEDULED) {
-			/* Enqueue into an unscheduled em-odp queue */
-			sent = odp_queue_enq_multi(q_elem->odp_queue,
-						   odp_event_tbl, num);
-		} else if (q_elem->type ==  EM_QUEUE_TYPE_LOCAL) {
-			/* Send into an local em-odp queue */
-			sent = send_local_multi(event_tbl, num, q_elem);
-		} else if (q_elem->type ==  EM_QUEUE_TYPE_OUTPUT) {
-			/* Send directly out via an output em-odp queue */
-			sent = send_output_multi(event_tbl, num, q_elem);
-		}
 	}
+
+	return sent;
+}
+
+static inline int
+pkt_enqueue_local(const odp_packet_t pkt_tbl[/*num*/], int num,
+		  const queue_elem_t *q_elem)
+{
+	odp_event_t odp_event_tbl[num];
+	em_event_t event_tbl[num];
+
+	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
+
+	events_odp2em(odp_event_tbl, event_tbl/*out*/, num);
+
+	/*
+	 * Send into an local em-odp queue.
+	 * No need to init the ev-hdrs - init is done in dispatch.
+	 */
+	int sent = send_local_multi(event_tbl, num, q_elem);
 
 	if (unlikely(sent < num)) {
 		sent = unlikely(sent < 0) ? 0 : sent;
@@ -356,14 +357,156 @@ int pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue)
 	return sent;
 }
 
+static inline int
+pkt_enqueue_chaining_out(const odp_packet_t pkt_tbl[/*num*/], int num,
+			 em_queue_t queue)
+{
+	odp_event_t odp_event_tbl[num];
+	em_event_t event_tbl[num];
+	event_hdr_t *evhdr_tbl[num];
+	int sent = 0;
+
+	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
+
+	events_odp2em(odp_event_tbl, event_tbl/*out*/, num);
+
+	/* Init the event-hdrs for incoming non-scheduled pkts */
+	event_init_pkt_multi(pkt_tbl, event_tbl/*in/out*/,
+			     evhdr_tbl/*out*/, num, true /*is_extev*/);
+
+	/* Send directly out via event chaining */
+	if (likely(queue_external(queue)))
+		sent = send_chaining_multi(event_tbl, num, queue);
+
+	if (unlikely(sent < num)) {
+		sent = unlikely(sent < 0) ? 0 : sent;
+		em_free_multi(&event_tbl[sent], num - sent);
+	}
+
+	return sent;
+}
+
+static inline int
+pkt_enqueue_unscheduled(const odp_packet_t pkt_tbl[/*num*/], int num,
+			const queue_elem_t *q_elem)
+{
+	odp_event_t odp_event_tbl[num];
+	em_event_t event_tbl[num];
+	event_hdr_t *evhdr_tbl[num];
+
+	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
+
+	events_odp2em(odp_event_tbl, event_tbl/*out*/, num);
+
+	/* Init the event-hdrs for incoming non-scheduled pkts */
+	event_init_pkt_multi(pkt_tbl, event_tbl/*in/out*/,
+			     evhdr_tbl/*out*/, num, true /*is_extev*/);
+
+	/* Enqueue into an unscheduled em-odp queue */
+	int sent = odp_queue_enq_multi(q_elem->odp_queue, odp_event_tbl, num);
+
+	if (unlikely(sent < num)) {
+		sent = unlikely(sent < 0) ? 0 : sent;
+		em_free_multi(&event_tbl[sent], num - sent);
+	}
+
+	return sent;
+}
+
+static inline int
+pkt_enqueue_output(const odp_packet_t pkt_tbl[/*num*/], int num,
+		   queue_elem_t *const q_elem)
+{
+	odp_event_t odp_event_tbl[num];
+	em_event_t event_tbl[num];
+	event_hdr_t *evhdr_tbl[num];
+
+	odp_packet_to_event_multi(pkt_tbl, odp_event_tbl/*out*/, num);
+
+	events_odp2em(odp_event_tbl, event_tbl/*out*/, num);
+
+	/* Init the event-hdrs for incoming non-scheduled pkts */
+	event_init_pkt_multi(pkt_tbl, event_tbl/*in/out*/,
+			     evhdr_tbl/*out*/, num, true /*is_extev*/);
+
+	/* Send directly out via an output em-odp queue */
+	int sent = send_output_multi(event_tbl, num, q_elem);
+
+	if (unlikely(sent < num)) {
+		sent = unlikely(sent < 0) ? 0 : sent;
+		em_free_multi(&event_tbl[sent], num - sent);
+	}
+
+	return sent;
+}
+
+int em_odp_pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t queue)
+{
+	if (unlikely(!pkt_tbl || num <= 0))
+		return 0;
+
+	queue_elem_t *const q_elem = queue_elem_get(queue);
+
+	/* Queue not in this EM instance, send directly out via event chaining */
+	if (!q_elem)
+		return pkt_enqueue_chaining_out(pkt_tbl, num, queue);
+
+	if (q_elem->flags.scheduled)
+		return pkt_enqueue_scheduled(pkt_tbl, num, q_elem);
+
+	if (q_elem->type == EM_QUEUE_TYPE_LOCAL)
+		return pkt_enqueue_local(pkt_tbl, num, q_elem);
+
+	if (q_elem->type == EM_QUEUE_TYPE_UNSCHEDULED)
+		return pkt_enqueue_unscheduled(pkt_tbl, num, q_elem);
+
+	if (q_elem->type ==  EM_QUEUE_TYPE_OUTPUT)
+		return pkt_enqueue_output(pkt_tbl, num, q_elem);
+
+	/* No supported queue type, drop all pkts */
+	odp_packet_free_multi(pkt_tbl, num);
+	/*
+	 * Event state checking: No need to adjust the event state
+	 * since the pkts/events were neither initialized nor enqueued into EM.
+	 */
+	return 0;
+}
+
 odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group)
 {
 	const queue_group_elem_t *qgrp_elem =
 		queue_group_elem_get(queue_group);
 
-	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
-			EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
-			"Invalid queue group:%" PRI_QGRP "", queue_group);
+	if (unlikely(EM_CHECK_LEVEL > 0 && !qgrp_elem)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,
+			       "Invalid queue group:%" PRI_QGRP "", queue_group);
+		return ODP_SCHED_GROUP_INVALID;
+	}
+	if (unlikely(EM_CHECK_LEVEL >= 2 && !queue_group_allocated(qgrp_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_ODP_EXT,
+			       "Queue group:%" PRI_QGRP " not created", queue_group);
+		return ODP_SCHED_GROUP_INVALID;
+	}
 
 	return qgrp_elem->odp_sched_group;
+}
+
+odp_timer_pool_t em_odp_timer2odp(em_timer_t tmr)
+{
+	unsigned int i = ((unsigned int)((uintptr_t)(tmr) - 1)); /* TMR_H2I */
+
+	if (unlikely(EM_CHECK_LEVEL > 0 && i >= EM_ODP_MAX_TIMERS))
+		return ODP_TIMER_POOL_INVALID;
+
+	const timer_storage_t *const tmrs = &em_shm->timers;
+
+	return tmrs->timer[i].odp_tmr_pool;
+}
+
+odp_timer_t em_odp_tmo2odp(em_tmo_t tmo)
+{
+	if (unlikely(EM_CHECK_LEVEL > 0 && tmo == EM_TMO_UNDEF))
+		return ODP_TIMER_INVALID;
+
+	return tmo->odp_timer;
 }

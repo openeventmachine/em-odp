@@ -10,6 +10,7 @@
 
 #define OPTPARSE_IMPLEMENTATION
 #include "misc/optparse.h"
+#include <errno.h>
 
 /* Maximum number of bytes (including terminating null byte) for an EM CLI command */
 #define MAX_CMD_LEN 20
@@ -237,6 +238,223 @@ static void cmd_em_pool_print(int argc, char *argv[])
 			break;
 		case 'h':
 			print_em_pool_help();
+			break;
+		case '?':
+			odph_cli_log("Error: %s\n", options.errmsg);
+			return;
+		default:
+			odph_cli_log("Unknown Error\n");
+			return;
+		}
+	}
+}
+
+static void print_em_pool_stats(em_pool_t pool, const char *pool_name)
+{
+	if (pool == EM_POOL_UNDEF) {
+		if (pool_name)
+			odph_cli_log("Error: can't find EM pool %s.\n", pool_name);
+		else
+			odph_cli_log("Error: can't find EM pool %" PRI_POOL "\n", pool);
+		return;
+	}
+
+	core_log_fn_set(cli_log);
+	pool_stats_print(pool);
+	core_log_fn_set(NULL);
+}
+
+static int str_to_long(const char *str, long *num/*out*/, int base)
+{
+	char *endptr;
+
+	errno = 0;
+	*num = strtol(str, &endptr, base);
+	if (errno) {
+		odph_cli_log("strtol failed\n");
+		return -1;
+	}
+
+	if (endptr == str) {
+		odph_cli_log("No digit is found in given str: %s\n", str);
+		return -1;
+	}
+
+	if (*endptr != '\0')
+		odph_cli_log("Extra characters not used in str: %s\n", endptr);
+
+	return 0;
+}
+
+/* Parse argument for subpools option -s or --subpools */
+static int subpools_str_to_id(char *str, int *num_subpools/*out*/, int *subpools/*out*/)
+{
+	int i;
+	long id;
+	const char *token;
+	char *saveptr;
+	const char *delim = "[,]";
+
+	/* Only one subpool is given */
+	if (!strstr(str, "[")) {
+		*num_subpools = 1;
+
+		if (str_to_long(str, &id, 10))
+			return -1;
+		subpools[0] = (int)id;
+		return 0;
+	}
+
+	token = strtok_r(str, delim, &saveptr);
+	if (token == NULL) {
+		odph_cli_log("Invalid option argument: %s\n", str);
+		return -1;
+	}
+	if (str_to_long(token, &id, 10))
+		return -1;
+	subpools[0] = (int)id;
+
+	for (i = 1; i < EM_MAX_SUBPOOLS; i++) {
+		token = strtok_r(NULL, delim, &saveptr);
+		if (token == NULL)
+			break;
+
+		if (str_to_long(token, &id, 10))
+			return -1;
+		subpools[i] = (int)id;
+	}
+
+	if (token/*Not break from loop*/ && strtok_r(NULL, delim, &saveptr)) {
+		odph_cli_log("Too many subpools, maximum number is: %d\n", EM_MAX_SUBPOOLS);
+		return -1;
+	}
+
+	*num_subpools = i;
+	return 0;
+}
+
+static void print_subpools_stats(char *arg_subpools)
+{
+	long pool_id;
+	char *saveptr;
+	em_pool_t pool;
+	int num_subpools;
+	char *str_subpools;
+	const char *pool_str;
+	int subpools[EM_MAX_SUBPOOLS];
+	const char *delim = ":";
+
+	pool_str = strtok_r(arg_subpools, delim, &saveptr);
+	if (pool_str == NULL) {
+		odph_cli_log("Invalid optarg: %s. Pool and subpool IDs must be separated with ':'\n",
+			     arg_subpools);
+		return;
+	}
+
+	if (str_to_long(pool_str, &pool_id, 16))
+		return;
+
+	/*pool_id = 0 --> EM_POOL_UNDEF*/
+	if (!pool_id) {
+		odph_cli_log("Invalid pool id: %d\n", pool_id);
+		return;
+	}
+	pool = (em_pool_t)(uintptr_t)pool_id;
+
+	str_subpools = strtok_r(NULL, delim, &saveptr);
+	if (str_subpools == NULL) {
+		odph_cli_log("Invalid option argument: %s (subpool IDs are missing)\n",
+			     arg_subpools);
+		return;
+	}
+
+	if (subpools_str_to_id(str_subpools, &num_subpools, subpools))
+		return;
+
+	core_log_fn_set(cli_log);
+	subpools_stats_print(pool, subpools, num_subpools);
+	core_log_fn_set(NULL);
+}
+
+static void print_em_pool_stats_help(void)
+{
+	const char *usage = "Usage: em_pool_stats [OPTION]\n"
+			    "Print EM pool statistics\n"
+			    "\n"
+			    "Options:\n"
+			    "  -i, --id <pool id>\tPrint statistics of <pool id>\n"
+			    "  -n, --name <pool name>\tPrint statistics of <pool name>\n"
+			    "  -s, --subpools <pool:[subpool ids]>\tPrint statistics of subpools\n"
+			    "  -h, --help\tDisplay this help\n";
+
+	odph_cli_log(usage);
+}
+
+static void cmd_em_pool_stats(int argc, char *argv[])
+{
+	/* Command em_pool_stats takes maximum 2 arguments */
+	const int max_args = 2;
+
+	if (argc == 0) {
+		odph_cli_log("Please specify pool or subpool ids!\n");
+		print_em_pool_stats_help();
+		return;
+	} else if (argc > max_args) {
+		odph_cli_log("Error: extra parameter given to command!\n");
+		return;
+	}
+
+	/* Unlike getopt, optparse does not require an argument count as input to
+	 * indicate the number of arguments in argv. Instead, it uses NULL pointer
+	 * to decide the end of argument array argv.
+	 *
+	 * argv here contains only CLI command options. To emulate a real command,
+	 * argv_new is constructed to include command name.
+	 */
+	argc += 1/*Cmd str "em_pool_stats"*/ + 1/*Terminating NULL pointer*/;
+	char *argv_new[argc];
+	char cmd[MAX_CMD_LEN] = "em_pool_stats";
+
+	argv_new[0] = cmd;
+	for (int i = 1; i < argc - 1; i++)
+		argv_new[i] = argv[i - 1];
+	argv_new[argc - 1] = NULL; /*Terminating NULL pointer*/
+
+	long pool_id;
+	em_pool_t pool;
+	int option;
+	struct optparse_long longopts[] = {
+		{"id", 'i', OPTPARSE_REQUIRED},
+		{"name", 'n', OPTPARSE_REQUIRED},
+		{"subpools", 's', OPTPARSE_REQUIRED},
+		{"help", 'h', OPTPARSE_NONE},
+		{0}
+	};
+	struct optparse options;
+
+	optparse_init(&options, argv_new);
+	options.permute = 0;
+	while (1) {
+		option = optparse_long(&options, longopts, NULL);
+		if (option == -1) /* No more options */
+			break;
+
+		switch (option) {
+		case 'i':
+			if (str_to_long(options.optarg, &pool_id, 16))
+				break;
+			pool = (em_pool_t)(uintptr_t)pool_id;
+			print_em_pool_stats(pool, NULL);
+			break;
+		case 'n':
+			pool = pool_find(options.optarg);
+			print_em_pool_stats(pool, options.optarg);
+			break;
+		case 's':
+			print_subpools_stats(options.optarg);
+			break;
+		case 'h':
+			print_em_pool_stats_help();
 			break;
 		case '?':
 			odph_cli_log("Error: %s\n", options.errmsg);
@@ -724,6 +942,12 @@ static int cli_register_em_commands(void)
 	if (odph_cli_register_command("em_pool_print", cmd_em_pool_print,
 				      "[a|i <pool id>|n <pool name>|h]")) {
 		EM_LOG(EM_LOG_ERR, "Registering EM command em_pool_print failed.\n");
+		return -1;
+	}
+
+	if (odph_cli_register_command("em_pool_stats", cmd_em_pool_stats,
+				      "[i <pool id>|n <pool name>|s <pool id:[subpool ids]>|h]")) {
+		EM_LOG(EM_LOG_ERR, "Registering EM command em_pool_stats failed.\n");
 		return -1;
 	}
 

@@ -134,10 +134,8 @@ typedef struct {
 	env_atomic32_t eo_count ENV_CACHE_LINE_ALIGNED;
 	/** Timer resources */
 	timer_storage_t timers ENV_CACHE_LINE_ALIGNED;
-	/** Daemon eo */
-	daemon_eo_t daemon ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated queues */
-	env_atomic32_t queue_count;
+	env_atomic32_t queue_count ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated queue groups */
 	env_atomic32_t queue_group_count;
 	/** Current number of allocated event groups */
@@ -169,21 +167,21 @@ COMPILE_TIME_ASSERT(sizeof(em_shm_t) % ENV_CACHE_LINE_SIZE == 0,
  * running in an EO context (e.g. in an EO-receive function),
  * undef/NULL otherwise.
  */
-typedef struct {
+typedef struct ODP_PACKED {
+	/** Current scheduling context type */
+	em_sched_context_type_t sched_context_type;
+	/** EO-receive function burst count */
+	int rcv_multi_cnt;
 	/** Current queue element during a receive call */
 	queue_elem_t *q_elem;
 	/** Current scheduled queue element that set the sched context*/
 	queue_elem_t *sched_q_elem;
-	/** Current event group element */
-	event_group_elem_t *egrp_elem;
 	/** Current event group */
 	em_event_group_t egrp;
+	/** Current event group element */
+	event_group_elem_t *egrp_elem;
 	/** Current event group generation count*/
 	int32_t egrp_gen;
-	/** EO-receive function burst count */
-	int rcv_multi_cnt;
-	/** Current scheduling context type */
-	em_sched_context_type_t sched_context_type;
 } em_locm_current_t;
 
 /**
@@ -193,53 +191,52 @@ typedef struct {
 	/** EM core/local current state */
 	em_locm_current_t current;
 
+	/** Idle state of the core, used when calling idle hooks */
+	idle_state_t idle_state;
+
 	/** EM core id for this core */
 	int core_id;
 	/** The number of events from the scheduler to dispatch */
 	int event_burst_cnt;
+
 	/** em_atomic_processing_end() called during event dispatch */
-	int atomic_group_released;
+	bool atomic_group_released;
+	/** Is input_poll_fn executed on this core */
+	bool do_input_poll;
+	/** Is output_drain_fn executed on this core */
+	bool do_output_drain;
+	/** Is thread external to EM (doesn't participate in event dispatching) */
+	bool is_external_thr;
 
 	/** Number of dispatch rounds since previous polling of ctrl queues */
 	unsigned int dispatch_cnt;
 	/** Time when polling of ctrl queues where last done */
 	odp_time_t dispatch_last_run;
 
+	/** Number of dispatch rounds since previous call of poll/drain functions */
+	unsigned int poll_drain_dispatch_cnt;
+	/** Time when poll and drain functions were last called */
+	odp_time_t poll_drain_dispatch_last_run;
+
 	/** Local queues, i.e. storage for events to local queues */
 	local_queues_t local_queues;
-
-	/** Track output-queues used during this dispatch round (burst) */
-	output_queue_track_t output_queue_track;
 
 	/** EO start-function ongoing, buffer all events and send after start */
 	eo_elem_t *start_eo_elem;
 	/** The number of errors on a core */
 	uint64_t error_count;
 
-	/** Is input_poll_fn executed on this core */
-	bool do_input_poll;
-	/** Is output_drain_fn executed on this core */
-	bool do_output_drain;
-
-	/** Number of dispatch rounds since previous call of poll/drain functions */
-	unsigned int poll_drain_dispatch_cnt;
-	/** Time when poll and drain functions were last called */
-	odp_time_t poll_drain_dispatch_last_run;
-
 	/** EM-core local log function */
 	em_log_func_t log_fn;
-
-	/** Is thread external to EM (doesn't participate in event dispatching) */
-	bool is_external_thr;
 
 	/** Synchronous API */
 	sync_api_t sync_api;
 
-	/** Idle state of the core, used when calling idle hooks */
-	idle_state_t idle_state;
-
 	/** dispatcher debug timestamps (ns) */
 	uint64_t debug_ts[EM_DEBUG_TSP_LAST];
+
+	/** Track output-queues used during this dispatch round (burst) */
+	output_queue_track_t output_queue_track;
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;

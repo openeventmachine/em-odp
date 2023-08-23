@@ -153,23 +153,14 @@ EM-ODP debug configuration:
   --enable-check-level=3 --enable-esv --enable-debug-print CFLAGS='-O0 -g3' ...
 
 ===============================================================================
-Packet-I/O (ODP-linux-generic + socket, dpdk or netmap based io)
+Packet-I/O (ODP-linux-generic + socket or dpdk based io)
 ===============================================================================
-The default odp for linux-generic has pkt-io support based on linux networking
+The default ODP for linux-generic has pkt-io support based on linux networking
 and sockets that is quite slow but works nicely for development purposes.
-The linux-generic version of ODP also supports netmap or dpdk based packet i/o,
-especially on x86-targets. Use dpdk or netmap based packet io on x86 targets
-for better performance.
-
-netmap-io:
-In order to use netmap io you have to download, compile and install netmap for
-your Linux distribution. Code and instructions can be found from
-https://github.com/luigirizzo/netmap.
-See the supported netmap versions from the odp documentation.
-After netmap installation you need to configure and compile odp to use it:
-> ../configure --prefix=<odp install path> --with-netmap-path=<path to netmap>
-> make && make install
-Recompile em-odp and start an example packet io application.
+The linux-generic version of ODP also supports dpdk based packet io. Use dpdk
+based packet io on x86 targets for better performance.
+Alternatively, try XDP sockets (AF_XDP) that has been added to odp-linux.
+See odp-linux documentation for setup.
 
 dpdk-io:
 DPDK can be used to accelerate packet io on x86 targets with the linux-generic
@@ -180,12 +171,12 @@ DPDK can be installed via e.g. apt-get or yum or compiled from source code from
 https://www.dpdk.org/.
 See the supported dpdk versions from the odp documentation.
 
-DPDK compilation from source code:
+DPDK compilation from source code (example for dpdk v19.11):
 > cd dpdk
 > make config T=x86_64-native-linuxapp-gcc O=x86_64-native-linuxapp-gcc
 ... edit x86_64-native-linuxapp-gcc/.config to your liking ...
 > make install T=x86_64-native-linuxapp-gcc DESTDIR=<dpdk install path> \
-  EXTRA_CFLAGS="-fPIC"
+  EXTRA_CFLAGS="-fPIC" (fPIC optional)
 See ODP and DPDK instructions for more detailed info - e.g. uio vs vfio usage.
 Note that 'DESTDIR' is required when compiling to generate a similar
 installation as installing via apt-get would generate, use e.g.

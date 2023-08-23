@@ -114,10 +114,6 @@ em_core.c \
 em_core.h \
 em_core_types.h \
 	\
-em_daemon_eo.c \
-em_daemon_eo.h \
-em_daemon_eo_types.h \
-	\
 em_dispatcher.c \
 em_dispatcher.h \
 em_dispatcher_types.h \

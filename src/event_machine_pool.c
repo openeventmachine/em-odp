@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2018, Nokia Solutions and Networks
+ *   Copyright (c) 2018-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -49,7 +49,7 @@ void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
 	uint32_t cache_sz;
 
 	if (unlikely(!pool_cfg)) {
-		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_ARG),
 			       EM_ESCOPE_POOL_CFG_INIT,
 			       "pool_cfg pointer NULL!");
 		return;
@@ -130,14 +130,14 @@ em_pool_get_name(em_pool_t pool, char *name /*out*/, size_t maxlen)
 	size_t len = 0;
 
 	if (unlikely(name == NULL || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_POOL_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_GET_NAME,
 			       "Invalid args: name=0x%" PRIx64 ", maxlen=%zu",
 			       name, maxlen);
 		return 0;
 	}
 
 	if (unlikely(mpool_elem == NULL || !pool_allocated(mpool_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_POOL_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_GET_NAME,
 			       "Invalid Pool:%" PRI_POOL "", pool);
 		name[0] = '\0';
 		return 0;
@@ -206,16 +206,18 @@ em_pool_get_next(void)
 em_status_t
 em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 {
-	const mpool_elem_t *pool_elem;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
 
-	RETURN_ERROR_IF(pool_info == NULL,
-			EM_ERR_BAD_POINTER, EM_ESCOPE_POOL_INFO,
-			"arg 'pool_info' invalid");
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(!pool_elem || !pool_info,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_INFO,
+				"Inv. args: pool:%" PRI_POOL " pool_info:%p",
+				pool, pool_info);
 
-	pool_elem = pool_elem_get(pool);
-	RETURN_ERROR_IF(pool_elem == NULL || !pool_allocated(pool_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_POOL_INFO,
-			"EM-pool:%" PRI_POOL " invalid", pool);
+	if (EM_CHECK_LEVEL >= 2)
+		RETURN_ERROR_IF(!pool_allocated(pool_elem),
+				EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_INFO,
+				"EM-pool:%" PRI_POOL " not created", pool);
 
 	memset(pool_info, 0, sizeof(*pool_info));
 	/* copy pool info into the user provided 'pool_info' */
@@ -224,7 +226,7 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 	pool_info->em_pool = pool_elem->em_pool;
 	pool_info->event_type = pool_elem->event_type;
 	pool_info->align_offset = pool_elem->align_offset;
-	pool_info->user_area_size = pool_elem->user_area.req_size;
+	pool_info->user_area_size = pool_elem->user_area.size;
 	pool_info->num_subpools = pool_elem->num_subpools;
 
 	for (int i = 0; i < pool_elem->num_subpools; i++) {
@@ -234,10 +236,13 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 	}
 
 	/*
-	 * EM pool usage statistics only collected if
-	 * EM config file: pool.statistics_enable=true.
+	 * EM pool usage statistics only collected if the pool was created with
+	 * 'available' or 'cache_available' statistics enabled either through
+	 * EM config file: 'pool.statistics' or in 'em_pool_cfg_t::stats_opt'
+	 * given to function em_pool_create(..., pool_cfg).
 	 */
-	if (!em_shm->opt.pool.statistics_enable)
+	if (!pool_elem->stats_opt.bit.available &&
+	    !pool_elem->stats_opt.bit.cache_available)
 		return EM_OK; /* no statistics, return */
 
 	/* EM pool usage statistics _enabled_ - collect it: */
@@ -295,4 +300,160 @@ em_pool_info_print_all(void)
 		pool_info_print(pool);
 		pool = em_pool_get_next();
 	}
+}
+
+em_status_t em_pool_stats(em_pool_t pool, em_pool_stats_t *pool_stats/*out*/)
+{
+	int i;
+	int ret;
+	odp_pool_stats_t *odp_stats;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(!pool_elem || !pool_stats,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_STATS,
+				"Inv. args: pool:%" PRI_POOL " pool_stats:%p",
+				pool, pool_stats);
+
+	if (EM_CHECK_LEVEL >= 2)
+		RETURN_ERROR_IF(!pool_allocated(pool_elem),
+				EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_STATS,
+				"EM-pool: %" PRI_POOL "not created", pool);
+
+	i = 0;
+	for (; i < pool_elem->num_subpools; i++) {
+		odp_stats = (odp_pool_stats_t *)&pool_stats->subpool_stats[i];
+
+		/* avoid LTO-error: 'odp_stats.thread.first/last' may be used uninitialized */
+		odp_stats->thread.first = 0;
+		odp_stats->thread.last = 0;
+
+		ret = odp_pool_stats(pool_elem->odp_pool[i], odp_stats);
+
+		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_STATS,
+				"EM-pool:%" PRI_POOL " subpool:%d stats failed:%d",
+				pool, i, ret);
+	}
+
+	pool_stats->num_subpools = i;
+
+	return EM_OK;
+}
+
+em_status_t em_pool_stats_reset(em_pool_t pool)
+{
+	int ret;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(pool_elem == NULL,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_STATS_RESET,
+				"EM-pool:%" PRI_POOL " invalid", pool);
+
+	if (EM_CHECK_LEVEL >= 2)
+		RETURN_ERROR_IF(!pool_allocated(pool_elem),
+				EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_STATS_RESET,
+				"EM-pool:%" PRI_POOL " not created", pool);
+
+	for (int i = 0; i < pool_elem->num_subpools; i++) {
+		ret = odp_pool_stats_reset(pool_elem->odp_pool[i]);
+		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_STATS_RESET,
+				"EM-pool:%" PRI_POOL " subpool:%d stats reset failed:%d",
+				pool);
+	}
+
+	return EM_OK;
+}
+
+void em_pool_stats_print(em_pool_t pool)
+{
+	pool_stats_print(pool);
+}
+
+int
+em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
+		      em_pool_subpool_stats_t subpool_stats[]/*out*/)
+{
+	int ret;
+	int num_stats = 0;
+	odp_pool_stats_t *odp_stats;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(!pool_elem || !subpools || !subpool_stats ||
+		     num_subpools <= 0 || num_subpools > pool_elem->num_subpools)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS,
+			       "Inv. args: pool:%" PRI_POOL " subpools:%p num:%d stats:%p",
+			       pool, subpools, num_subpools, subpool_stats);
+		return 0;
+	}
+
+	if (EM_CHECK_LEVEL >= 2 && unlikely(!pool_allocated(pool_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_SUBPOOL_STATS,
+			       "EM-pool: %" PRI_POOL "not allocated", pool);
+		return 0;
+	}
+
+	for (int i = 0; i < num_subpools; i++) {
+		if (EM_CHECK_LEVEL > 0 &&
+		    unlikely(subpools[i] > pool_elem->num_subpools - 1)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS,
+				       "arg 'subpools[%d]: %d' out of range", i, subpools[i]);
+			return num_stats;
+		}
+
+		odp_stats = (odp_pool_stats_t *)&subpool_stats[i];
+
+		/* avoid LTO-error: 'odp_stats.thread.first/last' may be used uninitialized */
+		odp_stats->thread.first = 0;
+		odp_stats->thread.last = 0;
+
+		ret = odp_pool_stats(pool_elem->odp_pool[subpools[i]], odp_stats);
+		if (unlikely(ret < 0)) {
+			INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_SUBPOOL_STATS,
+				       "EM-pool:%" PRI_POOL " subpool:%d stats failed:%d",
+				       pool, subpools[i], ret);
+			return num_stats;
+		}
+		num_stats++;
+	}
+
+	return num_stats;
+}
+
+em_status_t
+em_pool_subpool_stats_reset(em_pool_t pool, const int subpools[], int num_subpools)
+{
+	int ret;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(!pool_elem || !subpools || num_subpools <= 0 ||
+				num_subpools > pool_elem->num_subpools,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS_RESET,
+				"Inv. args: pool:%" PRI_POOL " subpools:%p num:%d",
+				pool, subpools, num_subpools);
+
+	if (EM_CHECK_LEVEL >= 2)
+		RETURN_ERROR_IF(!pool_allocated(pool_elem),
+				EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_SUBPOOL_STATS_RESET,
+				"EM-pool:%" PRI_POOL " not created", pool);
+
+	for (int i = 0; i < num_subpools; i++) {
+		RETURN_ERROR_IF(subpools[i] > pool_elem->num_subpools - 1,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS_RESET,
+				"arg 'subpools[%d]: %d' out of range", i, subpools[i]);
+
+		ret = odp_pool_stats_reset(pool_elem->odp_pool[subpools[i]]);
+		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_SUBPOOL_STATS_RESET,
+				"EM-pool:%" PRI_POOL " subpool:%d stats reset failed:%d",
+				pool, subpools[i], ret);
+	}
+
+	return EM_OK;
+}
+
+void em_pool_subpool_stats_print(em_pool_t pool, const int subpools[], int num_subpools)
+{
+	subpools_stats_print(pool, subpools, num_subpools);
 }

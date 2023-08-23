@@ -57,8 +57,10 @@ sed -i 's/inline\s*=.*/inline = 1/' "${odp_conf}"
 sed -i 's/inline_thread_type\s*=.*/inline_thread_type = 1/' "${odp_conf}"
 
 em_conf="config/em-odp.conf"
-#  - set pool.statistics_enable = true
-sed -i 's/statistics_enable.*/statistics_enable = true/' "${em_conf}"
+#  - set pool.statistics.available = true
+sed -i 's/\t\tavailable\s*=.*/\t\tavailable = true/' "${em_conf}"
+#  - set pool.statistics.cache_available = true
+sed -i 's/\t\tcache_available\s*=.*/\t\tcache_available = true/' "${em_conf}"
 #  - set queue.priority.map_mode = 1
 sed -i 's/\(^[[:space:]]*map_mode.*=[[:space:]]\).*/\11/' "${em_conf}"
 #  - set esv.prealloc_pools = false

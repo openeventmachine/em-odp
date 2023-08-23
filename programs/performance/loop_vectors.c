@@ -31,20 +31,16 @@
 /**
  * @file
  *
- * Event Machine performance test example using event references.
- *
- * Test based on the 'loop' test but changed to use event references instead of
- * separate events.
+ * Event Machine performance test example
  *
  * Measures the average cycles consumed during an event send-sched-receive loop
  * for a certain number of EOs in the system. The test has a number of EOs, each
- * with one queue. Each EO receives events (references) through its dedicated
- * queue and sends them right back into the same queue, thus looping the events.
- * Each sent event is a reference in the example.
+ * with one queue. Each EO receives events through its dedicated queue and
+ * sends them right back into the same queue, thus looping the events.
  *
  * Based on the 'pairs' performance test, but instead of forwarding events
  * between queues, here we loop them back into the same queue (which is usually
- * faster). Also 'loop_refs' only uses one queue priority level.
+ * faster). Also 'loop' only uses one queue priority level.
  */
 
 #include <inttypes.h>
@@ -65,7 +61,7 @@
 #define NUM_EO  128
 
 /** Number of events per queue */
-#define NUM_EVENT_PER_QUEUE  128  /* Increase the value to tune performance */
+#define NUM_EVENT_PER_QUEUE  32  /* Increase the value to tune performance */
 
 /** sizeof data[DATA_SIZE] in bytes in the event payload */
 #define DATA_SIZE  250
@@ -74,13 +70,15 @@
 #define MAX_NBR_OF_CORES  256
 
 /** The number of events to be received before printing a result */
-#define PRINT_EVENT_COUNT  0x3f0000
+#define PRINT_EVENT_COUNT  0xff0000
 
 /** EM Queue type used */
-#define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL
+#define QUEUE_TYPE  EM_QUEUE_TYPE_ATOMIC
 
 /** Define how many events are sent per em_send_multi() call */
 #define SEND_MULTI_MAX 32
+
+#define MAX_VECTOR_SIZE 8
 
 /*
  * Options
@@ -118,6 +116,8 @@ typedef struct {
 	em_eo_t eo_tbl[NUM_EO];
 	/* Event pool used by this application */
 	em_pool_t pool;
+	/* Vector pool used by this application */
+	em_pool_t vec_pool;
 } perf_shm_t;
 
 /** EM-core local pointer to shared memory */
@@ -225,6 +225,21 @@ test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(perf_shm->pool == EM_POOL_UNDEF,
 		      "Undefined application event pool!");
 
+	em_pool_cfg_t vec_pool_cfg;
+	em_pool_t vec_pool = EM_POOL_UNDEF;
+
+	em_pool_cfg_init(&vec_pool_cfg);
+	vec_pool_cfg.event_type = EM_EVENT_TYPE_VECTOR;
+	vec_pool_cfg.num_subpools = 1;
+	vec_pool_cfg.subpool[0].cache_size = 0; /* all allocated in startup */
+	vec_pool_cfg.subpool[0].num = NUM_EO * NUM_EVENT_PER_QUEUE;
+	vec_pool_cfg.subpool[0].size = MAX_VECTOR_SIZE;
+
+	vec_pool = em_pool_create("vector-pool", EM_POOL_UNDEF, &vec_pool_cfg);
+	test_fatal_if(vec_pool == EM_POOL_UNDEF, "vector pool create failed!");
+
+	perf_shm->vec_pool = vec_pool;
+
 	/*
 	 * Create and start application EOs
 	 * Send initial test events to the EOs' queues
@@ -263,36 +278,48 @@ test_start(appl_conf_t *const appl_conf)
 			      ret, start_ret);
 	}
 
-	/* Alloc one test event from which references are created */
-	em_event_t ev = em_alloc(sizeof(perf_event_t),
-				 EM_EVENT_TYPE_SW, perf_shm->pool);
-	test_fatal_if(ev == EM_EVENT_UNDEF,
-		      "Event allocation failed");
-
 	for (int i = 0; i < NUM_EO; i++) {
 		em_queue_t queue = queues[i];
-		em_event_t events[NUM_EVENT_PER_QUEUE];
+		em_event_t vectors[NUM_EVENT_PER_QUEUE];
 
+		/* Alloc and send test vectors */
 		for (int j = 0; j < NUM_EVENT_PER_QUEUE; j++) {
-			em_event_t ref = em_event_ref(ev);
+			uint32_t vec_sz = (j % MAX_VECTOR_SIZE) + 1;
+			em_event_t vec = em_alloc(vec_sz, EM_EVENT_TYPE_VECTOR,
+						  vec_pool);
+			test_fatal_if(vec == EM_EVENT_UNDEF,
+				      "Vector allocation failed (%d, %d)", i, j);
+			em_event_t *vectbl = NULL;
+			uint32_t curr_sz = em_event_vector_tbl(vec, &vectbl);
 
-			test_fatal_if(ref == EM_EVENT_UNDEF,
-				      "Event ref creation failed (%d, %d)", i, j);
-			events[j] = ref;
+			test_fatal_if(curr_sz || !vectbl,
+				      "Vector table invalid: sz=%d vectbl=%p)",
+				      curr_sz, vectbl);
+
+			for (uint32_t k = 0; k < vec_sz; k++) {
+				em_event_t ev = em_alloc(sizeof(perf_event_t),
+							 EM_EVENT_TYPE_SW, perf_shm->pool);
+				test_fatal_if(ev == EM_EVENT_UNDEF,
+					      "Event allocation failed (%d, %d)", i, j);
+				vectbl[k] = ev;
+			}
+			em_event_vector_size_set(vec, vec_sz);
+
+			vectors[j] = vec;
 		}
 
-		/* Send in bursts of 'SEND_MULTI_MAX' events */
+		/* Send in bursts of 'SEND_MULTI_MAX' vectors */
 		const int send_rounds = NUM_EVENT_PER_QUEUE / SEND_MULTI_MAX;
 		const int left_over = NUM_EVENT_PER_QUEUE % SEND_MULTI_MAX;
 		int num_sent = 0;
 		int m, n;
 
 		for (m = 0, n = 0; m < send_rounds; m++, n += SEND_MULTI_MAX) {
-			num_sent += em_send_multi(&events[n], SEND_MULTI_MAX,
+			num_sent += em_send_multi(&vectors[n], SEND_MULTI_MAX,
 						  queue);
 		}
 		if (left_over) {
-			num_sent += em_send_multi(&events[n], left_over,
+			num_sent += em_send_multi(&vectors[n], left_over,
 					  queue);
 		}
 		test_fatal_if(num_sent != NUM_EVENT_PER_QUEUE,
@@ -301,8 +328,6 @@ test_start(appl_conf_t *const appl_conf)
 			      num_sent, NUM_EVENT_PER_QUEUE, queue);
 	}
 
-	/* Free the original event */
-	em_free(ev);
 	env_sync_mem();
 }
 
@@ -330,6 +355,8 @@ test_stop(appl_conf_t *const appl_conf)
 		test_fatal_if(ret != EM_OK,
 			      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 	}
+
+	em_pool_delete(perf_shm->vec_pool);
 }
 
 void
@@ -419,9 +446,13 @@ perf_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 
 	if (ALLOC_FREE_PER_EVENT) {
+		em_pool_t pool = perf_shm->pool;
+
+		if (em_event_type_major(type) == EM_EVENT_TYPE_VECTOR)
+			pool = perf_shm->vec_pool;
+
 		em_free(event);
-		event = em_alloc(sizeof(perf_event_t), EM_EVENT_TYPE_SW,
-				 perf_shm->pool);
+		event = em_alloc(sizeof(perf_event_t), type, pool);
 		test_fatal_if(event == EM_EVENT_UNDEF, "Event alloc fails");
 	}
 

@@ -77,9 +77,7 @@ extern "C" {
  * returned) from the API call or em_error(). The error scope identifies the
  * source of the error and how the error code and the variable arguments should
  * be interpreted (number of arguments and types) in an implementation specific
- * way. For each API call scope the list starts with the arguments given to the
- * API called. Each EM implementation should provide a list of arguments for
- * each error scope.
+ * way.
  *
  * @param eo            Execution object id
  * @param error         The error code

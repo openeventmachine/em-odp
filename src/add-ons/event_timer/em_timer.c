@@ -32,12 +32,27 @@
 
 #include "em_timer.h"
 
+static int read_config_file(void);
+
 em_status_t timer_init(timer_storage_t *const tmrs)
 {
-	for (int i = 0; i < EM_ODP_MAX_TIMERS; i++)
-		tmrs->timer[i].idx = i;
-
+	for (int i = 0; i < EM_ODP_MAX_TIMERS; i++) {
+		memset(&tmrs->timer[i], 0, sizeof(event_timer_t));
+		tmrs->timer[i].idx = i; /* for fast reverse lookup */
+		tmrs->timer[i].tmo_pool = ODP_POOL_INVALID;
+		tmrs->timer[i].odp_tmr_pool = ODP_TIMER_POOL_INVALID;
+	}
+	tmrs->ring_tmo_pool = ODP_POOL_INVALID;
+	tmrs->shared_tmo_pool = ODP_POOL_INVALID;
+	tmrs->ring_reserved = 0;
+	tmrs->reserved = 0;
+	tmrs->num_rings = 0;
+	tmrs->num_timers = 0;
+	tmrs->init_check = EM_CHECK_INIT_CALLED;
 	odp_ticketlock_init(&tmrs->timer_lock);
+
+	if (read_config_file() < 0)
+		return EM_ERR_LIB_FAILED;
 
 	return EM_OK;
 }
@@ -55,4 +70,103 @@ em_status_t timer_term_local(void)
 em_status_t timer_term(void)
 {
 	return EM_OK;
+}
+
+static int read_config_file(void)
+{
+	const char *conf_str;
+	int val = 0;
+	int ret;
+	bool bval;
+
+	EM_PRINT("EM-timer config:\n");
+
+	/*
+	 * Option: timer.shared_tmo_pool_enable
+	 */
+	conf_str = "timer.shared_tmo_pool_enable";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &bval);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.timer.shared_tmo_pool_enable = bval;
+	EM_PRINT("  %s: %s\n", conf_str, bval ? "true" : "false");
+
+	/*
+	 * Option: timer.shared_tmo_pool_size
+	 */
+	if (em_shm->opt.timer.shared_tmo_pool_enable) {
+		conf_str = "timer.shared_tmo_pool_size";
+		ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+		if (unlikely(!ret)) {
+			EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+			return -1;
+		}
+
+		if (val < 1) {
+			EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n", conf_str, val);
+			return -1;
+		}
+		/* store & print the value */
+		em_shm->opt.timer.shared_tmo_pool_size = val;
+		EM_PRINT("  %s: %d\n", conf_str, val);
+	}
+
+	/*
+	 * Option: timer.tmo_pool_cache
+	 */
+	conf_str = "timer.tmo_pool_cache";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+
+	if (val < 0) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n", conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.timer.tmo_pool_cache = val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	/*
+	 * Option: timer.ring.timer_event_pool_size
+	 */
+	conf_str = "timer.ring.timer_event_pool_size";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+
+	if (val < 0) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n", conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.timer.ring.timer_event_pool_size = val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	/*
+	 * Option: timer.ring.timer_event_pool_cache
+	 */
+	conf_str = "timer.ring.timer_event_pool_cache";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+
+	if (val < 0) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d'\n", conf_str, val);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.timer.ring.timer_event_pool_cache = val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	return 0;
 }

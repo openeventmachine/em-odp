@@ -1,4 +1,5 @@
 atomic_processing_end
+bench_event
 loop
 pairs
 queue_groups

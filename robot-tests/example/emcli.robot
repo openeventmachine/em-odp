@@ -49,6 +49,7 @@ Test Emcli
     Test Event Group Print
     Test EM Info Print
     Test Pool Print
+    Test Pool Stats
     Test Queue Print
     Test Queue Group Print
     Test Core Print
@@ -88,6 +89,10 @@ Show Available Commands
     [Documentation]    Write help command over the connection and check if it
     ...    list all suppoorted EM-CLI commands.
 
+    ${pool_stats_help} =    Catenate    SEPARATOR=
+    ...    ^\\s{2}em_pool_stats\\s+\\[i <pool id>\\|n <pool name>\\|s <pool id:
+    ...    \\[subpool ids\\]>\\|h\\]\\s?$(?m)
+
     # (?m) switch on multiline mode, making ^ and $ match also at the start and end
     # of a new line, otherwise, ^ and $ match only at the start and end of whole text.
     @{telnet_regex} =    Create List
@@ -97,6 +102,7 @@ Show Available Commands
     ...    ^\\s{2}em_egrp_print\\s+$(?m)
     ...    ^\\s{2}em_info_print\\s+\\[a\\|p\\|c\\|h\\]\\s?$(?m)
     ...    ^\\s{2}em_pool_print\\s+\\[a\\|i <pool id>\\|n <pool name>\\|h\\]\\s?$(?m)
+    ...    ${pool_stats_help}
     ...    ^\\s{2}em_queue_print\\s+\\[a\\|c\\|h\\]\\s?$(?m)
     ...    ^\\s{2}em_qgrp_print\\s+\\[a\\|i <qgrp id>\\|n <qgrp name>\\|h\\]\\s?$(?m)
     ...    ^\\s{2}em_core_print\\s+$(?m)
@@ -145,10 +151,9 @@ Test EO Print
     # em_eo_print
     # 122 is from EO_INFO_LEN - 1 in em_eo.c
     @{eo_regex} =    Create List
-    ...    Number of EOs: 3
+    ...    Number of EOs: 2
     ...    ${eo_info_fmt}
     ...    -{122}
-    ...    ^0x[A-Fa-f0-9]+\\s+daemon-eo\\s+RUNNING\\s+N\\s+N\\s+N\\s+1\\s+N\\s+0\\s+N(?m)
     ...    ^0x[A-Fa-f0-9]+\\s+EO [AB]\\s+RUNNING\\s+N\\s+N\\s+N\\s+1\\s+N\\s+1\\s+Y(?m)
 
     ${eo_print} =    Execute Command    em_eo_print
@@ -157,32 +162,28 @@ Test EO Print
     END
 
     # Extracts EO IDs which are not fixed across different runs (can't be hard coded),
-    # first ID corresponds to daemon-eo, second EO A and third EO B. The extracted IDs
+    # first ID corresponds to EO A and second EO B. The extracted IDs
     # are needed while fetching EO queue info with EO ID.
     ${eo_ids} =    Get Regexp Matches    ${eo_print}    0x[A-Fa-f0-9]+
 
-    # Fetch information about queues belonging to daemon-eo using its EO ID
-    ${daemon_eo} =    Execute Command    em_eo_print -i ${eo_ids[0]}
-    Should Match Regexp    ${daemon_eo}    ^EO ${eo_ids[0]}\\(daemon-eo\\) has no queue!(?m)
-
-    # 84 is from EO_Q_INFO_LEN -1 in em_eo.c
+    # 84 is from EO_Q_INFO_LEN - 1 in em_eo.c
     @{eo_a_regex} =    Create List
-    ...    EO ${eo_ids[1]}\\(EO A\\) has 1 queue\\(s\\):
+    ...    EO ${eo_ids[0]}\\(EO A\\) has 1 queue\\(s\\):
     ...    ^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Ctx\\s?$(?m)
     ...    -{84}
-    ...    ^0x[A-Fa-f0-9]+\\s+queue A\\s+4\\s+ATOMIC\\s+READY\\s+0x80\\s+Y(?m)
+    ...    ^0x[A-Fa-f0-9]+\\s+queue A\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+\\s+Y(?m)
 
     # Fetch information about queues belonging to EO A using its EO ID
-    ${eo_a} =    Execute Command    em_eo_print -i ${eo_ids[1]}
+    ${eo_a} =    Execute Command    em_eo_print -i ${eo_ids[0]}
     FOR    ${line}    IN    @{eo_a_regex}
         Should Match Regexp    ${eo_a}    ${line}
     END
 
     @{eo_b_regex} =    Create List
-    ...    EO ${eo_ids[2]}\\(EO B\\) has 1 queue\\(s\\):
+    ...    EO ${eo_ids[1]}\\(EO B\\) has 1 queue\\(s\\):
     ...    ^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Ctx\\s?$(?m)
     ...    -{84}
-    ...    ^0x[A-Fa-f0-9]+\\s+queue B\\s+4\\s+ATOMIC\\s+READY\\s+0x80\\s+Y(?m)
+    ...    ^0x[A-Fa-f0-9]+\\s+queue B\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+\\s+Y(?m)
 
     ${eo_b} =    Execute Command    em_eo_print -n "EO B"
     FOR    ${line}    IN    @{eo_b_regex}
@@ -269,6 +270,30 @@ Test Pool Print
     ${pool_name} =    Execute Command    em_pool_print --name appl_pool_1
     FOR    ${line}    IN    @{pool_name_regex}
         Should Match Regexp    ${pool_name}    ${line}
+    END
+
+Test Pool Stats
+    [Documentation]    Test em_pool_stats command and check if it outputs pool
+    ...    statistics as expected.
+
+    ${stats_fmt} =    Catenate    SEPARATOR=
+    ...    Subpool Available Alloc_ops Alloc_fails Free_ops Total_ops
+    ...    \\sCache_available Cache_alloc_ops Cache_free_ops
+
+    @{pool_stats_regex} =    Create List
+    ...    ${stats_fmt}
+    ...    ^([0-9]+\\s+){8}[0-9]+\\s?(?m)
+
+    ${pool_stats} =    Execute Command    em_pool_stats -i 0x1
+    Should Match Regexp    ${pool_stats}    EM pool statistics for pool 0x[A-Fa-f0-9]+:
+    FOR    ${line}    IN    @{pool_stats_regex}
+        Should Match Regexp    ${pool_stats}    ${line}
+    END
+
+    ${subpool_stats} =    Execute Command    em_pool_stats --subpools 0x1:[1,2]
+    Should Match Regexp    ${subpool_stats}    EM subpool statistics for pool 0x[A-Fa-f0-9]+:
+    FOR    ${line}    IN    @{pool_stats_regex}
+        Should Match Regexp    ${subpool_stats}    ${line}
     END
 
 Test Queue Print

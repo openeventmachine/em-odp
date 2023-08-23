@@ -43,6 +43,7 @@ extern "C" {
 #include <stdio.h>
 #include <signal.h>
 #include <odp/helper/odph_api.h>
+#include <event_machine/platform/env/environment.h>
 
 #define APPL_NAME_LEN  (64)
 

@@ -171,12 +171,15 @@ eo_add_queue(eo_elem_t *const eo_elem, queue_elem_t *const q_elem)
 	if (unlikely(err != EM_OK))
 		return err;
 
-	q_elem->use_multi_rcv = eo_elem->use_multi_rcv;
-	q_elem->max_events = eo_elem->max_events;
-	q_elem->receive_func = eo_elem->receive_func;
-	q_elem->receive_multi_func = eo_elem->receive_multi_func;
+	q_elem->max_events = (uint16_t)eo_elem->max_events;
 
-	q_elem->eo = eo_elem->eo;
+	q_elem->flags.use_multi_rcv = eo_elem->use_multi_rcv ? true : false;
+	if (eo_elem->use_multi_rcv)
+		q_elem->receive_multi_func = eo_elem->receive_multi_func;
+	else
+		q_elem->receive_func = eo_elem->receive_func;
+
+	q_elem->eo = (uint16_t)(uintptr_t)eo_elem->eo;
 	q_elem->eo_ctx = eo_elem->eo_ctx;
 	q_elem->eo_elem = eo_elem;
 	q_elem->state = new_state;
@@ -205,7 +208,7 @@ eo_rem_queue_locked(eo_elem_t *const eo_elem, queue_elem_t *const q_elem)
 	env_atomic32_dec(&eo_elem->num_queues);
 
 	q_elem->state = new_state;
-	q_elem->eo = EM_EO_UNDEF;
+	q_elem->eo = (uint16_t)(uintptr_t)EM_EO_UNDEF;
 	q_elem->eo_elem = NULL;
 
 	return EM_OK;
@@ -435,6 +438,29 @@ int eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue)
 }
 
 /**
+ * @brief Helper to eo_start_send_buffered_events()
+ */
+static void eo_start_send_multi(em_event_t ev_tbl[], int num,
+				em_queue_t queue, em_event_group_t event_group)
+{
+	int num_sent = 0;
+
+	/* send events with same destination queue and event group */
+	if (event_group == EM_EVENT_GROUP_UNDEF)
+		num_sent = em_send_multi(ev_tbl, num, queue);
+	else
+		num_sent = em_send_group_multi(ev_tbl, num, queue, event_group);
+
+	if (unlikely(num_sent != num)) {
+		/* User's eo-start saw successful em_send, free here */
+		em_free_multi(&ev_tbl[num_sent], num - num_sent);
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
+			       "Q:%" PRI_QUEUE " req:%u sent:%u",
+			       queue, num, num_sent);
+	}
+}
+
+/**
  * Send the buffered events at the end of the EO-start operation.
  *
  * Events sent from within the EO-start functions are buffered and sent
@@ -482,14 +508,13 @@ void eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 		int tbl_idx = 0; /* index into ..._tbl[] */
 
 		/*
-		 * Dispatch in batches of 'batch_cnt' events.
+		 * Send in batches of 'batch_cnt' events.
 		 * Each batch contains events from the same queue & evgrp.
 		 */
 		do {
 			const int qidx = entry_tbl[tbl_idx].qidx;
 			const em_queue_t queue = queue_idx2hdl(qidx);
 			const em_event_group_t event_group = ev_hdr_tbl[tbl_idx]->egrp;
-			int num_sent = 0;
 			int batch_cnt = 1;
 
 			for (int i = tbl_idx + 1; i < num &&
@@ -499,19 +524,7 @@ void eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 			}
 
 			/* send events with same destination queue and event group */
-			if (event_group == EM_EVENT_GROUP_UNDEF)
-				num_sent = em_send_multi(&ev_tbl[tbl_idx], batch_cnt, queue);
-			else
-				num_sent = em_send_group_multi(&ev_tbl[tbl_idx], batch_cnt, queue,
-							       event_group);
-			if (unlikely(num_sent != batch_cnt)) {
-				/* User's eo-start saw successful em_send, free here */
-				for (int i = num_sent; i < batch_cnt; i++)
-					em_free(ev_tbl[i]);
-				INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
-					       "Q:%" PRI_QUEUE " req:%u sent:%u",
-					       queue, batch_cnt, num_sent);
-			}
+			eo_start_send_multi(&ev_tbl[tbl_idx], batch_cnt, queue, event_group);
 
 			tbl_idx += batch_cnt;
 		} while (tbl_idx < num);
@@ -585,7 +598,7 @@ eo_stop_done_callback(void *args)
 	 * 'save_q_elem'.
 	 */
 	memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
-	tmp_q_elem.eo = eo;
+	tmp_q_elem.eo = (uint16_t)(uintptr_t)eo;
 
 	locm->current.q_elem = &tmp_q_elem;
 	/*
@@ -1090,7 +1103,7 @@ i_event__eo_local_func_call_req(const internal_event_t *i_ev)
 		 * 'save_q_elem'.
 		 */
 		memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
-		tmp_q_elem.eo = eo_elem->eo;
+		tmp_q_elem.eo = (uint16_t)(uintptr_t)eo_elem->eo;
 		locm->current.q_elem = &tmp_q_elem;
 
 		locm->start_eo_elem = eo_elem;
@@ -1122,7 +1135,7 @@ i_event__eo_local_func_call_req(const internal_event_t *i_ev)
 			 * q_elem' from 'save_q_elem'.
 			 */
 			memset(&tmp_q_elem, 0, sizeof(tmp_q_elem));
-			tmp_q_elem.eo = eo_elem->eo;
+			tmp_q_elem.eo = (uint16_t)(uintptr_t)eo_elem->eo;
 			locm->current.q_elem = &tmp_q_elem;
 
 			status = eo_elem->stop_local_func(eo_elem->eo_ctx,
@@ -1382,7 +1395,7 @@ void eo_queue_info_print(em_eo_t eo)
 /**
  * @brief Create a stash used to buffer events sent during EO-start
  */
-odp_stash_t eo_start_stash_create(const char *name)
+odp_stash_t eo_start_stash_create(void)
 {
 	unsigned int num_obj = 0;
 	odp_stash_capability_t stash_capa;
@@ -1417,7 +1430,7 @@ odp_stash_t eo_start_stash_create(const char *name)
 	stash_param.obj_size = sizeof(uint64_t);
 	stash_param.cache_size = 0; /* No core local caching */
 
-	stash = odp_stash_create(name, &stash_param);
+	stash = odp_stash_create(NULL, &stash_param);
 	if (unlikely(stash == ODP_STASH_INVALID))
 		return ODP_STASH_INVALID;
 

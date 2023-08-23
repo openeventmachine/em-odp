@@ -52,13 +52,13 @@
 #endif
 
 #ifndef EM_ODP_DEFAULT_TMOS
-/* Default number of simultaneous timeouts (pool size) */
+/* Default number of simultaneous timeouts per timer (handle pool size) */
 #define EM_ODP_DEFAULT_TMOS	1000
 #endif
 
-#ifndef EM_ODP_TIMER_CACHE
-/* Default local cache size for tmo buffer pool */
-#define EM_ODP_TIMER_CACHE	16
+#ifndef EM_ODP_DEFAULT_RING_TMOS
+/* Default per ring timer number of timeouts. Total comes from runtime config */
+#define EM_ODP_DEFAULT_RING_TMOS 100
 #endif
 
 #ifndef EM_TIMER_TMO_STATS

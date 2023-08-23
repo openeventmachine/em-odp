@@ -82,7 +82,7 @@ typedef struct {
 			/** The number of notif events stored in notif_tbl[] */
 			int num_notif;
 			/** true/false, event group is ready for apply */
-			uint8_t ready;
+			bool ready;
 		};
 		/** clear all options at once */
 		uint64_t all;
@@ -95,7 +95,7 @@ typedef struct {
 } event_group_elem_t ENV_CACHE_LINE_ALIGNED;
 
 COMPILE_TIME_ASSERT(offsetof(event_group_elem_t, all) + sizeof(uint64_t)
-		    >= offsetof(event_group_elem_t, ready) + sizeof(uint8_t),
+		    >= offsetof(event_group_elem_t, ready) + sizeof(bool),
 		    EVENT_GROUP_ELEM_T__SIZE_ERROR);
 /**
  * Event group table

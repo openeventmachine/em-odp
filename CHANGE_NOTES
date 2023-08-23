@@ -26,9 +26,9 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-===============================================================================
+================================================================================
 CHANGE NOTES - Event Machine (EM) on ODP (em-odp)
-===============================================================================
+================================================================================
 
 The EM version numbering scheme reflects the used EM API version:
 maj.min.impl(-fix)
@@ -51,6 +51,87 @@ Examples:
 
 - See em-odp/README for usage and compilation instructions.
 - See em-odp/include/event_machine/README_API for API changes
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.2.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.2 (em-odp/include), see API additions and changes in
+  em-odp/include/event_machine/README_API.
+  * Timer ring
+  * Timeout type
+  * Error codes
+
+- EM config file options - config/em-odp.conf:
+  - Config file version number bumped up to "0.0.17",
+  - New 'timer:{}' options in the config file.
+
+- Event State Verification (ESV) changes
+  - Combine ESV operations for events/packets from e.g. pktio for potential
+    performance gains.
+    Combine 'mark allocated', 'mark sent' and 'mark em2usr for dispatch' into a
+    single ESV operation (with a single atomic counter update).
+
+- Performance optimizations
+  - Reduce the sizes of commonly used (in fast path) data structures for
+    potential caching gains (queue, pool, atomic group).
+  - Adjust fast-path API error checking according to the used EM_CHECK_LEVEL.
+  - Dispatch: check output queue buffering only with ordered schedule context.
+
+- Misc.
+  - daemon-eo: remove the unnecessary daemon-eo
+  - event: replace odp_packet_user_ptr/set() with odp_packet_user_flag/set() to
+    detect whether the event header has been initialized or not.
+
+- Performance test applications added
+  - em-odp/programs/performance/bench_event.c
+     - Measure event related API-function performance (cycles), single-core
+  - em-odp/programs/performance/pool_perf.c
+    - Performance test tool for memory pool performance.
+      Measures time consumed during calls to allocate and free buffers or
+      packets. Command line arguments can be used to try different aspects.
+  - em-odp/programs/performance/timer_test_ring.c
+    - Timer ring test for alternative periodic timeouts.
+      The purpose of this tool is to manually test periodic ring timer
+      functionality. At least two EM timers are created. One standard timer for
+      a heartbeat driving test states. The second timer (or many) is periodic
+      ring for testing.
+
+--------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.1.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.1 (em-odp/include), see API additions and changes in
+  em-odp/include/event_machine/README_API.
+  * Pool Statistics
+  * Timer updates
+  * Event Vectors
+
+- EM config file options - config/em-odp.conf:
+  - Config file version number bumped up to "0.0.16",
+  - New 'pool.statistics:{}' options in the config file.
+
+- Event State Verification (ESV) changes
+  - Fix: evgen wrap handling in esv_usr2em/_multi() during a 'revert'
+  - Use larger EVGEN_INIT value to protect from over/underflows
+      Evgen values:  0x1000 - 0xEFFF
+      Event handles: 0x1000 xxxx xxxx xxxx - 0xefff xxxx xxxx xxxx,
+                     where x…x = ptr value)
+  - Fix: Reset ESV-counters on the next alloc after using a reference.
+    Event references do not use the ESV evgen counter but it is still updated by
+    ESV operations. Thus it needs to be reset for the next alloc of the same
+    event or it will contain invalid values.
+
+- Event changes
+  Highlighting EM internal changes related to the event header since it may
+  affect users extending or accessing EM internals.
+  -  Placement of the internal event header has been changed for odp_buffers.
+     Now the event header always resides in the ODP buf/pkt/vector user area
+     followed by the EM event user area (if any).
+      Prev:  event_hdr_t *ev_hdr = odp_buffer_addr(odp_buf);
+      Curr:  event_hdr_t *ev_hdr = odp_buffer_user_area(odp_buf);
+      If changes have been made to EM internals in your project then this needs
+      to be updated!
+    - The internal event header size is reduced to fit within one cache line for
+      potential caching and performance gains.
 
 --------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.0.0

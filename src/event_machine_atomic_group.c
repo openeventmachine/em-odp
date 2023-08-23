@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2014, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -46,7 +46,7 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 	int ret = 0;
 
 	if (unlikely(invalid_qgrp(queue_group))) {
-		error = EM_ERR_BAD_ID;
+		error = EM_ERR_BAD_ARG;
 		err_str = "Invalid queue group!";
 		goto error;
 	}
@@ -63,7 +63,8 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 	/* Initialize the atomic group */
 	ag_elem = atomic_group_elem_get(atomic_group);
 	if (unlikely(!ag_elem)) {
-		error = EM_ERR_BAD_POINTER;
+		/* Fatal since atomic_group_alloc() returned 'ok', should never happen */
+		error = EM_FATAL(EM_ERR_BAD_ID);
 		err_str = "Atomic group allocation failed: ag_elem NULL!";
 		goto error;
 	}
@@ -147,7 +148,7 @@ ag_stash_destroy(odp_stash_t stash)
 	stash_entry_t entry_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
 	odp_event_t odp_evtbl[EM_SCHED_AG_MULTI_MAX_BURST];
 	em_event_t ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
 	int32_t cnt = 0;
 	bool esv_ena = esv_enabled();
 
@@ -185,7 +186,7 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 	int err = 0;
 
 	RETURN_ERROR_IF(ag_elem == NULL,
-			EM_ERR_BAD_ID, EM_ESCOPE_ATOMIC_GROUP_DELETE,
+			EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_DELETE,
 			"Invalid atomic group - cannot delete!");
 
 	env_spinlock_lock(&ag_elem->lock);
@@ -231,7 +232,7 @@ em_queue_create_ag(const char *name, em_queue_prio_t prio,
 	const char *err_str = "";
 
 	if (unlikely(ag_elem == NULL || !atomic_group_allocated(ag_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_CREATE_AG,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_CREATE_AG,
 			       "Invalid Atomic Group:%" PRI_AGRP "",
 			       atomic_group);
 		return EM_QUEUE_UNDEF;
@@ -269,7 +270,7 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 	const char *err_str = "";
 
 	RETURN_ERROR_IF(ag_elem == NULL || !atomic_group_allocated(ag_elem),
-			EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
+			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
 			"Invalid Atomic Group:%" PRI_AGRP "", atomic_group);
 
 	queue_group = ag_elem->queue_group;
@@ -295,14 +296,18 @@ em_atomic_group_t
 em_atomic_group_get(em_queue_t queue)
 {
 	const queue_elem_t *q_elem = queue_elem_get(queue);
+	em_atomic_group_t atomic_group = EM_ATOMIC_GROUP_UNDEF;
 
 	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_ATOMIC_GROUP_GET,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_GET,
 			       "Invalid queue:%" PRI_QUEUE "", queue);
 		return EM_ATOMIC_GROUP_UNDEF;
 	}
 
-	return q_elem->atomic_group;
+	if (q_elem->flags.in_atomic_group)
+		atomic_group = q_elem->agrp.atomic_group;
+
+	return atomic_group;
 }
 
 size_t
@@ -314,15 +319,14 @@ em_atomic_group_get_name(em_atomic_group_t atomic_group,
 	size_t len = 0;
 
 	if (unlikely(name == NULL || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-			       EM_ESCOPE_ATOMIC_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_GET_NAME,
 			       "Invalid args: name=0x%" PRIx64 ", maxlen=%zu",
 			       name, maxlen);
 		return 0;
 	}
 
 	if (unlikely(ag_elem == NULL || !atomic_group_allocated(ag_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_ATOMIC_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_GET_NAME,
 			       "Invalid Atomic Group:%" PRI_AGRP "",
 			       atomic_group);
 		name[0] = '\0';
@@ -416,7 +420,7 @@ em_atomic_group_queue_get_first(unsigned int *num,
 		atomic_group_elem_get(atomic_group);
 
 	if (unlikely(agrp_elem == NULL || !atomic_group_allocated(agrp_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG,
 			       EM_ESCOPE_ATOMIC_GROUP_QUEUE_GET_FIRST,
 			       "Invalid atomic group:%" PRI_AGRP "",
 			       atomic_group);
@@ -451,7 +455,8 @@ em_atomic_group_queue_get_first(unsigned int *num,
 
 	/* find first */
 	while (!queue_allocated(q_elem) ||
-	       q_elem->atomic_group != _agrp_q_iter_agrp) {
+	       !q_elem->flags.in_atomic_group ||
+	       q_elem->agrp.atomic_group != _agrp_q_iter_agrp) {
 		_agrp_q_iter_idx++;
 		if (_agrp_q_iter_idx >= EM_MAX_QUEUES)
 			return EM_QUEUE_UNDEF;
@@ -474,7 +479,8 @@ em_atomic_group_queue_get_next(void)
 
 	/* find next */
 	while (!queue_allocated(q_elem) ||
-	       q_elem->atomic_group != _agrp_q_iter_agrp) {
+	       !q_elem->flags.in_atomic_group ||
+	       q_elem->agrp.atomic_group != _agrp_q_iter_agrp) {
 		_agrp_q_iter_idx++;
 		if (_agrp_q_iter_idx >= EM_MAX_QUEUES)
 			return EM_QUEUE_UNDEF;

@@ -20,7 +20,9 @@ IGNORE+='MACRO_ARG_REUSE,'
 IGNORE+='SPDX_LICENSE_TAG,'
 IGNORE+='C99_COMMENT_TOLERANCE,' # C99-style comments '//' reported as error
 IGNORE+='PREFER_FALLTHROUGH,'
-IGNORE+='SSCANF_TO_KSTRTO'
+IGNORE+='SSCANF_TO_KSTRTO,'
+IGNORE+='PREFER_ALIGNED',
+IGNORE+='MACRO_ARG_PRECEDENCE' # ignore sizeof_field(type, field) CHECK-warning
 
 $DIR/cleanfile $1 2> /dev/null
 $DIR/checkpatch.pl -f --no-tree --ignore $IGNORE --mailback --strict --terse \

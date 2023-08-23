@@ -202,6 +202,12 @@ extern "C" {
 #define EM_POOL_DEFAULT_NAME "default"
 
 /**
+ * @def EM_POOL_SUBPOOL_STAT_INTERNAL
+ * Reserve for EM pool subpool statistic internal use
+ */
+#define EM_POOL_SUBPOOL_STAT_INTERNAL 129
+
+/**
  * @def EM_EVENT_USER_AREA_MAX_SIZE
  * The maximum size in bytes that can be configured for the event user area.
  * The user area is located outside of the payload in the event metadata (hdr)
@@ -224,6 +230,13 @@ extern "C" {
  * The maximum number of events from an atomic group to dispatch in one burst.
  */
 #define EM_SCHED_AG_MULTI_MAX_BURST  32
+
+/**
+ * @def EM_QUEUE_LOCAL_MULTI_MAX_BURST
+ * The maximum number of events from a local queue (EM_QUEUE_TYPE_LOCAL) to
+ * dispatch in one burst.
+ */
+#define EM_QUEUE_LOCAL_MULTI_MAX_BURST  32
 
 /**
  * @def EM_EO_MULTIRCV_MAX_EVENTS

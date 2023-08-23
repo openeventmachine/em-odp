@@ -124,12 +124,18 @@ atomic_group_free(em_atomic_group_t atomic_group)
 void
 atomic_group_remove_queue(queue_elem_t *const q_elem)
 {
-	if (!invalid_atomic_group(q_elem->atomic_group)) {
+	if (!q_elem->flags.in_atomic_group)
+		return;
+
+	em_atomic_group_t atomic_group = q_elem->agrp.atomic_group;
+
+	if (!invalid_atomic_group(atomic_group)) {
 		atomic_group_elem_t *const ag_elem =
-			atomic_group_elem_get(q_elem->atomic_group);
+			atomic_group_elem_get(atomic_group);
 
 		atomic_group_rem_queue_list(ag_elem, q_elem);
-		q_elem->atomic_group = EM_ATOMIC_GROUP_UNDEF;
+		q_elem->flags.in_atomic_group = false;
+		q_elem->agrp.atomic_group = EM_ATOMIC_GROUP_UNDEF;
 	}
 }
 
@@ -149,7 +155,7 @@ ag_local_processing_ended(atomic_group_elem_t *const ag_elem)
 	 * the application called em_atomic_processing_end()
 	 */
 	if (locm->atomic_group_released) {
-		locm->atomic_group_released = 0;
+		locm->atomic_group_released = false;
 		/*
 		 * Try to acquire the atomic group lock and continue processing.
 		 * It is possible that another core has acquired the lock
@@ -165,19 +171,19 @@ ag_local_processing_ended(atomic_group_elem_t *const ag_elem)
 
 static inline int
 ag_internal_enq(const atomic_group_elem_t *ag_elem, const queue_elem_t *q_elem,
-		const em_event_t ev_tbl[], const int num_events,
+		odp_event_t odp_evtbl[], const int num_events,
 		const em_queue_prio_t priority)
 {
 	stash_entry_t entry_tbl[num_events];
-	const evhdl_t *const evhdl_tbl = (const evhdl_t *const)ev_tbl;
 	odp_stash_t stash;
 	int ret;
 
-	const uint16_t qidx = queue_hdl2idx(q_elem->queue);
+	const em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
+	const uint16_t qidx = (uint16_t)queue_hdl2idx(queue);
 
 	for (int i = 0; i < num_events; i++) {
 		entry_tbl[i].qidx = qidx;
-		entry_tbl[i].evptr = evhdl_tbl[i].evptr;
+		entry_tbl[i].evptr = (uintptr_t)odp_evtbl[i];
 	}
 
 	if (priority == EM_QUEUE_PRIO_HIGHEST)
@@ -221,27 +227,33 @@ ag_internal_deq(const atomic_group_elem_t *ag_elem,
 	return hi_cnt + lo_cnt;
 }
 
-void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
+void atomic_group_dispatch(odp_event_t odp_evtbl[], const int num_events,
 			   const queue_elem_t *q_elem)
 {
 	atomic_group_elem_t *const ag_elem =
-		atomic_group_elem_get(q_elem->atomic_group);
+		atomic_group_elem_get(q_elem->agrp.atomic_group);
 	const em_queue_prio_t priority = q_elem->priority;
-	int enq_cnt;
 
 	/* Enqueue the scheduled events into the atomic group internal queue */
-	enq_cnt = ag_internal_enq(ag_elem, q_elem, ev_tbl, num_events, priority);
+	int enq_cnt = ag_internal_enq(ag_elem, q_elem, odp_evtbl, num_events, priority);
 
 	if (unlikely(enq_cnt < num_events)) {
-		em_free_multi(&ev_tbl[enq_cnt], num_events - enq_cnt);
+		int num_free = num_events - enq_cnt;
+		event_hdr_t *ev_hdr_tbl[num_free];
+		em_event_t ev_tbl[num_free];
+
+		event_init_odp_multi(&odp_evtbl[enq_cnt], ev_tbl/*out*/, ev_hdr_tbl/*out*/,
+				     num_free, true/*is_extev*/);
+		/* Drop events that could not be enqueued */
+		em_free_multi(ev_tbl, num_free);
 		/*
 		 * Use dispatch escope since this func is called only from
 		 * dispatch_round() => atomic_group_dispatch()
 		 */
 		INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_DISPATCH,
-			       "Atomic group:%" PRI_AGRP " internal enqueue:\n"
-			       "  num_events:%d enq_cnt:%d",
-			       ag_elem->atomic_group, num_events, enq_cnt);
+			       "Atomic group:%" PRI_AGRP " internal enqueue fails:\n"
+			       "  num_events:%d enq_cnt:%d => %d events dropped",
+			       ag_elem->atomic_group, num_events, enq_cnt, num_free);
 	}
 
 	/*
@@ -256,14 +268,13 @@ void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
 	/* hint */
 	odp_schedule_release_atomic();
 
-	locm->atomic_group_released = 0;
+	locm->atomic_group_released = false;
 	/*
 	 * Loop until no more events or until atomic processing end.
 	 * Events in the ag_elem->internal_queue:s have been scheduled
 	 * already once and should be dispatched asap.
 	 */
-	em_event_t deq_ev_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
-	event_hdr_t *deq_evhdr_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
+	odp_event_t deq_evtbl[EM_SCHED_AG_MULTI_MAX_BURST];
 	stash_entry_t entry_tbl[EM_SCHED_AG_MULTI_MAX_BURST];
 
 	do {
@@ -277,10 +288,9 @@ void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
 		}
 
 		for (int i = 0; i < deq_cnt; i++)
-			deq_ev_tbl[i] = (em_event_t)(uintptr_t)entry_tbl[i].evptr;
+			deq_evtbl[i] = (odp_event_t)(uintptr_t)entry_tbl[i].evptr;
 
 		locm->event_burst_cnt = deq_cnt;
-		event_to_hdr_multi(deq_ev_tbl, deq_evhdr_tbl /*out*/, deq_cnt);
 		int tbl_idx = 0; /* index into ..._tbl[] */
 
 		/*
@@ -294,13 +304,13 @@ void atomic_group_dispatch(em_event_t ev_tbl[], const int num_events,
 
 			int batch_cnt = 1;
 
+			/* i < deq_cnt <= EM_SCHED_AG_MULTI_MAX_BURST */
 			for (int i = tbl_idx + 1; i < deq_cnt &&
 			     entry_tbl[i].qidx == qidx; i++) {
 				batch_cnt++;
 			}
 
-			dispatch_events(&deq_ev_tbl[tbl_idx],
-					&deq_evhdr_tbl[tbl_idx],
+			dispatch_events(&deq_evtbl[tbl_idx],
 					batch_cnt, batch_qelem);
 			tbl_idx += batch_cnt;
 		} while (tbl_idx < deq_cnt);
@@ -456,4 +466,42 @@ void print_atomic_group_queues(em_atomic_group_t ag)
 	 */
 	q_info_str[len] = '\0';
 	EM_PRINT(AG_QUEUE_INFO_HDR_STR, ag, ag_elem->name, q_num, q_info_str);
+}
+
+void print_ag_elem_info(void)
+{
+	EM_PRINT("\n"
+		 "EM Atomic Groups\n"
+		 "----------------\n"
+		 "ag-elem size: %zu B\n",
+		 sizeof(atomic_group_elem_t));
+
+	EM_DBG("\t\toffset\tsize\n"
+	       "\t\t------\t-----\n"
+	       "atomic_group:\t%3zu B\t%3zu B\n"
+	       "queue_group:\t%3zu B\t%3zu B\n"
+	       "ag pool_elem:\t%3zu B\t%3zu B\n"
+	       "stashes:\t%3zu B\t%3zu B\n"
+	       "lock:\t\t%3zu B\t%3zu B\n"
+	       "num_queues:\t%3zu B\t%3zu B\n"
+	       "qlist_head[]:\t%3zu B\t%3zu B\n"
+	       "name:\t\t%3zu B\t%3zu B\n",
+	       offsetof(atomic_group_elem_t, atomic_group),
+	       sizeof_field(atomic_group_elem_t, atomic_group),
+	       offsetof(atomic_group_elem_t, queue_group),
+	       sizeof_field(atomic_group_elem_t, queue_group),
+	       offsetof(atomic_group_elem_t, atomic_group_pool_elem),
+	       sizeof_field(atomic_group_elem_t, atomic_group_pool_elem),
+	       offsetof(atomic_group_elem_t, stashes),
+	       sizeof_field(atomic_group_elem_t, stashes),
+	       offsetof(atomic_group_elem_t, lock),
+	       sizeof_field(atomic_group_elem_t, lock),
+	       offsetof(atomic_group_elem_t, num_queues),
+	       sizeof_field(atomic_group_elem_t, num_queues),
+	       offsetof(atomic_group_elem_t, qlist_head),
+	       sizeof_field(atomic_group_elem_t, qlist_head),
+	       offsetof(atomic_group_elem_t, name),
+	       sizeof_field(atomic_group_elem_t, name));
+
+	       EM_PRINT("\n");
 }

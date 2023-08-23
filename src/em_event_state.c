@@ -153,6 +153,8 @@ static const evstate_info_t evstate_info_tbl[] = {
 				      .escope = EM_ESCOPE_TMO_ACK},
 	[EVSTATE__TMO_ACK__FAIL] = {.str = "em_tmo_ack(fail)",
 				    .escope = EM_ESCOPE_TMO_ACK},
+	[EVSTATE__TMO_CREATE] = {.str = "em_tmo_create()",
+				 .escope = EM_ESCOPE_TMO_CREATE},
 	[EVSTATE__TMO_DELETE] = {.str = "em_tmo_delete()",
 				 .escope = EM_ESCOPE_TMO_DELETE},
 	[EVSTATE__AG_DELETE] = {.str = "em_atomic_group_delete(flush)",
@@ -181,17 +183,18 @@ esv_update_state(ev_hdr_state_t *const evstate, const uint16_t api_op,
 	const uint32_t *const pl_u32 = ev_ptr;
 	const queue_elem_t *const q_elem = locm->current.q_elem;
 
-	if (!q_elem) {
-		evstate->eo = EM_EO_UNDEF;
-		evstate->queue = EM_QUEUE_UNDEF;
-	} else {
-		evstate->eo = q_elem->eo;
-		evstate->queue = q_elem->queue;
-	}
-	evstate->api_op = api_op;
-	evstate->core = locm->core_id;
 	if (ev_ptr)
 		evstate->payload_first = *pl_u32;
+
+	if (!q_elem) {
+		evstate->eo_idx = (int16_t)eo_hdl2idx(EM_EO_UNDEF); /* -1 is fine */
+		evstate->queue_idx = (int16_t)queue_hdl2idx(EM_QUEUE_UNDEF); /* -1 is fine */
+	} else {
+		evstate->eo_idx = (int16_t)eo_hdl2idx((em_eo_t)(uintptr_t)q_elem->eo);
+		evstate->queue_idx = (int16_t)queue_hdl2idx((em_queue_t)(uintptr_t)q_elem->queue);
+	}
+	evstate->api_op = (uint8_t)api_op; /* no trucation */
+	evstate->core = locm->core_id;
 }
 
 static inline void
@@ -302,18 +305,21 @@ esv_error(const evstate_cnt_t cnt,
 		curr_payload[sizeof(curr_payload) - 1] = '\0';
 	}
 
+	em_eo_t curr_eo = eo_idx2hdl(err_state.eo_idx);
+	em_queue_t curr_queue = queue_idx2hdl(err_state.queue_idx);
+
 	/* current EO-name: */
-	eo_elem = eo_elem_get(err_state.eo);
+	eo_elem = eo_elem_get(curr_eo);
 	if (eo_elem != NULL)
 		eo_get_name(eo_elem, curr_eoname, sizeof(curr_eoname));
 	/* current queue-name: */
-	q_elem = queue_elem_get(err_state.queue);
+	q_elem = queue_elem_get(curr_queue);
 	if (q_elem != NULL)
 		queue_get_name(q_elem, curr_qname, sizeof(curr_qname));
 
 	const int16_t send_cnt = cnt.send_cnt - SEND_CNT_INIT;
-	uint16_t evgen_cnt = cnt.evgen;
-	const uint16_t evgen_hdl = evhdl.evgen;
+	uint16_t evgen_cnt = cnt.evgen - EVGEN_INIT;
+	const uint16_t evgen_hdl = evhdl.evgen - EVGEN_INIT;
 	const int16_t ref_cnt = REF_CNT_INIT - cnt.ref_cnt;
 
 	/* Read the previous event state only if it has been stored */
@@ -328,12 +334,16 @@ esv_error(const evstate_cnt_t cnt,
 				 "0x%08" PRIx32 "", prev_state.payload_first);
 			prev_payload[sizeof(prev_payload) - 1] = '\0';
 		}
+
+		em_eo_t prev_eo = eo_idx2hdl(prev_state.eo_idx);
+		em_queue_t prev_queue = queue_idx2hdl(prev_state.queue_idx);
+
 		/* previous EO-name: */
-		eo_elem = eo_elem_get(prev_state.eo);
+		eo_elem = eo_elem_get(prev_eo);
 		if (eo_elem != NULL)
 			eo_get_name(eo_elem, prev_eoname, sizeof(prev_eoname));
 		/* previous queue-name: */
-		q_elem = queue_elem_get(prev_state.queue);
+		q_elem = queue_elem_get(prev_queue);
 		if (q_elem != NULL)
 			queue_get_name(q_elem, prev_qname, sizeof(prev_qname));
 
@@ -343,17 +353,17 @@ esv_error(const evstate_cnt_t cnt,
 				       err_info->escope, EVSTATE_REF_ERROR_FMT,
 				       event, send_cnt, ref_cnt, evgen_cnt, help_str,
 				       err_info->str, err_state.core,
-				       err_state.eo, curr_eoname, err_state.queue, curr_qname,
+				       curr_eo, curr_eoname, curr_queue, curr_qname,
 				       curr_payload, evhdl.event, evhdl.evptr);
 		} else if (!is_unmark_error) {
 			/* "Normal" ESV Error, prev state available */
 			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
 				       err_info->escope, EVSTATE_ERROR_FMT,
 				       event, send_cnt, ref_cnt, evgen_hdl, evgen_cnt, help_str,
-				       prev_info->str, prev_state.core, prev_state.eo, prev_eoname,
-				       prev_state.queue, prev_qname, prev_payload,
-				       err_info->str, err_state.core, err_state.eo, curr_eoname,
-				       err_state.queue, curr_qname, curr_payload,
+				       prev_info->str, prev_state.core, prev_eo, prev_eoname,
+				       prev_queue, prev_qname, prev_payload,
+				       err_info->str, err_state.core, curr_eo, curr_eoname,
+				       curr_queue, curr_qname, curr_payload,
 				       evhdl.event, evhdl.evptr);
 		} else {
 			/*
@@ -364,11 +374,11 @@ esv_error(const evstate_cnt_t cnt,
 				       err_info->escope, EVSTATE_UNMARK_ERROR_FMT,
 				       event,
 				       prev_info->str, prev_state.core,
-				       prev_state.eo, prev_eoname,
-				       prev_state.queue, prev_qname, prev_payload,
+				       prev_eo, prev_eoname,
+				       prev_queue, prev_qname, prev_payload,
 				       err_info->str, err_state.core,
-				       err_state.eo, curr_eoname,
-				       err_state.queue, curr_qname, curr_payload);
+				       curr_eo, curr_eoname,
+				       curr_queue, curr_qname, curr_payload);
 		}
 	} else { /* em_shm->opt.esv.store_state == false */
 		/* No previous state stored by EM at runtime */
@@ -377,8 +387,8 @@ esv_error(const evstate_cnt_t cnt,
 			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
 				       err_info->escope, EVSTATE__NO_PREV_STATE__ERROR_FMT,
 				       event, send_cnt, ref_cnt, evgen_hdl, evgen_cnt, help_str,
-				       err_info->str, err_state.core, err_state.eo, curr_eoname,
-				       err_state.queue, curr_qname, curr_payload,
+				       err_info->str, err_state.core, curr_eo, curr_eoname,
+				       curr_queue, curr_qname, curr_payload,
 				       evhdl.event, evhdl.evptr);
 		} else {
 			/*
@@ -388,8 +398,8 @@ esv_error(const evstate_cnt_t cnt,
 			INTERNAL_ERROR(EM_FATAL(EM_ERR_EVENT_STATE),
 				       err_info->escope, EVSTATE__NO_PREV_STATE__UNMARK_ERROR_FMT,
 				       event,
-				       err_info->str, err_state.core, err_state.eo, curr_eoname,
-				       err_state.queue, curr_qname, curr_payload);
+				       err_info->str, err_state.core, curr_eo, curr_eoname,
+				       curr_queue, curr_qname, curr_payload);
 		}
 	}
 }
@@ -454,12 +464,44 @@ esv_evinit_multi(em_event_t ev_tbl[/*in/out*/],
 }
 
 static inline em_event_t
+esv_evinit_ext(const em_event_t event, event_hdr_t *const ev_hdr,
+	       const uint16_t api_op)
+{
+	/*
+	 * Combination of:
+	 * event = esv_evinit(..., init_cnt_extev, ...)
+	 * return evstate_em2usr(event, ...);
+	 */
+	evhdl_t evhdl = {.event = event};
+	const evstate_cnt_t init = init_cnt_extev;
+	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
+				   .ref_cnt = 0, .send_cnt = 1};
+	const evstate_cnt_t cnt = {.u64 = init.u64 - sub.u64};
+
+	evhdl.evgen = cnt.evgen;
+	ev_hdr->event = evhdl.event;
+
+	/* Set initial counters (atomic) */
+	__atomic_store_n(&ev_hdr->state_cnt.u64, cnt.u64,
+			 __ATOMIC_RELAXED);
+
+	/* Set initial state information (non-atomic) */
+	evhdr_update_state(ev_hdr, api_op);
+
+	return evhdl.event;
+}
+
+static inline em_event_t
 esv_em2usr(const em_event_t event, event_hdr_t *const ev_hdr,
 	   const evstate_cnt_t cnt, const uint16_t api_op, const bool is_revert)
 {
 	const bool refs_used = ev_hdr->flags.refs_used;
 	evhdl_t evhdl = {.event = event};
 	evstate_cnt_t new_cnt;
+
+	/* TIMER events have no ESV state */
+	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER))
+		return evhdl.event;
 
 	/* Update state-count and return value of all counters (atomic) */
 	if (unlikely(is_revert)) {
@@ -511,6 +553,10 @@ esv_em2usr_multi(em_event_t ev_tbl[/*in/out*/],
 	for (int i = 0; i < num; i++) {
 		const bool refs_used = ev_hdr_tbl[i]->flags.refs_used;
 
+		/* TIMER events have no ESV state */
+		if (unlikely(ev_hdr_tbl[i]->event_type == EM_EVENT_TYPE_TIMER))
+			continue;
+
 		/* Update state-count and return value of all counters (atomic) */
 		if (unlikely(is_revert)) {
 			/* Revert em2usr counter update on failed operation */
@@ -559,6 +605,10 @@ esv_usr2em(const em_event_t event, event_hdr_t *const ev_hdr,
 	evhdl_t evhdl = {.event = event};
 	evstate_cnt_t new_cnt;
 
+	/* TIMER events have no ESV state */
+	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER))
+		return;
+
 	/* Update state-count and return value of all counters (atomic) */
 	if (unlikely(is_revert)) {
 		/* Revert previous usr2em counter update on failed operation */
@@ -569,8 +619,8 @@ esv_usr2em(const em_event_t event, event_hdr_t *const ev_hdr,
 			/* Avoid .evgen counter wrap */
 			const evstate_cnt_t add = {.evgen = EVGEN_MAX - EVGEN_INIT,
 						   .rsvd = 0, .ref_cnt = 0, .send_cnt = 0};
-			new_cnt.evgen = __atomic_add_fetch(&ev_hdr->state_cnt.u64,
-							   add.u64, __ATOMIC_RELAXED);
+			new_cnt.u64 = __atomic_add_fetch(&ev_hdr->state_cnt.u64,
+							 add.u64, __ATOMIC_RELAXED);
 		}
 	} else {
 		/* Normal usr2em counter update */
@@ -630,6 +680,10 @@ esv_usr2em_multi(const em_event_t ev_tbl[],
 	for (int i = 0; i < num; i++) {
 		const bool refs_used = ev_hdr_tbl[i]->flags.refs_used;
 
+		/* TIMER events have no ESV state */
+		if (unlikely(ev_hdr_tbl[i]->event_type == EM_EVENT_TYPE_TIMER))
+			continue;
+
 		/* Update state-count and return value of all counters (atomic) */
 		if (unlikely(is_revert)) {
 			/* Revert usr2em counter update on failed operation */
@@ -641,8 +695,9 @@ esv_usr2em_multi(const em_event_t ev_tbl[],
 				/* Avoid .evgen counter wrap */
 				const evstate_cnt_t add = {.evgen = EVGEN_MAX - EVGEN_INIT,
 							   .rsvd = 0, .ref_cnt = 0, .send_cnt = 0};
-				new_cnt.evgen = __atomic_add_fetch(&ev_hdr_tbl[i]->state_cnt.u64,
-								   add.u64, __ATOMIC_RELAXED);
+				new_cnt.u64 =
+				__atomic_add_fetch(&ev_hdr_tbl[i]->state_cnt.u64,
+						   add.u64, __ATOMIC_RELAXED);
 			}
 		} else {
 			/* Normal usr2em counter update */
@@ -696,15 +751,16 @@ em_event_t evstate_prealloc(const em_event_t event, event_hdr_t *const ev_hdr)
 	return esv_evinit(event, ev_hdr, init_cnt_alloc, EVSTATE__PREALLOC);
 }
 
-em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr)
+em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr,
+			 const uint16_t api_op)
 {
-	if (!em_shm->opt.esv.prealloc_pools)
-		return esv_evinit(event, ev_hdr, init_cnt_alloc, EVSTATE__ALLOC);
+	if (!em_shm->opt.esv.prealloc_pools || ev_hdr->flags.refs_used)
+		return esv_evinit(event, ev_hdr, init_cnt_alloc, api_op);
 
 	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
 				   .ref_cnt = 1, .send_cnt = 0};
 
-	return esv_em2usr(event, ev_hdr, sub, EVSTATE__ALLOC, false);
+	return esv_em2usr(event, ev_hdr, sub, api_op, false);
 }
 
 void evstate_alloc_multi(em_event_t ev_tbl[/*in/out*/],
@@ -716,24 +772,20 @@ void evstate_alloc_multi(em_event_t ev_tbl[/*in/out*/],
 		return;
 	}
 
+	/* em_shm->opt.esv.prealloc_pools: */
 	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
 				   .ref_cnt = 1, .send_cnt = 0};
 
-	esv_em2usr_multi(ev_tbl/*in/out*/, ev_hdr_tbl, num,
-			 sub, EVSTATE__ALLOC_MULTI, false);
-}
-
-em_event_t evstate_clone(const em_event_t clone_event, event_hdr_t *const ev_hdr)
-{
-	if (!em_shm->opt.esv.prealloc_pools)
-		return esv_evinit(clone_event, ev_hdr,
-				  init_cnt_alloc /* use 'alloc' init value */,
-				  EVSTATE__EVENT_CLONE);
-
-	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
-				   .ref_cnt = 1, .send_cnt = 0};
-
-	return esv_em2usr(clone_event, ev_hdr, sub, EVSTATE__EVENT_CLONE, false);
+	for (int i = 0; i < num; i++) {
+		if (ev_hdr_tbl[i]->flags.refs_used) {
+			ev_tbl[i] = esv_evinit(ev_tbl[i], ev_hdr_tbl[i],
+					       init_cnt_alloc,
+					       EVSTATE__ALLOC_MULTI);
+		} else {
+			ev_tbl[i] = esv_em2usr(ev_tbl[i], ev_hdr_tbl[i], sub,
+					       EVSTATE__ALLOC_MULTI, false);
+		}
+	}
 }
 
 em_event_t evstate_ref(const em_event_t event, event_hdr_t *const ev_hdr)
@@ -747,18 +799,10 @@ em_event_t evstate_ref(const em_event_t event, event_hdr_t *const ev_hdr)
 em_event_t evstate_init(const em_event_t event, event_hdr_t *const ev_hdr,
 			bool is_extev)
 {
-	uint16_t api_op;
-	evstate_cnt_t init_cnt;
-
-	if (is_extev) {
-		api_op = EVSTATE__INIT_EXTEV;
-		init_cnt = init_cnt_extev;
-	} else {
-		api_op = EVSTATE__INIT;
-		init_cnt = init_cnt_alloc;
-	}
-
-	return esv_evinit(event, ev_hdr, init_cnt, api_op);
+	if (is_extev)
+		return esv_evinit_ext(event, ev_hdr, EVSTATE__INIT_EXTEV);
+	else
+		return esv_evinit(event, ev_hdr, init_cnt_alloc, EVSTATE__INIT);
 }
 
 void evstate_init_multi(em_event_t ev_tbl[/*in/out*/],
@@ -780,22 +824,99 @@ void evstate_init_multi(em_event_t ev_tbl[/*in/out*/],
 			 init_cnt, api_op);
 }
 
+/**
+ * This is a combined calculation of the following three separate
+ * calculations:
+ *
+ * mark allocated:
+ * const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
+ *                            .ref_cnt = 1, .send_cnt = 0};
+ * event = esv_em2usr(event, ev_hdr, sub, api_op, false);
+ *
+ * mark sent:
+ * const evstate_cnt_t add = {.evgen = 1, .rsvd = 0,
+ *                            .ref_cnt = 0, .send_cnt = 1};
+ * esv_usr2em(event, ev_hdr, add, api_op, false);
+ *
+ * mark em2usr for dispatch to user EO:
+ * const evstate_cnt_t sub2 = {.evgen = 0, .rsvd = 0,
+ *                             .ref_cnt = 0, .send_cnt = 1};
+ * event = esv_em2usr(event, ev_hdr, sub2, api_op, false);
+ *
+ * combined = add - sub - sub2
+ * add:    {.evgen = 1, .rsvd = 0, .ref_cnt = 0, .send_cnt = 1}
+ * sub:  - {.evgen = 0, .rsvd = 0, .ref_cnt = 1, .send_cnt = 0}
+ * sub2: - {.evgen = 0, .rsvd = 0, .ref_cnt = 0, .send_cnt = 1}
+ *       -------------------------------------------------------
+ * cmb =   {.evgen = 1, .rsvd = 0, .ref_cnt =-1, .send_cnt = 0}
+ */
+static inline em_event_t
+esv_update_ext(const em_event_t event, event_hdr_t *const ev_hdr,
+	       const uint16_t api_op)
+{
+	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
+				   .ref_cnt = 1, .send_cnt = 0};
+	const evstate_cnt_t add = {.evgen = 1, .rsvd = 0,
+				   .ref_cnt = 0, .send_cnt = 0};
+	const evstate_cnt_t cmb = {.u64 = add.u64 - sub.u64}; /* combined, wraps */
+
+	const bool refs_used = ev_hdr->flags.refs_used;
+	evhdl_t evhdl = {.event = event};
+	evstate_cnt_t new_cnt;
+
+	/* Update state-count and return value of all counters (atomic) */
+	new_cnt.u64 = __atomic_add_fetch(&ev_hdr->state_cnt.u64,
+					 cmb.u64, __ATOMIC_RELAXED);
+
+	if (unlikely(new_cnt.evgen == EVGEN_MAX)) {
+		/* Avoid .evgen counter wrap */
+		const evstate_cnt_t wrap = {.evgen = EVGEN_MAX - EVGEN_INIT,
+					    .rsvd = 0, .ref_cnt = 0, .send_cnt = 0};
+		new_cnt.u64 = __atomic_sub_fetch(&ev_hdr->state_cnt.u64, wrap.u64,
+						 __ATOMIC_RELAXED);
+	}
+
+	if (!refs_used) {
+		evhdl.evgen = new_cnt.evgen;
+		ev_hdr->event = evhdl.event;
+	}
+
+	const int16_t ref_cnt = REF_CNT_INIT - new_cnt.ref_cnt;
+	const int16_t send_cnt = new_cnt.send_cnt - SEND_CNT_INIT;
+
+	/*
+	 * Check state count:
+	 * OK: send_cnt < ref_cnt and both >=0. Error otherwise.
+	 */
+	if (unlikely(send_cnt >= ref_cnt || send_cnt < 0)) {
+		/* report fatal event-state error, never return */
+		evstate_error(new_cnt, evhdl, ev_hdr, api_op, help_str_em2usr);
+		/* never reached */
+	}
+
+	/*
+	 * Valid state transition, update state (non-atomic)
+	 */
+	if (!refs_used)
+		evhdr_update_state(ev_hdr, api_op);
+
+	return evhdl.event;
+}
+
 em_event_t evstate_update(const em_event_t event, event_hdr_t *const ev_hdr,
 			  bool is_extev)
 {
 	em_event_t ret_event;
 
-	/* mark allocated */
-	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
-				   .ref_cnt = 1, .send_cnt = 0};
-
-	ret_event = esv_em2usr(event, ev_hdr, sub, EVSTATE__UPDATE_EXTEV, false);
-
 	if (is_extev) {
-		/* mark sent */
-		const evstate_cnt_t add = {.evgen = 1, .rsvd = 0, .ref_cnt = 0, .send_cnt = 1};
+		/* combined mark allocated & mark sent */
+		ret_event = esv_update_ext(event, ev_hdr, EVSTATE__UPDATE_EXTEV);
+	} else {
+		/* mark allocated */
+		const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
+					   .ref_cnt = 1, .send_cnt = 0};
 
-		esv_usr2em(ret_event, ev_hdr, add, EVSTATE__UPDATE_EXTEV, false);
+		ret_event = esv_em2usr(event, ev_hdr, sub, EVSTATE__UPDATE_EXTEV, false);
 	}
 
 	return ret_event;
@@ -981,7 +1102,8 @@ void evstate_unmark_send(const em_event_t event, event_hdr_t *const ev_hdr)
 	evstate_usr2em_revert(event, ev_hdr, EVSTATE__UNMARK_SEND);
 }
 
-void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr)
+void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr,
+			 const uint16_t api_op)
 {
 	if (em_shm->opt.esv.store_state) {
 		uint16_t expected_prev_ops[2] = {EVSTATE__MARK_FREE,
@@ -990,15 +1112,15 @@ void evstate_unmark_free(const em_event_t event, event_hdr_t *const ev_hdr)
 		 * Ensure that em_event_unmark_free() is only called
 		 * after em_event_mark_free() (not after em_free() etc).
 		 */
-		check_valid_unmark(ev_hdr, EVSTATE__UNMARK_FREE,
-				   expected_prev_ops, 2);
+		check_valid_unmark(ev_hdr, api_op, expected_prev_ops, 2);
 	}
 
-	evstate_free_revert(event, ev_hdr, EVSTATE__UNMARK_FREE);
+	evstate_free_revert(event, ev_hdr, api_op);
 }
 
 void evstate_unmark_free_multi(const em_event_t ev_tbl[],
-			       event_hdr_t *const ev_hdr_tbl[], const int num)
+			       event_hdr_t *const ev_hdr_tbl[], const int num,
+			       const uint16_t api_op)
 {
 	if (em_shm->opt.esv.store_state) {
 		uint16_t expected_prev_ops[2] = {EVSTATE__MARK_FREE_MULTI,
@@ -1008,13 +1130,11 @@ void evstate_unmark_free_multi(const em_event_t ev_tbl[],
 		 * called after em_event_mark_free_multi()
 		 * (not after em_free/_multi() etc).
 		 */
-		check_valid_unmark_multi(ev_hdr_tbl, num,
-					 EVSTATE__UNMARK_FREE_MULTI,
+		check_valid_unmark_multi(ev_hdr_tbl, num, api_op,
 					 expected_prev_ops, 2);
 	}
 
-	evstate_free_revert_multi(ev_tbl, ev_hdr_tbl, num,
-				  EVSTATE__UNMARK_FREE_MULTI);
+	evstate_free_revert_multi(ev_tbl, ev_hdr_tbl, num, api_op);
 }
 
 static int read_config_file(void)

@@ -26,4 +26,4 @@ Test Ordered
     [Documentation]    ordered -c ${CORE_MASK} -${APPLICATION_MODE}
     [TAGS]    ${CORE_MASK}    ${APPLICATION_MODE}
 
-    Run EM-ODP Test    sleep_time=30    regex_match=${REGEX_MATCH}
+    Run EM-ODP Test    sleep_time=40    regex_match=${REGEX_MATCH}

@@ -50,6 +50,11 @@
 #endif
 
 /**
+ * sizeof_field() - Report the size of a struct field in bytes
+ */
+#define sizeof_field(type, field) sizeof((((type *)NULL)->field))
+
+/**
  * Compile time assertion-macro - fail compilation if cond is false.
  */
 #define COMPILE_TIME_ASSERT(cond, msg)  ODP_STATIC_ASSERT(cond, #msg)
