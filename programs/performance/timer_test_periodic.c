@@ -1649,7 +1649,7 @@ void test_start(appl_conf_t *const appl_conf)
 		if (g_options.min_period_ns < res_capa.min_tmo)
 			g_options.min_period_ns = res_capa.min_tmo;
 	}
-	if (g_options.first_ns && llabs(g_options.first_ns) < g_options.min_period_ns) {
+	if (g_options.first_ns && (uint64_t)llabs(g_options.first_ns) < g_options.min_period_ns) {
 		if (g_options.first_ns < 0)
 			g_options.first_ns = 0 - g_options.min_period_ns;
 		else
