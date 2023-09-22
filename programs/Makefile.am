@@ -1,1 +1,1 @@
-SUBDIRS = common example packet_io performance
+SUBDIRS =common bench example packet_io performance

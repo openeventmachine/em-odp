@@ -6,6 +6,57 @@ EM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 --------------------------------------------------------------------------------
+API 3.3 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=3)
+--------------------------------------------------------------------------------
+1. Timer
+   (see include/event_machine/add-ons/event_machine_timer.h for documentation)
+
+ - Timer Ring
+   - Add a new event type EM_EVENT_TYPE_TIMER_IND that will be used by the
+     timer ring (instead of EM_EVENT_TYPE_TIMER).
+     Keep the EM_EVENT_TYPE_TIMER available for application use, as it might have
+     been used by the applications prior to the API v3.2 update.
+
+ - Update the specification to state that only the major event types
+   EM_EVENT_TYPE_SW, EM_EVENT_TYPE_PACKET and EM_EVENT_TYPE_TIMER can be used as
+   a timeout indication. Additionally, the type EM_EVENT_TYPE_TIMER_IND is used
+   by the timer ring.
+
+ - Get timer from timeout:
+    EM API:
+    em_timer_t em_tmo_get_timer(em_tmo_t tmo);
+    Get the related timer handle from a timeout handle.
+
+2. Event
+   (see include/event_machine/api/event_machine_event.h for documentation)
+
+ - Partial Event Clone:
+   Add a new EM API to be able to partially clone an event (and its user area):
+   EM API:
+   em_event_t em_event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/,
+                                  uint32_t offset, uint32_t len, bool clone_uarea);
+
+3. Pool
+   (see include/event_machine/platform/event_machine_pool.h for documentation)
+
+ - Selected Pool Statistics
+   Read/print only a selected subset of the pool statistic counters
+     EM APIs:
+     em_status_t em_pool_stats_selected(em_pool_t pool,
+                                        em_pool_stats_selected_t *pool_stats/*out*/,
+                                        const em_pool_stats_opt_t *opt);
+     void em_pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt);
+     int em_pool_subpool_stats_selected(em_pool_t pool, const int subpools[], int num_subpools,
+                                        em_pool_subpool_stats_selected_t subpool_stats[]/*out*/,
+                                        const em_pool_stats_opt_t *opt);
+     void em_pool_subpool_stats_selected_print(em_pool_t pool, const int subpools[],
+                                               int num_subpools, const em_pool_stats_opt_t *opt);
+
+ - Get the number of subpools in an EM event pool
+   EM API:
+   int em_pool_get_num_subpools(em_pool_t pool);
+
+--------------------------------------------------------------------------------
 API 3.2 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=2)
 --------------------------------------------------------------------------------
 1. Timer: timer version updated to v2.3,
@@ -21,13 +72,13 @@ API 3.2 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=2)
    em_status_t em_tmo_set_periodic_ring(em_tmo_t tmo, em_timer_tick_t start_abs,
                                         uint64_t multiplier, em_event_t tmo_ev);
 
-   Alternative periodic ring timer. As it uses a different abstraction, it is
+   An alternative periodic ring timer. As it uses a different abstraction, it is
    created and started via separate ring specific APIs. It has three main
    differencies to the regular periodic timeouts:
      1. Only a pre-defined read-only event type can be used and is provided
-        by the timer.
+        by the timer ((EM_EVENT_TYPE_TIMER_IND).
      2. Flow control is not supported. Some implementations may have it,
-        but the specification does not quarantee any so user needs to be
+        but the specification does not quarantee any so the user needs to be
         prepared to see the same event enqueued multiple times if handling of
         the received timeouts is not fast enough
      3. Only a limited set of periods are supported per timer (base rate or an
@@ -82,14 +133,14 @@ API 3.2 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=2)
         and call the EO's receive function with the timeout event:
 
         ==> EM calls the EO's receive function:
-        my_eo_receive(..., event, event_type = EM_EVENT_TYPE_TIMER,
+        my_eo_receive(..., event, event_type = EM_EVENT_TYPE_TIMER_IND,
                       queue = MY_QUEUE, ...)
         {
                 em_tmo_t tmo = EM_TMO_UNDEF;
                 em_tmo_type_t tmo_type = em_tmo_get_type(event, &tmo /*out*/,
                                                          false);
                 if (tmo_type == EM_TMO_TYPE_PERIODIC) {
-                        if (event_type == EM_EVENT_TYPE_TIMER) {
+                        if (event_type == EM_EVENT_TYPE_TIMER_IND) {
                                 /* from timer ring, event read only*/
                         } else {
                                 /* from "normal" periodic timer,

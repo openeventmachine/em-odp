@@ -3,6 +3,7 @@
 
 #define APP_EO_NAME	"ringEO"
 #define SHM_NAME	"TimerRing-test"
+#define SHM_TRACE_NAME	"TimerRing-trace"
 #define MAX_CORES	64
 #define EXTRA_PRINTS	0 /* dev option, normally 0 */
 #define MAX_TEST_TIMERS 15
@@ -47,7 +48,7 @@ const char *descopts[] = {
 	"Trace buffer size (traces per core). Default 0",
 	"Write trace dump to csv file at exit. Argument is file name. Default stdout",
 	"Number of timeouts per timer, default 1.",
-	"Relative start offset in timer ticks. Default 0. Can be comma separated list",
+	"Relative start offset in timer ticks. Default 0. Can be comma separated list.",
 	"Add extra processing delay per tmo receive, ns. Default 0. Negative is random up to",
 	"Delete and re-create timers every loop, default no",
 	"Re-use tmo handles (new loop), default no",
@@ -61,8 +62,10 @@ const char *instructions =
 "\nMain purpose of this tool is to test periodic ring timer functionality.\n"
 "At least two EM timers are created. One standard timer for a heartbeat\n"
 "driving test states. Second timer(s) is periodic ring for testing.\n"
-"Multiple test timers are created if -b,M or r specify comma separated list\n"
-"By default (no options) this runs a simple test once\n";
+"Multiple test timers are created if -b,M or r specify comma separated list.\n"
+"Arguments to control EM setup and app itself are separated with -- e.g.:\n"
+"./timer_test_ring -c0x30 -t -- -a -l2 -N\n\n"
+"By default (no app options) this runs a simple test once.\n";
 
 #define RND_STATE_BUF   32
 typedef struct rnd_state_t {
@@ -162,7 +165,7 @@ typedef struct trace_entry_t {
 	uint32_t val;
 	int64_t arg1;
 	int64_t arg2;
-	int64_t arg3;
+	void   *arg3;
 	void   *arg4;
 } trace_entry_t;
 

@@ -37,7 +37,7 @@ em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool)
 
 	if (EM_CHECK_LEVEL > 0 &&
 	    unlikely(size == 0 || !pool_elem ||
-		     em_event_type_major(type) == EM_EVENT_TYPE_TIMER)) {
+		     em_event_type_major(type) == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ALLOC,
 			       "Invalid args: size:%u type:%u pool:%" PRI_POOL "",
 			       size, type, pool);
@@ -101,7 +101,7 @@ int em_alloc_multi(em_event_t events[/*out*/], int num,
 
 	if (EM_CHECK_LEVEL > 0 &&
 	    unlikely(!events || num < 0 || size == 0 || !pool_elem ||
-		     em_event_type_major(type) == EM_EVENT_TYPE_TIMER)) {
+		     em_event_type_major(type) == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ALLOC_MULTI,
 			       "Invalid args: events:%p num:%d size:%u type:%u pool:%" PRI_POOL "",
 			       events, num, size, type, pool);
@@ -253,26 +253,26 @@ void em_free(em_event_t event)
 		return;
 	}
 
-	event_hdr_t *ev_hdr = NULL;
-
-	if (esv_enabled()) {
-		ev_hdr = event_to_hdr(event);
-		evstate_free(event, ev_hdr, EVSTATE__FREE);
-
-		if (is_vector_type(event))
-			event_vector_prepare_free_full(event, EVSTATE__FREE);
-	}
-
 	odp_event_t odp_event = event_em2odp(event);
+	const bool esv_ena = esv_enabled();
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(odp_event_type(odp_event) == ODP_EVENT_TIMEOUT)) {
-		if (!ev_hdr)
-			ev_hdr = event_to_hdr(event);
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(odp_event_type(odp_event) == ODP_EVENT_TIMEOUT)) {
+		event_hdr_t *ev_hdr = event_to_hdr(event);
+
 		if (unlikely(ev_hdr->flags.tmo_type != EM_TMO_TYPE_NONE)) {
 			INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_FREE,
 				       "Can't free active TIMER event");
 			return;
 		}
+		if (esv_ena)
+			evstate_free(event, ev_hdr, EVSTATE__FREE);
+	} else if (esv_ena) {
+		event_hdr_t *ev_hdr = event_to_hdr(event);
+
+		evstate_free(event, ev_hdr, EVSTATE__FREE);
+		if (is_vector_type(event))
+			event_vector_prepare_free_full(event, EVSTATE__FREE);
 	}
 
 	if (EM_API_HOOKS_ENABLE)
@@ -598,8 +598,8 @@ em_status_t em_send(em_event_t event, em_queue_t queue)
 
 	event_hdr_t *ev_hdr = event_to_hdr(event);
 
-	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
-			EM_ERR_BAD_ARG, EM_ESCOPE_SEND, "Timer event can't be sent");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
+			EM_ERR_BAD_ARG, EM_ESCOPE_SEND, "Timer-ring event can't be sent");
 
 	/* avoid unnecessary writing 'undef' in case event is a ref */
 	if (ev_hdr->egrp != EM_EVENT_GROUP_UNDEF)
@@ -655,9 +655,10 @@ int em_send_multi(const em_event_t events[], int num, em_queue_t queue)
 	event_to_hdr_multi(events, ev_hdrs, num);
 
 	for (int i = 0; i < num; i++) {
-		if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER)) {
+		if (EM_CHECK_LEVEL > 0 &&
+		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER_IND)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_SEND_MULTI,
-				       "Timer event[%d] can't be sent", i);
+				       "Timer-ring event[%d] can't be sent", i);
 			return 0;
 		}
 		/* avoid unnecessary writing 'undef' in case event is a ref */
@@ -933,8 +934,8 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
 
 	event_hdr_t *ev_hdr = event_to_hdr(event);
 
-	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
-			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_SEND, "TIMER event not allowed");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_SEND, "Timer-ring event not allowed");
 
 	/* avoid unnecessary writing 'undef' in case event is a ref */
 	if (ev_hdr->egrp != EM_EVENT_GROUP_UNDEF)
@@ -965,8 +966,9 @@ em_status_t em_event_unmark_send(em_event_t event)
 
 	event_hdr_t *ev_hdr = event_to_hdr(event);
 
-	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
-			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_SEND, "TIMER event not allowed");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_SEND,
+			"Timer-ring event not allowed");
 
 	evstate_unmark_send(event, ev_hdr);
 
@@ -986,9 +988,9 @@ void em_event_mark_free(em_event_t event)
 
 	event_hdr_t *const ev_hdr = event_to_hdr(event);
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER)) {
+	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_FREE,
-			       "TIMER event not allowed");
+			       "Timer-ring event not allowed");
 		return;
 	}
 
@@ -1011,9 +1013,9 @@ void em_event_unmark_free(em_event_t event)
 
 	event_hdr_t *const ev_hdr = event_to_hdr(event);
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER)) {
+	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_FREE,
-			       "TIMER event not allowed");
+			       "Timer-ring event not allowed");
 		return;
 	}
 
@@ -1054,9 +1056,9 @@ void em_event_mark_free_multi(const em_event_t events[], int num)
 
 	for (int i = 0; i < num; i++) {
 		if (EM_CHECK_LEVEL > 0 &&
-		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER)) {
+		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER_IND)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_FREE_MULTI,
-				       "TIMER event[%d] not allowed", i);
+				       "Timer-ring event[%d] not allowed", i);
 			continue;
 		}
 
@@ -1098,9 +1100,9 @@ void em_event_unmark_free_multi(const em_event_t events[], int num)
 
 	for (int i = 0; i < num; i++) {
 		if (EM_CHECK_LEVEL > 0 &&
-		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER)) {
+		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER_IND)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_FREE_MULTI,
-				       "TIMER event[%d] not allowed", i);
+				       "Timer-ring event[%d] not allowed", i);
 			continue;
 		}
 
@@ -1111,15 +1113,19 @@ void em_event_unmark_free_multi(const em_event_t events[], int num)
 	}
 }
 
-em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
+static em_event_t event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/,
+				   uint32_t offset, uint32_t len, bool clone_uarea,
+				   em_escope_t escope)
 {
 	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+	/* use escope to distinguish between em_event_clone() and em_event_clone_part() */
+	const bool is_clone_part = escope == EM_ESCOPE_EVENT_CLONE_PART ? true : false;
 
 	/* Check all args */
 	if (EM_CHECK_LEVEL > 0 &&
 	    unlikely(event == EM_EVENT_UNDEF ||
 		     (pool != EM_POOL_UNDEF && !pool_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_CLONE,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, escope,
 			       "Inv.args: event:%" PRI_EVENT " pool:%" PRI_POOL "",
 			       event, pool);
 		return EM_EVENT_UNDEF;
@@ -1127,7 +1133,7 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 
 	if (EM_CHECK_LEVEL >= 2 &&
 	    unlikely(pool_elem && !pool_allocated(pool_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_EVENT_CLONE,
+		INTERNAL_ERROR(EM_ERR_BAD_STATE, escope,
 			       "Inv.args: pool:%" PRI_POOL " not created", pool);
 		return EM_EVENT_UNDEF;
 	}
@@ -1140,7 +1146,7 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 
 	if (unlikely(odp_evtype != ODP_EVENT_PACKET &&
 		     odp_evtype != ODP_EVENT_BUFFER)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_CLONE,
+		INTERNAL_ERROR(EM_ERR_BAD_ID, escope,
 			       "Inv. odp-event-type:%d", odp_evtype);
 		return EM_EVENT_UNDEF;
 	}
@@ -1171,10 +1177,27 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 		}
 	}
 
+	if (is_clone_part) {
+		if (EM_CHECK_LEVEL >= 1) {
+			uint64_t offset64 = offset;
+			uint64_t len64 = len;
+			uint64_t size64 = size;
+
+			if (unlikely(len == 0 || offset64 + len64 > size64)) {
+				INTERNAL_ERROR(EM_ERR_BAD_ARG, escope,
+					       "Inv.args: offset=%u len=%u (0 < offset+len <= %u)",
+					       offset, len, size);
+				return EM_EVENT_UNDEF;
+			}
+		}
+		if (len < size)
+			size = len;
+	}
+
 	/* No EM-pool found */
 	if (em_pool == EM_POOL_UNDEF) {
 		if (unlikely(odp_evtype == ODP_EVENT_BUFFER)) {
-			INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_CLONE,
+			INTERNAL_ERROR(EM_ERR_NOT_FOUND, escope,
 				       "No suitable event-pool found");
 			return EM_EVENT_UNDEF;
 		}
@@ -1182,9 +1205,9 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 		 * Not an EM-pool, e.g. event from external pktio odp-pool.
 		 * Allocate and clone pkt via ODP directly.
 		 */
-		clone_event = pkt_clone_odp(pkt, odp_pool);
+		clone_event = pkt_clone_odp(pkt, odp_pool, offset, size, is_clone_part);
 		if (unlikely(clone_event == EM_EVENT_UNDEF)) {
-			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_EVENT_CLONE,
+			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, escope,
 				       "Cloning from ext odp-pool:%" PRIu64 " failed",
 				       odp_pool_to_u64(odp_pool));
 		}
@@ -1202,10 +1225,21 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 	if (unlikely(EM_CHECK_LEVEL > 0 &&
 		     pool_elem->event_type == EM_EVENT_TYPE_SW &&
 		     em_event_type_major(type) == EM_EVENT_TYPE_PACKET)) {
-		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_EVENT_CLONE,
+		INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, escope,
 			       "EM-pool:%s(%" PRI_POOL "):\n"
 			       "Invalid event type:0x%x for buf",
 			       pool_elem->name, em_pool, type);
+		return EM_EVENT_UNDEF;
+	}
+
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(clone_uarea && ev_hdr->user_area.isinit &&
+		     pool_elem->user_area.size < ev_hdr->user_area.size)) {
+		INTERNAL_ERROR(EM_ERR_TOO_SMALL, escope,
+			       "EM-pool:%s(%" PRI_POOL "):\n"
+			       "Available user-area too small, clone uarea %u < needed uarea %u",
+			       pool_elem->name, em_pool, pool_elem->user_area.size,
+			       ev_hdr->user_area.size);
 		return EM_EVENT_UNDEF;
 	}
 
@@ -1214,8 +1248,8 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 	else /* EM_EVENT_TYPE_SW */
 		clone_hdr = event_alloc_buf(pool_elem, size);
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(!clone_hdr)) {
-		em_status_t err = INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_EVENT_CLONE,
+	if (unlikely(!clone_hdr)) {
+		em_status_t err = INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, escope,
 						 "EM-pool:'%s': sz:%u type:0x%x pool:%" PRI_POOL "",
 						 pool_elem->name, size, type, em_pool);
 		if (EM_DEBUG_PRINT && err != EM_OK &&
@@ -1233,21 +1267,25 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 	clone_hdr->event_type = type; /* store the event type */
 	clone_hdr->event_size = size; /* store requested size */
 	clone_hdr->egrp = EM_EVENT_GROUP_UNDEF;
-
-	/* Copy the uarea meta-data */
 	clone_hdr->user_area.all = ev_hdr->user_area.all;
+	clone_hdr->user_area.size = pool_elem->user_area.size; /* uarea size comes from pool */
+	clone_hdr->user_area.isinit = 1;
+
 	/* Copy the event uarea content if used */
-	if (ev_hdr->user_area.isinit && ev_hdr->user_area.size > 0) {
+	if (clone_uarea &&
+	    ev_hdr->user_area.isinit && ev_hdr->user_area.size > 0) {
 		const void *uarea_ptr = (void *)((uintptr_t)ev_hdr + sizeof(event_hdr_t));
 		void *clone_uarea_ptr = (void *)((uintptr_t)clone_hdr + sizeof(event_hdr_t));
+		size_t sz = MIN(pool_elem->user_area.size, ev_hdr->user_area.size);
 
-		memcpy(clone_uarea_ptr, uarea_ptr, ev_hdr->user_area.size);
+		memcpy(clone_uarea_ptr, uarea_ptr, sz);
 	}
 
 	clone_event = clone_hdr->event;
 
 	/* Copy event payload from the parent event into the clone event */
-	const void *src = event_pointer(event);
+	uintptr_t src_addr = (uintptr_t)event_pointer(event) + offset;
+	const void *src = (void *)src_addr;
 	void *dst = event_pointer(clone_event);
 
 	memcpy(dst, src, size);
@@ -1257,6 +1295,18 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
 		call_api_hooks_alloc(&clone_event, 1, 1, size, type, pool);
 
 	return clone_event;
+}
+
+em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/)
+{
+	return event_clone_part(event, pool, 0, 0, true, EM_ESCOPE_EVENT_CLONE);
+}
+
+em_event_t em_event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/,
+			       uint32_t offset, uint32_t len, bool clone_uarea)
+{
+	return event_clone_part(event, pool, offset, len, clone_uarea,
+				EM_ESCOPE_EVENT_CLONE_PART);
 }
 
 static inline int

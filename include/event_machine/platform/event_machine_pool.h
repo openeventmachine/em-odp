@@ -99,30 +99,41 @@ extern "C" {
  * ODP thread local cache_available. When creating an EM subpool, EM always
  * sets 'odp_pool_stats_opt_t::bit::thread_cache_available' to 0.
  */
-typedef struct {
-	/** See em_pool_subpool_stats_t::available */
-	uint64_t available          : 1;
+typedef union {
+	/** Option flags */
+	struct {
+		/** See em_pool_subpool_stats_t::available */
+		uint64_t available          : 1;
 
-	/** See em_pool_subpool_stats_t::alloc_ops */
-	uint64_t alloc_ops          : 1;
+		/** See em_pool_subpool_stats_t::alloc_ops */
+		uint64_t alloc_ops          : 1;
 
-	/** See em_pool_subpool_stats_t::alloc_fails */
-	uint64_t alloc_fails        : 1;
+		/** See em_pool_subpool_stats_t::alloc_fails */
+		uint64_t alloc_fails        : 1;
 
-	/** See em_pool_subpool_stats_t::free_ops */
-	uint64_t free_ops           : 1;
+		/** See em_pool_subpool_stats_t::free_ops */
+		uint64_t free_ops           : 1;
 
-	/** See em_pool_subpool_stats_t::total_ops */
-	uint64_t total_ops          : 1;
+		/** See em_pool_subpool_stats_t::total_ops */
+		uint64_t total_ops          : 1;
 
-	/** See em_pool_subpool_stats_t::cache_available */
-	uint64_t cache_available    : 1;
+		/** See em_pool_subpool_stats_t::cache_available */
+		uint64_t cache_available    : 1;
 
-	/** See em_pool_subpool_stats_t::cache_alloc_ops */
-	uint64_t cache_alloc_ops    : 1;
+		/** See em_pool_subpool_stats_t::cache_alloc_ops */
+		uint64_t cache_alloc_ops    : 1;
 
-	/** See em_pool_subpool_stats_t::cache_free_ops */
-	uint64_t cache_free_ops     : 1;
+		/** See em_pool_subpool_stats_t::cache_free_ops */
+		uint64_t cache_free_ops     : 1;
+
+	};
+
+	/** All bits of the bit field structure
+	 *
+	 *  This field can be used to set/clear all flags, or for bitwise
+	 *  operations over the entire structure.
+	 */
+	uint64_t all;
 } em_pool_stats_opt_t;
 
 typedef struct {
@@ -386,6 +397,48 @@ typedef struct {
 } em_pool_stats_t;
 
 /**
+ * Pool subpool statistics counters
+ *
+ * Same as em_pool_subpool_stats_t excluding the __internal_use.
+ */
+typedef struct {
+	/** The number of available events in the pool */
+	uint64_t available;
+
+	/** The number of alloc operations from the pool. Includes both
+	 *  successful and failed operations (pool empty).
+	 */
+	uint64_t alloc_ops;
+
+	/** The number of failed alloc operations (pool empty) */
+	uint64_t alloc_fails;
+
+	/** The number of free operations to the pool */
+	uint64_t free_ops;
+
+	/** The total number of alloc and free operations. Includes both
+	 *  successful and failed operations (pool empty).
+	 */
+	uint64_t total_ops;
+
+	/** The number of available events in the local caches of all cores */
+	uint64_t cache_available;
+
+	/** The number of successful alloc operations from pool caches (returned
+	 *  at least one event).
+	 */
+	uint64_t cache_alloc_ops;
+
+	/** The number of free operations, which stored events to pool caches. */
+	uint64_t cache_free_ops;
+} em_pool_subpool_stats_selected_t;
+
+typedef struct {
+	uint32_t num_subpools;
+	em_pool_subpool_stats_selected_t subpool_stats[EM_MAX_SUBPOOLS];
+} em_pool_stats_selected_t;
+
+/**
  * Initialize EM-pool configuration parameters for em_pool_create()
  *
  * Initialize em_pool_cfg_t to default values for all fields.
@@ -545,6 +598,16 @@ void
 em_pool_info_print(em_pool_t pool);
 
 /**
+ * @brief Return the number of subpools in an EM pool.
+ *
+ * @param pool        EM pool handle
+ *
+ * @return            Number of subpools in the given pool(max=EM_MAX_SUBPOOLS)
+ *                    or -1 on error
+ */
+int em_pool_get_num_subpools(em_pool_t pool);
+
+/**
  * Helper function to print EM Pool information for all pools in the system.
  *
  * Uses em_pool_info() when printing the pool information.
@@ -569,7 +632,7 @@ em_pool_info_print_all(void);
  * @param[out]    pool_stats     Pointer to pool statistics. A successful call
  *                               writes to this pointer the requested pool statistics.
  *
- * @return EM_OK if successful
+ * @return EM_OK if the statistics of all subpools of 'pool' are read successfully
  *
  * @note Runtime argument checking is not done unless EM_CHECK_LEVEL > 0.
  *
@@ -584,7 +647,6 @@ em_status_t em_pool_stats(em_pool_t pool, em_pool_stats_t *pool_stats/*out*/);
  * except:
  *	'em_pool_subpool_stats_t::available'
  *	'em_pool_subpool_stats_t::cache_available',
- *	'em_pool_subpool_stats_t::cores::cache_available'
  *
  * @param pool    EM Pool handle
  *
@@ -661,8 +723,7 @@ em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
  *
  * Reset all statistics counters in given subpools of an EM pool to zero except:
  *	'em_pool_subpool_stats_t::available'
- *	'em_pool_subpool_stats_t::cache_available',
- *	'em_pool_subpool_stats_t::thread::cache_available'
+ *	'em_pool_subpool_stats_t::cache_available'
  *
  * @param         pool          EM pool handle
  * @param         subpools      Array of subpool indices
@@ -690,6 +751,118 @@ em_pool_subpool_stats_reset(em_pool_t pool, const int subpools[], int num_subpoo
  * Uses em_pool_subpool_stats() when printing the subpool statistics.
  */
 void em_pool_subpool_stats_print(em_pool_t pool, const int subpools[], int num_subpools);
+
+/**
+ * @brief Retrieve selected statistics about an EM pool.
+ *
+ * Read the selected statistic counters specified in 'em_pool_stats_opt_t'. The
+ * selected counters must have been enabled in 'em_pool_cfg_t::stats_opt' passed
+ * to em_pool_create() or in the 'pool.statistics' of EM config file. Values of
+ * the unselected counters are undefined. Note that there may be some delay until
+ * performed pool operations are visible in the statistics.
+ *
+ * @param         pool           EM pool handle
+ * @param[out]    pool_stats     Pointer to pool statistics. A successful call
+ *                               writes to this pointer the requested pool statistics.
+ * @opt           opt            Used to select the statistic counters to read
+ *
+ * @return EM_OK if the selected statistics of all subpools of 'pool' are read
+ * successfully
+ *
+ * @note Runtime argument checking is not done unless EM_CHECK_LEVEL > 0.
+ *
+ * @see em_pool_cfg_t::stats_opt, em_pool_stats_selected_t and em_pool_stats_opt_t.
+ */
+em_status_t
+em_pool_stats_selected(em_pool_t pool, em_pool_stats_selected_t *pool_stats/*out*/,
+		       const em_pool_stats_opt_t *opt);
+
+/**
+ * @brief Helper function to print selected statistics for an EM pool.
+ *
+ * Note that there may be some delay until performed pool operations are visible
+ * in the statistics.
+ *
+ * @param      pool      EM pool handle
+ * @opt        opt       Used to select the statistic counters to print
+ *
+ * Uses em_pool_stats_selected() when printing the selected pool statistics.
+ */
+void em_pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt);
+
+/**
+ * @brief Retrieve selected statistics about subpool(s) of an EM pool.
+ *
+ * Read the selected subpool statistic counters given in 'em_pool_stats_opt_t'.
+ * The selected counters must have been enabled in 'em_pool_cfg_t::stats_opt'
+ * passed to em_pool_create() or in the 'pool.statistics' of EM config file.
+ * Values of the unselected counters are undefined. Note that there may be some
+ * delay until performed pool operations are visible in the statistics.
+ *
+ * The function returns the number of selected subpool statistics actually read.
+ * A return value of 'num_subpools' means that the selected subpool statistics
+ * for the given indices in 'subpools' are all retrieved successfully. A value
+ * less than 'num_subpools' means that the selected statistics for subpools whose
+ * indices are given at the end of 'subpools' can not be fetched. The function
+ * will not modify corresponding 'subpool_stats'.
+ *
+ * @param         pool          EM pool handle
+ * @param         subpools      Array of subpool indices, must contain
+ *                              'num_subpools' valid subpool-indices.
+ *                              0 <= indices < number of subpools 'pool' has.
+ * @param         num_subpools  Number of subpools to retrieve statistics for.
+ *                              0 < num_subpools <= number of subpools 'pool' has.
+ * @param[out] subpool_stats    Array of subpool statistics, must have room for
+ *                              'num_subpools' entries of subpool statistics.
+ *                              A successful call writes to this array the requested
+ *                              subpool statistics [out].
+ * @opt               opt       Used to select the statistic counters to read
+ *
+ * @return number of subpool_stats successfully fetched (equal to 'num_subpools'
+ *         if all successful) or 0 on error.
+ *
+ * @code
+ *	em_pool_t pool = 1;
+ *	int num = 3;
+ *	int subpools[3] = [0, 3, 2];
+ *	em_pool_subpool_stats_selected_t stats[3];
+ *	em_pool_stats_opt_t opt = {.bit.available = 1};
+ *	int ret = em_pool_subpool_stats_selected(pool, subpools, num, stats, &opt);
+ * @endcode
+ *
+ * The mapping between stats and subpools is as follows:
+ *	stats[0] <-> subpools[0]
+ *	stats[1] <-> subpools[1]
+ *	...
+ *	stats[num_subpools - 1] <-> subpools[num_subpools - 1]
+ * So in above code, stats[1] stores selected statistics for the subpool whose
+ * index is 3.
+ *
+ * @note Runtime argument checking is not done unless EM_CHECK_LEVEL > 0.
+ *
+ * @see em_pool_cfg_t::stats_opt, em_pool_subpool_stats_selected_t and em_pool_stats_opt_t.
+ */
+int em_pool_subpool_stats_selected(em_pool_t pool, const int subpools[], int num_subpools,
+				   em_pool_subpool_stats_selected_t subpool_stats[]/*out*/,
+				   const em_pool_stats_opt_t *opt);
+
+/**
+ * @brief Helper function to print selected statistics for subpool(s) of an EM pool.
+ *
+ * Note that there may be some delay until performed pool operations are visible
+ * in the statistics.
+ *
+ * @param      pool          EM pool handle
+ * @param      subpools      Array of subpool indices
+ *                           0 <= indices < number of subpools pool has
+ * @param      num_subpools  Number of subpools to print statistics for
+ *                           0 < num_subpools <= number of subpools pool has
+ * @opt        opt           Used to select the statistic counters to print
+ *
+ * Uses em_pool_subpool_stats_selected() when printing the selected subpool statistics.
+ */
+void em_pool_subpool_stats_selected_print(em_pool_t pool, const int subpools[],
+					  int num_subpools, const em_pool_stats_opt_t *opt);
 
 /**
  * @}

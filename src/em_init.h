@@ -114,6 +114,9 @@ typedef struct {
 		unsigned int poll_drain_interval;
 		uint64_t poll_drain_interval_ns;
 		odp_time_t poll_drain_interval_time;
+
+		uint64_t sched_wait_ns;
+		uint64_t sched_wait; /* odp_schedule_wait_time(sched_wait_ns) */
 	} dispatch;
 
 	struct {
@@ -163,6 +166,15 @@ output_drain_init_local(bool *const result /*out*/, int core_id,
  */
 void
 core_log_fn_set(em_log_func_t func);
+
+/**
+ * Set EM core local log function with va_list.
+ *
+ * Called by EM-core (= process, thread or bare metal core) when a
+ * different log function than EM internal log is needed.
+ *
+ */
+void core_vlog_fn_set(em_vlog_func_t func);
 
 /**
  * Initialize a thread external to EM.

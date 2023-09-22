@@ -620,6 +620,7 @@ dispatch_round(void)
 {
 	odp_queue_t odp_queue;
 	odp_event_t odp_evtbl[EM_SCHED_MULTI_MAX_BURST];
+	int num;
 
 	dispatch_poll_ctrl_queue();
 
@@ -629,7 +630,13 @@ dispatch_round(void)
 	if (EM_DEBUG_TIMESTAMP_ENABLE)
 		em_locm.debug_ts[EM_DEBUG_TSP_SCHED_ENTRY] = debug_timestamp();
 
-	int num = odp_schedule_multi_no_wait(&odp_queue, odp_evtbl, EM_SCHED_MULTI_MAX_BURST);
+	if (EM_SCHED_WAIT_ENABLE) {
+		num = odp_schedule_multi(&odp_queue, em_shm->opt.dispatch.sched_wait,
+					 odp_evtbl, EM_SCHED_MULTI_MAX_BURST);
+	} else {
+		num = odp_schedule_multi_no_wait(&odp_queue, odp_evtbl,
+						 EM_SCHED_MULTI_MAX_BURST);
+	}
 
 	if (EM_DEBUG_TIMESTAMP_ENABLE)
 		em_locm.debug_ts[EM_DEBUG_TSP_SCHED_RETURN] = debug_timestamp();

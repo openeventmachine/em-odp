@@ -49,6 +49,8 @@ typedef odp_time_t env_time_t;
 /* Zero time stamp */
 #define ENV_TIME_NULL ODP_TIME_NULL
 
+#define ENV_TIME_MSEC_IN_NS ODP_TIME_MSEC_IN_NS
+
 /**
  * Returns current local time stamp value.
  * Local time is thread specific and must not be shared between threads.
@@ -184,6 +186,11 @@ static inline uint64_t env_time_to_cycles(env_time_t time, uint64_t hz)
 	return odp_time_to_ns(time) * (hz / 1000000) / 1000;
 }
 #endif
+
+static inline void env_time_wait_ns(uint64_t ns)
+{
+	odp_time_wait_ns(ns);
+}
 
 #ifdef __cplusplus
 }

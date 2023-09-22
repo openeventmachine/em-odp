@@ -53,6 +53,68 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.3.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.3 (em-odp/include), see API additions and changes in
+  em-odp/include/event_machine/README_API.
+  * Timer ring event type changed to EM_EVENT_TYPE_TIMER_IND
+    (from EM_EVENT_TYPE_TIMER) to ensure that applications that prior to
+    v3.2.0 were using EM_EVENT_TYPE_TIMER for their "normal" timer events can
+    continue to do so.
+  * Timer APIs: em_tmo_get_timer() - Get timer from timeout
+  * Event APIs: em_event_clone_part() - Partially clone an event
+  * Pool APIs: Selected Pool Statistics - em_pool_stats_selected(),
+                                          em_pool_subpool_stats_selected() etc.
+
+- Event State Verification (ESV) changes
+  - Add basic ESV state checks for timer-ring events. Since the same event might
+    be processed on multiple cores, only a limited set of ESV checks can be done.
+    For now only verify timer-ring event alloc and free.
+
+- Dispatch configuration options
+  - Add the ability to configure the wait-for-events timeout passed
+    to the ODP scheduler during EM dispatch.
+  - Config file (em-odp.conf) version number bumped up to "0.0.18"
+
+    configure.ac:
+    -------------
+    Enable the EM dispatcher/scheduler to start waiting for events if none are
+    immediately available. Waiting for events, rather than busy-waiting, might
+    save power.
+    New configure option:
+    --enable-sched-wait   EM calls odp_schedule_multi(..., sched_wait_ns, ...),
+                          where 'sched_wait_ns' is taken from
+                          'dispatch.sched_wait_ns = value' in the
+                          EM config file (config/em-odp.conf).
+                          Set 'EM_SCHED_WAIT_ENABLE=1'
+    --disable--sched-wait EM calls odp_schedule_multi_no_wait().
+                          Set 'EM_SCHED_WAIT_ENABLE=0'
+     no option given Use '#define EM_SCHED_WAIT_ENABLE 0|1' from source code
+
+     em-odp.conf (runtime config file):
+     ----------------------------------
+     Runtime schedule-wait option in nanoseconds.
+     Allows the user to configure the time (ns) the scheduler should wait
+     for events before returning (when no events are immediately available).
+     Only usable if the define EM_SCHED_WAIT_ENABLE has been set to '1'
+     either via
+     1) 'configure --enable-sched-wait' or
+     2) #define EM_SCHED_WAIT_ENABLE 0 ==> 1
+        (include/event_machine/platform/event_machine_config.h)
+     Note that using option 1), i.e. via 'configure', overrides the value
+     in event_machine_config.h.
+     See configure.ac, config/em-odp.conf and event_machine_config.h
+     sched_wait_ns = 0: no waiting for events, scheduler returns
+                         immediately even if no events available
+                         (converted to 'ODP_SCHED_NO_WAIT')
+     sched_wait_ns = -1: waits indefinitly for events
+                         (converted to 'ODP_SCHED_WAIT')
+     sched_wait_ns > 0: waits 'sched_wait_ns' for events
+                         (converted to 'odp_schedule_wait_time(sched_wait_ns)')
+     Note that the 'sched_wait_ns' may be rounded up as specified by the
+     ODP spec, configuration and implementation.
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.2.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.2 (em-odp/include), see API additions and changes in

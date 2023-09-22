@@ -499,8 +499,8 @@ em_status_t em_send_group(em_event_t event, em_queue_t queue,
 
 	event_hdr_t *ev_hdr = event_to_hdr(event);
 
-	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
-			EM_ERR_BAD_ARG, EM_ESCOPE_SEND_GROUP, "TIMER event can't be sent");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
+			EM_ERR_BAD_ARG, EM_ESCOPE_SEND_GROUP, "Timer-ring event can't be sent");
 
 	/* Store the event group information in the event header */
 	if (egrp_elem) {
@@ -590,9 +590,9 @@ int em_send_group_multi(const em_event_t events[], int num, em_queue_t queue,
 	/* check for invalid TIMER events */
 	if (EM_CHECK_LEVEL > 0) {
 		for (int i = 0; i < num; i++) {
-			if (unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER)) {
+			if (unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER_IND)) {
 				INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_SEND_GROUP_MULTI,
-					       "event[%d] is TIMER event, can't send", i);
+					       "Timer-ring event[%d] can't be sent", i);
 				return 0;
 			}
 		}

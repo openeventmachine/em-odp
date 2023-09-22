@@ -50,7 +50,8 @@ COMPILE_TIME_ASSERT(EM_TMO_TYPE_NONE == 0,
 
 em_status_t event_init(void);
 void print_event_info(void);
-em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool);
+em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool,
+			 uint32_t offset, uint32_t size, bool is_clone_part);
 void output_queue_track(queue_elem_t *const output_q_elem);
 void output_queue_drain(const queue_elem_t *output_q_elem);
 void output_queue_buffering_drain(void);
@@ -373,7 +374,7 @@ static inline em_event_t
 event_init_odp(odp_event_t odp_event, bool is_extev, event_hdr_t **ev_hdr__out)
 {
 	const odp_event_type_t odp_type = odp_event_type(odp_event);
-	em_event_t event = event_odp2em(odp_event); /* return value */
+	em_event_t event = event_odp2em(odp_event); /* return value, updated by ESV */
 
 	switch (odp_type) {
 	case ODP_EVENT_PACKET: {
@@ -417,8 +418,21 @@ event_init_odp(odp_event_t odp_event, bool is_extev, event_hdr_t **ev_hdr__out)
 	case ODP_EVENT_TIMEOUT: {
 		odp_timeout_t odp_tmo = odp_timeout_from_event(odp_event);
 		event_hdr_t *ev_hdr = odp_timeout_user_area(odp_tmo);
+		const bool esv_ena = esv_enabled();
 
-		/* ignore ESV */
+		if (esv_ena) {
+			/*
+			 * Update event handle, no other ESV checks done.
+			 * Some timers might send a copy of the original event
+			 * in tear-down, thus keep ptr but update evgen.
+			 */
+			evhdl_t evhdl = {.event = event}; /* .evptr from here */
+			evhdl_t evhdr_hdl = {.event = ev_hdr->event}; /* .evgen from here */
+
+			evhdl.evgen = evhdr_hdl.evgen; /* update .evgen */
+			ev_hdr->event = evhdl.event; /* store updated hdl in hdr */
+			event = evhdl.event; /* return updated event */
+		}
 
 		if (ev_hdr__out)
 			*ev_hdr__out = ev_hdr;

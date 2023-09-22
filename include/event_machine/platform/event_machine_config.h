@@ -201,6 +201,28 @@ extern "C" {
 #endif
 
 /**
+ * @def EM_SCHED_WAIT_ENABLE
+ * Enable the EM dispatcher/scheduler to start waiting for events if none are
+ * immediately available. Waiting for events, rather than busy-waiting, might
+ * save power.
+ * The EM dispatch loop will call odp_schedule_multi(..., sched_wait_ns, ...)
+ * when EM_SCHED_WAIT_ENABLE=1.
+ * The EM dispatch loop will call odp_schedule_multi_no_wait()
+ * when EM_SCHED_WAIT_ENABLE=0.
+ * The 'sched_wait_ns' value can be set via the EM config file (config/em-odp.conf)
+ * variable 'dispatch.sched_wait_ns = value'
+ *
+ * @note em-odp: the 'EM_SCHED_WAIT_ENABLE' value can be overridden by a
+ *               command-line option to the 'configure' script, e.g.:
+ *               $build> ../configure ... --enable-sched-wait
+ *               The overridden value will be made available to the application
+ *               via a pkgconfig set define.
+ */
+#ifndef EM_SCHED_WAIT_ENABLE
+#define EM_SCHED_WAIT_ENABLE  0
+#endif
+
+/**
  * @def EM_CALLBACKS_MAX
  * Maximum number of EM callbacks/hooks that can be registered.
  *

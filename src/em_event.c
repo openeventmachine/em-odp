@@ -98,14 +98,19 @@ void print_event_info(void)
  *
  * Clone an event originating from an external odp pkt-pool.
  * Initialize the new cloned event as an EM event and return it.
+ *
+ * Alloc and copy content via ODP.
+ * Also the ev_hdr in the odp-pkt user_area is copied.
  */
-em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool)
+em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool,
+			 uint32_t offset, uint32_t size, bool is_clone_part)
 {
-	/*
-	 * Alloc and copy content via ODP.
-	 * Also the ev_hdr in the odp-pkt user_area is copied.
-	 */
-	odp_packet_t clone_pkt = odp_packet_copy(pkt, pkt_pool);
+	odp_packet_t clone_pkt;
+
+	if (is_clone_part)
+		clone_pkt = odp_packet_copy_part(pkt, offset, size, pkt_pool);
+	else
+		clone_pkt = odp_packet_copy(pkt, pkt_pool);
 
 	if (unlikely(clone_pkt == ODP_PACKET_INVALID))
 		return EM_EVENT_UNDEF;

@@ -71,12 +71,12 @@ typedef struct em_timer_timeout_t {
 	bool is_ring;			/* ring or normal timer */
 	em_queue_t queue;		/* destination queue */
 	odp_timer_t odp_timer;		/* odp timer / em tmo */
-	odp_timer_pool_t odp_timer_pool;/* odp timer_pool / em timer */
+	odp_timer_pool_t odp_timer_pool;/* odp timer_pool <- em timer */
 	odp_buffer_t odp_buffer;	/* this data is in odp buffer */
-
+	/* 2nd cache line: */
+	em_timer_t timer;		/* related timer (can't lookup from odp timer pool) */
 	odp_pool_t ring_tmo_pool;	/* if ring: this is the pool for odp timeout */
 	odp_event_t odp_timeout;	/* if ring: this is pre-allocated odp timeout */
-
 	em_tmo_stats_t stats;		/* per tmo statistics */
 } em_timer_timeout_t;
 

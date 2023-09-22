@@ -265,13 +265,9 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 				pool, i, ret);
 		/* ODP inactive counters are zero, it is safe to add both: */
 		free = odp_stats.available + odp_stats.cache_available;
-		used = num - free;
-
-		/* Sanity check */
 		if (free > num)
 			free = num;
-		if (used > num)
-			used = num;
+		used = num - free;
 
 		pool_info->subpool[i].used = used;
 		pool_info->subpool[i].free = free;
@@ -285,6 +281,25 @@ em_pool_info_print(em_pool_t pool)
 {
 	pool_info_print_hdr(1);
 	pool_info_print(pool);
+}
+
+int em_pool_get_num_subpools(em_pool_t pool)
+{
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0 && unlikely(!pool_elem)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_NUM_SUBPOOLS,
+			       "Inv. args: pool:%" PRI_POOL, pool);
+		return -1;
+	}
+
+	if (EM_CHECK_LEVEL >= 2 && unlikely(!pool_allocated(pool_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_NUM_SUBPOOLS,
+			       "EM-pool:%" PRI_POOL " not created", pool);
+		return -1;
+	}
+
+	return pool_elem->num_subpools;
 }
 
 void
@@ -370,6 +385,9 @@ void em_pool_stats_print(em_pool_t pool)
 	pool_stats_print(pool);
 }
 
+#define SUBPOOL_STATS_INV_ARG_FMT \
+"Inv. args: pool:%" PRI_POOL " subpools:%p num_subpools:%d subpool_stats:%p"
+
 int
 em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
 		      em_pool_subpool_stats_t subpool_stats[]/*out*/)
@@ -383,8 +401,8 @@ em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
 	    unlikely(!pool_elem || !subpools || !subpool_stats ||
 		     num_subpools <= 0 || num_subpools > pool_elem->num_subpools)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS,
-			       "Inv. args: pool:%" PRI_POOL " subpools:%p num:%d stats:%p",
-			       pool, subpools, num_subpools, subpool_stats);
+			       SUBPOOL_STATS_INV_ARG_FMT, pool, subpools,
+			       num_subpools, subpool_stats);
 		return 0;
 	}
 
@@ -456,4 +474,137 @@ em_pool_subpool_stats_reset(em_pool_t pool, const int subpools[], int num_subpoo
 void em_pool_subpool_stats_print(em_pool_t pool, const int subpools[], int num_subpools)
 {
 	subpools_stats_print(pool, subpools, num_subpools);
+}
+
+static inline void assign_odp_stats_opt(odp_pool_stats_opt_t *opt_odp/*out*/,
+					const em_pool_stats_opt_t *opt_em)
+{
+	opt_odp->all = 0;
+	opt_odp->bit.available = opt_em->available;
+	opt_odp->bit.alloc_ops = opt_em->alloc_ops;
+	opt_odp->bit.alloc_fails = opt_em->alloc_fails;
+	opt_odp->bit.free_ops = opt_em->free_ops;
+	opt_odp->bit.total_ops = opt_em->total_ops;
+	opt_odp->bit.cache_available = opt_em->cache_available;
+	opt_odp->bit.cache_alloc_ops = opt_em->cache_alloc_ops;
+	opt_odp->bit.cache_free_ops = opt_em->cache_free_ops;
+}
+
+em_status_t
+em_pool_stats_selected(em_pool_t pool, em_pool_stats_selected_t *pool_stats/*out*/,
+		       const em_pool_stats_opt_t *opt)
+{
+	int i;
+	int ret;
+	odp_pool_stats_opt_t opt_odp;
+	odp_pool_stats_selected_t *odp_stats;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(!pool_elem || !pool_stats || !opt,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_STATS_SELECTED,
+				"Inv. args: pool:%" PRI_POOL " pool_stats:%p opt: %p",
+				pool, pool_stats, opt);
+
+	if (EM_CHECK_LEVEL >= 2)
+		RETURN_ERROR_IF(!pool_allocated(pool_elem),
+				EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_STATS_SELECTED,
+				"EM-pool: %" PRI_POOL "not created", pool);
+
+	assign_odp_stats_opt(&opt_odp, opt);
+
+	for (i = 0; i < pool_elem->num_subpools; i++) {
+		odp_pool_t odp_pool = pool_elem->odp_pool[i];
+
+		if (EM_CHECK_LEVEL >= 3)
+			RETURN_ERROR_IF(odp_pool == ODP_POOL_INVALID,
+					EM_ERR_BAD_ID, EM_ESCOPE_POOL_STATS_SELECTED,
+					"EM-pool:%" PRI_POOL " invalid subpool:%d",
+					pool, i);
+
+		odp_stats = (odp_pool_stats_selected_t *)&pool_stats->subpool_stats[i];
+
+		ret = odp_pool_stats_selected(odp_pool, odp_stats, &opt_odp);
+
+		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_STATS_SELECTED,
+				"EM-pool:%" PRI_POOL " subpool:%d stats selected failed:%d",
+				pool, i, ret);
+	}
+
+	pool_stats->num_subpools = i;
+
+	return EM_OK;
+}
+
+void em_pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt)
+{
+	pool_stats_selected_print(pool, opt);
+}
+
+#define SUBPOOL_STATS_SELECTED_INV_ARG_FMT \
+"Inv. args: pool:%" PRI_POOL " subpools:%p num_subpools:%d subpool_stats:%p opt: %p"
+
+int em_pool_subpool_stats_selected(em_pool_t pool, const int subpools[], int num_subpools,
+				   em_pool_subpool_stats_selected_t subpool_stats[]/*out*/,
+				   const em_pool_stats_opt_t *opt)
+{
+	int ret;
+	int num_stats = 0;
+	odp_pool_stats_opt_t opt_odp;
+	odp_pool_stats_selected_t *odp_stats;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(!pool_elem || !subpools || !subpool_stats || !opt ||
+		     num_subpools <= 0 || num_subpools > pool_elem->num_subpools)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,
+			       SUBPOOL_STATS_SELECTED_INV_ARG_FMT, pool, subpools,
+			       num_subpools, subpool_stats, opt);
+		return 0;
+	}
+
+	if (EM_CHECK_LEVEL >= 2 && unlikely(!pool_allocated(pool_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,
+			       "EM-pool: %" PRI_POOL "not allocated", pool);
+		return 0;
+	}
+
+	assign_odp_stats_opt(&opt_odp, opt);
+
+	for (int i = 0; i < num_subpools; i++) {
+		odp_pool_t odp_pool = pool_elem->odp_pool[subpools[i]];
+
+		if (EM_CHECK_LEVEL > 0 &&
+		    unlikely(subpools[i] > pool_elem->num_subpools - 1)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,
+				       "arg 'subpools[%d]: %d' out of range", i, subpools[i]);
+			return num_stats;
+		}
+
+		if (EM_CHECK_LEVEL >= 3 && unlikely(odp_pool == ODP_POOL_INVALID)) {
+			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,
+				       "EM-pool:%" PRI_POOL " invalid subpool:%d", pool, i);
+			return num_stats;
+		}
+
+		odp_stats = (odp_pool_stats_selected_t *)&subpool_stats[i];
+
+		ret = odp_pool_stats_selected(odp_pool, odp_stats, &opt_odp);
+		if (unlikely(ret < 0)) {
+			INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,
+				       "EM-pool:%" PRI_POOL " subpool:%d stats failed:%d",
+				       pool, subpools[i], ret);
+			return num_stats;
+		}
+		num_stats++;
+	}
+
+	return num_stats;
+}
+
+void em_pool_subpool_stats_selected_print(em_pool_t pool, const int subpools[],
+					  int num_subpools,
+					  const em_pool_stats_opt_t *opt)
+{
+	subpools_stats_selected_print(pool, subpools, num_subpools, opt);
 }

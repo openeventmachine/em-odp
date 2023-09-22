@@ -138,6 +138,10 @@ em_status_t esv_init(void);
  */
 em_event_t evstate_prealloc(const em_event_t event, event_hdr_t *const ev_hdr);
 /**
+ * Set the initial event state during timeout allocation.
+ */
+em_event_t evstate_alloc_tmo(const em_event_t event, event_hdr_t *const ev_hdr);
+/**
  * Set the initial event state during em_alloc() / em_event_clone()
  */
 em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr,
