@@ -50,8 +50,7 @@ cd ..
   --host="${TARGET_ARCH}" \
   --with-odp-path="${install_dir}/odp_install" \
   --enable-check-level=3 \
-  --enable-esv \
-  CC="${CC}"
+  --enable-esv
 
 # Make doxygen document
 if [[ "${make_doxygen}" = "Y" ]]; then
