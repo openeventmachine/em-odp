@@ -34,6 +34,13 @@ static int cli_log(em_log_level_t level, const char *fmt, ...)
 	return r;
 }
 
+static int cli_vlog(em_log_level_t level, const char *fmt, va_list args)
+{
+	(void)level;
+
+	return odph_cli_log_va(fmt, args);
+}
+
 static void print_em_info_help(void)
 {
 	const char *usage = "Usage: em_info_print [OPTION]\n"
@@ -50,22 +57,28 @@ static void print_em_info_help(void)
 static void print_em_info_all(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	print_em_info();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_info_cpu_arch(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	print_cpu_arch_info();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_info_conf(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	em_libconfig_print(&em_shm->libconfig);
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void cmd_em_info_print(int argc, char *argv[])
@@ -142,8 +155,10 @@ static void cmd_em_info_print(int argc, char *argv[])
 static void print_em_pool_all(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	em_pool_info_print_all();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_pool(em_pool_t pool, const char *pool_name)
@@ -157,9 +172,11 @@ static void print_em_pool(em_pool_t pool, const char *pool_name)
 	}
 
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	pool_info_print_hdr(1);
 	pool_info_print(pool);
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_pool_help(void)
@@ -249,7 +266,8 @@ static void cmd_em_pool_print(int argc, char *argv[])
 	}
 }
 
-static void print_em_pool_stats(em_pool_t pool, const char *pool_name)
+static void
+print_em_pool_stats(em_pool_t pool, const char *pool_name, const em_pool_stats_opt_t *opt)
 {
 	if (pool == EM_POOL_UNDEF) {
 		if (pool_name)
@@ -260,8 +278,15 @@ static void print_em_pool_stats(em_pool_t pool, const char *pool_name)
 	}
 
 	core_log_fn_set(cli_log);
-	pool_stats_print(pool);
+	core_vlog_fn_set(cli_vlog);
+
+	if (opt)
+		pool_stats_selected_print(pool, opt);
+	else
+		pool_stats_print(pool);
+
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static int str_to_long(const char *str, long *num/*out*/, int base)
@@ -284,6 +309,56 @@ static int str_to_long(const char *str, long *num/*out*/, int base)
 		odph_cli_log("Extra characters not used in str: %s\n", endptr);
 
 	return 0;
+}
+
+/* Parse string statistic counter options to options in type em_pool_stats_opt_t */
+static void str_to_opt(const char *str_opt, em_pool_stats_opt_t * const opt)
+{
+	long stats_opt;
+
+	/* Parse statistic counter options */
+	if (str_to_long(str_opt, &stats_opt, 16))
+		return;
+
+	if (stats_opt & 0x80) {
+		odph_cli_log("available is selected\n");
+		opt->available = 1;
+	}
+
+	if (stats_opt & 0x40) {
+		odph_cli_log("alloc_ops is selected\n");
+		opt->alloc_ops = 1;
+	}
+
+	if (stats_opt & 0x20) {
+		odph_cli_log("alloc_fails is selected\n");
+		opt->alloc_fails = 1;
+	}
+
+	if (stats_opt & 0x10) {
+		odph_cli_log("free_ops is selected\n");
+		opt->free_ops = 1;
+	}
+
+	if (stats_opt & 0x08) {
+		odph_cli_log("total_ops is selected\n");
+		opt->total_ops = 1;
+	}
+
+	if (stats_opt & 0x04) {
+		odph_cli_log("cache_available is selected\n");
+		opt->cache_available = 1;
+	}
+
+	if (stats_opt & 0x02) {
+		odph_cli_log("cache_alloc_ops is selected\n");
+		opt->cache_alloc_ops = 1;
+	}
+
+	if (stats_opt & 0x01) {
+		odph_cli_log("cache_free_ops is selected\n");
+		opt->cache_free_ops = 1;
+	}
 }
 
 /* Parse argument for subpools option -s or --subpools */
@@ -333,6 +408,22 @@ static int subpools_str_to_id(char *str, int *num_subpools/*out*/, int *subpools
 	return 0;
 }
 
+static void
+print_em_subpools_stats(em_pool_t pool, const int subpools[], int num_subpools,
+			const em_pool_stats_opt_t *opt)
+{
+	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
+
+	if (opt)
+		subpools_stats_selected_print(pool, subpools, num_subpools, opt);
+	else
+		subpools_stats_print(pool, subpools, num_subpools);
+
+	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
+}
+
 static void print_subpools_stats(char *arg_subpools)
 {
 	long pool_id;
@@ -340,14 +431,15 @@ static void print_subpools_stats(char *arg_subpools)
 	em_pool_t pool;
 	int num_subpools;
 	char *str_subpools;
+	char *str_stats_opt;
 	const char *pool_str;
 	int subpools[EM_MAX_SUBPOOLS];
 	const char *delim = ":";
+	em_pool_stats_opt_t opt = {0};
 
 	pool_str = strtok_r(arg_subpools, delim, &saveptr);
 	if (pool_str == NULL) {
-		odph_cli_log("Invalid optarg: %s. Pool and subpool IDs must be separated with ':'\n",
-			     arg_subpools);
+		odph_cli_log("Invalid optarg: %s\n", arg_subpools);
 		return;
 	}
 
@@ -363,17 +455,21 @@ static void print_subpools_stats(char *arg_subpools)
 
 	str_subpools = strtok_r(NULL, delim, &saveptr);
 	if (str_subpools == NULL) {
-		odph_cli_log("Invalid option argument: %s (subpool IDs are missing)\n",
-			     arg_subpools);
+		odph_cli_log("Invalid optarg: %s (subpool IDs are missing)\n", arg_subpools);
 		return;
 	}
 
 	if (subpools_str_to_id(str_subpools, &num_subpools, subpools))
 		return;
 
-	core_log_fn_set(cli_log);
-	subpools_stats_print(pool, subpools, num_subpools);
-	core_log_fn_set(NULL);
+	str_stats_opt = strtok_r(NULL, delim, &saveptr);
+	/* No stats opt, then print all statistic counters */
+	if (str_stats_opt == NULL) {
+		print_em_subpools_stats(pool, subpools, num_subpools, NULL);
+	} else {
+		str_to_opt(str_stats_opt, &opt);
+		print_em_subpools_stats(pool, subpools, num_subpools, &opt);
+	}
 }
 
 static void print_em_pool_stats_help(void)
@@ -382,12 +478,64 @@ static void print_em_pool_stats_help(void)
 			    "Print EM pool statistics\n"
 			    "\n"
 			    "Options:\n"
-			    "  -i, --id <pool id>\tPrint statistics of <pool id>\n"
-			    "  -n, --name <pool name>\tPrint statistics of <pool name>\n"
-			    "  -s, --subpools <pool:[subpool ids]>\tPrint statistics of subpools\n"
-			    "  -h, --help\tDisplay this help\n";
+			    "  -i, --id <pool id [:stats opt]>\tPrint statistics of <pool id>\n"
+			    "  -n, --name <pool name [:stats opt]>\tPrint statistics of <pool name>\n"
+			    "  -s, --subpools <pool:[subpool ids] [:stats opt]>\tPrint statistics of subpools\n"
+			    "  -h, --help\tDisplay this help\n\n"
+			    "Note stats opt is optional, when not given, it prints statistics from\n"
+			    "em_pool_stats(), namely all statistic counters. When it is given,\n"
+			    "this command prints selected counters from em_pool_stats_selected().\n"
+			    "stats opt here uses one byte to select the counters to be read. One\n"
+			    "bit in stats opt selects one counter. MSB represents 'available' and\n"
+			    "LSB represents 'cache_free_ops'. For example, stats_opt=0x88 selects\n"
+			    "the 'available' and 'total_ops' statistic counters.\n\n"
+			    "Example:\n"
+			    "  em_pool_stats -i 0x1\n"
+			    "  em_pool_stats -i 0x1:0x88\n";
 
 	odph_cli_log(usage);
+}
+
+static void print_pool_stats(char *optarg_str, bool is_id)
+{
+	long pool_id;
+	char *saveptr;
+	em_pool_t pool;
+	char *str_opt;
+	const char *pool_str;
+	const char *delim = ":";
+	em_pool_stats_opt_t opt = {0};
+
+	/* Parse string containing pool ID or pool name */
+	pool_str = strtok_r(optarg_str, delim, &saveptr);
+	if (pool_str == NULL) {
+		odph_cli_log("Invalid optarg_str: %s\n", optarg_str);
+		return;
+	}
+
+	if (is_id) {
+		if (str_to_long(pool_str, &pool_id, 16))
+			return;
+
+		/*pool_id = 0 --> EM_POOL_UNDEF*/
+		if (!pool_id) {
+			odph_cli_log("Invalid pool id: %d\n", pool_id);
+			return;
+		}
+		pool = (em_pool_t)(uintptr_t)pool_id;
+	} else {
+		pool = pool_find(pool_str);
+	}
+
+	/* Parse string for statistic counter options */
+	str_opt = strtok_r(NULL, delim, &saveptr);
+	if (str_opt == NULL) {
+		/* stats opt is missing, then print all statistic counters */
+		print_em_pool_stats(pool, is_id ? NULL : pool_str, NULL);
+	} else {
+		str_to_opt(str_opt, &opt);
+		print_em_pool_stats(pool, is_id ? NULL : pool_str, &opt);
+	}
 }
 
 static void cmd_em_pool_stats(int argc, char *argv[])
@@ -420,8 +568,6 @@ static void cmd_em_pool_stats(int argc, char *argv[])
 		argv_new[i] = argv[i - 1];
 	argv_new[argc - 1] = NULL; /*Terminating NULL pointer*/
 
-	long pool_id;
-	em_pool_t pool;
 	int option;
 	struct optparse_long longopts[] = {
 		{"id", 'i', OPTPARSE_REQUIRED},
@@ -441,14 +587,10 @@ static void cmd_em_pool_stats(int argc, char *argv[])
 
 		switch (option) {
 		case 'i':
-			if (str_to_long(options.optarg, &pool_id, 16))
-				break;
-			pool = (em_pool_t)(uintptr_t)pool_id;
-			print_em_pool_stats(pool, NULL);
+			print_pool_stats(options.optarg, true);
 			break;
 		case 'n':
-			pool = pool_find(options.optarg);
-			print_em_pool_stats(pool, options.optarg);
+			print_pool_stats(options.optarg, false);
 			break;
 		case 's':
 			print_subpools_stats(options.optarg);
@@ -481,15 +623,19 @@ static void print_em_queue_help(void)
 static void print_em_queue_capa(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	print_queue_capa();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_queue_all(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	print_queue_info();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void cmd_em_queue_print(int argc, char *argv[])
@@ -574,8 +720,10 @@ static void print_em_qgrp_help(void)
 static void print_em_qgrp_all(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	queue_group_info_print_all();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_qgrp_queues(const em_queue_group_t qgrp, const char *name)
@@ -589,8 +737,10 @@ static void print_em_qgrp_queues(const em_queue_group_t qgrp, const char *name)
 	}
 
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	queue_group_queues_print(qgrp);
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void cmd_em_qgrp_print(int argc, char *argv[])
@@ -673,8 +823,10 @@ static void cmd_em_core_print(int argc, char *argv[])
 	/* Print EM core map */
 	if (argc == 0) {
 		core_log_fn_set(cli_log);
+		core_vlog_fn_set(cli_vlog);
 		print_core_map_info();
 		core_log_fn_set(NULL);
+		core_vlog_fn_set(NULL);
 	} else {
 		odph_cli_log("Error: extra parameter given to command!\n");
 	}
@@ -697,8 +849,10 @@ static void print_em_eo_help(void)
 static void print_em_eo_all(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	eo_info_print_all();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_eo(const em_eo_t eo, const char *name)
@@ -712,8 +866,10 @@ static void print_em_eo(const em_eo_t eo, const char *name)
 	}
 
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	eo_queue_info_print(eo);
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void cmd_em_eo_print(int argc, char *argv[])
@@ -806,8 +962,10 @@ static void print_em_agrp_help(void)
 static void print_em_agrp_all(void)
 {
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	print_atomic_group_info();
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void print_em_agrp(em_atomic_group_t ag, const char *ag_name)
@@ -821,8 +979,10 @@ static void print_em_agrp(em_atomic_group_t ag, const char *ag_name)
 	}
 
 	core_log_fn_set(cli_log);
+	core_vlog_fn_set(cli_vlog);
 	print_atomic_group_queues(ag);
 	core_log_fn_set(NULL);
+	core_vlog_fn_set(NULL);
 }
 
 static void cmd_em_agrp_print(int argc, char *argv[])
@@ -906,8 +1066,10 @@ static void cmd_em_egrp_print(int argc, char *argv[])
 	/* When no argument is given, print info about all event groups */
 	if (argc == 0) {
 		core_log_fn_set(cli_log);
+		core_vlog_fn_set(cli_vlog);
 		event_group_info_print();
 		core_log_fn_set(NULL);
+		core_vlog_fn_set(NULL);
 	} else {
 		odph_cli_log("Error: extra parameter given to command!\n");
 	}
@@ -946,7 +1108,7 @@ static int cli_register_em_commands(void)
 	}
 
 	if (odph_cli_register_command("em_pool_stats", cmd_em_pool_stats,
-				      "[i <pool id>|n <pool name>|s <pool id:[subpool ids]>|h]")) {
+				      "[i<pool id>|n<pool name>|s<pool id:[subpool ids]>[:o]|h]")) {
 		EM_LOG(EM_LOG_ERR, "Registering EM command em_pool_stats failed.\n");
 		return -1;
 	}

@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [2])
+m4_define([em_version_api_minor], [3])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -398,6 +398,47 @@ AC_ARG_ENABLE([idle-hooks],
 # Substitute @EM_IDLE_HOOKS_ENABLE@ into the pkgconfig file libemodp.pc.in
 AC_SUBST([EM_IDLE_HOOKS_ENABLE])
 
+#########################################################################
+# Enable EM schedule-wait (scheduler wait for event) functionality.
+#
+# Enable the EM dispatcher/scheduler to start waiting for events if none are
+# immediately available. Waiting for events, rather than busy-waiting, might
+# save power.
+#########################################################################
+# --enable-sched-wait		EM calls odp_schedule_multi(..., sched_wait_ns, ...),
+#				where 'sched_wait_ns' is taken from
+#				'dispatch.sched_wait_ns = value' in the
+#				EM config file (config/em-odp.conf).
+#				Set 'EM_SCHED_WAIT_ENABLE=1'
+# --disable--sched-wait		EM calls odp_schedule_multi_no_wait().
+#				Set 'EM_SCHED_WAIT_ENABLE=0'
+#   no option given    		Use '#define EM_SCHED_WAIT_ENABLE 0|1' from source code
+#
+# Note: Using the option --enable-sched-wait OR --disable-sched-wait will _override_
+#	the source code define value for '#define EM_SCHED_WAIT_ENABLE 0|1'
+#
+sched_wait_info="no (EM_SCHED_WAIT_ENABLE from source code)"
+EM_SCHED_WAIT_ENABLE=""
+AC_ARG_ENABLE([sched-wait],
+	      [AS_HELP_STRING([--enable-sched-wait],
+			      [Enable scheduler wait-for-event functionality instead of no-wait
+			       [default=value from source code '#define EM_SCHED_WAIT_ENABLE 0|1']])],
+	      [AS_IF(dnl --enable-sched-wait[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [sched_wait_info="$enableval (EM_SCHED_WAIT_ENABLE=1)"
+		      EM_SCHED_WAIT_ENABLE="-DEM_SCHED_WAIT_ENABLE=1"],
+		     dnl --disable-sched-wait OR --enable-sched-wait=no:
+		     [test "x$enableval" = "xno"],
+		     [sched_wait_info="$enableval (EM_SCHED_WAIT_ENABLE=0)"
+		      EM_SCHED_WAIT_ENABLE="-DEM_SCHED_WAIT_ENABLE=0"],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value --enable-sched-wait=${enableval}, use yes/no])]
+		)
+		EM_CPPFLAGS="$EM_CPPFLAGS $EM_SCHED_WAIT_ENABLE"
+	      ],[])
+# Substitute @EM_SCHED_WAIT_ENABLE@ into the pkgconfig file libemodp.pc.in
+AC_SUBST([EM_SCHED_WAIT_ENABLE])
+
 ##########################################################################
 # Default include setup
 ##########################################################################
@@ -409,6 +450,7 @@ AC_CONFIG_FILES([
 	Makefile
 	src/Makefile
 	programs/Makefile
+	programs/bench/Makefile
 	programs/common/Makefile
 	programs/example/Makefile
 	programs/example/hello/Makefile
@@ -659,4 +701,5 @@ AC_MSG_RESULT([
 	EM debug timestamps:	${debug_timestamps_info}
 	EM CLI:			${em_cli}
 	EM idle hooks:		${idle_hooks_info}
+	EM scheduler wait:	${sched_wait_info}
 	])

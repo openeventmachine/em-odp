@@ -65,12 +65,13 @@ EM_HANDLE_T(em_pool_t);
  * Major event types.
  */
 typedef enum em_event_type_major_e {
-	EM_EVENT_TYPE_UNDEF  = 0,       /**< Undef                */
-	EM_EVENT_TYPE_SW     = 1 << 24, /**< Event from SW (EO)   */
-	EM_EVENT_TYPE_PACKET = 2 << 24, /**< Event from packet HW */
-	EM_EVENT_TYPE_TIMER  = 3 << 24, /**< Event from timer HW  */
-	EM_EVENT_TYPE_CRYPTO = 4 << 24, /**< Event from crypto HW */
-	EM_EVENT_TYPE_VECTOR = 5 << 24  /**< Event contains a (packet) vector */
+	EM_EVENT_TYPE_UNDEF      = 0,       /**< Undef event type */
+	EM_EVENT_TYPE_SW         = 1 << 24, /**< SW event */
+	EM_EVENT_TYPE_PACKET     = 2 << 24, /**< Packet event */
+	EM_EVENT_TYPE_TIMER      = 3 << 24, /**< Timer event */
+	EM_EVENT_TYPE_CRYPTO     = 4 << 24, /**< Crypto event */
+	EM_EVENT_TYPE_VECTOR     = 5 << 24, /**< Event contains a (packet) vector */
+	EM_EVENT_TYPE_TIMER_IND  = 6 << 24  /**< Read-only no payload timeout notification */
 } em_event_type_major_e;
 
 /**
@@ -519,6 +520,21 @@ typedef struct {
  * EM error scope: event pool subpool statistics
  */
 #define EM_ESCOPE_POOL_SUBPOOL_STATS_RESET    (EM_ESCOPE_INTERNAL_MASK | 0x010C)
+/**
+ * @def EM_ESCOPE_POOL_STATS_SELECTED
+ * EM error scope: event pool statistics selected
+ */
+#define EM_ESCOPE_POOL_STATS_SELECTED         (EM_ESCOPE_INTERNAL_MASK | 0x010D)
+/**
+ * @def EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED
+ * EM error scope: event pool subpool statistics selected
+ */
+#define EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED (EM_ESCOPE_INTERNAL_MASK | 0x010E)
+/**
+ * @def EM_ESCOPE_POOL_NUM_SUBPOOLS
+ * EM error scope: event pool number of subpools
+ */
+#define EM_ESCOPE_POOL_NUM_SUBPOOLS           (EM_ESCOPE_INTERNAL_MASK | 0x010F)
 /**
  * @def EM_ESCOPE_HOOKS_REGISTER_ALLOC
  * EM error scope: register API callback hook for em_alloc()

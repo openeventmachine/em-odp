@@ -123,6 +123,40 @@ static int read_config_file(void)
 	/* Store ns value as odp_time_t */
 	em_shm->opt.dispatch.poll_drain_interval_time = odp_time_global_from_ns(val64);
 
+	/*
+	 * Option: dispatch.sched_wait_ns
+	 */
+	if (EM_SCHED_WAIT_ENABLE) {
+		conf_str = "dispatch.sched_wait_ns";
+		ret = em_libconfig_lookup_int64(&em_shm->libconfig, conf_str, &val64);
+		if (unlikely(!ret)) {
+			EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+			return -1;
+		}
+
+		if (val64 < -1) {
+			EM_LOG(EM_LOG_ERR, "Bad config value '%s = %" PRId64 "'\n",
+			       conf_str, val64);
+			return -1;
+		}
+
+		/* store & print the value */
+		em_shm->opt.dispatch.sched_wait_ns = val64;
+
+		/* Store ns value as odp sched-wait-time */
+		if (val64 == 0) {
+			em_shm->opt.dispatch.sched_wait = ODP_SCHED_NO_WAIT;
+			EM_PRINT("  %s: no-wait (0 ns)\n", conf_str);
+		} else if (val64 == -1) {
+			em_shm->opt.dispatch.sched_wait = ODP_SCHED_WAIT;
+			EM_PRINT("  %s: wait indefinitely (inf. ns)\n", conf_str);
+		} else {
+			em_shm->opt.dispatch.sched_wait = odp_schedule_wait_time(val64);
+			sec = (long double)val64 / 1000000000.0;
+			EM_PRINT("  %s: wait %" PRId64 "ns (%Lfs)\n", conf_str, val64, sec);
+		}
+	}
+
 	return 0;
 }
 

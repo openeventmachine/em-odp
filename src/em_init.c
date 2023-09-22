@@ -79,6 +79,13 @@ void core_log_fn_set(em_log_func_t func)
 	locm->log_fn = func;
 }
 
+void core_vlog_fn_set(em_vlog_func_t func)
+{
+	em_locm_t *const locm = &em_locm;
+
+	locm->vlog_fn = func;
+}
+
 em_status_t init_ext_thread(void)
 {
 	em_locm_t *const locm = &em_locm;

@@ -13,6 +13,7 @@
 #define DEF_MAX_PERIOD	(2 * 1000 * 1000 * 1000ULL) /* 2 sec */
 #define EXTRA_PRINTS	0 /* dev option, normally 0 */
 #define MAX_TEST_TIMERS 32
+#define TIME_STAMP_FN	odp_time_global_ns
 
 const struct option longopts[] = {
 	{"num-tmo",		required_argument, NULL, 'n'},
@@ -35,22 +36,22 @@ const struct option longopts[] = {
 	{"info",		no_argument, NULL, 'i'},
 	{"use-huge",		no_argument, NULL, 'u'},
 	{"no-delete",		no_argument, NULL, 'q'},
-	{"use-cpu-cycle",	optional_argument, NULL, 'g'},
 	{"memzero",		required_argument, NULL, 'o'},
 	{"abort",		required_argument, NULL, 'k'},
 	{"num-timers",		required_argument, NULL, 'y'},
+	{"event-type",		required_argument, NULL, 'g'},
 	{"help",		no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiuqg::hz:o:k:y:";
+const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiuq:hz:o:k:y:g:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
 	"Number of concurrent timeouts to create",
 	"Resolution of test timer (ns), Use 0 for highest supported",
 	"Resolution of periodic test timer as frequency (Hz). Use either -r or -z",
 	"Period of periodic test timer (ns). 0 for random",
-	"First period (ns, default 0 = same as period, use -1 for random)",
+	"First period (ns, default 0 = same as period, use negative for random up to)",
 	"Maximum period (ns)",
 	"Minimum period (ns, only used for random tmo)",
 	"Clock source (integer. See event_machine_timer_hw_specific.h)",
@@ -66,10 +67,10 @@ const char *descopts[] = {
 	"Only print timer capabilities and exit",
 	"Use huge page for trace buffer",
 	"Don't delete timeouts between runs (if -x)",
-	"Use CPU cycles instead of ODP time. Optionally give frequency (hz)",
 	"Allocate and clear memory: -o50,100[,1] to clear 50MB (,1 to use huge pg) every 100ms. Special HW test, must also use -j",
 	"Abort application after given tmos (test abnormal exit). Use negative count to do segfault instead",
 	"Number of timers to use for test. Default 1",
+	"Use alternative event type for timeout events (dec. number). Default EM_EVENT_TYPE_SW",
 	"Print usage and exit",
 	NULL
 };
@@ -149,16 +150,12 @@ const char *op_labels[] = {
 	"PROF-EXIT_CB"
 };
 
-typedef union time_stamp { /* to work around ODP time type vs CPU cycles */
-	uint64_t u64;
-	odp_time_t odp;
-} time_stamp;
 typedef struct tmo_trace {
 		int id;
 		e_op op;
 		uint64_t tick;
-		time_stamp ts;
-		time_stamp linuxt;
+		uint64_t ts;
+		uint64_t linuxt;
 		int count;
 		int tidx;
 } tmo_trace;
@@ -177,8 +174,8 @@ typedef struct core_data {
 	int jobs;
 	int jobs_deleted;
 	rnd_state_t rng;
-	time_stamp enter;
-	time_stamp acc_time;
+	uint64_t enter;
+	uint64_t acc_time;
 } core_data;
 
 typedef enum e_cmd {
@@ -221,7 +218,7 @@ const char *state_labels[] = {
 };
 
 typedef struct tmo_setup {
-	time_stamp start_ts;
+	uint64_t start_ts;
 	em_tmo_t handle;
 	uint64_t start;
 	uint64_t period_ns;

@@ -90,8 +90,8 @@ Show Available Commands
     ...    list all suppoorted EM-CLI commands.
 
     ${pool_stats_help} =    Catenate    SEPARATOR=
-    ...    ^\\s{2}em_pool_stats\\s+\\[i <pool id>\\|n <pool name>\\|s <pool id:
-    ...    \\[subpool ids\\]>\\|h\\]\\s?$(?m)
+    ...    ^\\s{2}em_pool_stats\\s+\\[i<pool id>\\|n<pool name>\\|s<pool id:
+    ...    \\[subpool ids\\]>\\[:o\\]\\|h\\]\\s?$(?m)
 
     # (?m) switch on multiline mode, making ^ and $ match also at the start and end
     # of a new line, otherwise, ^ and $ match only at the start and end of whole text.

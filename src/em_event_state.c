@@ -499,10 +499,6 @@ esv_em2usr(const em_event_t event, event_hdr_t *const ev_hdr,
 	evhdl_t evhdl = {.event = event};
 	evstate_cnt_t new_cnt;
 
-	/* TIMER events have no ESV state */
-	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER))
-		return evhdl.event;
-
 	/* Update state-count and return value of all counters (atomic) */
 	if (unlikely(is_revert)) {
 		/* Revert previous em2usr counter update on failed operation */
@@ -553,10 +549,6 @@ esv_em2usr_multi(em_event_t ev_tbl[/*in/out*/],
 	for (int i = 0; i < num; i++) {
 		const bool refs_used = ev_hdr_tbl[i]->flags.refs_used;
 
-		/* TIMER events have no ESV state */
-		if (unlikely(ev_hdr_tbl[i]->event_type == EM_EVENT_TYPE_TIMER))
-			continue;
-
 		/* Update state-count and return value of all counters (atomic) */
 		if (unlikely(is_revert)) {
 			/* Revert em2usr counter update on failed operation */
@@ -604,10 +596,6 @@ esv_usr2em(const em_event_t event, event_hdr_t *const ev_hdr,
 	const bool refs_used = ev_hdr->flags.refs_used;
 	evhdl_t evhdl = {.event = event};
 	evstate_cnt_t new_cnt;
-
-	/* TIMER events have no ESV state */
-	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER))
-		return;
 
 	/* Update state-count and return value of all counters (atomic) */
 	if (unlikely(is_revert)) {
@@ -679,10 +667,6 @@ esv_usr2em_multi(const em_event_t ev_tbl[],
 
 	for (int i = 0; i < num; i++) {
 		const bool refs_used = ev_hdr_tbl[i]->flags.refs_used;
-
-		/* TIMER events have no ESV state */
-		if (unlikely(ev_hdr_tbl[i]->event_type == EM_EVENT_TYPE_TIMER))
-			continue;
 
 		/* Update state-count and return value of all counters (atomic) */
 		if (unlikely(is_revert)) {
@@ -761,6 +745,11 @@ em_event_t evstate_alloc(const em_event_t event, event_hdr_t *const ev_hdr,
 				   .ref_cnt = 1, .send_cnt = 0};
 
 	return esv_em2usr(event, ev_hdr, sub, api_op, false);
+}
+
+em_event_t evstate_alloc_tmo(const em_event_t event, event_hdr_t *const ev_hdr)
+{
+	return esv_evinit(event, ev_hdr, init_cnt_alloc, EVSTATE__TMO_CREATE);
 }
 
 void evstate_alloc_multi(em_event_t ev_tbl[/*in/out*/],

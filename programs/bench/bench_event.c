@@ -3,35 +3,19 @@
  *
  * SPDX-License-Identifier:     BSD-3-Clause
  */
+#include "bench_common.h"
 
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE /* Needed for sigaction */
-#endif
-
-#include <odp_api.h>
-#include <odp/helper/odph_api.h>
-
-#include <event_machine.h>
 #include <event_machine/platform/event_machine_odp_ext.h>
 #include <event_machine/platform/env/environment.h>
 
 #include <getopt.h>
-#include <inttypes.h>
-#include <signal.h>
-#include <stdlib.h>
 #include <unistd.h>
-
-/* Number of API function calls per test case */
-#define REPEAT_COUNT 1000
 
 /* Maximum burst size for *_multi() operations */
 #define MAX_BURST 64
 
 /* Maximum number if test events */
 #define MAX_EVENTS (REPEAT_COUNT * MAX_BURST)
-
-/* Default number of rounds per test case */
-#define ROUNDS 1000u
 
 /* User area size in bytes */
 #define UAREA_SIZE 8
@@ -48,67 +32,25 @@
 /* Maximum number of retries */
 #define MAX_RETRY 1024
 
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
-
-#define BENCH_INFO(run, init, term, max, name) \
-	{#run, run, init, term, max, name}
-
-/* Initialize benchmark resources */
-typedef void (*bench_init_fn_t)(void);
-
-/* Run benchmark, returns >0 on success */
-typedef int (*bench_run_fn_t)(void);
-
-/* Release benchmark resources */
-typedef void (*bench_term_fn_t)(void);
-
-/* Benchmark data */
+/* Command line options specific to this event bench */
 typedef struct {
-	/* Default test name */
-	const char *name;
+	/* Burst size for *_multi operations */
+	int burst_size;
 
-	/* Test function to run */
-	bench_run_fn_t run;
+	/* Event size */
+	int event_size;
 
-	/* Initialize test */
-	bench_init_fn_t init;
+	/* Pool cache size */
+	int cache_size;
 
-	/* Terminate test */
-	bench_term_fn_t term;
-
-	/* Test specific limit for rounds (tuning for slow implementation) */
-	uint32_t max_rounds;
-
-	/* Override default test name */
-	const char *desc;
-
-} bench_info_t;
+	/* Vector size */
+	int vector_size;
+} event_opt_t;
 
 typedef struct {
-	/* Command line options */
-	struct {
-		/* Measure time vs CPU cycles */
-		int time;
+	run_bench_arg_t run_bench_arg;
 
-		/* Benchmark index to run indefinitely */
-		int bench_idx;
-
-		/* Burst size for *_multi operations */
-		int burst_size;
-
-		/* Event size */
-		int event_size;
-
-		/* Rounds per test case */
-		uint32_t rounds;
-
-		/* Pool cache size */
-		int cache_size;
-
-		/* Vector size */
-		int vector_size;
-
-	} opt;
+	event_opt_t event_opt;
 
 	/* Pools for allocating test events */
 	em_pool_t sw_event_pool;
@@ -117,15 +59,6 @@ typedef struct {
 
 	/* Test queues */
 	em_queue_t unsched_queue;
-
-	/* Benchmark functions */
-	bench_info_t *bench;
-
-	/* Number of benchmark functions */
-	int num_bench;
-
-	/* Break worker loop if set to 1 */
-	odp_atomic_u32_t exit_thread;
 
 	/* Test case input / output data */
 	em_event_t      event_tbl[MAX_EVENTS];
@@ -137,41 +70,9 @@ typedef struct {
 	em_pool_t        pool_tbl[MAX_EVENTS];
 	odp_event_t odp_event_tbl[MAX_EVENTS];
 
-	/* Benchmark run failed */
-	int bench_failed;
-
-	/* CPU mask as string */
-	char cpumask_str[ODP_CPUMASK_STR_SIZE];
-
 } gbl_args_t;
 
 static gbl_args_t *gbl_args;
-
-static void sig_handler(int signo ODP_UNUSED)
-{
-	if (gbl_args == NULL)
-		return;
-	odp_atomic_store_u32(&gbl_args->exit_thread, 1);
-}
-
-static int setup_sig_handler(void)
-{
-	struct sigaction action;
-
-	memset(&action, 0, sizeof(action));
-	action.sa_handler = sig_handler;
-
-	/* No additional signals blocked. By default, the signal which triggered
-	 * the handler is blocked.
-	 */
-	if (sigemptyset(&action.sa_mask))
-		return -1;
-
-	if (sigaction(SIGINT, &action, NULL))
-		return -1;
-
-	return 0;
-}
 
 static int create_pools(void)
 {
@@ -180,18 +81,28 @@ static int create_pools(void)
 	uint32_t num_events;
 
 	/* event_clone() and event_ref() tests require at least 2 x REPEAT_COUNT events */
-	num_events = gbl_args->opt.burst_size < 2 ? 2 * REPEAT_COUNT :
-			gbl_args->opt.burst_size * REPEAT_COUNT;
+	num_events = gbl_args->event_opt.burst_size < 2 ? 2 * REPEAT_COUNT :
+			gbl_args->event_opt.burst_size * REPEAT_COUNT;
 
 	em_pool_cfg_init(&pool_conf);
 	pool_conf.event_type = EM_EVENT_TYPE_SW;
 	pool_conf.user_area.in_use = true;
 	pool_conf.user_area.size = UAREA_SIZE;
 	pool_conf.num_subpools = 1;
-	pool_conf.subpool[0].size = gbl_args->opt.event_size;
-	pool_conf.subpool[0].num = num_events;
-	if (gbl_args->opt.cache_size >= 0)
-		pool_conf.subpool[0].cache_size = gbl_args->opt.cache_size;
+	pool_conf.subpool[0].size = gbl_args->event_opt.event_size;
+	if (gbl_args->event_opt.cache_size >= 0)
+		pool_conf.subpool[0].cache_size = gbl_args->event_opt.cache_size;
+
+	/* This is to make sure that there will be enough events to allocate from
+	 * the worker/testing core when ESV preallocation is enabled, in which case
+	 * all events in the pool are allocated and freed during pool creation.
+	 * Since this function is called from the control core, so cache_size number
+	 * of events will be cached in control core, reducing event availability
+	 * in the testing core. To avoid this, we add cache_size to num_events,
+	 * which is the maximum number of events that will be allocated in the
+	 * tests.
+	 */
+	pool_conf.subpool[0].num = num_events + pool_conf.subpool[0].cache_size;
 
 	pool = em_pool_create("sw_event_pool", EM_POOL_UNDEF, &pool_conf);
 	if (pool == EM_POOL_UNDEF) {
@@ -209,7 +120,7 @@ static int create_pools(void)
 	gbl_args->packet_pool = pool;
 
 	pool_conf.event_type = EM_EVENT_TYPE_VECTOR;
-	pool_conf.subpool[0].size = gbl_args->opt.vector_size;
+	pool_conf.subpool[0].size = gbl_args->event_opt.vector_size;
 	pool = em_pool_create("vector_pool", EM_POOL_UNDEF, &pool_conf);
 	if (pool == EM_POOL_UNDEF) {
 		ODPH_ERR("EM vector pool create failed\n");
@@ -224,7 +135,7 @@ static int create_queues(void)
 {
 	em_queue_t unsched_queue = EM_QUEUE_UNDEF;
 	em_queue_conf_t conf = {0};
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 
 	conf.flags = EM_QUEUE_FLAG_DEFAULT;
 	conf.min_events = burst_size * REPEAT_COUNT;
@@ -268,143 +179,6 @@ static int delete_queues(void)
 	return 0;
 }
 
-/* Run given benchmark indefinitely */
-static void run_indef(gbl_args_t *args, int idx)
-{
-	const char *desc;
-	const bench_info_t *bench = &args->bench[idx];
-
-	desc = bench->desc != NULL ? bench->desc : bench->name;
-
-	printf("Running %s test indefinitely\n", desc);
-
-	while (!odp_atomic_load_u32(&gbl_args->exit_thread)) {
-		int ret;
-
-		if (bench->init != NULL)
-			bench->init();
-
-		ret = bench->run();
-
-		if (bench->term != NULL)
-			bench->term();
-
-		if (!ret)
-			ODPH_ABORT("Benchmark %s failed\n", desc);
-	}
-}
-
-static int run_benchmarks(void *arg)
-{
-	int i, j;
-	uint64_t c1 = 0, c2 = 0;
-	odp_time_t t1 = ODP_TIME_NULL, t2 = ODP_TIME_NULL;
-	gbl_args_t *args = arg;
-	const int meas_time = args->opt.time;
-	int ret = 0;
-
-	/* Init EM */
-	if (em_init_core() != EM_OK) {
-		ODPH_ERR("EM core init failed\n");
-		return -1;
-	}
-
-	/* Create test event pools here to handle ESV preallocation */
-	if (create_pools())
-		return -1;
-
-	printf("\nAverage %s per function call\n", meas_time ? "time (nsec)" : "CPU cycles");
-	printf("------------------------------------------------------\n");
-
-	/* Run each test twice. Results from the first warm-up round are ignored. */
-	for (i = 0; i < 2; i++) {
-		uint64_t total = 0;
-		uint32_t round = 1;
-
-		for (j = 0; j < gbl_args->num_bench &&
-		     !odp_atomic_load_u32(&gbl_args->exit_thread);
-		     round++) {
-			int ret;
-			const char *desc;
-			const bench_info_t *bench = &args->bench[j];
-			uint32_t max_rounds = args->opt.rounds;
-
-			if (bench->max_rounds && max_rounds > bench->max_rounds)
-				max_rounds = bench->max_rounds;
-
-			/* Run selected test indefinitely */
-			if (args->opt.bench_idx) {
-				if ((j + 1) != args->opt.bench_idx) {
-					j++;
-					continue;
-				}
-
-				run_indef(args, j);
-				goto exit;
-			}
-
-			desc = bench->desc != NULL ? bench->desc : bench->name;
-
-			if (bench->init)
-				bench->init();
-
-			if (meas_time)
-				t1 = odp_time_local();
-			else
-				c1 = odp_cpu_cycles();
-
-			ret = bench->run();
-
-			if (meas_time)
-				t2 = odp_time_local();
-			else
-				c2 = odp_cpu_cycles();
-
-			if (!ret) {
-				ODPH_ERR("Benchmark %s failed\n", desc);
-				args->bench_failed = -1;
-				ret = -1;
-				goto exit;
-			}
-
-			if (bench->term)
-				bench->term();
-
-			if (meas_time)
-				total += odp_time_diff_ns(t2, t1);
-			else
-				total += odp_cpu_cycles_diff(c2, c1);
-
-			if (round >= max_rounds) {
-				double result;
-
-				/* Each benchmark runs internally REPEAT_COUNT times. */
-				result = ((double)total) / (max_rounds * REPEAT_COUNT);
-
-				/* No print from warm-up round */
-				if (i > 0) {
-					if (bench->desc != NULL)
-						printf("[%02d] %-35s: %12.2f\n", j + 1, desc,
-						       result);
-					else
-						printf("[%02d] em_%-32s: %12.2f\n", j + 1, desc,
-						       result);
-				}
-
-				j++;
-				total = 0;
-				round = 1;
-			}
-		}
-	}
-
-exit:
-	if (em_term_core() != EM_OK)
-		ODPH_ERR("EM core terminate failed\n");
-
-	return ret;
-}
-
 static void init_test_events(em_event_t event[], int num)
 {
 	for (int i = 0; i < num; i++) {
@@ -422,8 +196,8 @@ static void allocate_test_events(em_pool_t pool, em_event_type_t type, em_event_
 {
 	int num_events = 0;
 	int num_retries = 0;
-	const int size = type == EM_EVENT_TYPE_VECTOR ? gbl_args->opt.vector_size :
-				gbl_args->opt.event_size;
+	const int size = type == EM_EVENT_TYPE_VECTOR ? gbl_args->event_opt.vector_size :
+				gbl_args->event_opt.event_size;
 
 	while (num_events < num) {
 		int ret;
@@ -447,7 +221,7 @@ static void allocate_test_ext_pktevents(em_pool_t pool, em_event_type_t type,
 {
 	int num_events = 0;
 	int num_retries = 0;
-	const int size = gbl_args->opt.event_size;
+	const int size = gbl_args->event_opt.event_size;
 	odp_pool_t odp_pool = ODP_POOL_INVALID;
 
 	if (unlikely(type != EM_EVENT_TYPE_PACKET))
@@ -496,7 +270,7 @@ static void create_ext_packets(void)
 
 static void create_packets_multi(void)
 {
-	const int num_events = REPEAT_COUNT * gbl_args->opt.burst_size;
+	const int num_events = REPEAT_COUNT * gbl_args->event_opt.burst_size;
 
 	allocate_test_events(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET, gbl_args->event_tbl,
 			     num_events);
@@ -512,7 +286,7 @@ static void create_sw_events(void)
 
 static void create_sw_events_multi(void)
 {
-	const int num_events = REPEAT_COUNT * gbl_args->opt.burst_size;
+	const int num_events = REPEAT_COUNT * gbl_args->event_opt.burst_size;
 
 	allocate_test_events(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW, gbl_args->event_tbl,
 			     num_events);
@@ -528,7 +302,7 @@ static void create_vectors(void)
 
 static void create_vectors_multi(void)
 {
-	const int num_events = REPEAT_COUNT * gbl_args->opt.burst_size;
+	const int num_events = REPEAT_COUNT * gbl_args->event_opt.burst_size;
 
 	allocate_test_events(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR, gbl_args->event_tbl,
 			     num_events);
@@ -552,7 +326,7 @@ static void free_events(void)
 
 static void free_events_multi(void)
 {
-	free_event_tbl(gbl_args->event_tbl, REPEAT_COUNT * gbl_args->opt.burst_size);
+	free_event_tbl(gbl_args->event_tbl, REPEAT_COUNT * gbl_args->event_opt.burst_size);
 }
 
 static void free_vectors(void)
@@ -587,23 +361,26 @@ static inline int event_alloc(em_pool_t pool, em_event_type_t type, int event_si
 
 static int event_sw_alloc(void)
 {
-	return event_alloc(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW, gbl_args->opt.event_size);
+	return event_alloc(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW,
+			   gbl_args->event_opt.event_size);
 }
 
 static int event_pkt_alloc(void)
 {
-	return event_alloc(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET, gbl_args->opt.event_size);
+	return event_alloc(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+			   gbl_args->event_opt.event_size);
 }
 
 static int event_vector_alloc(void)
 {
-	return event_alloc(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR, gbl_args->opt.vector_size);
+	return event_alloc(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR,
+			   gbl_args->event_opt.vector_size);
 }
 
 static inline int event_alloc_multi(em_pool_t pool, em_event_type_t type, int event_size)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int ret = 0;
 
 	for (int i = 0; i < REPEAT_COUNT; i++)
@@ -616,19 +393,19 @@ static inline int event_alloc_multi(em_pool_t pool, em_event_type_t type, int ev
 static int event_sw_alloc_multi(void)
 {
 	return event_alloc_multi(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW,
-				 gbl_args->opt.event_size);
+				 gbl_args->event_opt.event_size);
 }
 
 static int event_pkt_alloc_multi(void)
 {
 	return event_alloc_multi(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
-				 gbl_args->opt.event_size);
+				 gbl_args->event_opt.event_size);
 }
 
 static int event_vector_alloc_multi(void)
 {
 	return event_alloc_multi(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR,
-				 gbl_args->opt.vector_size);
+				 gbl_args->event_opt.vector_size);
 }
 
 static inline int alloc_free(em_pool_t pool, em_event_type_t type, int event_size)
@@ -648,23 +425,26 @@ static inline int alloc_free(em_pool_t pool, em_event_type_t type, int event_siz
 
 static int event_sw_alloc_free(void)
 {
-	return alloc_free(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW, gbl_args->opt.event_size);
+	return alloc_free(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW,
+			  gbl_args->event_opt.event_size);
 }
 
 static int event_pkt_alloc_free(void)
 {
-	return alloc_free(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET, gbl_args->opt.event_size);
+	return alloc_free(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+			  gbl_args->event_opt.event_size);
 }
 
 static int event_vector_alloc_free(void)
 {
-	return alloc_free(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR, gbl_args->opt.vector_size);
+	return alloc_free(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR,
+			  gbl_args->event_opt.vector_size);
 }
 
 static inline int alloc_free_multi(em_pool_t pool, em_event_type_t type, int event_size)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++) {
@@ -681,19 +461,19 @@ static inline int alloc_free_multi(em_pool_t pool, em_event_type_t type, int eve
 static int event_sw_alloc_free_multi(void)
 {
 	return alloc_free_multi(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW,
-				gbl_args->opt.event_size);
+				gbl_args->event_opt.event_size);
 }
 
 static int event_pkt_alloc_free_multi(void)
 {
 	return alloc_free_multi(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
-				gbl_args->opt.event_size);
+				gbl_args->event_opt.event_size);
 }
 
 static int event_vector_alloc_free_multi(void)
 {
 	return alloc_free_multi(gbl_args->vector_pool, EM_EVENT_TYPE_VECTOR,
-				gbl_args->opt.vector_size);
+				gbl_args->event_opt.vector_size);
 }
 
 static int event_free(void)
@@ -710,7 +490,7 @@ static int event_free(void)
 static int event_free_multi(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
@@ -784,7 +564,7 @@ static int event_get_type_multi(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_event_type_t *et = gbl_args->et_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int ret = 0;
 
 	for (int i = 0; i < REPEAT_COUNT; i++)
@@ -798,7 +578,7 @@ static int event_same_type_multi(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_event_type_t *et = gbl_args->et_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int ret = 0;
 
 	for (int i = 0; i < REPEAT_COUNT; i++)
@@ -897,6 +677,32 @@ static int event_clone(void)
 
 	for (i = 0; i < REPEAT_COUNT; i++)
 		event2_tbl[i] = em_event_clone(event_tbl[i], EM_POOL_UNDEF);
+
+	return i;
+}
+
+static int event_clone_part(void)
+{
+	em_event_t *event_tbl = gbl_args->event_tbl;
+	em_event_t *event2_tbl = gbl_args->event2_tbl;
+	uint32_t size = em_event_get_size(event_tbl[0]); /* all events are of same size */
+	int i;
+
+	for (i = 0; i < REPEAT_COUNT; i++)
+		event2_tbl[i] = em_event_clone_part(event_tbl[i], EM_POOL_UNDEF, 0, size, true);
+
+	return i;
+}
+
+static int event_clone_part__no_uarea(void)
+{
+	em_event_t *event_tbl = gbl_args->event_tbl;
+	em_event_t *event2_tbl = gbl_args->event2_tbl;
+	uint32_t size = em_event_get_size(event_tbl[0]); /* all events are of same size */
+	int i;
+
+	for (i = 0; i < REPEAT_COUNT; i++)
+		event2_tbl[i] = em_event_clone_part(event_tbl[i], EM_POOL_UNDEF, 0, size, false);
 
 	return i;
 }
@@ -1008,7 +814,7 @@ static int odp_events2odp(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	odp_event_t *odp_event = gbl_args->odp_event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
@@ -1034,7 +840,7 @@ static int odp_events2em(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	odp_event_t *odp_event = gbl_args->odp_event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
@@ -1064,7 +870,7 @@ static inline int unsched_send_multi(void)
 {
 	em_queue_t unsched_queue = gbl_args->unsched_queue;
 	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int ret = 0;
 
 	for (int i = 0; i < REPEAT_COUNT; i++)
@@ -1095,7 +901,7 @@ static int unsched_dequeue_multi(void)
 {
 	em_queue_t unsched_queue = gbl_args->unsched_queue;
 	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int ret = 0;
 
 	for (int i = 0; i < REPEAT_COUNT; i++)
@@ -1132,7 +938,7 @@ static int unsched_send_dequeue_multi(void)
 {
 	em_queue_t unsched_queue = gbl_args->unsched_queue;
 	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->opt.burst_size;
+	const int burst_size = gbl_args->event_opt.burst_size;
 	int ret_send = 0;
 	int ret_deq = 0;
 
@@ -1229,6 +1035,14 @@ bench_info_t test_suite[] = {
 		   "em_event_clone(sw)"),
 	BENCH_INFO(event_clone, create_packets, free_clone_events, 0,
 		   "em_event_clone(pkt)"),
+	BENCH_INFO(event_clone_part, create_sw_events, free_clone_events, 0,
+		   "em_event_clone_part(sw)"),
+	BENCH_INFO(event_clone_part, create_packets, free_clone_events, 0,
+		   "em_event_clone_part(pkt)"),
+	BENCH_INFO(event_clone_part__no_uarea, create_sw_events, free_clone_events, 0,
+		   "em_event_clone_part(sw, no uarea)"),
+	BENCH_INFO(event_clone_part__no_uarea, create_packets, free_clone_events, 0,
+		   "em_event_clone_part(pkt, no-uarea)"),
 	BENCH_INFO(event_has_ref, create_packets, free_events, 0,
 		   "em_event_has_ref(pkt)"),
 	BENCH_INFO(event_ref, create_packets, free_clone_events, 0,
@@ -1332,13 +1146,16 @@ static void usage(void)
 	       "                          1: measure time\n"
 	       "  -i, --index <idx>       Benchmark index to run indefinitely.\n"
 	       "  -r, --rounds <num>      Run each test case 'num' times (default %u).\n"
+	       "  -w, --write-csv         Write result to csv files(used in CI) or not.\n"
+	       "                          default: not write\n"
 	       "  -v, --vector_size <num> Test vector size (default %u).\n"
 	       "  -h, --help              Display help and exit.\n\n"
 	       "\n", BURST_SIZE, EVENT_SIZE, ROUNDS, VECTOR_SIZE);
 }
 
 /* Parse command line arguments */
-static int parse_args(int argc, char *argv[])
+static int parse_args(int argc, char *argv[], int num_bench, cmd_opt_t *com_opt/*out*/,
+		      event_opt_t *event_opt/*out*/)
 {
 	int opt;
 	int long_index;
@@ -1349,20 +1166,22 @@ static int parse_args(int argc, char *argv[])
 		{"time", required_argument, NULL, 't'},
 		{"index", required_argument, NULL, 'i'},
 		{"rounds", required_argument, NULL, 'r'},
+		{"write-csv", no_argument, NULL, 'w'},
 		{"vector_size", required_argument, NULL, 'v'},
 		{"help", no_argument, NULL, 'h'},
 		{NULL, 0, NULL, 0}
 	};
 
-	static const char *shortopts =  "b:c:e:t:i:r:v:h";
+	static const char *shortopts =  "b:c:e:t:i:r:wv:h";
 
-	gbl_args->opt.burst_size = BURST_SIZE;
-	gbl_args->opt.time = 0; /* Measure CPU cycles */
-	gbl_args->opt.bench_idx = 0; /* Run all benchmarks */
-	gbl_args->opt.rounds = ROUNDS;
-	gbl_args->opt.cache_size = -1;
-	gbl_args->opt.event_size = EVENT_SIZE;
-	gbl_args->opt.vector_size = VECTOR_SIZE;
+	event_opt->burst_size = BURST_SIZE;
+	com_opt->time = 0; /* Measure CPU cycles */
+	com_opt->bench_idx = 0; /* Run all benchmarks */
+	com_opt->rounds = ROUNDS;
+	com_opt->write_csv = 0; /* Do not write result to csv files */
+	event_opt->cache_size = -1;
+	event_opt->event_size = EVENT_SIZE;
+	event_opt->vector_size = VECTOR_SIZE;
 
 	while (1) {
 		opt = getopt_long(argc, argv, shortopts, longopts, &long_index);
@@ -1372,25 +1191,28 @@ static int parse_args(int argc, char *argv[])
 
 		switch (opt) {
 		case 'b':
-			gbl_args->opt.burst_size = atoi(optarg);
+			event_opt->burst_size = atoi(optarg);
 			break;
 		case 'c':
-			gbl_args->opt.cache_size = atoi(optarg);
+			event_opt->cache_size = atoi(optarg);
 			break;
 		case 'e':
-			gbl_args->opt.event_size = atoi(optarg);
+			event_opt->event_size = atoi(optarg);
 			break;
 		case 't':
-			gbl_args->opt.time = atoi(optarg);
+			com_opt->time = atoi(optarg);
 			break;
 		case 'i':
-			gbl_args->opt.bench_idx = atoi(optarg);
+			com_opt->bench_idx = atoi(optarg);
 			break;
 		case 'r':
-			gbl_args->opt.rounds = atoi(optarg);
+			com_opt->rounds = atoi(optarg);
+			break;
+		case 'w':
+			com_opt->write_csv = 1;
 			break;
 		case 'v':
-			gbl_args->opt.vector_size = atoi(optarg);
+			event_opt->vector_size = atoi(optarg);
 			break;
 		case 'h':
 			usage();
@@ -1401,19 +1223,19 @@ static int parse_args(int argc, char *argv[])
 		}
 	}
 
-	if (gbl_args->opt.burst_size < 1 ||
-	    gbl_args->opt.burst_size > MAX_BURST) {
+	if (event_opt->burst_size < 1 ||
+	    event_opt->burst_size > MAX_BURST) {
 		ODPH_ERR("Invalid burst size (max %d)\n", MAX_BURST);
 		exit(EXIT_FAILURE);
 	}
 
-	if (gbl_args->opt.rounds < 1) {
-		ODPH_ERR("Invalid test cycle repeat count: %u\n", gbl_args->opt.rounds);
+	if (com_opt->rounds < 1) {
+		ODPH_ERR("Invalid test cycle repeat count: %u\n", com_opt->rounds);
 		return -1;
 	}
 
-	if (gbl_args->opt.bench_idx < 0 || gbl_args->opt.bench_idx > gbl_args->num_bench) {
-		ODPH_ERR("Bad bench index %i\n", gbl_args->opt.bench_idx);
+	if (com_opt->bench_idx < 0 || com_opt->bench_idx > num_bench) {
+		ODPH_ERR("Bad bench index %i\n", com_opt->bench_idx);
 		return -1;
 	}
 
@@ -1423,7 +1245,8 @@ static int parse_args(int argc, char *argv[])
 }
 
 /* Print system and application info */
-static void print_info(void)
+static void print_info(const char *cpumask_str, const event_opt_t *event_opt,
+		       const cmd_opt_t *com_opt)
 {
 	odp_sys_info_print();
 
@@ -1431,16 +1254,16 @@ static void print_info(void)
 	       "bench_events options\n"
 	       "-------------------\n");
 
-	printf("Burst size:        %d\n", gbl_args->opt.burst_size);
-	printf("CPU mask:          %s\n", gbl_args->cpumask_str);
-	printf("Event size:        %d\n", gbl_args->opt.event_size);
-	printf("Measurement unit:  %s\n", gbl_args->opt.time ? "nsec" : "CPU cycles");
-	if (gbl_args->opt.cache_size < 0)
+	printf("Burst size:        %d\n", event_opt->burst_size);
+	printf("CPU mask:          %s\n", cpumask_str);
+	printf("Event size:        %d\n", event_opt->event_size);
+	printf("Measurement unit:  %s\n", com_opt->time ? "nsec" : "CPU cycles");
+	if (event_opt->cache_size < 0)
 		printf("Pool cache size:   default\n");
 	else
-		printf("Pool cache size:   %d\n", gbl_args->opt.cache_size);
-	printf("Test rounds:       %u\n", gbl_args->opt.rounds);
-	printf("Vector size:       %d\n", gbl_args->opt.vector_size);
+		printf("Pool cache size:   %d\n", event_opt->cache_size);
+	printf("Test rounds:       %u\n", com_opt->rounds);
+	printf("Vector size:       %d\n", event_opt->vector_size);
 	printf("\n");
 }
 
@@ -1457,9 +1280,95 @@ static void init_default_pool_config(em_pool_cfg_t *pool_conf)
 	pool_conf->subpool[0].cache_size = 0;
 }
 
+#define CLONE_PART_FMT \
+"Date,clone_part(sw),clone_part(pkt),clone_part(sw no-uarea),clone_part(pkt no-uarea)\n" \
+"%s,%.2f,%.2f,%.2f,%.2f\n"
+
+static void write_result_to_csv(void)
+{
+	FILE *file;
+	char file_name[32] = {0};
+	char time_str[72] = {0};
+	double *result = gbl_args->run_bench_arg.result;
+
+	fill_time_str(time_str);
+
+	file = fopen("em_alloc.csv", "w");
+	if (file == NULL) {
+		perror("Failed to file em_alloc.csv");
+		return;
+	}
+
+	fprintf(file, "Date,em_alloc(sw),em_alloc(pkt),em_alloc(vec)\n"
+		"%s,%.2f,%.2f,%.2f\n", time_str, result[0], result[1], result[2]);
+
+	fclose(file);
+
+	/* em_alloc_multi */
+	sprintf(file_name, "em_alloc_multi_%d.csv", gbl_args->event_opt.burst_size);
+	file = fopen(file_name, "w");
+	if (file == NULL) {
+		perror("Failed to file em_alloc_multi_*.csv");
+		return;
+	}
+
+	fprintf(file, "Date,em_alloc_multi(sw),em_alloc_multi(pkt),em_alloc_multi(vec)\n"
+		"%s,%.2f,%.2f,%.2f\n", time_str, result[3], result[4], result[5]);
+	fclose(file);
+
+	/* em_free */
+	file = fopen("em_free.csv", "w");
+	if (file == NULL) {
+		perror("Failed to file em_free.csv");
+		return;
+	}
+
+	fprintf(file, "Date,em_free(sw),em_free(pkt),em_free(vec)\n"
+		"%s,%.2f,%.2f,%.2f\n", time_str, result[6], result[7], result[8]);
+
+	fclose(file);
+
+	/* em_free_multi */
+	memset(file_name, 0, sizeof(file_name));
+	sprintf(file_name, "em_free_multi_%d.csv", gbl_args->event_opt.burst_size);
+	file = fopen(file_name, "w");
+	if (file == NULL) {
+		perror("Failed to file bench_em_alloc_multi_*.csv");
+		return;
+	}
+
+	fprintf(file, "Date,em_free_multi(sw),em_free_multi(pkt),em_free_multi(vec)\n"
+		"%s,%.2f,%.2f,%.2f\n", time_str, result[9], result[10], result[11]);
+	fclose(file);
+
+	/* em_event_clone */
+	file = fopen("em_event_clone.csv", "w");
+	if (file == NULL) {
+		perror("Failed to file em_event_clone.csv");
+		return;
+	}
+
+	fprintf(file, "Date,em_event_clone(sw),em_event_clone(pkt)\n"
+		"%s,%.2f,%.2f\n", time_str, result[25], result[26]);
+	fclose(file);
+
+	/* em_event_clone_part */
+	file = fopen("em_event_clone_part.csv", "w");
+	if (file == NULL) {
+		perror("Failed to file em_event_clone_part.csv");
+		return;
+	}
+
+	fprintf(file, CLONE_PART_FMT, time_str, result[27], result[28],
+		result[29], result[30]);
+	fclose(file);
+}
+
 int main(int argc, char *argv[])
 {
 	em_conf_t conf;
+	cmd_opt_t com_opt;
+	event_opt_t event_opt;
 	em_pool_cfg_t pool_conf;
 	em_core_mask_t core_mask;
 	odph_helper_options_t helper_options;
@@ -1471,7 +1380,11 @@ int main(int argc, char *argv[])
 	odp_instance_t instance;
 	odp_init_t init_param;
 	int worker_cpu;
+	/* CPU mask as string */
+	char cpumask_str[ODP_CPUMASK_STR_SIZE];
 	int ret = 0;
+	int num_bench = ARRAY_SIZE(test_suite);
+	double result[ARRAY_SIZE(test_suite)] = {0};
 
 	/* Let helper collect its own arguments (e.g. --odph_proc) */
 	argc = odph_parse_options(argc, argv);
@@ -1479,6 +1392,11 @@ int main(int argc, char *argv[])
 		ODPH_ERR("Reading ODP helper options failed\n");
 		exit(EXIT_FAILURE);
 	}
+
+	/* Parse and store the application arguments */
+	ret = parse_args(argc, argv, num_bench, &com_opt, &event_opt);
+	if (ret)
+		exit(EXIT_FAILURE);
 
 	odp_init_param_init(&init_param);
 	init_param.mem_model = helper_options.mem_model;
@@ -1548,14 +1466,18 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
+	odp_atomic_init_u32(&exit_thread, 0);
+
 	memset(gbl_args, 0, sizeof(gbl_args_t));
-	odp_atomic_init_u32(&gbl_args->exit_thread, 0);
 	gbl_args->sw_event_pool = EM_POOL_UNDEF;
 	gbl_args->packet_pool = EM_POOL_UNDEF;
 	gbl_args->unsched_queue = EM_QUEUE_UNDEF;
 
-	gbl_args->bench = test_suite;
-	gbl_args->num_bench = ARRAY_SIZE(test_suite);
+	gbl_args->event_opt = event_opt;
+	gbl_args->run_bench_arg.opt = com_opt;
+	gbl_args->run_bench_arg.bench = test_suite;
+	gbl_args->run_bench_arg.num_bench = num_bench;
+	gbl_args->run_bench_arg.result = result;
 
 	for (int i = 0; i < MAX_EVENTS; i++) {
 		gbl_args->event_tbl[i] = EM_EVENT_UNDEF;
@@ -1568,17 +1490,15 @@ int main(int argc, char *argv[])
 		gbl_args->odp_event_tbl[i] = ODP_EVENT_INVALID;
 	}
 
-	/* Parse and store the application arguments */
-	ret = parse_args(argc, argv);
-	if (ret)
-		goto exit;
+	(void)odp_cpumask_to_str(&default_mask, cpumask_str, sizeof(cpumask_str));
 
-	(void)odp_cpumask_to_str(&default_mask, gbl_args->cpumask_str,
-				 sizeof(gbl_args->cpumask_str));
-
-	print_info();
+	print_info(cpumask_str, &event_opt, &com_opt);
 
 	if (create_queues())
+		goto exit;
+
+	/* Create test event pools here to handle ESV preallocation */
+	if (create_pools())
 		goto exit;
 
 	memset(&worker_thread, 0, sizeof(odph_thread_t));
@@ -1592,14 +1512,17 @@ int main(int argc, char *argv[])
 
 	odph_thread_param_init(&thr_param);
 	thr_param.start = run_benchmarks;
-	thr_param.arg = gbl_args;
+	thr_param.arg = &gbl_args->run_bench_arg;
 	thr_param.thr_type = ODP_THREAD_WORKER;
 
 	odph_thread_create(&worker_thread, &thr_common, &thr_param, 1);
 
 	odph_thread_join(&worker_thread, 1);
 
-	ret = gbl_args->bench_failed;
+	ret = gbl_args->run_bench_arg.bench_failed;
+
+	if (com_opt.write_csv)
+		write_result_to_csv();
 
 exit:
 	if (gbl_args->sw_event_pool != EM_POOL_UNDEF)

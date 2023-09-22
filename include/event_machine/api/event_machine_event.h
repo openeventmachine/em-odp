@@ -612,7 +612,14 @@ void em_event_unmark_free_multi(const em_event_t events[], int num);
  *
  * Allocate a new event with identical payload to the given event.
  *
- * @note Event metadata, internal headers and state are _NOT_ cloned
+ * If present, the event user area is also cloned. Note that if a 'pool' is
+ * given and it has been configured to provide a smaller user area for events
+ * than the pool the original event was allocated from, then the clone operation
+ * will fail, returning EM_EVENT_UNDEF. Thus make sure to use compatible pools
+ * for cloning. Using the same pool ('pool' == EM_POOL_UNDEF) will always be
+ * compatible with respect of the user area sizing.
+ *
+ * @note Other event metadata, internal headers and state are _NOT_ cloned
  *       (e.g. the event-group of a cloned event is EM_EVENT_GROUP_UNDEF etc).
  *
  * @param    event  Event to be cloned, must be a valid event.
@@ -622,12 +629,52 @@ void em_event_unmark_free_multi(const em_event_t events[], int num);
  *                  The event-type of 'event' must be suitable for allocation
  *                  from 'pool' (e.g. EM_EVENT_TYPE_PACKET can not be
  *                  allocated from a pool supporting only EM_EVENT_TYPE_SW)
+ *                  The user area size of events from 'pool' must be large
+ *                  enough to fit the cloned user area.
  *
  * @return The cloned event or EM_EVENT_UNDEF on error.
  *
  * @see em_alloc(), em_free()
  */
 em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/);
+
+/**
+ * @brief Partially clone an event
+ *
+ * Allocate a new event (of size 'len') and copy 'len' bytes of data starting
+ * from 'offset' from the given event into the new event.
+ * The maximum number of bytes to copy is event-size minus the offset.
+ *
+ * If present, and 'clone_uarea = true', the event user area is also cloned.
+ * Note that if a 'pool' is given and it has been configured to provide a
+ * smaller user area for events than the pool the original event was allocated
+ * from, then the clone operation will fail, returning EM_EVENT_UNDEF.
+ * Thus make sure to use compatible pools for cloning.
+ * Using the same pool ('pool' == EM_POOL_UNDEF) will always be compatible with
+ * respect of the user area sizing.
+ *
+ * @note Other event metadata, internal headers and state are _NOT_ cloned
+ *       (e.g. the event-group of a cloned event is EM_EVENT_GROUP_UNDEF etc).
+ *
+ * @param event Event to be cloned, must be a valid event.
+ * @param pool  Optional event pool to allocate the partially cloned event from.
+ *              Use 'EM_POOL_UNDEF' to clone from the same pool as 'event'
+ *              was allocated from.
+ *              The event-type of 'event' must be suitable for allocation
+ *              from 'pool' (e.g. EM_EVENT_TYPE_PACKET can not be
+ *              allocated from a pool supporting only EM_EVENT_TYPE_SW).
+ *              The user area size of events from 'pool' must be large
+ *              enough to fit the cloned user area (if 'clone_uarea = true').
+ * @param offset Byte offset into the event payload
+ * @param len    Number of bytes to copy/clone.
+ * @param clone_uarea Set 'true' to also clone the event user area (true/false).
+ *
+ * @return The partially cloned event or EM_EVENT_UNDEF on error.
+ *
+ * @see em_alloc(), em_free()
+ */
+em_event_t em_event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/,
+			       uint32_t offset, uint32_t len, bool clone_uarea);
 
 /**
  * @brief Get a pointer to the event user area, optionally along with its size.

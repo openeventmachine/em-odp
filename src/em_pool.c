@@ -1032,6 +1032,149 @@ static int check_em_pool_subpool_stats(void)
 	return 0;
 }
 
+/* We use following static asserts and function check_em_pool_subpool_stats_selected()
+ * to verify at both compile time and runtime that, em_pool_subpool_stats_selected_t
+ * is exactly the same as odp_pool_stats_selected_t This allows us to avoid exposing
+ * ODP type in EM-ODP API (at event_machine_pool.h in this case) and allows us to
+ * type cast 'em_pool_subpool_stats_selected_t' to 'odp_pool_stats_selected_t', ensuring
+ * high performance (see em_pool_stats_selected() and em_pool_subpool_stats_selected()).
+ */
+
+#define SIZE_NOT_EQUAL_ERR_STR \
+"Size of odp_pool_stats_selected_t must equal to that of em_pool_subpool_stats_selected_t\n"
+
+ODP_STATIC_ASSERT(sizeof(odp_pool_stats_selected_t) == sizeof(em_pool_subpool_stats_selected_t),
+		  SIZE_NOT_EQUAL_ERR_STR);
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, available) ==
+		  offsetof(em_pool_subpool_stats_selected_t, available) &&
+		  sizeof_field(odp_pool_stats_selected_t, available) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, available),
+		  "available in em_pool_subpool_stats_selected_t and odp_pool_stats_selected_t differs!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, alloc_ops) ==
+		  offsetof(em_pool_subpool_stats_selected_t, alloc_ops) &&
+		  sizeof_field(odp_pool_stats_selected_t, alloc_ops) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, alloc_ops),
+		  "em_pool_subpool_stats_selected_t.alloc_ops differs from odp_pool_stats_selected_t.alloc_ops!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, alloc_fails) ==
+		  offsetof(em_pool_subpool_stats_t, alloc_fails) &&
+		  sizeof_field(odp_pool_stats_selected_t, alloc_fails) ==
+		  sizeof_field(em_pool_subpool_stats_t, alloc_fails),
+		  "em_pool_subpool_stats_selected_t.alloc_fails differs from odp_pool_stats_selected_t.alloc_fails!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, free_ops) ==
+		  offsetof(em_pool_subpool_stats_selected_t, free_ops) &&
+		  sizeof_field(odp_pool_stats_selected_t, free_ops) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, free_ops),
+		  "em_pool_subpool_stats_selected_t.free_ops differs from odp_pool_stats_selected_t.free_ops!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, total_ops) ==
+		  offsetof(em_pool_subpool_stats_selected_t, total_ops) &&
+		  sizeof_field(odp_pool_stats_selected_t, total_ops) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, total_ops),
+		  "em_pool_subpool_stats_selected_t.total_ops differs from odp_pool_stats_selected_t.total_ops!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, cache_available) ==
+		  offsetof(em_pool_subpool_stats_selected_t, cache_available) &&
+		  sizeof_field(odp_pool_stats_selected_t, cache_available) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, cache_available),
+		  "em_pool_subpool_stats_selected_t.cache_available differs from that of odp_pool_stats_selected_t!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, cache_alloc_ops) ==
+		  offsetof(em_pool_subpool_stats_selected_t, cache_alloc_ops) &&
+		  sizeof_field(odp_pool_stats_selected_t, cache_alloc_ops) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, cache_alloc_ops),
+		  "em_pool_subpool_stats_selected_t.cache_alloc_ops differs from that of odp_pool_stats_selected_t!");
+
+ODP_STATIC_ASSERT(offsetof(odp_pool_stats_selected_t, cache_free_ops) ==
+		  offsetof(em_pool_subpool_stats_selected_t, cache_free_ops) &&
+		  sizeof_field(odp_pool_stats_selected_t, cache_free_ops) ==
+		  sizeof_field(em_pool_subpool_stats_selected_t, cache_free_ops),
+		  "em_pool_subpool_stats_selected_t.cache_free_ops differs from that of odp_pool_stats_selected_t!");
+
+#define SELECTED_TYPE_ERR_FMT \
+"em_pool_subpool_stats_selected_t.%s differs from odp_pool_stats_selected_t.%s\n"
+
+static int check_em_pool_subpool_stats_selected(void)
+{
+	if (sizeof(odp_pool_stats_selected_t) != sizeof(em_pool_subpool_stats_selected_t)) {
+		EM_LOG(EM_LOG_ERR,
+		       "odp_pool_stats_selected_t vs em_pool_subpool_stats_selected_t size diff\n");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, available) !=
+	    offsetof(em_pool_subpool_stats_selected_t, available) ||
+	    sizeof_field(odp_pool_stats_selected_t, available) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, available)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "available", "available");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, alloc_ops) !=
+	    offsetof(em_pool_subpool_stats_selected_t, alloc_ops) ||
+	    sizeof_field(odp_pool_stats_selected_t, alloc_ops) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, alloc_ops)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "alloc_ops", "alloc_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, alloc_fails) !=
+	    offsetof(em_pool_subpool_stats_selected_t, alloc_fails) ||
+	    sizeof_field(odp_pool_stats_selected_t, alloc_fails) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, alloc_fails)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "alloc_fails", "alloc_fails");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, free_ops) !=
+	    offsetof(em_pool_subpool_stats_selected_t, free_ops) ||
+	    sizeof_field(odp_pool_stats_selected_t, free_ops) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, free_ops)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "free_ops", "free_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, total_ops) !=
+	    offsetof(em_pool_subpool_stats_selected_t, total_ops) ||
+	    sizeof_field(odp_pool_stats_selected_t, total_ops) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, total_ops)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "total_ops", "total_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, cache_available) !=
+	    offsetof(em_pool_subpool_stats_selected_t, cache_available) ||
+	    sizeof_field(odp_pool_stats_selected_t, cache_available) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, cache_available)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "cache_available", "cache_available");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, cache_alloc_ops) !=
+	    offsetof(em_pool_subpool_stats_selected_t, cache_alloc_ops) ||
+	    sizeof_field(odp_pool_stats_selected_t, cache_alloc_ops) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, cache_alloc_ops)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "cache_alloc_ops", "cache_alloc_ops");
+		return -1;
+	}
+
+	if (offsetof(odp_pool_stats_selected_t, cache_free_ops) !=
+	    offsetof(em_pool_subpool_stats_selected_t, cache_free_ops) ||
+	    sizeof_field(odp_pool_stats_selected_t, cache_free_ops) !=
+	    sizeof_field(em_pool_subpool_stats_selected_t, cache_free_ops)) {
+		EM_LOG(EM_LOG_ERR, SELECTED_TYPE_ERR_FMT, "cache_free_ops", "cache_free_ops");
+		return -1;
+	}
+
+	return 0;
+}
+
+ODP_STATIC_ASSERT(sizeof(odp_pool_stats_opt_t) == sizeof(em_pool_stats_opt_t),
+		  "Size of odp_pool_stats_opt_t differs from that of em_pool_stats_opt_t\n");
+
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	  const em_pool_cfg_t *default_pool_cfg)
@@ -1045,6 +1188,10 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 
 	/* Return error if em_pool_subpool_stats_t differs from odp_pool_stats_t */
 	if (check_em_pool_subpool_stats())
+		return EM_ERR;
+
+	/*Return error if em_pool_subpool_stats_selected_t differs from odp_pool_stats_selected_t*/
+	if (check_em_pool_subpool_stats_selected())
 		return EM_ERR;
 
 	memset(mpool_tbl, 0, sizeof(mpool_tbl_t));
@@ -1973,6 +2120,114 @@ void pool_stats_print(em_pool_t pool)
 	EM_PRINT(POOL_STATS_HDR_STR, pool, stats_str);
 }
 
+#define POOL_STATS_SELECTED_HDR_STR \
+"Selected EM pool statistics for pool %" PRI_POOL ":\n\n"\
+"Selected statistic counters: %s\n\n"\
+"Subpool Available Alloc_ops Alloc_fails Free_ops Total_ops Cache_available" \
+" Cache_alloc_ops Cache_free_ops\n"\
+"--------------------------------------------------------------------------" \
+"-------------------------------\n%s"
+
+#define OPT_STR_LEN 150
+
+static void fill_opt_str(char *opt_str, const em_pool_stats_opt_t *opt)
+{
+	int n_print;
+	int len = 0;
+
+	if (opt->available) {
+		n_print = snprintf(opt_str + len, 12, "%s", "available");
+		len += n_print;
+	}
+
+	if (opt->alloc_ops) {
+		n_print = snprintf(opt_str + len, 12, "%s", len ? ", alloc_ops" : "alloc_ops");
+		len += n_print;
+	}
+
+	if (opt->alloc_fails) {
+		n_print = snprintf(opt_str + len, 14, "%s", len ? ", alloc_fails" : "alloc_fails");
+		len += n_print;
+	}
+
+	if (opt->free_ops) {
+		n_print = snprintf(opt_str + len, 11, "%s", len ? ", free_ops" : "free_ops");
+		len += n_print;
+	}
+
+	if (opt->total_ops) {
+		n_print = snprintf(opt_str + len, 12, "%s", len ? ", total_ops" : "total_ops");
+		len += n_print;
+	}
+
+	if (opt->cache_available) {
+		n_print = snprintf(opt_str + len, 18, "%s",
+				   len ? ", cache_available" : "cache_available");
+		len += n_print;
+	}
+
+	if (opt->cache_alloc_ops) {
+		n_print = snprintf(opt_str + len, 18, "%s",
+				   len ? ", cache_alloc_ops" : "cache_alloc_ops");
+		len += n_print;
+	}
+
+	if (opt->cache_free_ops)
+		snprintf(opt_str + len, 17, "%s", len ? ", cache_free_ops" : "cache_free_ops");
+}
+
+void pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt)
+{
+	em_status_t stat;
+	em_pool_stats_selected_t pool_stats = {0};
+	const em_pool_subpool_stats_selected_t *subpool_stats;
+	int len = 0;
+	int n_print = 0;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+	char opt_str[OPT_STR_LEN];
+	const int stats_str_len = EM_MAX_SUBPOOLS * POOL_STATS_LEN + 1;
+	char stats_str[stats_str_len];
+
+	if (pool_elem == NULL || !pool_allocated(pool_elem)) {
+		EM_LOG(EM_LOG_ERR, "EM-pool:%" PRI_POOL " invalid\n", pool);
+		return;
+	}
+
+	stat = em_pool_stats_selected(pool, &pool_stats, opt);
+	if (unlikely(stat != EM_OK)) {
+		EM_PRINT("Failed to fetch EM selected pool statistics\n");
+		return;
+	}
+
+	for (uint32_t i = 0; i < pool_stats.num_subpools; i++) {
+		subpool_stats = &pool_stats.subpool_stats[i];
+
+		n_print = snprintf(stats_str + len, stats_str_len - len,
+				   POOL_STATS_FMT,
+				   i,
+				   subpool_stats->available,
+				   subpool_stats->alloc_ops,
+				   subpool_stats->alloc_fails,
+				   subpool_stats->free_ops,
+				   subpool_stats->total_ops,
+				   subpool_stats->cache_available,
+				   subpool_stats->cache_alloc_ops,
+				   subpool_stats->cache_free_ops);
+
+		/* Not enough space to hold more subpool stats */
+		if (n_print >= stats_str_len - len)
+			break;
+
+		len += n_print;
+	}
+	stats_str[len] = '\0';
+
+	/* Fill selected statistic counters */
+	fill_opt_str(opt_str, opt);
+
+	EM_PRINT(POOL_STATS_SELECTED_HDR_STR, pool, opt_str, stats_str);
+}
+
 #define SUBPOOL_STATS_HDR_STR \
 "EM subpool statistics for pool %" PRI_POOL ":\n\n"\
 "Subpool Available Alloc_ops Alloc_fails Free_ops Total_ops Cache_available" \
@@ -2019,6 +2274,60 @@ void subpools_stats_print(em_pool_t pool, const int subpools[], int num_subpools
 
 	stats_str[len] = '\0';
 	EM_PRINT(SUBPOOL_STATS_HDR_STR, pool, stats_str);
+}
+
+#define SUBPOOL_STATS_SELECTED_HDR_STR \
+"Selected EM subpool statistics for pool %" PRI_POOL ":\n\n"\
+"Selected statistic counters: %s\n\n"\
+"Subpool Available Alloc_ops Alloc_fails Free_ops Total_ops Cache_available" \
+" Cache_alloc_ops Cache_free_ops\n"\
+"--------------------------------------------------------------------------" \
+"-------------------------------\n%s"
+
+void subpools_stats_selected_print(em_pool_t pool, const int subpools[],
+				   int num_subpools, const em_pool_stats_opt_t *opt)
+{
+	int num_stats;
+	char opt_str[OPT_STR_LEN];
+	em_pool_subpool_stats_selected_t stats[num_subpools];
+	int len = 0;
+	int n_print = 0;
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+	const int stats_str_len = num_subpools * POOL_STATS_LEN + 1;
+	char stats_str[stats_str_len];
+
+	if (pool_elem == NULL || !pool_allocated(pool_elem)) {
+		EM_LOG(EM_LOG_ERR, "EM-pool:%" PRI_POOL " invalid\n", pool);
+		return;
+	}
+
+	memset(stats, 0, sizeof(stats));
+	num_stats = em_pool_subpool_stats_selected(pool, subpools, num_subpools, stats, opt);
+	if (unlikely(!num_stats || num_stats > num_subpools)) {
+		EM_LOG(EM_LOG_ERR, "Failed to fetch selected subpool statistics\n");
+		return;
+	}
+
+	/* Print subpool stats */
+	for (int i = 0; i < num_stats; i++) {
+		n_print = snprintf(stats_str + len, stats_str_len - len,
+				   POOL_STATS_FMT,
+				   subpools[i], stats[i].available, stats[i].alloc_ops,
+				   stats[i].alloc_fails, stats[i].free_ops,
+				   stats[i].total_ops, stats[i].cache_available,
+				   stats[i].cache_alloc_ops, stats[i].cache_free_ops);
+
+		/* Not enough space to hold more subpool stats */
+		if (n_print >= stats_str_len - len)
+			break;
+
+		len += n_print;
+	}
+	stats_str[len] = '\0';
+
+	/* Fill selected statistic counters */
+	fill_opt_str(opt_str, opt);
+	EM_PRINT(SUBPOOL_STATS_SELECTED_HDR_STR, pool, opt_str, stats_str);
 }
 
 void print_pool_elem_info(void)

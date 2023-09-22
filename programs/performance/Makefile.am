@@ -1,7 +1,6 @@
 include $(top_srcdir)/programs/Makefile.inc
 
 noinst_PROGRAMS = atomic_processing_end \
-		  bench_event \
 		  pairs \
 		  loop \
 		  loop_multircv \
@@ -18,9 +17,6 @@ noinst_PROGRAMS = atomic_processing_end \
 
 atomic_processing_end_LDFLAGS = $(AM_LDFLAGS)
 atomic_processing_end_CFLAGS = $(AM_CFLAGS)
-
-bench_event_LDFLAGS = $(AM_LDFLAGS)
-bench_event_CFLAGS = $(AM_CFLAGS)
 
 pairs_LDFLAGS = $(AM_LDFLAGS)
 pairs_CFLAGS = $(AM_CFLAGS)
@@ -62,7 +58,6 @@ pool_perf_LDFLAGS = $(AM_LDFLAGS) -lm
 pool_perf_CFLAGS = $(AM_CFLAGS)
 
 dist_atomic_processing_end_SOURCES = atomic_processing_end.c
-dist_bench_event_SOURCES = bench_event.c
 dist_pairs_SOURCES = pairs.c
 dist_loop_SOURCES = loop.c
 dist_loop_multircv_SOURCES = loop_multircv.c

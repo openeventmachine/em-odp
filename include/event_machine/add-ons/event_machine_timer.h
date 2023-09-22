@@ -75,7 +75,7 @@
  * latest event from being received. An active timeout cannot be altered without
  * canceling it first.
  *
- * A timeout can be re-used after it has been received or successfylly
+ * A timeout can be re-used after it has been received or successfully
  * cancelled. Timeouts need to be deleted after use. Deletion frees the
  * resources reserved during creation.
  *
@@ -92,7 +92,10 @@
  * monotonic time, that will not wrap back to zero in any reasonable uptime.
  *
  * The major event types EM_EVENT_TYPE_SW, EM_EVENT_TYPE_PACKET and
- * EM_EVENT_TYPE_TIMER can be used as timeout indication.
+ * EM_EVENT_TYPE_TIMER can be used as a timeout indication. The type
+ * EM_EVENT_TYPE_TIMER is alternative to EM_EVENT_TYPE_SW and works the same
+ * way. Additionally for ring timer only, the type EM_EVENT_TYPE_TIMER_IND
+ * is used. This is a special indication event without visible payload.
  *
  * A periodic timer requires the application to acknowledge each received
  * timeout event after it has been processed. The acknowledgment activates the
@@ -128,24 +131,24 @@
  * There is an alternative periodic ring timer. As it uses different abstraction
  * it is created and started via separate ring specific APIs. It has three main
  * differencies to the regular periodic timeouts:
- *	1. Only pre-defined read-only event type can be used and is provided
- *	   by timer
- *	2. Flow control is not supported. Some implementations may have,
- *	   but the specification does not quarantee any so user needs to be
- *	   prepared to see the same event queued multiple times if handling of
+ *	1. Only a pre-defined read-only event type can be used and is provided
+ *	   by the timer (EM_EVENT_TYPE_TIMER_IND).
+ *	2. Flow control is not supported. Some implementations may have it,
+ *	   but the specification does not quarantee any so the user needs to be
+ *	   prepared to see the same event enqueued multiple times if handling of
  *	   the received timeouts is not fast enough
- *	2. Limited set of period times are supported per timer (base rate or
- *	   integer multiple of it only)
+ *	2. A limited set of period times are supported per timer (base rate or
+ *	   an integer multiple of it only)
  *
  * Ring timers can be abstracted as a clock face ticking the pointer forward.
  * One cycle around is the base rate (minimum rate). The same timeout can be
- * inserted to multiple locations evenly spread within the clock face thus
- * multiplying the base rate. Starting offset can be adjusted only up to
+ * inserted into multiple locations evenly spread within the clock face thus
+ * multiplying the base rate. The starting offset can be adjusted only up to
  * one timeout period.
- * Depending on platform this mode may provide better integration with HW and
- * thus less runtime overhead. However as it exposes potential queue overflow
- * and race hazard (race avoidable by using atomic queue as target) the regular
- * periodic timer is recommended as default.
+ * Depending on platform, this mode may provide better integration with HW and
+ * thus have less runtime overhead. However, as it exposes a potential queue
+ * overflow and a race hazard (race avoidable by using atomic queue as target),
+ * the regular periodic timer is recommended as a default.
  *
  * Example usage
  * @code
@@ -195,7 +198,7 @@ extern "C" {
 /** Major API version, marks possibly not backwards compatible changes */
 #define EM_TIMER_API_VERSION_MAJOR   2
 /** Minor version, backwards compatible changes or additions */
-#define EM_TIMER_API_VERSION_MINOR   3
+#define EM_TIMER_API_VERSION_MINOR   4
 
 /**
  * @typedef em_timer_t
@@ -451,7 +454,7 @@ void em_timer_attr_init(em_timer_attr_t *tmr_attr);
  * @param [out] ring_attr  Pointer to em_timer_attr_t to be initialized
  * @param clk_src	Clock source to use (system specific or portable
  *			EM_TIMER_CLKSRC_DEFAULT)
- * @param base_hz	Base rate of the ring (minimum rate / longest period)
+ * @param base_hz	Base rate of the ring (minimum rate i.e. longest period)
  * @param max_mul	Maximum multiplier (maximum rate = base_hz * max_mul)
  * @param res_ns	Required resolution of the timing or 0 to accept default
  *
@@ -573,9 +576,9 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr);
  * with em_timer_ring_attr_init and optionally adjusted for the required timing
  * constraints.
  *
- * A periodic ring timer is different and will only send EM_EVENT_TYPE_TIMER events,
- * which are automatically provided and cannot be modified. These events can
- * be allocated only via timer APIs.
+ * A periodic ring timer is different and will only send EM_EVENT_TYPE_TIMER_IND
+ * events, which are automatically provided and cannot be modified. These events
+ * can be allocated only via timer APIs.
  *
  * Example for 1ms ... 125us periodic ring timer (base 1000 hz, multiplier up to 8):
  * @code
@@ -653,7 +656,7 @@ em_tmo_t em_tmo_create(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue);
  *
  * Like em_tmo_create but with additional argument. This can be used with any
  * timer type, but e.g. the userptr argument is only used with ring timers
- * using EM_EVENT_TYPE_TIMER, that can carry userptr.
+ * using events of type EM_EVENT_TYPE_TIMER_IND that can carry userptr.
  *
  * @param tmr        Timer handle
  * @param flags      Functionality flags
@@ -800,13 +803,14 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
  * multiplied by the given multiplier. For example 1000Hz base_hz with multiplier
  * of 8 will give 125us period.
  *
- * Timeout event of type EM_EVENT_TYPE_TIMER is automatically allocated and
- * will be sent to the queue given to em_tmo_create() when the timeout expires.
- * User then needs to call em_timer_ack like with normal periodic timeout.
- * With ring timer however there is no guaranteed flow control, new events may
- * be sent even before user has called ack. This means the same event may be in
- * the input queue multiple times if the application can not keep up the period
- * rate. If the destination queue is not atomic the same event can then also be
+ * Timeout event of type EM_EVENT_TYPE_TIMER_IND is automatically allocated if
+ * not provided and will be sent to the queue given to em_tmo_create() when the
+ * timeout expires. User then needs to call em_timer_ack like with normal
+ * periodic timeout. With ring timer however there is no guaranteed flow control,
+ * new events may be sent even before user has called ack. This means the same
+ * event may be in the input queue multiple times if the application can not
+ * keep up the period rate.
+ * If the destination queue is not atomic the same event can then also be
  * concurrently received by multiple cores. This is a race hazard to prepare for.
  * Additionally the used event can not change via em_tmo_ack, the received event
  * must always be returned.
@@ -824,7 +828,8 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
  * @param tmo        Timeout handle
  * @param start_abs  Absolute start time (or 0 for period starting at call time)
  * @param multiplier Rate multiplier (period rate = multiplier * timer base_hz)
- * @param tmo_ev     EM_EVENT_TYPE_TIMER event to re-use. Normally EM_EVENT_UNDEF
+ * @param tmo_ev     Event of type EM_EVENT_TYPE_TIMER_IND to re-use.
+ *                   Normally EM_EVENT_UNDEF.
  *
  * @retval EM_OK		success
  * @retval EM_ERR_TOONEAR	failure, start tick value is past or too close
@@ -1028,7 +1033,8 @@ em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat);
  * Succesfull timeout cancel (event returned) will reset the event type to
  * EM_TMO_TYPE_NONE.
  *
- * @note If given event type is EM_EVENT_TYPE_TIMER the reset argument is ignored.
+ * @note The reset argument is ignored if the given event is of type
+ * EM_EVENT_TYPE_TIMER_IND.
  *
  * The related tmo handle can also be retrieved via parameter tmo. This
  * can be useful to call em_tmo_ack() for periodic timeouts:
@@ -1051,15 +1057,32 @@ em_tmo_type_t em_tmo_get_type(em_event_t event, em_tmo_t *tmo, bool reset);
 /**
  * Returns the optional user pointer for a periodic ring timeout
  *
- * Can only be used with event received as timeout for a periodic ring,
- * e.g. EM_EVENT_TYPE_TIMER only. Other event types will return NULL.
+ * Can only be used with an event received as a timeout for a periodic ring,
+ * i.e. EM_EVENT_TYPE_TIMER_IND only. Other event types will return NULL.
  *
  * @param event       Event received as timeout
  * @param [out] tmo   Optionally returns associated tmo handle. NULL ok.
  *
- * @return pointer given when creating associated tmo or NULL if event is not ring timeout
+ * @return A pointer given when creating the associated tmo or
+ *         NULL if the event is not ring timeout
  */
 void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo);
+
+/**
+ * Returns the associated timer handle from a timeout handle
+ *
+ * Associated timer handle is returned from a valid timeout. Can be used to for
+ * instance read the current timer tick without having the timer handle:
+ * @code
+ * em_timer_tick_t tick = em_timer_current_tick(em_tmo_get_timer(tmo));
+ * @endcode
+ *
+ * @param tmo	valid timeout handle
+ *
+ * @return associated timer handle or EM_TIMER_UNDEF if tmo is not valid
+ *
+ */
+em_timer_t em_tmo_get_timer(em_tmo_t tmo);
 
 /**
  * @}

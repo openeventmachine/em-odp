@@ -59,7 +59,7 @@
 #include "cm_error_handler.h"
 #include "timer_test_ring.h"
 
-#define VERSION "WIP v0.2"
+#define VERSION "WIP v0.3"
 struct {
 	unsigned int	loops;
 	em_fract_u64_t  basehz[MAX_TEST_TIMERS];
@@ -132,6 +132,7 @@ static void approx_fract(double f, em_fract_u64_t *fract);
 static void fix_setup(void);
 static void create_test_timeouts(app_eo_ctx_t *eo_ctx);
 static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force);
+static void delete_test_events(app_eo_ctx_t *eo_ctx, bool force);
 static void dump_trace(app_eo_ctx_t *eo_ctx);
 static void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 		     em_queue_t *queue, void **q_ctx);
@@ -229,14 +230,14 @@ static inline void profile_add(uint64_t t1, uint64_t t2, prof_apis api,
 }
 
 static inline void trace_add(uint64_t ts, trace_op_t op, uint32_t val,
-			     int64_t arg1, int64_t arg2, int64_t arg3, void *arg4)
+			     int64_t arg1, int64_t arg2, void *arg3, void *arg4)
 {
 	trace_entry_t *tp;
 
 	if (g_options.tracelen == 0)
 		return; /* disabled */
 
-	if (unlikely(m_tracecount >= (g_options.tracelen - 1))) { /* overflow marker */
+	if (unlikely(m_tracecount >= g_options.tracelen)) { /* overflow marker */
 		tp = &m_tracebuf[g_options.tracelen - 1];
 		tp->ns = TEST_TIME_FN();
 		tp->op = TRACE_OP_LAST;
@@ -274,7 +275,7 @@ static void extra_delay(rnd_state_t *rnd, int core, unsigned int tmri, unsigned 
 		ns = g_options.delay_us * 1000UL;
 	}
 
-	trace_add(TEST_TIME_FN(), TRACE_OP_DELAY, core, tmri, toi, ns, NULL);
+	trace_add(TEST_TIME_FN(), TRACE_OP_DELAY, core, tmri, toi, (void *)ns, NULL);
 	while (TEST_TIME_FN() < (ns + t1)) {
 		/* delay */
 	};
@@ -300,12 +301,12 @@ static void dump_trace(app_eo_ctx_t *eo_ctx)
 	if (title) {
 		fprintf(df, "#BEGIN RING TRACE FORMAT 1\n");
 		/* dump setup */
-		fprintf(df, "cores,loops,num_timer,num_tmo,recreate_tmr,reuse_tmo,reuse_ev,delay_us,tracelen\n");
-		fprintf(df, "%d,%u,%u,%u,%u,%u,%u,%ld,%u\n",
+		fprintf(df, "cores,loops,num_timer,num_tmo,recreate_tmr,reuse_tmo,reuse_ev,delay_us,tracelen,ver\n");
+		fprintf(df, "%d,%u,%u,%u,%u,%u,%u,%ld,%u,%s\n",
 			em_core_count(), g_options.loops, g_options.num_timers, g_options.num_tmo,
 					 g_options.recreate, g_options.reuse_tmo,
 					 g_options.reuse_ev, g_options.delay_us,
-					 g_options.tracelen);
+					 g_options.tracelen, VERSION);
 		/* dump timeouts */
 		fprintf(df, "#TMO:\ntmr,tmo,tick_hz,res_ns,base_hz,mul,startrel\n");
 		for (unsigned int tmr = 0; tmr < g_options.num_timers; tmr++)
@@ -326,7 +327,7 @@ static void dump_trace(app_eo_ctx_t *eo_ctx)
 
 		test_fatal_if(tp->op > TRACE_OP_LAST, "Invalid trace op %u!", tp->op);
 
-		fprintf(df, "%u,%lu,%s,%ld,%ld,%ld,%p\n",
+		fprintf(df, "%u,%lu,%s,%ld,%ld,%p,%p\n",
 			tp->val, tp->ns, trace_op_labels[tp->op],
 			tp->arg1, tp->arg2, tp->arg3, tp->arg4);
 	}
@@ -339,7 +340,7 @@ static void usage(void)
 {
 	printf("%s\n", instructions);
 
-	printf("Usage:\n");
+	printf("Options:\n");
 	for (int i = 0; ; i++) {
 		if (longopts[i].name == NULL || descopts[i] == NULL)
 			break;
@@ -627,7 +628,7 @@ static void delete_test_timer(app_eo_ctx_t *eo_ctx)
 	for (unsigned int i = 0; i < g_options.num_timers; i++) {
 		if (eo_ctx->test_tmr[i] != EM_TIMER_UNDEF) {
 			trace_add(TEST_TIME_FN(), TRACE_OP_TMR_DELETE, em_core_id(),
-				  i, -1, -1, eo_ctx->test_tmr[i]);
+				  i, -1, NULL, eo_ctx->test_tmr[i]);
 			em_status_t rv = em_timer_delete(eo_ctx->test_tmr[i]);
 
 			test_fatal_if(rv != EM_OK, "Ring timer[%d] delete fail, rv %d!", i, rv);
@@ -688,7 +689,7 @@ static void create_test_timer(app_eo_ctx_t *eo_ctx)
 		strncpy(rattr.name, "RingTmr", EM_TIMER_NAME_LEN);
 		em_timer_t rtmr = em_timer_ring_create(&rattr);
 
-		trace_add(TEST_TIME_FN(), TRACE_OP_TMR_CREATE, em_core_id(), i, -1, -1, rtmr);
+		trace_add(TEST_TIME_FN(), TRACE_OP_TMR_CREATE, em_core_id(), i, -1, NULL, rtmr);
 		test_fatal_if(rtmr == EM_TIMER_UNDEF, "Ring timer create fail!");
 		eo_ctx->test_tmr[i] = rtmr;
 		eo_ctx->tick_hz[i] = em_timer_get_freq(rtmr);
@@ -714,7 +715,7 @@ static void create_test_timeouts(app_eo_ctx_t *eo_ctx)
 				profile_add(t1, TEST_TIME_FN(), PROF_TMO_CREATE,
 					    eo_ctx, em_core_id());
 				trace_add(t1, TRACE_OP_TMO_CREATE, em_core_id(),
-					  t, to, -1, eo_ctx->test_tmo[t][to]);
+					  t, to, eo_ctx->test_tmr[t], eo_ctx->test_tmo[t][to]);
 				test_fatal_if(eo_ctx->test_tmo[t][to] == EM_TMO_UNDEF,
 					      "Can't allocate test_tmo!\n");
 			}
@@ -726,7 +727,7 @@ static void create_test_timeouts(app_eo_ctx_t *eo_ctx)
 			if (g_options.start_offset[to])
 				startabs = tick_now + g_options.start_offset[to];
 			trace_add(t1, TRACE_OP_TMO_SET, em_core_id(),
-				  t, to, tick_now, eo_ctx->test_ev[t][to]);
+				  t, to, (void *)tick_now, eo_ctx->test_ev[t][to]);
 			t1 = TEST_TIME_FN();
 			em_status_t stat = em_tmo_set_periodic_ring(eo_ctx->test_tmo[t][to],
 								    startabs,
@@ -737,6 +738,7 @@ static void create_test_timeouts(app_eo_ctx_t *eo_ctx)
 			test_fatal_if(stat != EM_OK, "Can't activate test tmo[%d][%d], ret %u!\n",
 				      t, to, stat);
 			eo_ctx->first_time[t][to] = t1;
+			eo_ctx->test_ev[t][to] = EM_EVENT_UNDEF; /* now given to timer */
 		}
 	}
 }
@@ -744,6 +746,8 @@ static void create_test_timeouts(app_eo_ctx_t *eo_ctx)
 static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 {
 	int core = em_core_id();
+
+	/* force == true means final cleanup, otherwise may skip if re-use option is active */
 
 	for (unsigned int ti = 0; ti < g_options.num_timers; ti++) {
 		for (unsigned int tmoi = 0; tmoi < g_options.num_tmo; tmoi++) {
@@ -755,18 +759,12 @@ static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 			test_fatal_if(s == EM_TMO_STATE_ACTIVE,
 				      "Unexpected tmo state ACTIVE after cancel\n");
 
-			if (g_options.reuse_ev && eo_ctx->test_ev[ti][tmoi] != EM_EVENT_UNDEF) {
-				trace_add(TEST_TIME_FN(), TRACE_OP_TMO_EV_FREE, core,
-					  ti, tmoi, -1, eo_ctx->test_ev[ti][tmoi]);
-				em_free(eo_ctx->test_ev[ti][tmoi]);
-			}
-
 			if (!g_options.reuse_tmo || force) {
 				em_event_t ev = EM_EVENT_UNDEF;
 				uint64_t t1 = TEST_TIME_FN();
 
 				trace_add(t1, TRACE_OP_TMO_DELETE, core,
-					  ti, tmoi, -1, eo_ctx->test_tmo[ti][tmoi]);
+					  ti, tmoi, NULL, eo_ctx->test_tmo[ti][tmoi]);
 
 				em_status_t rv = em_tmo_delete(eo_ctx->test_tmo[ti][tmoi], &ev);
 
@@ -776,6 +774,25 @@ static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 				test_fatal_if(ev != EM_EVENT_UNDEF,
 					      "Unexpected - tmo delete returned event %p", ev);
 				eo_ctx->test_tmo[ti][tmoi] = EM_TMO_UNDEF;
+			}
+		}
+	}
+}
+
+static void delete_test_events(app_eo_ctx_t *eo_ctx, bool force)
+{
+	int core = em_core_id();
+
+	for (unsigned int ti = 0; ti < g_options.num_timers; ti++) {
+		for (unsigned int tmoi = 0; tmoi < g_options.num_tmo; tmoi++) {
+			if (eo_ctx->test_ev[ti][tmoi] == EM_EVENT_UNDEF)
+				continue;
+			if (!g_options.reuse_ev || force) {
+				trace_add(TEST_TIME_FN(), TRACE_OP_TMO_EV_FREE,
+					  core, ti, tmoi, eo_ctx->test_tmo[ti][tmoi],
+					  eo_ctx->test_ev[ti][tmoi]);
+				em_free(eo_ctx->test_ev[ti][tmoi]);
+				eo_ctx->test_ev[ti][tmoi] = EM_EVENT_UNDEF;
 			}
 		}
 	}
@@ -804,7 +821,7 @@ static bool handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event, app_msg_t *
 	(void)eo_ctx;
 	(void)now;
 
-	trace_add(now, TRACE_OP_HB_RX, em_core_id(), msgin->count, eo_ctx->state, -1, event);
+	trace_add(now, TRACE_OP_HB_RX, em_core_id(), msgin->count, eo_ctx->state, NULL, event);
 
 	if (EXTRA_PRINTS)
 		APPL_PRINT(".");
@@ -815,7 +832,7 @@ static bool handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event, app_msg_t *
 		 * Some time is added between states so startup, printing etc is not causing jitter
 		 * to time stamping
 		 */
-		int state = eo_ctx->state; /* clang 11: statement requires expression of integer type */
+		int state = eo_ctx->state;
 
 		switch (state) {
 		case STATE_START:
@@ -843,10 +860,10 @@ static bool handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event, app_msg_t *
 					rv = em_tmo_cancel(eo_ctx->test_tmo[ti][tmoi], &ev);
 					profile_add(t1, TEST_TIME_FN(), PROF_TMO_CANCEL,
 						    eo_ctx, em_core_id());
+					trace_add(t1, TRACE_OP_TMO_CANCEL, em_core_id(),
+						  ti, tmoi, ev, eo_ctx->test_tmo[ti][tmoi]);
 					test_fatal_if(rv != EM_ERR_TOONEAR,
 						      "cancel did not return expected TOONEAR!");
-					trace_add(t1, TRACE_OP_TMO_CANCEL, em_core_id(),
-						  ti, tmoi, -1, eo_ctx->test_tmo[ti][tmoi]);
 				}
 			}
 			eo_ctx->next_change = msgin->count + 3;  /* enough to get all remaining */
@@ -857,6 +874,7 @@ static bool handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event, app_msg_t *
 			if (EXTRA_PRINTS)
 				APPL_PRINT("\nSTOP\n");
 			delete_test_timeouts(eo_ctx, false);
+			delete_test_events(eo_ctx, false);
 			eo_ctx->state++;  /* go to ANALYZE */
 		break;
 
@@ -865,21 +883,21 @@ static bool handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event, app_msg_t *
 			APPL_PRINT("\n\nLoop completed\n");
 			analyze_and_print(eo_ctx, loops);
 
-			if (loops >= g_options.loops) {
+			if (loops >= g_options.loops) { /* all done, cleanup and summary */
 				em_status_t rv = em_tmo_cancel(eo_ctx->heartbeat_tmo, &ev);
 
-				test_fatal_if(rv != EM_OK && rv != EM_ERR_TOONEAR,
-					      "HB cancel fail");
+				test_fatal_if(rv != EM_OK && rv != EM_ERR_TOONEAR, "HB cncl fail");
 				test_fatal_if(ev != EM_EVENT_UNDEF,
 					      "not expecting event on cancel (at receive)");
-				eo_ctx->state++;  /* go to EXIT */
+				eo_ctx->state++;  /* go to EXIT next */
 				delete_test_timeouts(eo_ctx, true);
+				delete_test_events(eo_ctx, true);
 
 				global_summary(eo_ctx);
 
 				APPL_PRINT("Done, raising SIGINT!\n");
 				trace_add(TEST_TIME_FN(), TRACE_OP_SIGINT, em_core_id(),
-					  loops, -1, -1, NULL);
+					  loops, -1, NULL, NULL);
 				raise(SIGINT);
 				return false;
 			}
@@ -900,7 +918,7 @@ static bool handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event, app_msg_t *
 		}
 	}
 
-	trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK, em_core_id(), -1, -1, -1, event);
+	trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK, em_core_id(), -1, -1, NULL, event);
 
 	em_status_t stat = em_tmo_ack(msgin->tmo, event);
 
@@ -931,11 +949,12 @@ static bool handle_tmo(app_eo_ctx_t *eo_ctx, em_event_t event, uint64_t now)
 		      "tmo handle [%u][%u] does not match expected %p->%p\n",
 		      tmri, tmoi, eo_ctx->test_tmo[tmri][tmoi], tmo);
 
-	/* use passed rx timestamp */
-	trace_add(now, TRACE_OP_TMO_RX, core, tmri, tmoi, -1, event);
+	/* use passed rx timestamp for better accuracy. Could still improve by debug timestamps */
+	uint64_t tick = em_timer_current_tick(eo_ctx->test_tmr[tmri]);
 
+	trace_add(now, TRACE_OP_TMO_RX, core, tmri, tmoi, (void *)tick, event);
 	eo_ctx->cdat[core].count[tmri][tmoi]++;
-	trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK, core, tmri, tmoi, -1, event);
+	trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK, core, tmri, tmoi, tmo, event);
 
 	em_status_t stat;
 	uint64_t t1 = TEST_TIME_FN();
@@ -943,12 +962,15 @@ static bool handle_tmo(app_eo_ctx_t *eo_ctx, em_event_t event, uint64_t now)
 	stat = em_tmo_ack(tmo, event);
 	profile_add(t1, TEST_TIME_FN(), PROF_TMO_ACK, eo_ctx, core);
 	if (stat == EM_ERR_CANCELED) { /* last event */
-		trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK_LAST, core, tmri, tmoi, -1, event);
+		trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK_LAST, core, tmri, tmoi, tmo, event);
 		eo_ctx->last_time[tmri][tmoi] = now;
-		eo_ctx->test_ev[tmri][tmoi] = event; /* for re-start */
 		if (EXTRA_PRINTS)
 			APPL_PRINT("last timeout[%u][%u]\n", tmri, tmoi);
-		return g_options.reuse_ev ? true : false; /* now allowed to free */
+		if (g_options.reuse_ev) {
+			eo_ctx->test_ev[tmri][tmoi] = event; /* event for tmo re-start */
+			return true; /* don't free in receive */
+		}
+		return false; /* now allowed to free */
 	}
 
 	test_fatal_if(stat != EM_OK, "Test tmo[%u][%u] ack returned %u!\n", tmri, tmoi, stat);
@@ -989,7 +1011,7 @@ static void global_summary(app_eo_ctx_t *eo_ctx)
 		}
 	}
 
-	APPL_PRINT("core   EO utilization\n");
+	APPL_PRINT("\ncore   EO utilization\n");
 	APPL_PRINT("---------------------\n");
 	for (int c = 0; c < cores; c++) {
 		double load = (double)eo_ctx->cdat[c].eo_ns /
@@ -1053,7 +1075,7 @@ void test_init(void)
 {
 	int core = em_core_id();
 
-	/* first core creates ShMem */
+	/* first core creates shared memory */
 	if (core == 0) {
 		odp_shm = odp_shm_reserve(SHM_NAME, sizeof(timer_app_shm_t), 64, 0);
 		if (odp_shm == ODP_SHM_INVALID) {
@@ -1073,7 +1095,7 @@ void test_init(void)
 		if (g_options.tracelen) {
 			size_t tlen = em_core_count() * g_options.tracelen * sizeof(trace_entry_t);
 
-			odp_shm_trace = odp_shm_reserve("Tracebuf", tlen, 64, 0);
+			odp_shm_trace = odp_shm_reserve(SHM_TRACE_NAME, tlen, 64, 0);
 			if (odp_shm_trace == ODP_SHM_INVALID) {
 				test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 					   "trace shm init failed on EM-core: %u", core);
@@ -1086,14 +1108,28 @@ void test_init(void)
 		} else {
 			odp_shm_trace = ODP_SHM_INVALID;
 		}
+	} else {
+		/* lookup memory from core 0 init */
+		odp_shm = odp_shm_lookup(SHM_NAME);
+		test_fatal_if(odp_shm == ODP_SHM_INVALID, "shared mem lookup fail");
+
+		if (g_options.tracelen) {
+			odp_shm_trace = odp_shm_lookup(SHM_TRACE_NAME);
+			test_fatal_if(odp_shm_trace == ODP_SHM_INVALID,
+				      "trace shared mem lookup fail");
+		}
+
+		m_shm = odp_shm_addr(odp_shm);
 	}
 
 	if (m_shm == NULL)
 		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 			   "ShMem init failed on EM-core: %u", core);
 
+	if (EXTRA_PRINTS)
+		APPL_PRINT("Shared mem at %p on core %d\n", m_shm, core);
+
 	if (g_options.tracelen) {
-		/* each core has own buf */
 		m_tracebuf = odp_shm_addr(odp_shm_trace);
 		if (m_tracebuf == NULL)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
@@ -1105,7 +1141,7 @@ void test_init(void)
 
 	mlockall(MCL_FUTURE);
 	if (EXTRA_PRINTS)
-		APPL_PRINT("core %d: %s done\n", core, __func__);
+		APPL_PRINT("core %d: %s done, shm @%p\n", core, __func__, m_shm);
 }
 
 /**
@@ -1120,9 +1156,8 @@ void test_start(appl_conf_t *const appl_conf)
 	app_eo_ctx_t *eo_ctx;
 
 	if (appl_conf->num_procs > 1) {
-		APPL_PRINT("\n!! PROCESS MODE NOT SUPPORTED !!\n\n");
-		raise(SIGINT);
-		return;
+		APPL_PRINT("\nPROCESS MODE is not yet supported!\n");
+		abort();
 	}
 
 	fix_setup();
@@ -1163,7 +1198,7 @@ void test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(m_shm->hb_tmr == EM_TIMER_UNDEF,
 		      "Failed to create HB timer!");
 
-	trace_add(TEST_TIME_FN(), TRACE_OP_TMR_CREATE, em_core_id(), -1, -1, -1, m_shm->hb_tmr);
+	trace_add(TEST_TIME_FN(), TRACE_OP_TMR_CREATE, em_core_id(), -1, -1, NULL, m_shm->hb_tmr);
 
 	em_timer_capability_t capa = { 0 };
 
@@ -1283,7 +1318,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 
 	test_fatal_if(stat != EM_OK, "Can't activate heartbeat tmo!\n");
 	trace_add(TEST_TIME_FN(), TRACE_OP_TMO_SET, em_core_id(),
-		  -1, -1, -1, eo_ctx->heartbeat_tmo);
+		  -1, -1, NULL, eo_ctx->heartbeat_tmo);
 
 	if (EXTRA_PRINTS)
 		APPL_PRINT("WARNING: extra prints enabled, expect some timing jitter\n");
@@ -1316,7 +1351,7 @@ static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo)
 		    &eo_ctx->cdat[core].rnd.rdata);
 	srandom(time(NULL));
 	m_tracecount = 0;
-	trace_add(TEST_TIME_FN(), TRACE_OP_START, core, -1, -1, -1, NULL);
+	trace_add(TEST_TIME_FN(), TRACE_OP_START, core, -1, -1, NULL, NULL);
 	return EM_OK;
 }
 
@@ -1359,7 +1394,7 @@ static em_status_t app_eo_stop_local(void *eo_context, em_eo_t eo)
 {
 	(void)eo;
 
-	trace_add(TEST_TIME_FN(), TRACE_OP_END, em_core_id(), -1, -1, -1, NULL);
+	trace_add(TEST_TIME_FN(), TRACE_OP_END, em_core_id(), -1, -1, NULL, NULL);
 
 	/* dump trace */
 	if (g_options.tracelen) {
@@ -1395,19 +1430,19 @@ static void app_eo_receive(void *eo_context, em_event_t event,
 		default:
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Invalid msg received!\n");
 		}
-	} else if (type == EM_EVENT_TYPE_TIMER) { /* test timeout */
-		reuse = handle_tmo(eo_ctx, event, now); /* parallel queue */
+	} else if (type == EM_EVENT_TYPE_TIMER_IND) { /* test timeout */
+		reuse = handle_tmo(eo_ctx, event, now); /* uses parallel queue */
 	} else {
 		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Invalid event type %u!\n", type);
 	}
 
 	if (!reuse) {
-		if (type == EM_EVENT_TYPE_TIMER) { /* extra trace */
+		if (type == EM_EVENT_TYPE_TIMER_IND) { /* extra trace */
 			unsigned int tmri, tmoi;
 
 			ptr2tmo(em_tmo_get_userptr(event, NULL), &tmri, &tmoi);
 			trace_add(TEST_TIME_FN(), TRACE_OP_TMO_EV_FREE, em_core_id(),
-				  tmri, tmoi, -1, event);
+				  tmri, tmoi, eo_ctx->test_tmo[tmri][tmoi], event);
 			eo_ctx->test_ev[tmri][tmoi] = EM_EVENT_UNDEF;
 		}
 		em_free(event);

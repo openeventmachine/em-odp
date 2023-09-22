@@ -100,6 +100,20 @@ static inline bool is_event_type_valid(em_event_t event)
 	return false;
 }
 
+/* Helper for em_tmo_get_type() */
+static inline bool can_have_tmo_type(em_event_t event)
+{
+	em_event_type_t etype = em_event_type_major(em_event_get_type(event));
+
+	if (etype == EM_EVENT_TYPE_PACKET ||
+	    etype == EM_EVENT_TYPE_SW ||
+	    etype == EM_EVENT_TYPE_TIMER ||
+	    etype == EM_EVENT_TYPE_TIMER_IND)
+		return true;
+
+	return false;
+}
+
 static inline int is_timer_valid(em_timer_t tmr)
 {
 	unsigned int i;
@@ -127,9 +141,10 @@ static inline em_status_t ack_ring_timeout_event(em_tmo_t tmo,
 	(void)ev;
 	(void)tmo_state;
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type != EM_EVENT_TYPE_TIMER))
+	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type != EM_EVENT_TYPE_TIMER_IND))
 		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_ACK,
-				      "event %p type not TIMER", ev);
+				      "Invalid event type:%u, expected timer-ring:%u",
+				      ev_hdr->event_type, EM_EVENT_TYPE_TIMER_IND);
 
 	if (EM_CHECK_LEVEL > 0 && unlikely(tmo != ev_hdr->tmo))
 		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_ACK,
@@ -201,35 +216,35 @@ static odp_pool_t create_tmo_handle_pool(uint32_t num_buf, uint32_t cache, const
 	return pool;
 }
 
-static inline event_hdr_t *alloc_odp_timeout(em_tmo_t tmo)
+static inline odp_event_t alloc_odp_timeout(em_tmo_t tmo)
 {
 	odp_timeout_t odp_tmo = odp_timeout_alloc(tmo->ring_tmo_pool);
 
 	if (unlikely(odp_tmo == ODP_TIMEOUT_INVALID))
-		return NULL;
+		return ODP_EVENT_INVALID;
 
 	/* init EM event header */
 	event_hdr_t *const ev_hdr = odp_timeout_user_area(odp_tmo);
 	odp_event_t odp_event = odp_timeout_to_event(odp_tmo);
 	em_event_t event = event_odp2em(odp_event);
 
-	if (likely(ev_hdr != NULL)) {
-		ev_hdr->event = event;
-
-		/* ESV is not supported for TIMER events, but init for debug */
-		ev_hdr->state.api_op = EVSTATE__TMO_CREATE;
-		ev_hdr->state_cnt.u64 = 0;
-
-		ev_hdr->flags.all = 0;
-		ev_hdr->flags.tmo_type = EM_TMO_TYPE_PERIODIC;
-		ev_hdr->tmo = tmo;
-		ev_hdr->event_type = EM_EVENT_TYPE_TIMER;
-		ev_hdr->event_size = 0;
-		ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
-		ev_hdr->user_area.all = 0;
-		ev_hdr->user_area.isinit = 1;
+	if (unlikely(!ev_hdr)) {
+		odp_timeout_free(odp_tmo);
+		return ODP_EVENT_INVALID;
 	}
-	return ev_hdr;
+
+	if (esv_enabled())
+		event = evstate_alloc_tmo(event, ev_hdr);
+	ev_hdr->flags.all = 0;
+	ev_hdr->flags.tmo_type = EM_TMO_TYPE_PERIODIC;
+	ev_hdr->tmo = tmo;
+	ev_hdr->event_type = EM_EVENT_TYPE_TIMER_IND;
+	ev_hdr->event_size = 0;
+	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	ev_hdr->user_area.all = 0;
+	ev_hdr->user_area.isinit = 1;
+
+	return odp_event;
 }
 
 static inline void free_odp_timeout(odp_event_t odp_event)
@@ -238,8 +253,8 @@ static inline void free_odp_timeout(odp_event_t odp_event)
 		em_event_t event = event_odp2em(odp_event);
 		event_hdr_t *const ev_hdr = event_to_hdr(event);
 
-		/* no ESV, but update for debug help */
-		ev_hdr->state.api_op = EVSTATE__TMO_DELETE;
+		event = ev_hdr->event;
+		evstate_free(event, ev_hdr, EVSTATE__TMO_DELETE);
 	}
 
 	odp_event_free(odp_event);
@@ -393,6 +408,14 @@ void em_timer_attr_init(em_timer_attr_t *tmr_attr)
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TIMER_ATTR_INIT,
 			       "Timer capability: ret %d, odp-clksrc:%d",
 			       err, odp_clksrc);
+		return;
+	}
+
+	TMR_DBG_PRINT("odp says highest res %lu\n", odp_capa.highest_res_ns);
+	if (unlikely(odp_capa.highest_res_ns > tmr_attr->resparam.res_ns)) {
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TIMER_ATTR_INIT,
+			       "Timer capability: maxres %lu req %lu, odp-clksrc:%d!",
+			       odp_capa.highest_res_ns, tmr_attr->resparam.res_ns, odp_clksrc);
 		return;
 	}
 
@@ -720,10 +743,9 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	timer->plain_q_ok = capa.queue_type_plain;
 	timer->is_ring = false;
 	odp_timer_pool_start();
-
+	em_shm->timers.num_timers++;
 	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
-	em_shm->timers.num_timers++;
 	TMR_DBG_PRINT("ret %" PRI_TMR ", total timers %u\n", TMR_I2H(i), em_shm->timers.num_timers);
 	return TMR_I2H(i);
 
@@ -1094,26 +1116,28 @@ em_tmo_t em_tmo_create_arg(em_timer_t tmr, em_tmo_flag_t flags,
 		return EM_TMO_UNDEF;
 	}
 
-	/* OK, init state */
+	/* OK, init state. Some values copied for faster access runtime */
 	tmo->period = 0;
 	tmo->odp_timer_pool = odptmr;
+	tmo->timer = tmr;
 	tmo->odp_buffer = tmo_buf;
 	tmo->flags = flags;
 	tmo->queue = queue;
-	tmo->is_ring = em_shm->timers.timer[i].is_ring; /* copied for faster access runtime */
+	tmo->is_ring = em_shm->timers.timer[i].is_ring;
+	tmo->odp_timeout = ODP_EVENT_INVALID;
 	tmo->ring_tmo_pool = em_shm->timers.ring_tmo_pool;
 
 	if (tmo->is_ring) { /* pre-allocate timeout event to save time at start */
-		event_hdr_t *ev_hdr = alloc_odp_timeout(tmo);
+		odp_event_t odp_tmo_event = alloc_odp_timeout(tmo);
 
-		if (unlikely(ev_hdr == NULL)) {
+		if (unlikely(odp_tmo_event == ODP_EVENT_INVALID)) {
 			INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_TMO_CREATE,
 				       "Ring: odp timeout event allocation failed");
 			odp_timer_free(tmo->odp_timer);
 			odp_buffer_free(tmo_buf);
 			return EM_TMO_UNDEF;
 		}
-		tmo->odp_timeout = event_em2odp(ev_hdr->event);
+		tmo->odp_timeout = odp_tmo_event;
 		TMR_DBG_PRINT("Ring: allocated odp timeout ev %p\n", tmo->odp_timeout);
 	}
 
@@ -1163,9 +1187,16 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 
 	tmo->odp_timer = ODP_TIMER_INVALID;
 	tmo->odp_buffer = ODP_BUFFER_INVALID;
-	odp_buffer_free(tmp);
+	tmo->timer = EM_TIMER_UNDEF;
+
+	if (tmo->is_ring && tmo->odp_timeout != ODP_EVENT_INVALID) {
+		TMR_DBG_PRINT("ring: free unused ODP timeout ev %p\n", tmo->odp_timeout);
+		free_odp_timeout(tmo->odp_timeout);
+		tmo->odp_timeout = ODP_EVENT_INVALID;
+	}
 
 	if (odp_evt != ODP_EVENT_INVALID) {
+		/* these errors no not free buffer to prevent potential further corruption */
 		RETURN_ERROR_IF(EM_CHECK_LEVEL > 2 && !odp_event_is_valid(odp_evt),
 				EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
 				"Invalid tmo event");
@@ -1178,12 +1209,7 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 						EVSTATE__TMO_DELETE);
 	}
 
-	if (tmo->is_ring && tmo->odp_timeout != ODP_EVENT_INVALID) {
-		TMR_DBG_PRINT("ring: free unused ODP timeout ev %p\n", tmo->odp_timeout);
-		free_odp_timeout(tmo->odp_timeout);
-		tmo->odp_timeout = ODP_EVENT_INVALID;
-	}
-
+	odp_buffer_free(tmp);
 	*cur_event = tmo_ev;
 	TMR_DBG_PRINT("tmo %p delete ok, event returned %p\n", tmo, tmo_ev);
 	return EM_OK;
@@ -1227,9 +1253,9 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
 	odp_timer_start_t startp;
 
 	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
-			ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
+			ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
 			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_SET_ABS,
-			"Invalid event type TIMER");
+			"Invalid event type: timer-ring");
 
 	if (esv_ena)
 		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_ABS);
@@ -1300,9 +1326,9 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
 	odp_timer_start_t startp;
 
 	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
-			ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
+			ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
 			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_SET_REL,
-			"Invalid event type TIMER");
+			"Invalid event type: timer-ring");
 
 	if (esv_ena)
 		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_REL);
@@ -1371,9 +1397,9 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
 	odp_timer_start_t startp;
 
 	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
-			ev_hdr->event_type == EM_EVENT_TYPE_TIMER,
+			ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
 			EM_ERR_BAD_ARG, EM_ESCOPE_TMO_SET_PERIODIC,
-			"Invalid event type TIMER");
+			"Invalid event type: timer-ring");
 
 	if (esv_ena)
 		evstate_usr2em(tmo_ev, ev_hdr, EVSTATE__TMO_SET_PERIODIC);
@@ -1464,12 +1490,12 @@ em_status_t em_tmo_set_periodic_ring(em_tmo_t tmo,
 	}
 
 	if (odp_ev == ODP_EVENT_INVALID) { /* re-start, pre-alloc used */
-		event_hdr_t *ev_hdr = alloc_odp_timeout(tmo);
+		odp_event_t odp_tmo_event = alloc_odp_timeout(tmo);
 
-		if (unlikely(ev_hdr == NULL))
+		if (unlikely(odp_tmo_event == ODP_EVENT_INVALID))
 			return INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_TMO_SET_PERIODIC_RING,
 					      "Ring: odp timeout event allocation failed");
-		odp_ev = event_em2odp(ev_hdr->event);
+		odp_ev = odp_tmo_event;
 	}
 
 	TMR_DBG_PRINT("ring tmo start_abs %lu, M=%lu, odp ev=%p\n", start_abs, multiplier, odp_ev);
@@ -1840,7 +1866,7 @@ em_tmo_type_t em_tmo_get_type(em_event_t event, em_tmo_t *tmo, bool reset)
 	event_hdr_t *ev_hdr = event_to_hdr(event);
 	em_tmo_type_t type = (em_tmo_type_t)ev_hdr->flags.tmo_type;
 
-	if (EM_CHECK_LEVEL > 1 && unlikely(!is_event_type_valid(event))) {
+	if (EM_CHECK_LEVEL > 1 && unlikely(!can_have_tmo_type(event))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_GET_STATE,
 			       "Invalid event type");
 		return EM_TMO_TYPE_NONE;
@@ -1855,7 +1881,7 @@ em_tmo_type_t em_tmo_get_type(em_event_t event, em_tmo_t *tmo, bool reset)
 	if (tmo)
 		*tmo = (type == EM_TMO_TYPE_NONE) ? EM_TMO_UNDEF : ev_hdr->tmo;
 
-	if (reset && ev_hdr->event_type != EM_EVENT_TYPE_TIMER) {
+	if (reset && ev_hdr->event_type != EM_EVENT_TYPE_TIMER_IND) {
 		ev_hdr->flags.tmo_type = EM_TMO_TYPE_NONE;
 		ev_hdr->tmo = EM_TMO_UNDEF;
 	}
@@ -1882,4 +1908,18 @@ void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo)
 		*tmo = ev_hdr->tmo;
 
 	return odp_timeout_user_ptr(odp_timeout_from_event(odp_event));
+}
+
+em_timer_t em_tmo_get_timer(em_tmo_t tmo)
+{
+	if (EM_CHECK_LEVEL > 0 && unlikely(tmo == EM_TMO_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_GET_TIMER, "Invalid tmo given");
+		return EM_TIMER_UNDEF;
+	}
+	if (EM_CHECK_LEVEL > 1 && !odp_buffer_is_valid(tmo->odp_buffer)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TMO_GET_TIMER, "Corrupted tmo?");
+		return EM_TIMER_UNDEF;
+	}
+
+	return tmo->timer;
 }

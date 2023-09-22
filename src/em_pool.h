@@ -71,6 +71,9 @@ void pool_info_print(em_pool_t pool);
 void pool_stats_print(em_pool_t pool);
 
 void subpools_stats_print(em_pool_t pool, const int subpools[], int num_subpools);
+void pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt);
+void subpools_stats_selected_print(em_pool_t pool, const int subpools[],
+				   int num_subpools, const em_pool_stats_opt_t *opt);
 
 void print_pool_elem_info(void);
 

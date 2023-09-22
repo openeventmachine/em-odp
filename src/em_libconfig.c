@@ -294,6 +294,9 @@ static int setting_get_child(const config_setting_t *parent, const char *path,
 
 	/* Get second last setting */
 	member_name = strtok_r(path_cp, delim, &saveptr);
+	if (!member_name)
+		return -1;
+
 	for (uint32_t i = 0; i < depth - 1; i++) {
 		*child = config_setting_get_member(parent, member_name);
 
@@ -302,6 +305,9 @@ static int setting_get_child(const config_setting_t *parent, const char *path,
 
 		parent = *child;
 		member_name = strtok_r(NULL, delim, &saveptr);
+
+		if (!member_name)
+			return -1;
 	}
 
 	/* Get last setting name */

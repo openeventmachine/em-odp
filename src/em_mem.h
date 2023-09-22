@@ -229,6 +229,9 @@ typedef struct {
 	/** EM-core local log function */
 	em_log_func_t log_fn;
 
+	/** EM-core local log function with va_list */
+	em_vlog_func_t vlog_fn;
+
 	/** Synchronous API */
 	sync_api_t sync_api;
 
