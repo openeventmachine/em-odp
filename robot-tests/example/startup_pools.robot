@@ -106,6 +106,18 @@ ${NO_VALUE_PRINT} =    SEPARATOR=
 # Directory where all confs to be tested are stored
 ${CONF_DIR} =    ${CURDIR}${/}test-startup-pools-confs
 
+${MOUNT_POINT} =    /dev/hugepages2M
+
+
+*** Keywords ***
+Set Up Hugepage
+    [Documentation]    Set up huge pages
+    Run    umount ${MOUNT_POINT}
+    Run    rm -fr ${MOUNT_POINT}
+    Run    mkdir ${MOUNT_POINT}
+    Run    mount --types hugetlbfs --options pagesize=2M none ${MOUNT_POINT}
+    Run    echo 4096 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages
+
 
 *** Test Cases ***
 Test Invalid Startup Pool Confs
@@ -113,16 +125,22 @@ Test Invalid Startup Pool Confs
     ...    they fail as expected.
     [TAGS]    ${CORE_MASK}    ${APPLICATION_MODE}
 
+    ${status}    Run Keyword And Return Status    Get Environment Variable    SKIP_INVALID_CONFS
+    Skip if    ${status}    msg=Skipped testing invalid startup pool confs
+
     FOR    ${conf}    IN    @{CONF_OUT}
-        # Set up huge pages
-        Run    ${EXECDIR}${/}scripts${/}gitlab-ci${/}huge-pages-setup.sh
+        # In this test, the hello program is re-started for each startup_pools
+        # setting, huge pages are thus accumulated and used up. To fix this,
+        # huge pages are cleared and setup before running the hello program.
+        Set Up Hugepage
 
         # Include the 'startup_pools' conf to em-odp.conf
         # sed syntax explained: $ matches the last line, a is the append command
         Run    sed -i -e '$a@include "${CONF_DIR}/${conf}"' %{EM_CONFIG_FILE}
 
         # Run hello program with given arguments
-        ${output} =    Process.Run Process    ${APPLICATION}
+        ${output} =    Process.Run Process    taskset    -c    ${TASKSET_CORES}
+        ...    ${APPLICATION}
         ...    @{CM_ARGS}
         ...    stderr=STDOUT
         ...    shell=True
@@ -141,9 +159,6 @@ Test Default Startup Pool Conf
     ...    one passed to em_init(), namely, em_conf_t::default_pool_cfg.
     [TAGS]    ${CORE_MASK}    ${APPLICATION_MODE}
 
-    # Set up huge pages
-    Run    ${EXECDIR}${/}scripts${/}gitlab-ci${/}huge-pages-setup.sh
-
     # Uncomment option 'startup_pools'
     Run    sed -i '/^#startup_pools:\\s{/,/^#}/s/^#//g' %{EM_CONFIG_FILE}
 
@@ -159,9 +174,6 @@ Test Non-default Startup Pool Conf
     [Documentation]    Run hello program with a valid and non-default pool
     ...    configuration configured via 'startup_pools' in em-odp.conf
     [TAGS]    ${CORE_MASK}    ${APPLICATION_MODE}
-
-    # Set up huge pages
-    Run    ${EXECDIR}${/}scripts${/}gitlab-ci${/}huge-pages-setup.sh
 
     # Include valid non-default pool configurations to em-odp.conf
     Run    sed -i -e '$a@include "${CONF_DIR}/non-default-pools.conf"' %{EM_CONFIG_FILE}

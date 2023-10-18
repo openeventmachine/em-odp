@@ -29,6 +29,7 @@ apps["ordered"]=programs/example/queue/ordered
 apps["queue_types_ag"]=programs/example/queue/queue_types_ag
 apps["queue_types_local"]=programs/example/queue/queue_types_local
 apps["queue_group"]=programs/example/queue_group/queue_group
+apps["startup_pools"]=programs/example/hello/hello
 apps["timer_hello"]=programs/example/add-ons/timer_hello
 apps["timer_test"]=programs/example/add-ons/timer_test
 
