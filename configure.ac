@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [3])
+m4_define([em_version_api_minor], [4])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -524,7 +524,14 @@ AC_ARG_ENABLE([lto],
 		      # Fat LTO object file contains GIMPLE bytecodes and the
 		      # usual final code. There are less build problems (e.g.
 		      # due to older binutils), but object files are larger.
-		      EM_LTO_FLAGS="-flto -ffat-lto-objects"
+		      #
+		      # -flto=auto and -ffat-lto-objects are currently not supported by clang.
+		      $CC --version | grep -q clang
+		      if test $? -ne 0; then
+			EM_LTO_FLAGS="-flto=auto -ffat-lto-objects"
+		      else
+			EM_LTO_FLAGS="-flto"
+		      fi
 		     ])
 	      ])
 AC_SUBST([EM_LTO_FLAGS])

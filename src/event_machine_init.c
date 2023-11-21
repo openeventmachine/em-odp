@@ -352,7 +352,7 @@ em_term(const em_conf_t *conf)
 	(void)conf;
 
 	if (em_shm->conf.event_timer)
-		timer_term();
+		timer_term(&em_shm->timers);
 
 	stat = emcli_term();
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
@@ -387,6 +387,7 @@ em_term_core(void)
 {
 	em_status_t stat = EM_OK;
 	em_status_t ret_stat = EM_OK;
+	em_locm_t *const locm = &em_locm;
 
 	if (em_core_id() == 0)
 		delete_ctrl_queues();
@@ -417,9 +418,11 @@ em_term_core(void)
 
 	/*
 	 * Flush all events in the scheduler.
-	 * Scheduler paused during return from em_dispatch()
 	 */
-	odp_schedule_resume();
+	if (locm->is_sched_paused) {
+		locm->is_sched_paused = false;
+		odp_schedule_resume();
+	}
 
 	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
@@ -445,6 +448,7 @@ em_term_core(void)
 			em_free_multi(em_ev_tbl, num_events);
 		} while (num_events > 0);
 
+		locm->is_sched_paused = true;
 		odp_schedule_pause();
 	}
 

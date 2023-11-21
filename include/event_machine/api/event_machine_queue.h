@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -74,8 +74,8 @@
  *     scheduling. A chain of ordered (or atomic) queues will still maintain
  *     the original order.
  *
- *     Conceptually an ordering context is atomically created when the scheduler
- *     dequeues an event from an ordered queue and represents the sequence
+ *     Conceptually an ordering context is created when the scheduler
+ *     dequeues an event from an ordered queue and it represents the sequence
  *     number of that event within that queue. The ordering context is valid
  *     within the EO receive function and ends implicitly when the EO returns
  *     (can be terminated early, see em_ordered_processing_end()). Any number of
@@ -96,12 +96,12 @@
  *     the performance as multiple cores can concurrently process the events.
  *
  * -# EM_QUEUE_TYPE_UNSCHEDULED
- *   - Unscheduled queues are new to API 1.2. It is a special queue not
- *     connected to the scheduler but instead the application needs to dequeue
- *     events directly using em_queue_dequeue(). em_send() is used to enqueue
- *     events to an unscheduled queue, i.e. all queue types look the same to
- *     the sender with the exception that em_send_group() is not supported for
- *     unscheduled queues. Unscheduled queues cannot be added to an EO.
+ *   - Unscheduled queues are not connected to the scheduler but instead the
+ *     application needs to dequeue events directly using em_queue_dequeue().
+ *     The API function em_send() is used to enqueue events into an unscheduled
+ *     queue. All queue types look the same to the sender with the exception
+ *     that em_send_group() is not supported for unscheduled queues.
+ *     Unscheduled queues cannot be added to an EO.
  *
  * -# EM_QUEUE_TYPE_LOCAL
  *   - Local queues are special virtual queues bypassing the scheduler for
@@ -129,8 +129,7 @@
  *     logically split processing into separate EO's but due to the side
  *     effects (may delay context release of the sending EO) and limitations
  *     should not be used without a valid reason. Local queues are mainly
- *     suitable for stateless processing that does not need EM scheduling
- *     (no need for ordering or atomic context).
+ *     suitable for stateless processing that does not need EM scheduling.
  *
  * -# EM_QUEUE_TYPE_OUTPUT
  *   - An output queue is a system specific implementation of a SW-HW interface.

@@ -94,10 +94,6 @@ extern "C" {
 
 /**
  * EM pool statistic counter options
- *
- * Note that EM does not support core local cache_available corresponding to
- * ODP thread local cache_available. When creating an EM subpool, EM always
- * sets 'odp_pool_stats_opt_t::bit::thread_cache_available' to 0.
  */
 typedef union {
 	/** Option flags */
@@ -126,6 +122,12 @@ typedef union {
 		/** See em_pool_subpool_stats_t::cache_free_ops */
 		uint64_t cache_free_ops     : 1;
 
+		/** Enables applications to read core/thread cache
+		 *  available of the underlying ODP pool with ODP
+		 *  API (e.g. odp_pool_stats()). EM pool statistic APIs
+		 *  do not support fetching core_cache_available.
+		 */
+		uint64_t core_cache_available : 1;
 	};
 
 	/** All bits of the bit field structure

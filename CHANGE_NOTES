@@ -53,6 +53,67 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.4.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.4 (em-odp/include/),
+  see API additions and changes in em-odp/include/event_machine/README_API.
+  * Dispatch APIs: em_dispatch_duration()/_ns()/_rounds()/_events() and
+                   em_dispatch_opt_init()
+    Dispatch APIs with duration and option arguments for more control of the
+    dispatch loop.
+  * Pool statistics: new option em_pool_stats_opt_t::core_cache_available
+
+- Dispatch configuration options
+  em-odp.conf (runtime config file):
+  ----------------------------------
+  Add a new EM runtime config file option:
+    'dispatch.sched_pause = true / false'
+  that controls whether the em_dispatch() API-function pauses the EM core
+  from scheduling when it returns.
+
+  Note: the option only affects the em_dispatch() API,
+        not e.g. em_dispatch_opt().
+
+  dispatch: {
+        ...
+        # Pause scheduling for an EM-core returning from em_dispatch().
+        # The core is paused from participation in global scheduling and EM
+        # empties all locally pre-scheduled events, as well as dispatches them,
+        # before returning from the em_dispatch() function.
+        # The scheduler should be paused on a core that is leaving the
+        # dispatch / scheduling loop for a longer time to avoid locking atomic
+        # or ordered contexts (thus blocking other cores from handling events
+        # from those same contexts / queues).
+        # Only affects the em_dispatch() function.
+        sched_pause = false
+  }
+
+  Bump the em-odp.conf file version to 0.0.19
+
+- Info: detect additional ARM v8 and v9 isa's.
+  Update the SW ISA detection for EM with further ARM v8 and v9 ISAs:
+  ARMv8.8-A, ARMv8.9-A, and ARMv9.3-A.
+  Based on ODP's sysinfo.
+  Detection of these ISAs require ODP API v1.42.1 or later.
+
+- Fixes:
+ - Timer: fix last ring timer delete bug
+   Events for ring timeout indication is provided by timer from a common pool.
+   This pool was deleted when last ring timer was deleted to save memory,
+   but application may still have event(s) from that pool, create new ring timer
+   and then re-use those events. That lead to corrupted event. Fixed by not
+   deleting the shared pool until application termination.
+
+ - Scheduler: em_ordered_processing_end() corrected.
+   Allow ending the ordered context only if the currect scheduling context type
+   is 'ordered', not if the current queue type is 'ordered'.
+
+ - Dispatch, ESV: set core's (internal) current queue info before event init.
+   Set the core's current queue before event-init in dispatch, since the init
+   might notice early ESV errors and the error printout is then able to print
+   the queue and EO information correctly.
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.3.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.3 (em-odp/include), see API additions and changes in

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2023, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -87,6 +87,14 @@ static const char *arm_isa_name(odp_cpu_arch_arm_t isa)
 		return "ARMv9.1-A";
 	case ODP_CPU_ARCH_ARMV9_2:
 		return "ARMv9.2-A";
+#if ODP_VERSION_API_NUM(1, 42, 1) <= ODP_VERSION_API
+	case ODP_CPU_ARCH_ARMV8_8:
+		return "ARMv8.8-A";
+	case ODP_CPU_ARCH_ARMV8_9:
+		return "ARMv8.9-A";
+	case ODP_CPU_ARCH_ARMV9_3:
+		return "ARMv9.3-A";
+#endif
 	default:
 		return "Unknown";
 	}
@@ -129,25 +137,24 @@ static const char *cpu_arch_isa_name(odp_cpu_arch_t cpu_arch,
  */
 static odp_cpu_arch_arm_t detect_sw_isa_arm(void)
 {
-	odp_cpu_arch_arm_t isa_arm = ODP_CPU_ARCH_ARM_UNKNOWN;
-
 #if defined(__ARM_ARCH)
-
-	if (__ARM_ARCH == 6) {
-		isa_arm = ODP_CPU_ARCH_ARMV6;
-	} else if (__ARM_ARCH == 7) {
-		isa_arm = ODP_CPU_ARCH_ARMV7;
-	} else if (__ARM_ARCH == 8) {
+	if (__ARM_ARCH == 8) {
 	#ifdef __ARM_FEATURE_QRDMX
 		/* v8.1 or higher */
-		isa_arm = ODP_CPU_ARCH_ARMV8_1;
+		return ODP_CPU_ARCH_ARMV8_1;
 	#else
-		isa_arm = ODP_CPU_ARCH_ARMV8_0;
+		return ODP_CPU_ARCH_ARMV8_0;
 	#endif
 	}
 
+	if (__ARM_ARCH == 9) {
+		/* v9.0 or higher */
+		return ODP_CPU_ARCH_ARMV9_0;
+	}
+
 	if (__ARM_ARCH >= 800) {
-		/* ACLE 2018 defines that from v8.1 onwards the value includes
+		/*
+		 * ACLE 2018 defines that from v8.1 onwards the value includes
 		 * the minor version number: __ARM_ARCH = X * 100 + Y
 		 * E.g. for Armv8.1 __ARM_ARCH = 801
 		 */
@@ -157,53 +164,49 @@ static odp_cpu_arch_arm_t detect_sw_isa_arm(void)
 		if (major == 8) {
 			switch (minor) {
 			case 0:
-				isa_arm = ODP_CPU_ARCH_ARMV8_0;
-				break;
+				return ODP_CPU_ARCH_ARMV8_0;
 			case 1:
-				isa_arm = ODP_CPU_ARCH_ARMV8_1;
-				break;
+				return ODP_CPU_ARCH_ARMV8_1;
 			case 2:
-				isa_arm = ODP_CPU_ARCH_ARMV8_2;
-				break;
+				return ODP_CPU_ARCH_ARMV8_2;
 			case 3:
-				isa_arm = ODP_CPU_ARCH_ARMV8_3;
-				break;
+				return ODP_CPU_ARCH_ARMV8_3;
 			case 4:
-				isa_arm = ODP_CPU_ARCH_ARMV8_4;
-				break;
+				return ODP_CPU_ARCH_ARMV8_4;
 			case 5:
-				isa_arm = ODP_CPU_ARCH_ARMV8_5;
-				break;
+				return ODP_CPU_ARCH_ARMV8_5;
 			case 6:
-				isa_arm = ODP_CPU_ARCH_ARMV8_6;
-				break;
+				return ODP_CPU_ARCH_ARMV8_6;
 			case 7:
-				isa_arm = ODP_CPU_ARCH_ARMV8_7;
-				break;
+				return ODP_CPU_ARCH_ARMV8_7;
+#if ODP_VERSION_API_NUM(1, 42, 1) <= ODP_VERSION_API
+			case 8:
+				return ODP_CPU_ARCH_ARMV8_8;
+			case 9:
+				return ODP_CPU_ARCH_ARMV8_9;
+#endif
 			default:
-				isa_arm = ODP_CPU_ARCH_ARM_UNKNOWN;
-				break;
+				return ODP_CPU_ARCH_ARM_UNKNOWN;
 			}
 		} else if (major == 9) {
 			switch (minor) {
 			case 0:
-				isa_arm = ODP_CPU_ARCH_ARMV9_0;
-				break;
+				return ODP_CPU_ARCH_ARMV9_0;
 			case 1:
-				isa_arm = ODP_CPU_ARCH_ARMV9_1;
-				break;
+				return ODP_CPU_ARCH_ARMV9_1;
 			case 2:
-				isa_arm = ODP_CPU_ARCH_ARMV9_2;
-				break;
+				return ODP_CPU_ARCH_ARMV9_2;
+#if ODP_VERSION_API_NUM(1, 42, 1) <= ODP_VERSION_API
+			case 3:
+				return ODP_CPU_ARCH_ARMV9_3;
+#endif
 			default:
-				isa_arm = ODP_CPU_ARCH_ARM_UNKNOWN;
-				break;
+				return ODP_CPU_ARCH_ARM_UNKNOWN;
 			}
 		}
 	}
 #endif
-
-	return isa_arm;
+	return ODP_CPU_ARCH_ARM_UNKNOWN;
 }
 
 /*
@@ -340,6 +343,7 @@ static void print_mem_info(void)
 	       "do_input_poll:\t\t\t%5zu B\t%5zu B\n"
 	       "do_output_drain:\t\t%5zu B\t%5zu B\n"
 	       "is_external_thr:\t\t%5zu B\t%5zu B\n"
+	       "is_sched_paused:\t\t%5zu B\t%5zu B\n"
 	       "dispatch_cnt:\t\t\t%5zu B\t%5zu B\n"
 	       "dispatch_last_run:\t\t%5zu B\t%5zu B\n"
 	       "poll_drain_dispatch_cnt:\t%5zu B\t%5zu B\n"
@@ -368,6 +372,8 @@ static void print_mem_info(void)
 	       sizeof_field(em_locm_t, do_output_drain),
 	       offsetof(em_locm_t, is_external_thr),
 	       sizeof_field(em_locm_t, is_external_thr),
+	       offsetof(em_locm_t, is_sched_paused),
+	       sizeof_field(em_locm_t, is_sched_paused),
 	       offsetof(em_locm_t, dispatch_cnt),
 	       sizeof_field(em_locm_t, dispatch_cnt),
 	       offsetof(em_locm_t, dispatch_last_run),

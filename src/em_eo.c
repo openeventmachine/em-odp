@@ -1419,15 +1419,15 @@ odp_stash_t eo_start_stash_create(void)
 		stash_param.num_obj = num_obj;
 	/* else: use odp default as set by odp_stash_param_init() */
 
-	if (stash_param.num_obj > stash_capa.max_num_obj) {
+	stash_param.obj_size = sizeof(uint64_t);
+	if (stash_param.num_obj > stash_capa.max_num.u64) {
 		EM_LOG(EM_LOG_PRINT,
-		       "%s(): req stash.num_obj(%" PRIu64 ") > capa.max_num_obj(%" PRIu64 ").\n"
+		       "%s(): req stash.num_obj(%" PRIu64 ") > capa.max_num.u64(%" PRIu64 ").\n"
 		       "      ==> using max value:%" PRIu64 "\n", __func__,
-		       stash_param.num_obj, stash_capa.max_num_obj, stash_capa.max_num_obj);
-		stash_param.num_obj = stash_capa.max_num_obj;
+		       stash_param.num_obj, stash_capa.max_num.u64, stash_capa.max_num.u64);
+		stash_param.num_obj = stash_capa.max_num.u64;
 	}
 
-	stash_param.obj_size = sizeof(uint64_t);
 	stash_param.cache_size = 0; /* No core local caching */
 
 	stash = odp_stash_create(NULL, &stash_param);

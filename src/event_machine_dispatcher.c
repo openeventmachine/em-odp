@@ -29,127 +29,245 @@
  */
 
 #include "em_include.h"
+#include "em_dispatcher_inline.h"
 
-/*
- * em_dispatch() helper: check if the user provided callback functions
- *			 'input_poll' and 'output_drain' should be called in
- *			 this dispatch round
- */
-static inline bool
-check_poll_drain_round(unsigned int interval, odp_time_t poll_drain_period)
+static const em_dispatch_opt_t dispatch_opt_default = {
+	.burst_size = EM_SCHED_MULTI_MAX_BURST,
+	.__internal_check = EM_CHECK_INIT_CALLED
+	/* other members initialized to 0 or NULL as per C standard */
+};
+
+uint64_t em_dispatch(uint64_t rounds /* 0 = forever */)
 {
-	if (interval > 1) {
-		em_locm_t *const locm = &em_locm;
+	uint64_t events;
 
-		locm->poll_drain_dispatch_cnt--;
-		if (locm->poll_drain_dispatch_cnt == 0) {
-			odp_time_t now = odp_time_global();
-			odp_time_t period;
-
-			period = odp_time_diff(now, locm->poll_drain_dispatch_last_run);
-			locm->poll_drain_dispatch_cnt = interval;
-
-			if (odp_time_cmp(poll_drain_period, period) < 0) {
-				locm->poll_drain_dispatch_last_run = now;
-				return true;
-			}
-		}
-	} else {
-		return true;
-	}
-	return false;
-}
-
-/*
- * em_dispatch() helper: dispatch and call the user provided callback functions
- *                       'input_poll' and 'output_drain'
- */
-static inline uint64_t
-dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
-{
-	const bool do_forever = rounds == 0 ? true : false;
-	const em_input_poll_func_t input_poll =
-		em_shm->conf.input.input_poll_fn;
-	const em_output_drain_func_t output_drain =
-		em_shm->conf.output.output_drain_fn;
-	int rx_events = 0;
-	int dispatched_events;
-	int round_events;
-	uint64_t events = 0;
-	bool do_poll_drain_round;
-	const unsigned int poll_interval = em_shm->opt.dispatch.poll_drain_interval;
-	const odp_time_t poll_period = em_shm->opt.dispatch.poll_drain_interval_time;
-
-	for (uint64_t i = 0; do_forever || i < rounds;) {
-		dispatched_events = 0;
-
-		do_poll_drain_round = check_poll_drain_round(poll_interval, poll_period);
-
-		if (do_input_poll && do_poll_drain_round)
-			rx_events = input_poll();
-
-		do {
-			round_events = dispatch_round();
-			dispatched_events += round_events;
-			i++; /* inc rounds */
-		} while (dispatched_events < rx_events &&
-			 round_events > 0 && (do_forever || i < rounds));
-
-		events += dispatched_events; /* inc ret value*/
-		if (do_output_drain && do_poll_drain_round)
-			(void)output_drain();
-	}
-
-	return events;
-}
-
-/*
- * em_dispatch() helper: dispatch without calling any user provided callbacks
- */
-static inline uint64_t
-dispatch_no_userfn(uint64_t rounds)
-{
-	const bool do_forever = rounds == 0 ? true : false;
-	uint64_t events = 0;
-
-	if (do_forever) {
-		for (;/*ever*/;)
-			dispatch_round();
-	} else {
-		for (uint64_t i = 0; i < rounds; i++)
-			events += dispatch_round();
-	}
-
-	return events;
-}
-
-uint64_t
-em_dispatch(uint64_t rounds /* 0 = forever */)
-{
-	uint64_t events = 0;
-	int round_events;
-
-	const em_locm_t *const locm = &em_locm;
+	em_locm_t *const locm = &em_locm;
 	const bool do_input_poll = locm->do_input_poll;
 	const bool do_output_drain = locm->do_output_drain;
+	const bool do_schedule_pause = em_shm->opt.dispatch.sched_pause;
 
-	odp_schedule_resume();
+	if (locm->is_sched_paused) {
+		odp_schedule_resume();
+		locm->is_sched_paused = false;
+	}
 
 	if (do_input_poll || do_output_drain)
-		events = dispatch_with_userfn(rounds, do_input_poll,
-					      do_output_drain);
+		events = dispatch_with_userfn(rounds, do_input_poll, do_output_drain);
 	else
 		events = dispatch_no_userfn(rounds);
 
-	/* pause scheduling before exiting the dispatch loop */
-	odp_schedule_pause();
-	/* empty the locally pre-scheduled events (if any) */
-	do {
-		round_events = dispatch_round();
-		events += round_events;
-	} while (round_events > 0);
+	if (do_schedule_pause) {
+		/* pause scheduling before exiting the dispatch loop */
+		int round_events;
+
+		odp_schedule_pause();
+		locm->is_sched_paused = true;
+
+		/* empty the locally pre-scheduled events (if any) */
+		do {
+			round_events = dispatch_round(ODP_SCHED_NO_WAIT,
+						      EM_SCHED_MULTI_MAX_BURST, NULL);
+			events += round_events;
+		} while (round_events > 0);
+	}
 
 	return events;
+}
+
+void em_dispatch_opt_init(em_dispatch_opt_t *opt)
+{
+	if (unlikely(!opt)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_OPT_INIT,
+			       "Bad argument, opt=NULL");
+		return;
+	}
+
+	*opt = dispatch_opt_default;
+}
+
+static inline em_status_t
+dispatch_duration(const em_dispatch_duration_t *duration,
+		  const em_dispatch_opt_t *opt,
+		  em_dispatch_results_t *results /*out, optional*/)
+{
+	em_locm_t *const locm = &em_locm;
+	const bool do_input_poll = locm->do_input_poll && !opt->skip_input_poll;
+	const bool do_output_drain = locm->do_output_drain && !opt->skip_output_drain;
+	const bool do_sched_pause = opt->sched_pause;
+	uint64_t events;
+
+	if (locm->is_sched_paused) {
+		odp_schedule_resume();
+		locm->is_sched_paused = false;
+	}
+
+	if (do_input_poll || do_output_drain)
+		events = dispatch_duration_with_userfn(duration, opt, results,
+						       do_input_poll, do_output_drain);
+	else
+		events = dispatch_duration_no_userfn(duration, opt, results);
+
+	/* pause scheduling before exiting the dispatch loop */
+	if (do_sched_pause) {
+		odp_schedule_pause();
+		locm->is_sched_paused = true;
+
+		int round_events;
+		uint64_t rounds = 0;
+		uint16_t burst_size = opt->burst_size;
+
+		/* empty the locally pre-scheduled events (if any) */
+		do {
+			round_events = dispatch_round(ODP_SCHED_NO_WAIT,
+						      burst_size, opt);
+			events += round_events;
+			rounds++;
+		} while (round_events > 0);
+
+		if (results) {
+			results->rounds += rounds;
+			results->events = events;
+		}
+	}
+
+	return EM_OK;
+}
+
+em_status_t em_dispatch_duration(const em_dispatch_duration_t *duration,
+				 const em_dispatch_opt_t *opt /* optional */,
+				 em_dispatch_results_t *results /*out, optional*/)
+{
+	RETURN_ERROR_IF(!duration, EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_DURATION,
+			"Bad argument: duration=NULL");
+
+	if (!opt) {
+		opt = &dispatch_opt_default;
+	} else {
+		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_DURATION,
+				"Bad argument: em_dispatch_opt_init(opt) not called");
+	}
+
+	if (EM_CHECK_LEVEL > 0) {
+		RETURN_ERROR_IF(opt->burst_size == 0 || opt->burst_size > EM_SCHED_MULTI_MAX_BURST,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_DURATION,
+				"Bad option: 0 < opt.burst_size (%" PRIu64 ") <= %u (max)",
+				opt->burst_size, EM_SCHED_MULTI_MAX_BURST);
+	}
+
+	if (EM_CHECK_LEVEL > 1) {
+		/* _FLAG_LAST is 'pow2 + 1' */
+		const em_dispatch_duration_select_t next_pow2 =
+			(EM_DISPATCH_DURATION_LAST >> 1) << 2;
+
+		RETURN_ERROR_IF(duration->select >= next_pow2,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_DURATION,
+				"Bad option: duration->select=0x%x invalid", duration->select);
+		RETURN_ERROR_IF(((duration->select & EM_DISPATCH_DURATION_ROUNDS &&
+				  duration->rounds == 0) ||
+				 (duration->select & EM_DISPATCH_DURATION_NS &&
+				  duration->ns == 0) ||
+				 (duration->select & EM_DISPATCH_DURATION_EVENTS &&
+				  duration->events == 0) ||
+				 (duration->select & EM_DISPATCH_DURATION_NO_EVENTS_ROUNDS &&
+				  duration->no_events.rounds == 0) ||
+				 (duration->select & EM_DISPATCH_DURATION_NO_EVENTS_NS &&
+				  duration->no_events.ns == 0)),
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_DURATION,
+				"Bad option: opt.duration is zero(0).");
+	}
+
+	return dispatch_duration(duration, opt, results);
+}
+
+em_status_t em_dispatch_ns(uint64_t ns,
+			   const em_dispatch_opt_t *opt,
+			   em_dispatch_results_t *results /*out*/)
+{
+	RETURN_ERROR_IF(ns == 0, EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_NS,
+			"Bad argument: ns=0");
+
+	if (!opt) {
+		opt = &dispatch_opt_default;
+	} else {
+		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_NS,
+				"Bad argument: em_dispatch_opt_init(opt) not called");
+	}
+
+	if (EM_CHECK_LEVEL > 0) {
+		RETURN_ERROR_IF(opt->burst_size == 0 || opt->burst_size > EM_SCHED_MULTI_MAX_BURST,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_NS,
+				"Bad option: 0 < opt.burst_size (%" PRIu64 ") <= %u (max)",
+				opt->burst_size, EM_SCHED_MULTI_MAX_BURST);
+	}
+
+	const em_dispatch_duration_t duration = {
+		.select = EM_DISPATCH_DURATION_NS,
+		.ns = ns
+	};
+
+	return dispatch_duration(&duration, opt, results);
+}
+
+em_status_t em_dispatch_events(uint64_t events,
+			       const em_dispatch_opt_t *opt,
+			       em_dispatch_results_t *results /*out*/)
+{
+	RETURN_ERROR_IF(events == 0, EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_EVENTS,
+			"Bad argument: events=0");
+
+	if (!opt) {
+		opt = &dispatch_opt_default;
+	} else {
+		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_EVENTS,
+				"Bad argument: em_dispatch_opt_init(opt) not called");
+	}
+
+	if (EM_CHECK_LEVEL > 0) {
+		RETURN_ERROR_IF(opt->burst_size == 0 || opt->burst_size > EM_SCHED_MULTI_MAX_BURST,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_EVENTS,
+				"Bad option: 0 < opt.burst_size (%" PRIu64 ") <= %u (max)",
+				opt->burst_size, EM_SCHED_MULTI_MAX_BURST);
+	}
+
+	const em_dispatch_duration_t duration = {
+		.select = EM_DISPATCH_DURATION_EVENTS,
+		.events = events
+	};
+
+	return dispatch_duration(&duration, opt, results);
+}
+
+em_status_t em_dispatch_rounds(uint64_t rounds,
+			       const em_dispatch_opt_t *opt,
+			       em_dispatch_results_t *results /*out*/)
+{
+	RETURN_ERROR_IF(rounds == 0, EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_ROUNDS,
+			"Bad argument: rounds=0");
+
+	if (!opt) {
+		opt = &dispatch_opt_default;
+	} else {
+		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_ROUNDS,
+				"Bad argument: em_dispatch_opt_init(opt) not called");
+	}
+
+	if (EM_CHECK_LEVEL > 0) {
+		RETURN_ERROR_IF(opt->burst_size == 0 || opt->burst_size > EM_SCHED_MULTI_MAX_BURST,
+				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_ROUNDS,
+				"Bad option: 0 < opt.burst_size (%" PRIu64 ") <= %u (max)",
+				opt->burst_size, EM_SCHED_MULTI_MAX_BURST);
+	}
+
+	const em_dispatch_duration_t duration = {
+		.select = EM_DISPATCH_DURATION_ROUNDS,
+		.rounds = rounds
+	};
+
+	return dispatch_duration(&duration, opt, results);
 }
 
 em_status_t

@@ -35,6 +35,7 @@ static int read_config_file(void)
 	const char *conf_str;
 	int val = 0;
 	int64_t val64 = 0;
+	bool val_bool = false;
 	int ret;
 
 	/*
@@ -155,7 +156,24 @@ static int read_config_file(void)
 			sec = (long double)val64 / 1000000000.0;
 			EM_PRINT("  %s: wait %" PRId64 "ns (%Lfs)\n", conf_str, val64, sec);
 		}
+	} else {
+		em_shm->opt.dispatch.sched_wait_ns = 0;
+		em_shm->opt.dispatch.sched_wait = ODP_SCHED_NO_WAIT;
 	}
+
+	/*
+	 * Option: dispatch.sched_pause
+	 */
+	conf_str = "dispatch.sched_pause";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.dispatch.sched_pause = val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
 
 	return 0;
 }

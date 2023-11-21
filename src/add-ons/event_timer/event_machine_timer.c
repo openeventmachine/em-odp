@@ -988,19 +988,11 @@ em_status_t em_timer_delete(em_timer_t tmr)
 	odp_timer_pool_destroy(tmrs->timer[i].odp_tmr_pool);
 	tmrs->timer[i].odp_tmr_pool = ODP_TIMER_POOL_INVALID;
 
-	/* last ring delete should remove shared event pool */
+	/* Ring delete. Don't remove shared event pool as user could still have event */
 	if (tmrs->timer[i].is_ring && tmrs->num_rings) {
 		tmrs->num_rings--;
-		if (tmrs->num_rings < 1) {
-			if (unlikely(odp_pool_destroy(tmrs->ring_tmo_pool) != 0)) {
-				rv = EM_ERR_LIB_FAILED;
-				pool_fail = tmrs->ring_tmo_pool;
-			} else {
-				TMR_DBG_PRINT("Deleted shared ring timeout event pool %p\n",
-					      tmrs->ring_tmo_pool);
-				tmrs->ring_tmo_pool = ODP_POOL_INVALID;
-			}
-		}
+		if (tmrs->num_rings < 1)
+			TMR_DBG_PRINT("Last ring deleted");
 		tmrs->ring_reserved -= tmrs->timer[i].num_ring_reserve;
 		TMR_DBG_PRINT("Updated ring reserve by -%u to %u\n",
 			      tmrs->timer[i].num_ring_reserve, tmrs->ring_reserved);
@@ -1015,7 +1007,7 @@ em_status_t em_timer_delete(em_timer_t tmr)
 		tmrs->timer[i].num_tmo_reserve = 0;
 	}
 	if (tmrs->num_timers == 0 && tmrs->shared_tmo_pool != ODP_POOL_INVALID) {
-		/* no more timers, delete shared pool */
+		/* no more timers, delete shared tmo pool */
 		if (unlikely(odp_pool_destroy(tmrs->shared_tmo_pool) != 0)) {
 			rv = EM_ERR_LIB_FAILED;
 			pool_fail = tmrs->shared_tmo_pool;

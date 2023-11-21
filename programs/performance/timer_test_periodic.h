@@ -14,6 +14,8 @@
 #define EXTRA_PRINTS	0 /* dev option, normally 0 */
 #define MAX_TEST_TIMERS 32
 #define TIME_STAMP_FN	odp_time_global_ns
+#define PRINT_MAX_TMRS  2
+#define MIN_COOLOFF	5 /* secs */
 
 const struct option longopts[] = {
 	{"num-tmo",		required_argument, NULL, 'n'},
@@ -36,15 +38,18 @@ const struct option longopts[] = {
 	{"info",		no_argument, NULL, 'i'},
 	{"use-huge",		no_argument, NULL, 'u'},
 	{"no-delete",		no_argument, NULL, 'q'},
+	{"same-start",		no_argument, NULL, 'S'},
+	{"recreate",		no_argument, NULL, 'R'},
 	{"memzero",		required_argument, NULL, 'o'},
 	{"abort",		required_argument, NULL, 'k'},
 	{"num-timers",		required_argument, NULL, 'y'},
 	{"event-type",		required_argument, NULL, 'g'},
+	{"stop-limit",		required_argument, NULL, 'L'},
 	{"help",		no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sadbiuq:hz:o:k:y:g:";
+const char *shortopts = "n:r:p:f:m:l:c:w::x:t:e:j:sSRadbiuqhz:o:k:y:g:L:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
 	"Number of concurrent timeouts to create",
@@ -67,10 +72,13 @@ const char *descopts[] = {
 	"Only print timer capabilities and exit",
 	"Use huge page for trace buffer",
 	"Don't delete timeouts between runs (if -x)",
+	"Use same starting tick value for all timeouts (EXPERIMENTAL)",
+	"Delete and re-create test timer (with -x)",
 	"Allocate and clear memory: -o50,100[,1] to clear 50MB (,1 to use huge pg) every 100ms. Special HW test, must also use -j",
 	"Abort application after given tmos (test abnormal exit). Use negative count to do segfault instead",
 	"Number of timers to use for test. Default 1",
 	"Use alternative event type for timeout events (dec. number). Default EM_EVENT_TYPE_SW",
+	"Stop rounds (-x) on timing error greater than given (ns). Default 0 = no stop",
 	"Print usage and exit",
 	NULL
 };
@@ -78,13 +86,13 @@ const char *descopts[] = {
 const char *instructions =
 "\nMain purpose of this experimental tool is to manually test periodic timer accuracy and\n"
 "behaviour optionally under (over)load. Test is controlled by command line arguments.\n"
-"Some API overheads can also be measured.\n"
+"No argument default runs a basic test and exits. Some API overheads can also be optionally measured.\n"
 "\nAt least two EM timers are created. One for a heartbeat driving test states. Second\n"
 "timer (or multiple) is used for testing the periodic timeouts. It can be created with\n"
 "given attributes to also test limits. All the test timers are configured the same way.\n"
 "If multiple timers are used the timeouts are randomly placed on those.\n\n"
 "Test runs in states:\n"
-"	STATE_INIT	let some time pass before starting (to settle down)\n"
+"	STATE_INIT	let some time pass before starting\n"
 "	STATE_MEASURE	measure timer tick frequency against linux clock\n"
 "	STATE_STABILIZE finish all prints before starting run\n"
 "	STATE_RUN	timeouts created and measured\n"
@@ -109,7 +117,7 @@ const char *instructions =
 "Test can write a file of measured timings (-w). It is in CSV format and can\n"
 "be imported e.g. to excel for plotting. -w without name prints to stdout\n"
 "\nSingle time values can be postfixed with n,u,m,s to indicate nano(default),\n"
-"micro, milli or seconds. e.g. -p1m for 1ms. Integers only\n";
+"micro, milli or seconds. e.g. -p1m for 1ms. Integer only\n";
 
 typedef enum e_op {
 	OP_TMO,
@@ -128,6 +136,8 @@ typedef enum e_op {
 	OP_PROF_SET,
 	OP_PROF_ENTER_CB,
 	OP_PROF_EXIT_CB,
+	OP_PROF_TMR_CREATE,
+	OP_PROF_TMR_DELETE,
 
 	OP_LAST
 } e_op;
@@ -147,7 +157,11 @@ const char *op_labels[] = {
 	"PROF-CREATE",
 	"PROF-SET",
 	"PROF-ENTER_CB",
-	"PROF-EXIT_CB"
+	"PROF-EXIT_CB",
+	"PROF-TMR_CREATE",
+	"PROF-TMR-DELETE",
+
+	"<?>"
 };
 
 typedef struct tmo_trace {

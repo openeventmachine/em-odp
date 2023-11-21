@@ -29,6 +29,7 @@
  */
 
 #include "em_include.h"
+#include "em_dispatcher_inline.h"
 
 /**
  * Atomic group inits done at global init (once at startup on one core)

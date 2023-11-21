@@ -35,20 +35,13 @@ em_atomic_processing_end(void)
 {
 	em_locm_t *const locm = &em_locm;
 
-	if (locm->current.sched_context_type != EM_SCHED_CONTEXT_TYPE_ATOMIC)
-		return;
-
-	if (locm->event_burst_cnt != 0)
+	if (locm->current.sched_context_type != EM_SCHED_CONTEXT_TYPE_ATOMIC ||
+	    locm->event_burst_cnt)
 		return;
 
 	const queue_elem_t *q_elem = locm->current.sched_q_elem;
 
-	/*
-	 * Do nothing for non-atomic queues or if the func has already
-	 * been called.
-	 */
-	if (unlikely(q_elem == NULL ||
-		     q_elem->type != EM_QUEUE_TYPE_ATOMIC))
+	if (unlikely(!q_elem || q_elem->type != EM_QUEUE_TYPE_ATOMIC))
 		return;
 
 	if (q_elem->flags.in_atomic_group)
@@ -58,7 +51,7 @@ em_atomic_processing_end(void)
 
 	/*
 	 * Mark that em_atomic_processing_end() has been called
-	 * for the current queue.
+	 * for the current atomic context.
 	 */
 	locm->current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
 }
@@ -68,19 +61,13 @@ em_ordered_processing_end(void)
 {
 	em_locm_t *const locm = &em_locm;
 
-	if (locm->event_burst_cnt != 0)
+	if (locm->current.sched_context_type != EM_SCHED_CONTEXT_TYPE_ORDERED ||
+	    locm->event_burst_cnt)
 		return;
 
-	const queue_elem_t *q_elem = locm->current.q_elem;
-	em_queue_t queue;
-	em_queue_type_t qtype;
+	const queue_elem_t *q_elem = locm->current.sched_q_elem;
 
-	if (unlikely(q_elem == NULL))
-		return;
-
-	queue = (em_queue_t)(uintptr_t)q_elem->queue;
-	qtype = em_queue_get_type(queue);
-	if (unlikely(qtype != EM_QUEUE_TYPE_PARALLEL_ORDERED))
+	if (unlikely(!q_elem || q_elem->type != EM_QUEUE_TYPE_PARALLEL_ORDERED))
 		return;
 
 	odp_schedule_release_ordered();

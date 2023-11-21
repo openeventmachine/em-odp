@@ -431,7 +431,7 @@ static void print_subpools_stats(char *arg_subpools)
 	em_pool_t pool;
 	int num_subpools;
 	char *str_subpools;
-	char *str_stats_opt;
+	const char *str_stats_opt;
 	const char *pool_str;
 	int subpools[EM_MAX_SUBPOOLS];
 	const char *delim = ":";
@@ -501,7 +501,7 @@ static void print_pool_stats(char *optarg_str, bool is_id)
 	long pool_id;
 	char *saveptr;
 	em_pool_t pool;
-	char *str_opt;
+	const char *str_opt;
 	const char *pool_str;
 	const char *delim = ":";
 	em_pool_stats_opt_t opt = {0};
