@@ -6,6 +6,100 @@ EM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 --------------------------------------------------------------------------------
+API 3.4 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=4)
+--------------------------------------------------------------------------------
+1. Dispatch
+   (see include/event_machine/api/event_machine_dispatcher.h for documentation)
+
+ - Dispatch APIs with duration and option arguments for more control of the
+   dispatch loop.
+
+   EM API:
+   void em_dispatch_opt_init(em_dispatch_opt_t *opt);
+
+   em_status_t em_dispatch_duration(const em_dispatch_duration_t *duration,
+                                    const em_dispatch_opt_t *opt,
+                                    em_dispatch_results_t *results /*out*/);
+
+   and the simplified versions of em_dispatch_duration():
+
+   em_status_t em_dispatch_ns(uint64_t ns,
+                              const em_dispatch_opt_t *opt,
+                              em_dispatch_results_t *results /*out*/);
+   em_status_t em_dispatch_events(uint64_t events,
+                                  const em_dispatch_opt_t *opt,
+                                  em_dispatch_results_t *results /*out*/);
+   em_status_t em_dispatch_rounds(uint64_t rounds,
+                                  const em_dispatch_opt_t *opt,
+                                  em_dispatch_results_t *results /*out*/);
+
+   These APIs gives the user more control over the dispatching of events.
+   The user can select to dispatch for a certain number of rounds,
+   a certain amount of time or until a certain amount of events have been
+   dispatched.
+   Options to exit the dispatching when no events are available are also added.
+   Further, options to control the event burst-size, the scheduler
+   wait-for-events and the pausing of scheduling on return are added.
+
+2. Pool
+   (see include/event_machine/platform/event_machine_pool.h for documentation)
+
+- Add a new (special) field to the pool-statistics selection options
+  in the EM API:
+  em_pool_stats_opt_t::core_cache_available
+
+  This new, and a bit special, EM event pool statistics option enables
+  applications to read the number of events/bufs available in the
+  core/thread-local pool-cache of the underlying ODP pool(s), but do so with
+  ODP APIs only (e.g. odp_pool_stats()).
+  The EM pool statistics APIs do not support fetching '.core_cache_available'
+  directly because EM has no reliable way of mapping ODP threads to EM cores in
+  all possible ODP-thread setups. Thus EM allows for this statistics to be setup
+  for an EM pool but the reading must be done by the application using ODP APIs
+  for the ODP pools that correspond to a certain EM pool. The application must
+  then itself figure out which ODP thread maps to which EM core and which are
+  "extra" ODP control or other theads.
+
+  Example usage
+  -------------
+  A) Create an EM pool with 'core_cache_available'-statistics enabled:
+  em_pool_cfg_t pool_cfg;
+
+  em_pool_cfg_init(&pool_cfg);
+  ...
+  pool_cfg.stats_opt.in_use = true;
+  pool_cfg.stats_opt.opt.core_cache_available = 1;
+  ...
+  em_pool_t pool_em = em_pool_create("my-pool", EM_POOL_UNDEF, &pool_cfg);
+
+  B) To read the cached-per-thread statistics we need ODP APIs:
+
+  odp_pool_t odp_pools[EM_MAX_SUBPOOLS];
+
+  /* Get the nbr of subpools (= ODP pools) in the EM pool */
+  int num = em_pool_get_num_subpools(pool_em);
+
+  if (num > 0) {
+	/* Get the ODP pools used as subpools in the EM event pool */
+  	int ret = em_odp_pool2odp(pool_em, odp_pools, num); /* EM<->ODP conversion extension */
+
+	if (ret > 0) {
+		for (int i = 0; i < ret; i++) {
+			odp_pool_stats_t stats;
+
+			stats.thread.first = x;
+			stats.thread.last = y;
+			err = odp_pool_stats(odp_pools[i], &stats /*in/out*/);
+			/*
+			 * stats.thread.cache_available[...] now contains
+			 * cached-per-thread stats for odp_pools[i]
+			 */
+			...
+		}
+	}
+  }
+
+--------------------------------------------------------------------------------
 API 3.3 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=3)
 --------------------------------------------------------------------------------
 1. Timer

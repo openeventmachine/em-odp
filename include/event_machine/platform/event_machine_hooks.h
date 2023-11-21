@@ -168,7 +168,9 @@ typedef void (*em_api_hook_send_t)(const em_event_t events[], int num,
  * process and the state changes from active to idle.
  *
  * @param to_idle_delay_ns	The delay in nanoseconds that a core was waiting
- *				for scheduled events before calling to_idle hook
+ *				for scheduled events before calling to_idle hook.
+ *				The value might be a coarse approximation and
+ *				should not be used for precise calculations.
  */
 typedef void (*em_idle_hook_to_idle_t)(uint64_t to_idle_delay_ns);
 

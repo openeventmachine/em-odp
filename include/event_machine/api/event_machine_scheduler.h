@@ -36,11 +36,11 @@
 /**
  * @file
  * @defgroup em_scheduler Scheduler
- *  Event Machine scheduling related services (new to API 1.2)
+ *  Event Machine event scheduling related services
  * @{
  *
- * Most of the scheduling is a system dependent implementation but the common
- * services here can be used for performance tuning etc.
+ * Most of the event scheduling is a system dependent implementation but the
+ * common services here can be used for performance tuning etc.
  *
  * Do not include this from the application, event_machine.h will
  * do it for you.
@@ -55,17 +55,22 @@ extern "C" {
  *
  * This function can be used to release the atomic context before returning from
  * the EO receive function.
+ *
+ * After this API call is the scheduler allowed to schedule another event from
+ * the same atomic queue (or atomic group) that established the current
+ * atomic context, to another (or same) core.
+ *
  * When an event has been received from an atomic queue, the scheduler is
  * allowed to schedule another event from the same atomic queue to another,
- * or same, core after the call. This increases parallelism and may improve
+ * or same, core after this API call. This increases parallelism and may improve
  * performance - however, the exclusive processing and ordering might be lost.
  * Note, however, that this is a hint only, the scheduler is still allowed to
  * keep the atomic context until scheduling the next event.
  *
  * Can only be called from within the EO receive function.
  *
- * The call is ignored if the current event was not received from an atomic
- * queue.
+ * The call is ignored if the currently active scheduling context type is not
+ * atomic (EM_SCHED_CONTEXT_TYPE_ATOMIC, see em_sched_context_type_current()).
  *
  * Pseudo-code example:
  * @code
@@ -98,8 +103,10 @@ void em_atomic_processing_end(void);
  * EM implementation is still allowed to keep it until scheduling the next
  * incoming event.
  *
- * Can only be called from within the EO receive function. The call is ignored,
- * if the current event was not received from an ordered queue.
+ * Can only be called from within the EO receive function.
+ *
+ * The call is ignored if the currently active scheduling context type is not
+ * ordered (EM_SCHED_CONTEXT_TYPE_ORDERED, see em_sched_context_type_current()).
  *
  * The ordering context cannot be resumed after it has been released.
  *
@@ -122,15 +129,17 @@ void em_preschedule(void);
  * Return the currently active scheduling context type
  *
  * Returns the current scheduling context type (none, ordered, atomic) and
- * optionally the input queue that determines the context. Note, that this is
- * not the same as queue type since the context could have been released.
+ * optionally the queue that determines the context.
+ * Note, that the scheduling context type is not the same as the queue type
+ * since the scheduling context type could have been released by the user, or
+ * inherited by local queue processing.
  *
  * This function is mainly for handling local queues that inherit the scheduling
  * context that was active for the sending EO. The scheduling context can be
  * unpredictable unless the processing chain is carefully crafted.
  * This function will return the active scheduling context type and queue of the
- * last event from the scheduler (i.e. the input queue of the EO that sent the
- * event to a local queue).
+ * last event from the scheduler (i.e. the scheduled queue of the EO that sent
+ * the event to the first local queue in the chain).
  *
  * @param[out] queue  if not NULL, set to the queue that determines the current
  *                    sched context

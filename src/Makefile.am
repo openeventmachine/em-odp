@@ -117,6 +117,7 @@ em_core_types.h \
 em_dispatcher.c \
 em_dispatcher.h \
 em_dispatcher_types.h \
+em_dispatcher_inline.h \
 	\
 em_eo.c \
 em_eo.h \
@@ -128,8 +129,8 @@ em_error_types.h \
 	\
 em_event.c \
 em_event.h \
-em_event_inline.h \
 em_event_types.h \
+em_event_inline.h \
 em_event_state.c \
 em_event_state.h \
 	\
@@ -166,10 +167,10 @@ em_pool_types.h \
 em_queue.c \
 em_queue.h \
 em_queue_types.h \
+em_queue_inline.h \
 	\
 em_queue_group.c \
 em_queue_group.h \
-em_queue_inline.h \
 em_queue_group_types.h \
 	\
 em_sync_api_types.h \

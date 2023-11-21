@@ -38,7 +38,7 @@
 em_status_t timer_init(timer_storage_t *const tmrs);
 em_status_t timer_init_local(void);
 em_status_t timer_term_local(void);
-em_status_t timer_term(void);
+em_status_t timer_term(timer_storage_t *const tmrs);
 
 static inline int
 timer_clksrc_em2odp(em_timer_clksrc_t clksrc_em,

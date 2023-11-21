@@ -802,6 +802,18 @@ static int read_config_pool(void)
 	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
 
 	/*
+	 * Option: pool.statistics.core_cache_available
+	 */
+	conf_str = "pool.statistics.core_cache_available";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	em_shm->opt.pool.statistics.core_cache_available = (int)val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	/*
 	 * Option: pool.align_offset
 	 */
 	conf_str = "pool.align_offset";
@@ -1633,6 +1645,9 @@ static void set_pool_params_stats(odp_pool_stats_opt_t *param_stats /*out*/,
 
 	if (capa_stats->bit.cache_free_ops)
 		param_stats->bit.cache_free_ops = stats_opt->cache_free_ops;
+
+	if (capa_stats->bit.thread_cache_available)
+		param_stats->bit.thread_cache_available = stats_opt->core_cache_available;
 }
 
 /** Helper to create_subpools() */

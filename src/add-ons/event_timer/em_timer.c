@@ -67,8 +67,14 @@ em_status_t timer_term_local(void)
 	return EM_OK;
 }
 
-em_status_t timer_term(void)
+em_status_t timer_term(timer_storage_t *const tmrs)
 {
+	if (tmrs && tmrs->ring_tmo_pool != ODP_POOL_INVALID) {
+		if (odp_pool_destroy(tmrs->ring_tmo_pool) != 0)
+			return EM_ERR_LIB_FAILED;
+		tmrs->ring_tmo_pool = ODP_POOL_INVALID;
+	}
+
 	return EM_OK;
 }
 

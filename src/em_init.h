@@ -117,6 +117,7 @@ typedef struct {
 
 		uint64_t sched_wait_ns;
 		uint64_t sched_wait; /* odp_schedule_wait_time(sched_wait_ns) */
+		bool sched_pause;
 	} dispatch;
 
 	struct {
