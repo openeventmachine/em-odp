@@ -35,6 +35,9 @@ ${KILL_TIMEOUT} =    30s
 # Common arguments used for all test cases
 @{CM_ARGS} =    -c    ${CORE_MASK}    -${APPLICATION_MODE}
 
+@{REGEX_MATCH} =
+...    Done\\s*-\\s*exit
+
 
 *** Keywords ***
 Kill Any Hanging Applications
@@ -111,3 +114,39 @@ Run EM-ODP Test
     END
 
     Check Pool Statistics    output=${output}
+
+Run EM-ODP Test To Complete
+    [Documentation]    Run em-odp application and wait for it to complete. This
+    ...    is suitable for running em-odp applications that stop automatically
+    ...    instead of wait for SIGINT signal to stop.
+
+    # args: command line arguments specific for the given em-odp app (must start with --)
+    # time_out: time out for the program
+    # regex_match: regex pattern that must be matched
+
+    [Arguments]    ${args}=@{EMPTY}    ${time_out}=30    ${regex_match}=${REGEX_MATCH}
+    ...    ${regex_not_match}=${REGEX_NOT_MATCH}
+
+    ${output} =    Process.Run Process    taskset  -c  ${TASKSET_CORES}  ${APPLICATION}
+    ...    -c    ${CORE_MASK}
+    ...    -${APPLICATION_MODE}
+    ...    @{args}
+    ...    stderr=STDOUT
+    ...    timeout=${time_out}
+    ...    shell=True
+    ...    stdout=${TEMPDIR}/stdout.txt
+
+    # Log output
+    Log    ${output.stdout}\n\nApplication Return Code: ${output.rc}    console=yes
+
+    # Verify the return code is 0
+    Should Be Equal    ${output.rc}    ${0}
+
+    # Match regular expression lines
+    FOR    ${line}    IN    @{regex_match}
+        Should Match Regexp    ${output.stdout}    ${line}
+    END
+
+    FOR    ${line}    IN    @{regex_not_match}
+        Should Not Match Regexp    ${output.stdout}    ${line}
+    END
