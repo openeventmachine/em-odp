@@ -333,7 +333,7 @@ typedef struct em_timer_ring_param_t {
  * @see em_timer_attr_init, em_timer_ring_attr_init, em_timer_capability
  */
 typedef struct em_timer_attr_t {
-	/** Resolution parameters. sed when not creating periodic ring.
+	/** Resolution parameters. set when not creating periodic ring.
 	 * This gets cleared by em_timer_ring_attr_init
 	 */
 	em_timer_res_param_t resparam;
