@@ -238,6 +238,14 @@ int parse_args(int first, int argc, char *argv[])
 		}
 		break;
 
+		case 's': {
+			num = strtol(optarg, &endptr, 0);
+			if (*endptr != '\0' || num < 0)
+				return 0;
+			g_options.size = (uint64_t)num;
+		}
+		break;
+
 		case 'w': {
 			num = strtol(optarg, &endptr, 0);
 			if (*endptr != '\0' || num < 1)
@@ -400,7 +408,7 @@ em_event_t __attribute__ ((noinline)) do_em_event_alloc(int64_t *diff, size_t si
 	em_event_t ev;
 	uint64_t t1 = TIME_FN();
 
-	ev = em_alloc(size, EM_EVENT_TYPE_SW, pool);
+	ev = em_alloc(size, g_options.pool.type, pool);
 	*diff = (int64_t)TIME_FN() - (int64_t)t1;
 	return ev;
 }
@@ -533,7 +541,7 @@ void allocate_events_multi(test_msg *msg, em_pool_t pool, size_t size, odp_pool_
 	} else { /* use EM API */
 		em_event_t ev[MAX_ALLOCS];
 		uint64_t t1 = TIME_FN();
-		int got = em_alloc_multi(ev, num, size, EM_EVENT_TYPE_SW, pool);
+		int got = em_alloc_multi(ev, num, size, g_options.pool.type, pool);
 
 		diff = (int64_t)TIME_FN() - (int64_t)t1;
 		test_fatal_if(num != got, "not enough events from pool");
@@ -704,7 +712,7 @@ void update_allocs(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_po
 	bool skip = g_options.skip && (msg->times.alloc.tot_allocs < g_options.skip) ? true : false;
 
 	/* first do some allocations */
-	if (!(msg->count & 1)) { /* on odd counts */
+	if (!(msg->count & 1)) { /* on even counts */
 
 		if (g_options.no_first &&
 		    perf_shm->counts[em_core_id()].events <= g_options.no_first)
@@ -717,7 +725,7 @@ void update_allocs(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_po
 				allocate_events(msg, pool, size, odp_pool, skip);
 		}
 	} else {
-		/* then frees on even counts */
+		/* then frees on odd counts */
 		if (msg->allocated) {
 			if (g_options.use_multi)
 				free_events_multi(msg, skip);
@@ -796,11 +804,17 @@ void print_setup(void)
 	if (g_options.skip)
 		APPL_PRINT(" Skip first:        %u\n", g_options.skip);
 	APPL_PRINT(" Skip N per core:   %u\n", g_options.no_first);
-	if (g_options.pool.num)
-		APPL_PRINT(" Test pool:         %u * %uB, cache %u\n",
-			   g_options.pool.num,
-			   g_options.pool.size,
-			   g_options.pool.cache);
+	if (g_options.pool.num) {
+		char type[10] = {0};
+
+		if (g_options.pool.type == EM_EVENT_TYPE_SW)
+			strcpy(type, "SW");
+		else
+			strcpy(type, "PACKET");
+		APPL_PRINT(" Test pool:         %u * %uB, cache %u, %s\n",
+			   g_options.pool.num, g_options.pool.size,
+			   g_options.pool.cache, type);
+	}
 	APPL_PRINT(" Use _multi:        %s\n\n", g_options.use_multi ? "yes" : "no");
 
 	APPL_PRINT("Using test pool:\n");

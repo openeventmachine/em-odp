@@ -293,7 +293,7 @@ int parse_args(int first, int argc, char *argv[])
 				return 0;
 		}
 		break;
-		case 't': { /* low-prio grp */
+		case 't': { /* hi-prio grp */
 			num = mask_from_str(optarg, &g_options.hgroup);
 			if (!num)
 				return 0;
@@ -388,7 +388,7 @@ void test_start(appl_conf_t *const appl_conf)
 	}
 
 	em_queue_t q = em_queue_create("testQ", g_options.queue_type,
-				       EM_QUEUE_PRIO_HIGHEST, EM_QUEUE_GROUP_DEFAULT, NULL);
+				       EM_QUEUE_PRIO_HIGHEST, grp, NULL);
 
 	test_fatal_if(q == EM_QUEUE_UNDEF, "Q create fail");
 	em_eo_add_queue_sync(perf_shm->eo, q);
@@ -405,10 +405,14 @@ void test_start(appl_conf_t *const appl_conf)
 		APPL_PRINT("Using default queue group for background events\n");
 	}
 
-	em_core_mask_t mask;
+	if (em_core_mask_count(&g_options.lgroup) && em_core_mask_count(&g_options.hgroup)) {
+		em_core_mask_t mask;
 
-	em_core_mask_and(&mask, &g_options.lgroup, &g_options.hgroup);
-	APPL_PRINT("Queue groups are %soverlapping\n", em_core_mask_count(&mask) ? "" : "not ");
+		em_core_mask_and(&mask, &g_options.lgroup, &g_options.hgroup);
+		APPL_PRINT("Queue groups are %soverlapping\n", em_core_mask_count(&mask) ? "" : "not ");
+	} else {
+		APPL_PRINT("Queue groups are overlapping\n");
+	}
 
 	em_queue_t q2 = em_queue_create("testQlo", EM_QUEUE_TYPE_PARALLEL, EM_QUEUE_PRIO_NORMAL,
 					grp, NULL);

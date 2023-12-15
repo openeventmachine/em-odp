@@ -83,8 +83,8 @@ const struct option longopts[] = {
 const char *shortopts = "l:e:hw:g:t:arq:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
-	"Number of measurement cycles (10M events each)",
-	"Number of lower priority background events (default 0)",
+	"Number of measurement cycles (10M events each cycle, default 1)",
+	"Number of lower priority background events(default 0)",
 	"Amount of time spent for each background event (ns, default 2000)",
 	"Coremask for background events, default all (hex, EM core ids)",
 	"Coremask for hi-prio timing events, default all (hex, EM core ids)",

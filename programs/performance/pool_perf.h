@@ -3,7 +3,7 @@
 #include <odp_api.h>
 #include <stdatomic.h>
 
-#define VERSION "v0.2 WIP"
+#define VERSION "v0.3"
 
 #define MAX_ALLOCS	128	/* max events allocated per context, pwr 2 */
 #define MAX_CORES	64	/* space for per-core tables */
@@ -85,7 +85,7 @@ typedef struct perf_shm_t {
 
 	atomic_int loopcount ODP_ALIGNED_CACHE;
 	uint64_t start_time;
-	odp_spinlock_t lock; /* used with global stats update */
+	odp_spinlock_t lock; /* used with times update */
 
 } perf_shm_t;
 
@@ -169,15 +169,15 @@ const char *shortopts = "l:e:ha:f:w:md:s:p:i:n:bc:t::";
 const char *descopts[] = {
 	"Number of measurement cycles (-n events each), default 1",
 	"Number alloc and free batches per cycle, default 10M",
-	"Number of events (parallel ops), default 1",
+	"Number of context events (parallel ops), default 1",
 	"Number of burst allocs, default 1. Negative for random",
 	"Number of burst frees, default 1. Negative for random",
-	"Window of buffers (maximum allocated), default from -a",
-	"Add delay after alloc burst, ns. Default 0",
-	"Size of event to allocate, bytes. Default 256",
+	"Window of buffers (maximum allocated, default 2), from -a if -a is bigger",
+	"Add delay after alloc/free burst, ns. Default 0",
+	"Size of event to allocate in bytes. Default 256",
 	"Pool setup. -p10000,512,32,SW means create pool with 10000 events of 512B, local cache 32, event type SW (or PACKET)",
 	"Ignore given amount of allocations at start (skip timing first N total allocs)",
-	"Flush cpu HW caches after each alloc burst by modifying given amount of data (kB). Default 0=no",
+	"Flush cpu HW caches after each alloc/free burst by modifying given amount of data (kB). Default 0=no",
 	"Use _multi - variants. Default no",
 	"Bypass EM and use ODP pool API. Default no",
 	"Skip timing first N allocs counted per core, default 1",
@@ -188,16 +188,21 @@ const char *descopts[] = {
 const char *instructions =
 "Simple memory pool performance test\n\n"
 "Test runs event allocation and free and measures min, max and average time of the API call.\n"
-"Trigger event(s) are sent at start. Once received given number of allocations are done and then\n"
-"event is sent again. Next time given amount of free is done. When enough these are done,\n"
-"statistics are calculated and if number of loops is more than one then test is repeated.\n"
-"Number of events can be specified, which can enable concurrent operations.\n\n"
+"A number(specified with option -e) of trigger/context event(s) are sent at start. Once received,\n"
+"perform a burst/given number(specified with option -a) of allocations, update relevant alloc\n"
+"stats in context event and then send it back to the same queue. Upon receiving the context event\n"
+"again, perform a burst/given amount(specified with -f) of free, update relevant free stats in\n"
+"context event and send it back. Repeat this burst event allocation/free cycle until the sum of\n"
+"allocation and free ops reach a given number(specified with -n). Statistics per context event\n"
+"are calculated and printed. Repeat the test if the number of loops(specified with -l) is more\n"
+"than one\n\n"
+"Note than the number of events specified with -e enables concurrent operations.\n\n"
 
 "Test tries to measure timestamping overhead at startup and subtracts that from measured times.\n"
 "However if the measured time is equal or less than (may happen with short times) then time is negative\n"
 "and the measured overhead is also printed for reference.\n\n"
 "Min and max times are per API call (either single or multi flavor), but global average is per buffer/packet.\n"
-"The printed timing bins are per loop, not accumulating global.\n"
+"The printed timing bins are not per loop, but accumulating global.\n"
 "The printed rates (allocs/sec) are only informational, those include the overheads of keeping and\n"
 "printing statistics plus double schedule round per burst.\n"
 "\n";
