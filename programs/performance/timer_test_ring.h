@@ -45,7 +45,7 @@ const char *descopts[] = {
 	"Resolution, ns. Default 0 (system default).  Can be comma separated list",
 	"Clock source for timer",
 	"Loop time, i.e. how long to run per loop. Seconds, default 30",
-	"Trace buffer size (traces per core). Default 0",
+	"Trace buffer size (number of traces per core). Default 0",
 	"Write trace dump to csv file at exit. Argument is file name. Default stdout",
 	"Number of timeouts per timer, default 1.",
 	"Relative start offset in timer ticks. Default 0. Can be comma separated list.",

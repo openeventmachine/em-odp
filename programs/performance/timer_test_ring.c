@@ -332,7 +332,8 @@ static void dump_trace(app_eo_ctx_t *eo_ctx)
 			tp->arg1, tp->arg2, tp->arg3, tp->arg4);
 	}
 
-	fclose(df);
+	if (df != stdout)
+		fclose(df);
 	title = false;
 }
 

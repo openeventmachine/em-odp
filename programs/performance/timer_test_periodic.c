@@ -472,21 +472,12 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 	fprintf(fle, "id,op,tick,time_ns,linux_time_ns,counter,core,timer\n");
 	for (int c = 0; c < cores; c++) {
 		for (int i = 0; i < eo_ctx->cdat[c].count; i++) {
-			uint64_t ns;
-
-			if (eo_ctx->cdat[c].trc[i].op >= OP_PROF_ACK) {
-				/* it's tick diff */
-				ns = eo_ctx->cdat[c].trc[i].linuxt;
-			} else { /* it's ns from linux */
-				ns = eo_ctx->cdat[c].trc[i].linuxt;
-			}
-
 			fprintf(fle, "%d,%s,%lu,%lu,%lu,%d,%d,%d\n",
 				eo_ctx->cdat[c].trc[i].id,
 				op_labels[eo_ctx->cdat[c].trc[i].op],
 				eo_ctx->cdat[c].trc[i].tick,
 				eo_ctx->cdat[c].trc[i].ts,
-				ns,
+				eo_ctx->cdat[c].trc[i].linuxt,
 				eo_ctx->cdat[c].trc[i].count,
 				c,
 				eo_ctx->cdat[c].trc[i].tidx);
@@ -773,13 +764,15 @@ void profile_statistics(e_op op, int cores, app_eo_ctx_t *eo_ctx)
 		}
 	}
 	if (num)
-		APPL_PRINT("%s: %lu samples: min %lu ns, max %lu ns, avg %lu ns\n",
-			   op_labels[op], num, min, max, avg / num);
+		APPL_PRINT("%-15s %-15lu %-15lu %-15lu %-15lu\n", op_labels[op],
+			   num, min, max, avg / num);
 }
 
 void profile_all_stats(int cores, app_eo_ctx_t *eo_ctx)
 {
-	APPL_PRINT("API profile statistics:\n");
+	APPL_PRINT("API timing profiles:\n");
+	APPL_PRINT("api             count           min             max             avg (ns)\n");
+	APPL_PRINT("------------------------------------------------------------------------\n");
 	profile_statistics(OP_PROF_CREATE, cores, eo_ctx);
 	profile_statistics(OP_PROF_SET, cores, eo_ctx);
 	profile_statistics(OP_PROF_ACK, cores, eo_ctx);
