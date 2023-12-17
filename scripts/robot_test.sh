@@ -43,7 +43,10 @@ apps["queues_local"]=programs/performance/queues_local
 apps["queues_unscheduled"]=programs/performance/queues_unscheduled
 apps["queues"]=programs/performance/queues
 apps["send_multi"]=programs/performance/send_multi
-apps["timer_periodic"]=programs/performance/timer_test_periodic
+apps["timer_test_periodic"]=programs/performance/timer_test_periodic
+apps["pool_perf"]=programs/performance/pool_perf
+apps["scheduling_latency"]=programs/performance/scheduling_latency
+apps["timer_test_ring"]=programs/performance/timer_test_ring
 
 # Set up conf files for robot tests
 odp_conf="odp/config/odp-linux-generic.conf"
