@@ -27,7 +27,7 @@ install_dir=$(dirname "${script_dir}")/installation
 mkdir "${install_dir}" --parents
 
 # Clone, build and install ODP which is needed by EM-ODP
-git clone --branch v1.42.1.0 --depth 1 https://github.com/OpenDataPlane/odp.git
+git clone --branch master --depth 1 https://github.com/OpenDataPlane/odp.git
 cd odp
 ./bootstrap
 
