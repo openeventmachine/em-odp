@@ -940,6 +940,8 @@ em_timer_t em_timer_ring_create(const em_timer_attr_t *ring_attr)
 	timer->flags = ring_attr->flags;
 	timer->plain_q_ok = capa.queue_type_plain;
 	timer->is_ring = true;
+	tmrs->num_ring_create_calls++;
+
 	odp_timer_pool_start();
 	odp_ticketlock_unlock(&tmrs->timer_lock);
 
@@ -1150,30 +1152,60 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 				"Invalid args: tmo:%" PRI_TMO " cur_event:%p",
 				tmo, cur_event);
 	}
+
 	*cur_event = EM_EVENT_UNDEF;
+	em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
+
 	if (EM_CHECK_LEVEL > 1) {
 		/* check that tmo buf is valid before accessing other struct members */
 		RETURN_ERROR_IF(!odp_buffer_is_valid(tmo->odp_buffer),
 				EM_ERR_BAD_ID, EM_ESCOPE_TMO_DELETE,
 				"Invalid tmo buffer");
 
-		em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
-
 		RETURN_ERROR_IF(tmo_state == EM_TMO_STATE_UNKNOWN,
 				EM_ERR_BAD_STATE, EM_ESCOPE_TMO_DELETE,
 				"Invalid tmo state:%d", tmo_state);
-	}
-	if (EM_CHECK_LEVEL > 2) {
+
 		RETURN_ERROR_IF(tmo->odp_timer == ODP_TIMER_INVALID,
 				EM_ERR_BAD_ID, EM_ESCOPE_TMO_DELETE,
-				"Invalid tmo odp_timer");
+				"Invalid tmo odp_timer, deleted?");
 	}
 
 	TMR_DBG_PRINT("ODP timer %p\n", tmo->odp_timer);
 
+	/* change this first to increase propability to catch e.g. double delete */
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_UNKNOWN);
 
-	odp_event_t odp_evt = odp_timer_free(tmo->odp_timer);
+	odp_event_t odp_evt;
+
+#if ODP_VERSION_API_NUM(1, 43, 0) <= ODP_VERSION_API
+	/* ODP 1.43 does not allow to delete active timer, do it first */
+	odp_evt = ODP_EVENT_INVALID;
+	if (tmo_state == EM_TMO_STATE_ACTIVE) {
+		int cret;
+
+		if (tmo->is_ring) {
+			cret = odp_timer_periodic_cancel(tmo->odp_timer);
+			RETURN_ERROR_IF(cret != 0, EM_ERR_LIB_FAILED,
+					EM_ESCOPE_TMO_DELETE,
+					"ring active but odp timer cancel failed, rv %d\n", cret);
+		} else {
+			cret = odp_timer_cancel(tmo->odp_timer, &odp_evt);
+			RETURN_ERROR_IF(cret == ODP_TIMER_FAIL, EM_ERR_LIB_FAILED,
+					EM_ESCOPE_TMO_DELETE,
+					"was active but odp timer cancel failed, rv %d\n", cret);
+		}
+
+		TMR_DBG_PRINT("tmo cancelled first, odp rv %d\n", cret);
+	}
+
+	int fret = odp_timer_free(tmo->odp_timer);
+
+	RETURN_ERROR_IF(fret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
+			"odp timer free failed!?, rv %d\n", fret);
+#else
+	odp_evt = odp_timer_free(tmo->odp_timer);
+#endif
 	odp_buffer_t tmp = tmo->odp_buffer;
 	em_event_t tmo_ev = EM_EVENT_UNDEF;
 
@@ -1191,14 +1223,13 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 		/* these errors no not free buffer to prevent potential further corruption */
 		RETURN_ERROR_IF(EM_CHECK_LEVEL > 2 && !odp_event_is_valid(odp_evt),
 				EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
-				"Invalid tmo event");
+				"Corrupted tmo event returned");
 		RETURN_ERROR_IF(tmo->is_ring, EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
-				"odp_timer_free returned event %p\n", odp_evt);
+				"odp_timer_free returned event %p for a ring!\n", odp_evt);
 
 		tmo_ev = event_odp2em(odp_evt);
 		if (esv_enabled())
-			tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev),
-						EVSTATE__TMO_DELETE);
+			tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev), EVSTATE__TMO_DELETE);
 	}
 
 	odp_buffer_free(tmp);
@@ -1914,4 +1945,14 @@ em_timer_t em_tmo_get_timer(em_tmo_t tmo)
 	}
 
 	return tmo->timer;
+}
+
+uint64_t em_timer_to_u64(em_timer_t timer)
+{
+	return (uint64_t)timer;
+}
+
+uint64_t em_tmo_to_u64(em_tmo_t tmo)
+{
+	return (uint64_t)tmo;
 }

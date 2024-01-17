@@ -80,10 +80,11 @@ typedef struct {
 	} queue_group;
 
 	struct {
+		unsigned int max_num;
 		unsigned int min_events_default; /* default min nbr of events */
 		struct {
-		int map_mode;
-		int custom_map[EM_QUEUE_PRIO_NUM];
+			int map_mode;
+			int custom_map[EM_QUEUE_PRIO_NUM];
 		} priority;
 	} queue;
 

@@ -207,7 +207,7 @@ typedef struct {
 	bool do_output_drain;
 	/** Is thread external to EM (doesn't participate in event dispatching) */
 	bool is_external_thr;
-	/* Is the scheduler paused on this core (for odp_sched_pause/resume()) */
+	/** Is the scheduler paused on this core (for odp_sched_pause/resume()) */
 	bool is_sched_paused;
 
 	/** Number of dispatch rounds since previous polling of ctrl queues */

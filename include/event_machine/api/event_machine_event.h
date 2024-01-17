@@ -328,6 +328,27 @@ uint32_t em_event_get_size(em_event_t event);
 em_pool_t em_event_get_pool(em_event_t event);
 
 /**
+ * @brief Returns the EM event-pool and subpool the event was allocated from.
+ *
+ * Similar to em_event_get_pool(), but also outputs the subpool the event was
+ * allocated from.
+ * The subpool is in the range [0, EM_MAX_SUBPOOLS - 1].
+ *
+ * @param      event    Event handle
+ * @param[out] subpool  Subpool index, output arg filled on successful return.
+ *                      Use 'NULL' if not interested in the subpool (or prefer
+ *                      em_event_get_pool() instead).
+ *                      The subpool is filled only when a valid EM pool can be
+ *                      found, i.e. when the return value is other than
+ *                      EM_POOL_UNDEF - EM doesn't touch it otherwise.
+ *
+ * @return The EM event-pool handle or EM_POOL_UNDEF if no EM pool is found.
+ *         EM_POOL_UNDEF is returned also for a valid event that has been
+ *         allocated from a pool external to EM (no error is reported).
+ */
+em_pool_t em_event_get_pool_subpool(em_event_t event, int *subpool /*out*/);
+
+/**
  * Set the event type of an event
  *
  * The operation may fail if (the major part of) the new type is not compatible
@@ -1071,6 +1092,18 @@ typedef struct {
  */
 em_status_t em_event_vector_info(em_event_t vector_event,
 				 em_event_vector_info_t *vector_info /*out*/);
+
+/**
+ * Convert an event handle to an unsigned integer
+ *
+ * @param event  Event handle to be converted
+ * @return       uint64_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_event_t handle.
+ */
+uint64_t em_event_to_u64(em_event_t event);
 
 /**
  * @}

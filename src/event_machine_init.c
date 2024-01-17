@@ -89,10 +89,6 @@ em_init(const em_conf_t *conf)
 	 * Reserve the EM shared memory once at start-up.
 	 */
 	uint32_t flags = 0;
-
-#if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
-	flags |= ODP_SHM_SINGLE_VA;
-#else
 	odp_shm_capability_t shm_capa;
 
 	ret = odp_shm_capability(&shm_capa);
@@ -101,7 +97,7 @@ em_init(const em_conf_t *conf)
 
 	if (shm_capa.flags & ODP_SHM_SINGLE_VA)
 		flags |= ODP_SHM_SINGLE_VA;
-#endif
+
 	odp_shm_t shm = odp_shm_reserve("em_shm", sizeof(em_shm_t),
 					ODP_CACHE_LINE_SIZE, flags);
 
@@ -370,6 +366,8 @@ em_term(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"pool_term() failed:%" PRI_STAT "", stat);
 
+	env_shared_free(em_shm->queue_tbl.queue_elem);
+
 	/*
 	 * Free the EM shared memory
 	 */
@@ -453,4 +451,9 @@ em_term_core(void)
 	}
 
 	return ret_stat == EM_OK ? EM_OK : EM_ERR;
+}
+
+uint16_t em_device_id(void)
+{
+	return em_shm->conf.device_id;
 }

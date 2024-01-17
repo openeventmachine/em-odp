@@ -48,6 +48,7 @@ em_status_t timer_init(timer_storage_t *const tmrs)
 	tmrs->reserved = 0;
 	tmrs->num_rings = 0;
 	tmrs->num_timers = 0;
+	tmrs->num_ring_create_calls = 0;
 	tmrs->init_check = EM_CHECK_INIT_CALLED;
 	odp_ticketlock_init(&tmrs->timer_lock);
 

@@ -830,3 +830,8 @@ em_event_group_get_next(void)
 
 	return egrp_idx2hdl(_egrp_tbl_iter_idx);
 }
+
+uint64_t em_event_group_to_u64(em_event_group_t event_group)
+{
+	return (uint64_t)event_group;
+}

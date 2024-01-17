@@ -1184,8 +1184,6 @@ static int cli_shm_setup(void)
 	 * Reserve the CLI shared memory once at start-up.
 	 */
 	uint32_t flags = 0;
-
-#if ODP_VERSION_API_NUM(1, 33, 0) < ODP_VERSION_API
 	odp_shm_capability_t shm_capa;
 	int ret = odp_shm_capability(&shm_capa);
 
@@ -1197,7 +1195,7 @@ static int cli_shm_setup(void)
 	/* No huge pages needed for the CLI shm */
 	if (shm_capa.flags & ODP_SHM_NO_HP)
 		flags |= ODP_SHM_NO_HP;
-#endif
+
 	odp_shm_t shm = odp_shm_reserve("em_cli", sizeof(em_cli_shm_t),
 					ODP_CACHE_LINE_SIZE, flags);
 

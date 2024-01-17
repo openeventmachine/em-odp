@@ -6,6 +6,76 @@ EM API Release Notes
 - See em-odp/CHANGE_NOTES for changed and added features.
 
 --------------------------------------------------------------------------------
+API 3.5 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=5)
+--------------------------------------------------------------------------------
+1. Queue
+   (see include/event_machine/api/event_machine_queue.h for documentation)
+
+ - Replace the EM API define 'EM_MAX_QUEUES' with a runtime config file
+   option 'queue.max_num'
+   (see config/em-odp.conf and the CHANGE_NOTES for v3.5.0)
+   In addition, add a new define 'EM_MAX_OUTPUT_QUEUES' and a function that
+   returns the current setting for the maximum number of EM queues:
+   EM API:
+   (removed) EM_MAX_QUEUES
+   #define EM_MAX_OUTPUT_QUEUES ...
+   int em_queue_get_max_num(void);
+
+ - Conversions between EM queue and device-id, queue-id
+   Extract the device-id and/or queue-id from an EM queue handle.
+   EM API:
+   uint16_t em_queue_get_device_id(em_queue_t queue);
+   uint16_t em_queue_get_qid(em_queue_t queue);
+   void em_queue_get_ids(em_queue_t queue, uint16_t *device_id, uint16_t *qid);
+
+   Also add a function that let's the user construct a raw
+   EM queue handle that may, or may not, refer to a real queue.
+   This is for event-chaining / BIP use cases:
+   EM API:
+   em_queue_t em_queue_handle_raw(uint16_t device_id, uint16_t qid);
+
+2. Event
+   (see include/event_machine/api/event_machine_event.h for documentation)
+
+ - Add the em_event_get_pool_subpool() function
+   Add a new event API function that returns both the EM event-pool and the
+   subpool the event was allocated from.
+   EM API:
+   em_pool_t em_event_get_pool_subpool(em_event_t event, int *subpool /out/);
+
+3. EM Handle
+ - EM-handle to unsigned integer conversion functions.
+   Diagnostic conversion-to-'unsigned integer' functions for various EM handles
+   added.
+   Event, EO, queue group, event group, atomic group, pool, timer and tmo
+   handles can be converted to uint64_t:s.
+   EM API:
+   uint64_t em_atomic_group_to_u64(em_atomic_group_t atomic_group);
+   uint64_t em_eo_to_u64(em_eo_t eo);
+   uint64_t em_event_group_to_u64(em_event_group_t event_group);
+   uint64_t em_event_to_u64(em_event_t event);
+   uint64_t em_pool_to_u64(em_pool_t pool);
+   uint64_t em_queue_group_to_u64(em_queue_group_t queue_group);
+   uint64_t em_timer_to_u64(em_timer_t timer);
+   uint64_t em_tmo_to_u64(em_tmo_t tmo);
+
+   The queue handle can be converted to an uint32_t. The queue conversion
+   is different since it reflects the fact that the queue handle consists
+   of a 16-bit device-id and a 16-bit queue-id.
+   EM API:
+   uint32_t em_queue_to_u32(em_queue_t queue);
+
+4. EM device-ID
+   (see include/event_machine/platform/event_machine_init.h for documentation)
+
+ - Add a function that returns the EM device-id for the current instance.
+   This is a convenience function that returns the EM device-id given by the
+   user to em_init() via the em_conf_t::device_id field.
+   The function should only be called after a successful EM initialization.
+   EM API:
+   uint16_t em_device_id(void);
+
+--------------------------------------------------------------------------------
 API 3.4 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=4)
 --------------------------------------------------------------------------------
 1. Dispatch

@@ -212,7 +212,6 @@ extern "C" {
  * @example timer_test.c
  * performance:
  * @example atomic_processing_end.c
- * @example bench_event.c
  * @example loop.c
  * @example loop_multircv.c
  * @example loop_refs.c
@@ -224,6 +223,9 @@ extern "C" {
  * @example scheduling_latency.c
  * @example send_multi.c
  * @example timer_test_periodic.c
+ * bench:
+ * @example bench_event.c
+ * @example bench_pool.c
  */
 
 /* EM version */

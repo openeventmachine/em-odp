@@ -142,8 +142,7 @@ output_queue_track(queue_elem_t *const output_q_elem)
 {
 	output_queue_track_t *const track =
 		&em_locm.output_queue_track;
-	em_queue_t queue = (em_queue_t)(uintptr_t)output_q_elem->queue;
-	const int qidx = queue_hdl2idx(queue);
+	const uint32_t qidx = output_q_elem->output.idx;
 
 	if (track->used_queues[qidx] == NULL) {
 		track->used_queues[qidx] = output_q_elem;

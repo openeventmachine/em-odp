@@ -67,12 +67,6 @@ COMPILE_TIME_ASSERT(MAX_INTERNAL_QUEUES - 1 >= EM_MAX_CORES,
 #define _FIRST_DYN_QUEUE (_LAST_INTERNAL_QUEUE + 1)
 #define FIRST_DYN_QUEUE  ((uint16_t)_FIRST_DYN_QUEUE)
 
-#define MAX_DYN_QUEUES  (EM_MAX_QUEUES - \
-			 (_FIRST_DYN_QUEUE - EM_QUEUE_RANGE_OFFSET))
-
-#define _LAST_DYN_QUEUE  (_FIRST_DYN_QUEUE + MAX_DYN_QUEUES - 1)
-#define LAST_DYN_QUEUE   ((uint16_t)_LAST_DYN_QUEUE)
-
 COMPILE_TIME_ASSERT(_FIRST_DYN_QUEUE > _LAST_INTERNAL_QUEUE,
 		    FIRST_DYN_QUEUE_ERROR);
 
@@ -120,9 +114,6 @@ typedef union {
 	};
 } internal_queue_t;
 
-/* Assert that all EM queues can fit into the .queue_id field */
-COMPILE_TIME_ASSERT(UINT16_MAX >= EM_MAX_QUEUES,
-		    INTERNAL_QUEUE_ID_MAX_ERROR);
 /* Verify size of struct, i.e. accept no padding */
 COMPILE_TIME_ASSERT(sizeof(internal_queue_t) == sizeof(em_queue_t),
 		    INTERNAL_QUEUE_T_SIZE_ERROR);
@@ -177,6 +168,8 @@ typedef struct q_elem_output_ {
 	em_output_queue_conf_t output_conf;
 	/** Copied output_fn_args content of length 'args_len' stored in event */
 	em_event_t output_fn_args_event;
+	/** Output queue index used for output queue tracking, not same as queue index */
+	uint32_t idx;
 	/** Lock for output queues during an ordered-context */
 	env_spinlock_t lock;
 } q_elem_output_t;
@@ -276,14 +269,27 @@ COMPILE_TIME_ASSERT(sizeof(queue_elem_t) % ENV_CACHE_LINE_SIZE == 0,
  * EM queue element table
  */
 typedef struct queue_tbl_t {
-	/** Queue element table */
-	queue_elem_t queue_elem[EM_MAX_QUEUES] ENV_CACHE_LINE_ALIGNED;
 	/** ODP queue capabilities common for all queues */
 	odp_queue_capability_t odp_queue_capability;
 	/** ODP schedule capabilities related to queues */
 	odp_schedule_capability_t odp_schedule_capability;
-	/** Queue name table */
-	char name[EM_MAX_QUEUES][EM_QUEUE_NAME_LEN] ENV_CACHE_LINE_ALIGNED;
+	/** Current number of allocated output queues */
+	env_atomic32_t output_queue_count ENV_CACHE_LINE_ALIGNED;
+	/** Free output queue indexes */
+	bool output_queue_idx_free[EM_MAX_OUTPUT_QUEUES];
+	/** Lock for output queue (de-)allocations */
+	env_spinlock_t output_queue_lock;
+
+	/**
+	 * Dynamically allocated memory starts here. The elements
+	 * are in a single continuous memory block. The amount of memory
+	 * reserved depends on the max number of EM queues given in
+	 * EM config file.
+	 */
+	/** Queue element table, format: queue_elem[em_queue_get_max_num()] */
+	queue_elem_t *queue_elem ENV_CACHE_LINE_ALIGNED;
+	/** Queue name table, format: name[em_queue_get_max_num()][EM_QUEUE_NAME_LEN] */
+	char (*name)[EM_QUEUE_NAME_LEN];
 } queue_tbl_t;
 
 /**
@@ -309,8 +315,8 @@ typedef struct local_queues_t {
  */
 typedef struct output_queue_track_t {
 	unsigned int idx_cnt;
-	uint16_t idx[EM_MAX_QUEUES];
-	queue_elem_t *used_queues[EM_MAX_QUEUES];
+	uint16_t idx[EM_MAX_OUTPUT_QUEUES];
+	queue_elem_t *used_queues[EM_MAX_OUTPUT_QUEUES];
 } output_queue_track_t;
 
 #ifdef __cplusplus

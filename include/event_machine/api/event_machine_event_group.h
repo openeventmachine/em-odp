@@ -455,6 +455,18 @@ em_event_group_t
 em_event_group_get_next(void);
 
 /**
+ * Convert an event group handle to an unsigned integer
+ *
+ * @param event_group  Event group handle to be converted
+ * @return  uint64_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_event_group_t handle.
+ */
+uint64_t em_event_group_to_u64(em_event_group_t event_group);
+
+/**
  * @}
  */
 #ifdef __cplusplus

@@ -213,7 +213,10 @@ static void event_vector_prepare_free_full(em_event_t event, const uint16_t api_
 	if (sz) {
 		event_hdr_t *ev_hdrs[sz];
 
-		event_to_hdr_multi(ev_tbl, ev_hdrs, sz);
+		/* same as event_to_hdr_multi(), removes gcc-12 LTO error in haswell */
+		for (uint32_t i = 0; i < sz; i++)
+			ev_hdrs[i] = event_to_hdr(ev_tbl[i]);
+
 		evstate_free_multi(ev_tbl, ev_hdrs, sz, api_op);
 
 		/* drop ESV generation from event handles */
@@ -245,6 +248,17 @@ static void event_vector_prepare_free_full__revert(em_event_t event, const uint1
 	}
 }
 
+/**
+ * Helper to em_free() and em_free_multi() to determine whether timeout events
+ * from periodic timer rings can exist and if free() needs to check for them.
+ * Active tmo events from ring timers must never be freed (user error), only
+ * inactive (last tmo event after cancel) can be freed.
+ */
+static inline bool timer_rings_used(void)
+{
+	return em_shm->timers.num_ring_create_calls > 0 ? true : false;
+}
+
 void em_free(em_event_t event)
 {
 	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
@@ -255,9 +269,10 @@ void em_free(em_event_t event)
 
 	odp_event_t odp_event = event_em2odp(event);
 	const bool esv_ena = esv_enabled();
+	/* Is a check for an active periodic tmo event from a timer ring needed? */
+	const bool check_tmos = EM_CHECK_LEVEL >= 2 && timer_rings_used();
 
-	if (EM_CHECK_LEVEL > 0 &&
-	    unlikely(odp_event_type(odp_event) == ODP_EVENT_TIMEOUT)) {
+	if (unlikely(check_tmos && odp_event_type(odp_event) == ODP_EVENT_TIMEOUT)) {
 		event_hdr_t *ev_hdr = event_to_hdr(event);
 
 		if (unlikely(ev_hdr->flags.tmo_type != EM_TMO_TYPE_NONE)) {
@@ -281,24 +296,76 @@ void em_free(em_event_t event)
 	odp_event_free(odp_event);
 }
 
-/* helper to remove active TIMER events from free list */
-static inline int remove_active_timers(int num, odp_event_t odp_evtbl[/*in/out*/],
-				       event_hdr_t *ev_hdr_tbl[/*in/out*/],
-				       em_event_t ev_tbl[/*in/out*/])
+/**
+ * Helper to em_free_multi() to remove active periodic tmo events
+ * (from ring timers) from the free list.
+ *
+ * Active tmo events from ring timers must never be freed (user error), only
+ * inactive (last tmo event after cancel) can be freed. Thus remove the active
+ * ones if the user incorrectly tries to free them.
+ */
+static inline int
+rem_active_ring_timer_tmos(const int num, odp_event_t odp_evtbl[/*in/out*/],
+			   event_hdr_t *ev_hdr_tbl[/*in/out*/],
+			   em_event_t ev_tbl[/*in/out*/])
 {
+	int first_tmo_idx = -1;
+
+	/* find first active tmo-event */
 	for (int i = 0; i < num; i++) {
 		if (unlikely(odp_event_type(odp_evtbl[i]) == ODP_EVENT_TIMEOUT &&
 			     ev_hdr_tbl[i]->flags.tmo_type != EM_TMO_TYPE_NONE)) {
-			for (int j = i; j + 1 < num; j++) {
-				odp_evtbl[j] = odp_evtbl[j + 1];
-				ev_hdr_tbl[j] = ev_hdr_tbl[j + 1];
-				ev_tbl[j] = ev_tbl[j + 1];
-			}
-			num--;
+			first_tmo_idx = i;
+			break;
 		}
 	}
 
-	return num;
+	/*
+	 * No active tmo events found - all OK, return.
+	 * This is the normal, no-error, scenario.
+	 */
+	if (likely(first_tmo_idx == -1))
+		return num;
+
+	/*
+	 * Error: Active tmo events found - remove them from the arrays
+	 */
+
+	/* last event is tmo, no need to move/copy anything, just drop last */
+	if (first_tmo_idx == num - 1)
+		return num - 1;
+
+	/*
+	 * Store indexes of "normal events" (i.e. events other than active
+	 * tmo events) to copy from 'first_tmo_idx + 1' onwards.
+	 */
+	int num_cpy = 0;
+	int cpy_idx[num - first_tmo_idx - 1];
+
+	for (int i = first_tmo_idx + 1; i < num; i++) {
+		if (likely(!(odp_event_type(odp_evtbl[i]) == ODP_EVENT_TIMEOUT &&
+			     ev_hdr_tbl[i]->flags.tmo_type != EM_TMO_TYPE_NONE)))
+			cpy_idx[num_cpy++] = i;
+	}
+
+	/* all further events were active tmo events, drop them */
+	if (num_cpy == 0)
+		return first_tmo_idx;
+
+	/*
+	 * Remove all active tmo events from the arrays by copying the "normal"
+	 * events into the slots occupied by the active tmo events.
+	 */
+	for (int i = 0; i < num_cpy; i++) {
+		int src_idx = cpy_idx[i];
+		int dst_idx = first_tmo_idx + i;
+
+		odp_evtbl[dst_idx] = odp_evtbl[src_idx];
+		ev_hdr_tbl[dst_idx] = ev_hdr_tbl[src_idx];
+		ev_tbl[dst_idx] = ev_tbl[src_idx];
+	}
+
+	return first_tmo_idx + num_cpy;
 }
 
 void em_free_multi(em_event_t events[], int num)
@@ -329,13 +396,16 @@ void em_free_multi(em_event_t events[], int num)
 
 	events_em2odp(events, odp_events/*out*/, num);
 
-	if (EM_CHECK_LEVEL > 1 || esv_ena) {
+	/* Is a check for active periodic tmo events from timer rings needed? */
+	const bool check_tmos = EM_CHECK_LEVEL >= 2 && timer_rings_used();
+
+	if (check_tmos || esv_ena) {
 		event_hdr_t *ev_hdrs[num];
 
 		event_to_hdr_multi(events, ev_hdrs, num);
 
-		if (EM_CHECK_LEVEL > 1) {
-			num_free = remove_active_timers(num, odp_events, ev_hdrs, events);
+		if (check_tmos) {
+			num_free = rem_active_ring_timer_tmos(num, odp_events, ev_hdrs, events);
 			if (unlikely(num_free != num))
 				INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_FREE_MULTI,
 					       "Can't free active TIMER events: %d of %d ignored",
@@ -725,14 +795,8 @@ uint32_t em_event_get_size(em_event_t event)
 	return 0;
 }
 
-em_pool_t em_event_get_pool(em_event_t event)
+static inline odp_pool_t event_get_odp_pool(em_event_t event)
 {
-	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_POOL,
-			       "event undefined!");
-		return EM_POOL_UNDEF;
-	}
-
 	odp_event_t odp_event = event_em2odp(event);
 	odp_event_type_t type = odp_event_type(odp_event);
 	odp_pool_t odp_pool = ODP_POOL_INVALID;
@@ -749,9 +813,20 @@ em_pool_t em_event_get_pool(em_event_t event)
 		odp_packet_vector_t pktvec = odp_packet_vector_from_event(odp_event);
 
 		odp_pool = odp_packet_vector_pool(pktvec);
-	} else if (type == ODP_EVENT_TIMEOUT) {
+	}
+
+	return odp_pool;
+}
+
+em_pool_t em_event_get_pool(em_event_t event)
+{
+	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_POOL,
+			       "event undefined!");
 		return EM_POOL_UNDEF;
 	}
+
+	odp_pool_t odp_pool = event_get_odp_pool(event);
 
 	if (unlikely(odp_pool == ODP_POOL_INVALID))
 		return EM_POOL_UNDEF;
@@ -764,6 +839,46 @@ em_pool_t em_event_get_pool(em_event_t event)
 	 * (to EM) odp pools.
 	 */
 	return pool;
+}
+
+em_pool_t em_event_get_pool_subpool(em_event_t event, int *subpool /*out*/)
+{
+	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_POOL_SUBPOOL,
+			       "event undefined!");
+		return EM_POOL_UNDEF;
+	}
+
+	odp_pool_t odp_pool = event_get_odp_pool(event);
+
+	if (unlikely(odp_pool == ODP_POOL_INVALID))
+		return EM_POOL_UNDEF;
+
+	em_pool_t pool = pool_odp2em(odp_pool);
+
+	if (!subpool || pool == EM_POOL_UNDEF)
+		return pool; /* return the pool (or undef), subpool:don't care */
+
+	/*
+	 * EM pool found - obtain subpool information.
+	 */
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (unlikely(!pool_elem))
+		return EM_POOL_UNDEF;
+
+	for (int i = 0; i < pool_elem->num_subpools; i++) {
+		if (pool_elem->odp_pool[i] == odp_pool) {
+			*subpool = i;
+			return pool; /* success! return pool & subpool */
+		}
+	}
+
+	/* Error: pool found but no subpool - should never happen! */
+	INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_GET_POOL_SUBPOOL,
+		       "No matching subpool found from EM pool:%" PRI_POOL "",
+		       pool);
+	return EM_POOL_UNDEF;
 }
 
 em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype)
@@ -1737,4 +1852,9 @@ err_vecinfo:
 		vector_info->max_size = 0;
 	}
 	return status;
+}
+
+uint64_t em_event_to_u64(em_event_t event)
+{
+	return (uint64_t)event;
 }

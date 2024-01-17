@@ -736,13 +736,18 @@ do_dummy_work(unsigned int work_loops)
 		/* Dummy workload after releasing atomic context */
 		workbuf_event = em_alloc(sizeof(perf_event_t),
 					 EM_EVENT_TYPE_SW, perf_shm->pool);
-		test_fatal_if(workbuf_event == EM_EVENT_UNDEF,
-			      "em_alloc(pool:%" PRI_POOL ") of buf:%u of tot:%u failed!",
-			      perf_shm->pool, i, work_loops);
+		if (unlikely(workbuf_event == EM_EVENT_UNDEF)) {
+			test_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead,
+				   "em_alloc(pool:%" PRI_POOL ") of buf:%u of tot:%u failed!",
+				   perf_shm->pool, i, work_loops);
+			return;
+		}
 		workbuf = em_event_pointer(workbuf_event);
-		from = &workbuf->data[DATA_SIZE / 2];
-		to = &workbuf->data[0];
-		memcpy(to, from, DATA_SIZE / 2);
+		if (likely(workbuf)) {
+			from = &workbuf->data[DATA_SIZE / 2];
+			to = &workbuf->data[0];
+			memcpy(to, from, DATA_SIZE / 2);
+		}
 		em_free(workbuf_event);
 	}
 }

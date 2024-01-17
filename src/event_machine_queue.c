@@ -61,13 +61,8 @@ em_queue_create_static(const char *name, em_queue_type_t type,
 {
 	const char *err_str = "";
 	em_queue_t queue_static;
-	internal_queue_t iq;
 
-	iq.queue = queue;
-
-	RETURN_ERROR_IF(iq.device_id != em_shm->conf.device_id ||
-			iq.queue_id < EM_QUEUE_STATIC_MIN ||
-			iq.queue_id > EM_QUEUE_STATIC_MAX,
+	RETURN_ERROR_IF(queue == EM_QUEUE_UNDEF,
 			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_CREATE_STATIC,
 			"Invalid static queue requested:%" PRI_QUEUE "",
 			queue);
@@ -75,11 +70,25 @@ em_queue_create_static(const char *name, em_queue_type_t type,
 	queue_static = queue_create(name, type, prio, queue_group,
 				    queue, EM_ATOMIC_GROUP_UNDEF,
 				    conf, &err_str);
-
-	RETURN_ERROR_IF(queue_static == EM_QUEUE_UNDEF ||
-			queue_static != queue,
+	RETURN_ERROR_IF(queue_static == EM_QUEUE_UNDEF,
 			EM_ERR_NOT_FREE, EM_ESCOPE_QUEUE_CREATE_STATIC,
-			err_str);
+			"Static queue:%" PRI_QUEUE " creation failed: %s", queue, err_str);
+
+	if (unlikely(queue_static != queue)) {
+		queue_elem_t *q_elem = queue_elem_get(queue_static);
+
+		/* Fatal error if q_elem == NULL, should never happen if queue_static != UNDEF */
+		RETURN_ERROR_IF(!q_elem, EM_FATAL(EM_ERR_BAD_POINTER),
+				EM_ESCOPE_QUEUE_CREATE_STATIC,
+				"Queue error - req:%" PRI_QUEUE " vs. %" PRI_QUEUE "(q_elem NULL)",
+				queue, queue_static);
+
+		queue_delete(q_elem);
+		return INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_CREATE_STATIC,
+				      "Queue error - req:%" PRI_QUEUE " vs. %" PRI_QUEUE "",
+				      queue, queue_static);
+	}
+
 	return EM_OK;
 }
 
@@ -161,7 +170,7 @@ em_queue_t em_queue_find(const char *name)
 {
 	if (name && *name) {
 		/* this might be worth optimizing if maaany queues */
-		for (int i = 0; i < EM_MAX_QUEUES; i++) {
+		for (unsigned int i = 0; i < em_shm->opt.queue.max_num; i++) {
 			const queue_elem_t *q_elem =
 				&em_shm->queue_tbl.queue_elem[i];
 
@@ -299,6 +308,7 @@ em_queue_t em_queue_get_first(unsigned int *num)
 {
 	const queue_tbl_t *const queue_tbl = &em_shm->queue_tbl;
 	const unsigned int queue_cnt = queue_count();
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
 
 	_queue_tbl_iter_idx = 0; /* reset iteration */
 
@@ -306,14 +316,14 @@ em_queue_t em_queue_get_first(unsigned int *num)
 		*num = queue_cnt;
 
 	if (queue_cnt == 0) {
-		_queue_tbl_iter_idx = EM_MAX_QUEUES; /* UNDEF = _get_next() */
+		_queue_tbl_iter_idx = max_queues; /* UNDEF = _get_next() */
 		return EM_QUEUE_UNDEF;
 	}
 
 	/* find first */
 	while (!queue_allocated(&queue_tbl->queue_elem[_queue_tbl_iter_idx])) {
 		_queue_tbl_iter_idx++;
-		if (_queue_tbl_iter_idx >= EM_MAX_QUEUES)
+		if (_queue_tbl_iter_idx >= max_queues)
 			return EM_QUEUE_UNDEF;
 	}
 
@@ -322,7 +332,9 @@ em_queue_t em_queue_get_first(unsigned int *num)
 
 em_queue_t em_queue_get_next(void)
 {
-	if (_queue_tbl_iter_idx >= EM_MAX_QUEUES - 1)
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
+
+	if (_queue_tbl_iter_idx >= max_queues - 1)
 		return EM_QUEUE_UNDEF;
 
 	_queue_tbl_iter_idx++;
@@ -332,7 +344,7 @@ em_queue_t em_queue_get_next(void)
 	/* find next */
 	while (!queue_allocated(&queue_tbl->queue_elem[_queue_tbl_iter_idx])) {
 		_queue_tbl_iter_idx++;
-		if (_queue_tbl_iter_idx >= EM_MAX_QUEUES)
+		if (_queue_tbl_iter_idx >= max_queues)
 			return EM_QUEUE_UNDEF;
 	}
 
@@ -344,7 +356,7 @@ int em_queue_get_index(em_queue_t queue)
 	const internal_queue_t iq = {.queue = queue};
 	const int queue_idx = queue_id2idx(iq.queue_id); /* return value */
 
-	if (unlikely((unsigned int)queue_idx > EM_MAX_QUEUES - 1))
+	if (unlikely((unsigned int)queue_idx > em_shm->opt.queue.max_num - 1))
 		goto error;
 
 	if (EM_CHECK_LEVEL > 0 &&
@@ -365,7 +377,7 @@ error:
 		       "Bad arg, invalid queue:%" PRI_QUEUE ":\n"
 		       "  Q.device-id:0x%" PRIx16 " Q.id:0x%" PRIx16 "",
 		       queue, iq.device_id, iq.queue_id);
-	return queue_idx % EM_MAX_QUEUES;
+	return queue_idx % em_shm->opt.queue.max_num;
 }
 
 int em_queue_get_num_prio(int *num_runtime)
@@ -380,4 +392,48 @@ int em_queue_get_num_prio(int *num_runtime)
 		*num_runtime = em_shm->queue_prio.num_runtime;
 
 	return EM_QUEUE_PRIO_NUM;
+}
+
+int em_queue_get_max_num(void)
+{
+	return em_shm->opt.queue.max_num;
+}
+
+uint16_t em_queue_get_device_id(em_queue_t queue)
+{
+	internal_queue_t iq = {.queue = queue};
+
+	return iq.device_id;
+}
+
+uint16_t em_queue_get_qid(em_queue_t queue)
+{
+	internal_queue_t iq = {.queue = queue};
+
+	return iq.queue_id;
+}
+
+void em_queue_get_ids(em_queue_t queue, uint16_t *device_id /*out*/, uint16_t *qid /*out*/)
+{
+	internal_queue_t iq = {.queue = queue};
+
+	if (likely(device_id))
+		*device_id = iq.device_id;
+	if (likely(qid))
+		*qid = iq.queue_id;
+}
+
+em_queue_t em_queue_handle_raw(uint16_t device_id, uint16_t qid)
+{
+	internal_queue_t iq = {.device_id = device_id, .queue_id = qid};
+
+	return iq.queue;
+}
+
+uint32_t em_queue_to_u32(em_queue_t queue)
+{
+	uint64_t queue_uptr = (uintptr_t)queue;
+	uint32_t queue_u32 = (uint32_t)(queue_uptr & UINT32_MAX);
+
+	return queue_u32;
 }

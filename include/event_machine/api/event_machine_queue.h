@@ -465,6 +465,7 @@ em_queue_get_next(void);
  *
  * Only meaningful for queues created within the current EM instance.
  *
+ * @param queue  EM queue handle
  * @return Index in the range 0...EM_MAX_QUEUES-1
  */
 int em_queue_get_index(em_queue_t queue);
@@ -489,6 +490,86 @@ int em_queue_get_index(em_queue_t queue);
  * @see em-odp.conf
  */
 int em_queue_get_num_prio(int *num_runtime);
+
+/**
+ * Returns the maximum number of queues that EM can support.
+ *
+ * The max number of EM queues can be configured via EM config file.
+ * This contains the number of internal EM ctrl queues and all EM queues
+ * (static/dynamic) created by application.
+ *
+ * @return the max number of EM queues that can be supported
+ */
+int em_queue_get_max_num(void);
+
+/**
+ * Returns the device-id extracted from the given queue handle
+ *
+ * An EM queue handle consists of a device-id and a queue-id. This function
+ * extracts the device-id from an EM queue handle and returns it.
+ *
+ * @param queue  EM queue handle
+ * @return the device-id extracted from the queue handle
+ */
+uint16_t em_queue_get_device_id(em_queue_t queue);
+
+/**
+ * Returns the queue-id extracted from the given queue handle
+ *
+ * An EM queue handle consists of a device-id and a queue-id. This function
+ * extracts the queue-id from an EM queue handle and returns it.
+ *
+ * @param queue EM queue handle
+ * @return the queue-id extracted from the queue handle
+ */
+uint16_t em_queue_get_qid(em_queue_t queue);
+
+/**
+ * Extract and output both the device-id and the queue-id from the given
+ * queue handle.
+ *
+ * An EM queue handle consists of a device-id and a queue-id. This function
+ * extracts both the device-id and the queue-id from an EM queue handle and
+ * returns them to the caller via the output arguments 'device_id' and 'qid'.
+ *
+ * @param       queue      EM queue handle
+ * @param[out]  device_id  device-id
+ * @param[out]  qid        queue-id
+ */
+void em_queue_get_ids(em_queue_t queue, uint16_t *device_id /*out*/, uint16_t *qid /*out*/);
+
+/**
+ * Construct a raw EM queue handle from the provided device-id and queue-id.
+ *
+ * An EM queue handle consists of a device-id and a queue-id. This function
+ * constructs an EM queue handle by combining the device-id and queue-id
+ * together into an EM queue handle.
+ *
+ * @note No checks for the validity of the provided device-id or queue-id are
+ * done. Thus the constructed EM queue handle is a raw value that may not refer
+ * to any existing queue on this EM instance or on another. Be careful.
+ *
+ * @param device_id
+ * @param qid
+ * @return raw EM queue handle created from the given arguments
+ */
+em_queue_t em_queue_handle_raw(uint16_t device_id, uint16_t qid);
+
+/**
+ * Convert an queue handle to an unsigned integer
+ *
+ * @param queue  queue handle to be converted
+ * @return       uint32_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_queue_t handle.
+ *
+ * @note Unlike other "EM handle to unsigned integer" conversion functions,
+ * the queue handle is converted to a uint32_t (instead of a uint64_t) since
+ * the handle consists of a 16-bit device-id and a 16-bit queue-id.
+ */
+uint32_t em_queue_to_u32(em_queue_t queue);
 
 /**
  * @}

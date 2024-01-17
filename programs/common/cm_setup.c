@@ -70,39 +70,70 @@
 "Event Machine (EM) example application.\n"					\
 "\n"										\
 "Mandatory EM-OPTIONS:\n"							\
-"  -c, --coremask <arg>    Select the cores to use, hexadecimal\n"		\
+"  -c, --coremask <arg>    Select the cores to use, hexadecimal.\n"		\
 "  -p, --process-per-core  Running EM with one process per core.\n"		\
 "  -t, --thread-per-core   Running EM with one thread per core.\n"		\
 "    Select EITHER -p OR -t, but not both!\n"					\
 "\n"										\
-"Optional [APPL&EM-OPTIONS]\n"							\
-"  -d, --device-id <arg>        Device-id, hexadecimal (default: 0x0)\n"	\
-"  -r, --dispatch-rounds <arg>  Number of dispatch rounds (default: 0=forever)\n"\
-"  -s, --startup-mode <arg>     Application startup mode:\n"	\
-"                               0: Start-up & init all EM cores before appl-setup (default)\n" \
-"                               1: Start-up & init only one EM core before appl-setup,\n" \
-"                                  the rest of the EM-cores are init only after that.\n" \
-"Packet-IO\n"									\
-"  -m, --pktin-mode <arg>        Select the packet-input mode to use:\n"	\
-"                                0: Direct mode: PKTIN_MODE_DIRECT (default)\n"	\
-"                                1: Plain queue mode: PKTIN_MODE_QUEUE\n"	\
-"                                2: Scheduler mode with parallel queues:\n"	\
-"                                   PKTIN_MODE_SCHED + SCHED_SYNC_PARALLEL\n"	\
-"                                3: Scheduler mode with atomic queues:\n"	\
-"                                   PKTIN_MODE_SCHED + SCHED_SYNC_ATOMIC\n"	\
-"                                4: Scheduler mode with ordered queues:\n"	\
-"                                   PKTIN_MODE_SCHED + SCHED_SYNC_ORDERED\n"	\
-"  -v, --pktin-vector            Enable vector-mode for packet-input (default: disabled)\n"\
-"                                Supported with --pktin-mode:s 2, 3, 4\n"	\
-"  -i, --eth-interface <arg(s)>  Select the ethernet interface(s) to use\n"	\
-"  -e, --pktpool-em              Packet-io pool is an EM-pool (default)\n"	\
-"  -o, --pktpool-odp             Packet-io pool is an ODP-pool\n"		\
-"  -x, --vecpool-em              Packet-io vector pool is an EM-pool (default)\n" \
-"  -y, --vecpool-odp             Packet-io vector pool is an ODP-pool\n"	  \
+"Optional [APPL & EM-OPTIONS]\n"								\
+"  -d, --device-id <arg>        Device-id, hexadecimal (default: 0x0)\n"			\
+"  -s, --startup-mode <arg>     Application startup mode:\n"					\
+"                               0: Start-up & init all EM cores before appl-setup (default)\n"	\
+"                               1: Start-up & init only one EM core before appl-setup,\n"	\
+"                                  the rest of the EM-cores are init only after that.\n"	\
+"\n"												\
+"EM dispatch options (optional):\n"								\
+"  a) using em_dispatch() - default: uses em_dispatch() unless options in b) are given.\n"	\
+"    -r, --dispatch-rounds <arg>       Number of dispatch rounds (default: 0=forever).\n"	\
+"  b) using em_dispatch_duration() - combinations of these options possible.\n"			\
+"    --duration-rounds <arg>           Dispatch for the given number of rounds.\n"		\
+"    --duration-ns <arg>               Dispatch for the given time in nanoseconds.\n"		\
+"    --duration-events <arg>           Dispatch until the given number of events\n"		\
+"                                      have been handled.\n"					\
+"    --duration-noevents-rounds <arg>  Dispatch until no events have been received for the\n"	\
+"                                      given number of rounds.\n"				\
+"    --duration-noevents-ns <arg>      Dispatch until no events have been received for the\n"	\
+"                                      given time in nanoseconds.\n"				\
+"    --burst-size <arg>                The max number of events the dispatcher will request\n"	\
+"                                      in one burst from the scheduler.\n"			\
+"                                      (default: EM_SCHED_MULTI_MAX_BURST=%d)\n"		\
+"    --wait-ns <arg>                   Scheduler wait-for-events timeout in nanoseconds.\n"	\
+"                                      The scheduler will wait for events, if no immediately\n" \
+"                                      available, for 'wait_ns' per dispatch round.\n"		\
+"                                      (default: 0, do not wait)\n"				\
+"    --sched-pause                     Pause the scheduler on the calling core when exiting the\n" \
+"                                      EM dispatch function. If enabled, will also resume the\n"   \
+"                                      scheduling when entering dispatch (default: don't pause).\n"\
+"    Select EITHER a) OR b), but not both!\n"							\
+"\n"												\
+"Packet-IO (optional)\n"									\
+"  -m, --pktin-mode <arg>        Select the packet-input mode to use:\n"			\
+"                                0: Direct mode: PKTIN_MODE_DIRECT (default)\n"			\
+"                                1: Plain queue mode: PKTIN_MODE_QUEUE\n"			\
+"                                2: Scheduler mode with parallel queues:\n"			\
+"                                   PKTIN_MODE_SCHED + SCHED_SYNC_PARALLEL\n"			\
+"                                3: Scheduler mode with atomic queues:\n"			\
+"                                   PKTIN_MODE_SCHED + SCHED_SYNC_ATOMIC\n"			\
+"                                4: Scheduler mode with ordered queues:\n"			\
+"                                   PKTIN_MODE_SCHED + SCHED_SYNC_ORDERED\n"			\
+"  -v, --pktin-vector            Enable vector-mode for packet-input (default: disabled)\n"	\
+"                                Supported with --pktin-mode:s 2, 3, 4\n"			\
+"  -i, --eth-interface <arg(s)>  Select the ethernet interface(s) to use\n"			\
+"  -e, --pktpool-em              Packet-io pool is an EM-pool (default)\n"			\
+"  -o, --pktpool-odp             Packet-io pool is an ODP-pool\n"				\
+"  -x, --vecpool-em              Packet-io vector pool is an EM-pool (default)\n"		\
+"  -y, --vecpool-odp             Packet-io vector pool is an ODP-pool\n"			\
 "    Select EITHER -e OR -o, but not both!\n" \
 "Help\n" \
 "  -h, --help              Display help and exit.\n" \
 "\n"
+
+static void
+usage(char *progname)
+{
+	APPL_PRINT(USAGE_FMT, NO_PATH(progname), NO_PATH(progname),
+		   EM_SCHED_MULTI_MAX_BURST);
+}
 
 /**
  * Stored command line arguments given at startup
@@ -130,8 +161,47 @@ typedef struct {
 		char name[APPL_NAME_LEN];
 		/** Start-up mode */
 		startup_mode_t startup_mode;
-		/** Dispatch rounds before returning */
-		uint32_t dispatch_rounds;
+
+		/** Dispatch rounds before returning: em_dispatch(rounds) */
+		uint64_t dispatch_rounds;
+
+		struct {
+			/** Use em_dispatch_duration(duration, opt, ...) */
+			bool in_use;
+
+			/** Use 'rounds' as duration with em_dispatch_duration() */
+			bool use_rounds;
+			/** Dispatch for the given number of rounds */
+			uint64_t rounds;
+
+			/** Use 'ns' as duration with em_dispatch_duration() */
+			bool use_ns;
+			/** Dispatch for the given time of nanoseconds */
+			uint64_t ns;
+
+			/** Use 'events' as duration with em_dispatch_duration() */
+			bool use_events;
+			/** Dispatch until the given number of events have been handled */
+			uint64_t events;
+
+			/** Use 'noevents_rounds' as duration with em_dispatch_duration() */
+			bool use_noevents_rounds;
+			/** Dispatch until no events have been received for 'noevents_rounds' */
+			uint64_t noevents_rounds;
+
+			/** Use 'use_noevents_ns' as duration with em_dispatch_duration() */
+			bool use_noevents_ns;
+			/** Dispatch until no events have been received for 'noevents_ns' */
+			uint64_t noevents_ns;
+
+			/** Scheduler wait-for-events timeout in nanoseconds */
+			uint64_t wait_ns;
+			/** Scheduler event-burst size */
+			unsigned int burst_size;
+			/** Pause scheduler when returning form dispatch */
+			bool sched_pause;
+		} dispatch_duration;
+
 		/** Packet I/O parameters */
 		struct {
 			/** Packet input mode */
@@ -172,16 +242,18 @@ typedef struct {
 
 /**
  * Dispatch rounds for em_dispatch() during program execution to regularly
- * return from dipatch and inspect the 'appl_shm->exit_flag' value. Program
+ * return from dispatch and inspect the 'appl_shm->exit_flag' value. Program
  * termination will begin once a set 'appl_shm->exit_flags' has been noticed.
  */
 #define EXIT_CHECK_DISPATCH_ROUNDS 20000
 
 /**
- * Dispatch rounds for em_dispatch() during termination to properly sync the
- * cores and shutdown actions and allow for a graceful shutdown.
+ * Dispatch duration in nanoseconds for em_dispatch_duration() during program
+ * execution to regularly return from dispatch and inspect the
+ * 'appl_shm->exit_flag' value. Program termination will begin once a set
+ * 'appl_shm->exit_flags' has been noticed.
  */
-#define TERM_DISPATCH_ROUNDS 16
+#define EXIT_CHECK_DISPATCH_DURATION_NS 1000000000 /* 1s */
 
 static void
 parse_args(int argc, char *argv[], parse_args_t *parse_args /* out */);
@@ -222,12 +294,6 @@ static void
 sigchld_handler(int sig ODP_UNUSED);
 static void
 sigint_handler(int signo ODP_UNUSED);
-
-static void
-usage(char *progname)
-{
-	APPL_PRINT(USAGE_FMT, NO_PATH(progname), NO_PATH(progname));
-}
 
 /**
  * Global pointer to common application shared memory
@@ -284,10 +350,6 @@ int cm_setup(int argc, char *argv[])
 	 * Reserve application shared memory in one chunk.
 	 */
 	uint32_t flags = 0;
-
-#if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
-	flags |= ODP_SHM_SINGLE_VA;
-#else
 	odp_shm_capability_t shm_capa;
 	int err = odp_shm_capability(&shm_capa);
 
@@ -296,7 +358,7 @@ int cm_setup(int argc, char *argv[])
 
 	if (shm_capa.flags & ODP_SHM_SINGLE_VA)
 		flags |= ODP_SHM_SINGLE_VA;
-#endif
+
 	odp_shm_t shm = odp_shm_reserve("appl_shm", sizeof(appl_shm_t),
 					ODP_CACHE_LINE_SIZE, flags);
 	if (unlikely(shm == ODP_SHM_INVALID))
@@ -595,8 +657,49 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 		appl_conf->num_threads = parsed->args_em.core_count;
 	}
 
-	appl_conf->dispatch_rounds = parsed->args_appl.dispatch_rounds;
 	appl_conf->startup_mode = parsed->args_appl.startup_mode;
+
+	appl_conf->dispatch_rounds = parsed->args_appl.dispatch_rounds;
+
+	appl_conf->dispatch_duration.in_use = parsed->args_appl.dispatch_duration.in_use;
+
+	if (appl_conf->dispatch_duration.in_use) {
+		em_dispatch_opt_init(&appl_conf->dispatch_duration.opt);
+
+		if (parsed->args_appl.dispatch_duration.use_rounds) {
+			appl_conf->dispatch_duration.duration.select |= EM_DISPATCH_DURATION_ROUNDS;
+			appl_conf->dispatch_duration.duration.rounds =
+				parsed->args_appl.dispatch_duration.rounds;
+		}
+		if (parsed->args_appl.dispatch_duration.use_ns) {
+			appl_conf->dispatch_duration.duration.select |= EM_DISPATCH_DURATION_NS;
+			appl_conf->dispatch_duration.duration.ns =
+				parsed->args_appl.dispatch_duration.ns;
+		}
+		if (parsed->args_appl.dispatch_duration.use_events) {
+			appl_conf->dispatch_duration.duration.select |= EM_DISPATCH_DURATION_EVENTS;
+			appl_conf->dispatch_duration.duration.events =
+				parsed->args_appl.dispatch_duration.events;
+		}
+		if (parsed->args_appl.dispatch_duration.use_noevents_rounds) {
+			appl_conf->dispatch_duration.duration.select |=
+				EM_DISPATCH_DURATION_NO_EVENTS_ROUNDS;
+			appl_conf->dispatch_duration.duration.no_events.rounds =
+				parsed->args_appl.dispatch_duration.noevents_rounds;
+		}
+		if (parsed->args_appl.dispatch_duration.use_noevents_ns) {
+			appl_conf->dispatch_duration.duration.select |=
+				EM_DISPATCH_DURATION_NO_EVENTS_NS;
+			appl_conf->dispatch_duration.duration.no_events.ns =
+				parsed->args_appl.dispatch_duration.noevents_ns;
+		}
+		appl_conf->dispatch_duration.opt.wait_ns =
+			parsed->args_appl.dispatch_duration.wait_ns;
+		appl_conf->dispatch_duration.opt.burst_size =
+			parsed->args_appl.dispatch_duration.burst_size;
+		appl_conf->dispatch_duration.opt.sched_pause =
+			parsed->args_appl.dispatch_duration.sched_pause;
+	}
 
 	/*
 	 * Create the other event pools used by the application.
@@ -731,7 +834,7 @@ create_odp_threads(odp_instance_t instance,
 }
 
 /**
- * @brief Helper to run_core_fn():
+ * @brief Helper to startup_core():
  *        Start-up and init all EM-cores before application setup
  *
  * @param sync       Application start-up and tear-down synchronization vars
@@ -740,14 +843,11 @@ create_odp_threads(odp_instance_t instance,
 static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 			      bool is_thread_per_core)
 {
-	em_status_t stat;
-	int core_id;
-	uint64_t cores;
-
 	/*
 	 * Initialize this thread of execution (proc, thread), i.e. EM-core
 	 */
-	stat = em_init_core();
+	em_status_t stat = em_init_core();
+
 	if (stat != EM_OK)
 		APPL_EXIT_FAILURE("em_init_core():%" PRI_STAT ", EM-core:%02d",
 				  stat, em_core_id());
@@ -769,8 +869,8 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 	 * where they are ready to process events as soon as the EOs have been
 	 * started and queues enabled.
 	 */
-	core_id = em_core_id();
-	cores = (uint64_t)em_core_count();
+	int core_id = em_core_id();
+	uint64_t cores = (uint64_t)em_core_count();
 
 	/* Ensure all EM cores can find the default event pool */
 	if (em_pool_find(EM_POOL_DEFAULT_NAME) != EM_POOL_DEFAULT)
@@ -794,7 +894,7 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 	const char *str = appl_conf->dispatch_rounds == 0 ?
 				"forever" : "rounds";
 
-	APPL_PRINT("Entering the event dispatch loop(%s=%d) on EM-core:%02d\n",
+	APPL_PRINT("Entering the event dispatch loop(%s=%" PRIu64 ") on EM-core:%02d\n",
 		   str, appl_conf->dispatch_rounds, core_id);
 
 	odp_barrier_wait(&sync->start_barrier); /* to print pretty */
@@ -818,16 +918,27 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 	 * completed in order to handle sync-API function calls and to enter
 	 * the main dispatch loop almost at the same time.
 	 */
+	em_dispatch_duration_t start_duration;
+	em_dispatch_opt_t start_opt;
+
+	em_dispatch_opt_init(&start_opt);
+	start_opt.skip_input_poll = true;
+	start_opt.skip_output_drain = true;
+	start_opt.sched_pause = false;
+
+	start_duration.select = EM_DISPATCH_DURATION_ROUNDS;
+	start_duration.rounds = STARTUP_DISPATCH_ROUNDS;
+
 	env_atomic64_inc(&sync->enter_count);
 	do {
-		em_dispatch(STARTUP_DISPATCH_ROUNDS);
+		em_dispatch_duration(&start_duration, &start_opt, NULL);
 		if (core_id == 0)
 			env_atomic64_inc(&sync->enter_count);
 	} while (env_atomic64_get(&sync->enter_count) <= cores);
 }
 
 /**
- * @brief Helper to run_core_fn():
+ * @brief Helper to startup_core():
  *        Start-up and init only one EM-core before application setup. The rest
  *        of the EM-cores are init only after that.
  *
@@ -923,7 +1034,7 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
 	const char *str = appl_conf->dispatch_rounds == 0 ?
 				"forever" : "rounds";
 
-	APPL_PRINT("Entering the event dispatch loop(%s=%d) on EM-core:%02d\n",
+	APPL_PRINT("Entering the event dispatch loop(%s=%" PRIu64 ") on EM-core:%02d\n",
 		   str, appl_conf->dispatch_rounds, core_id);
 
 	/*
@@ -931,60 +1042,40 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
 	 * completed in order to handle sync-API function calls and to enter
 	 * the main dispatch loop almost at the same time.
 	 */
+	em_dispatch_duration_t start_duration;
+	em_dispatch_opt_t start_opt;
+
+	em_dispatch_opt_init(&start_opt);
+	start_opt.skip_input_poll = true;
+	start_opt.skip_output_drain = true;
+	start_opt.sched_pause = false;
+
+	start_duration.select = EM_DISPATCH_DURATION_ROUNDS;
+	start_duration.rounds = STARTUP_DISPATCH_ROUNDS;
+
 	env_atomic64_inc(&sync->enter_count);
 	do {
-		em_dispatch(STARTUP_DISPATCH_ROUNDS);
+		em_dispatch_duration(&start_duration, &start_opt, NULL);
 		if (core_id == 0)
 			env_atomic64_inc(&sync->enter_count);
 	} while (env_atomic64_get(&sync->enter_count) <= 2 * cores);
 }
 
-/**
- * Core runner - application entry on each EM-core
+/*
+ * Startup EM-core.
+ * Allow testing different startup scenarios.
  *
- * Application setup and event dispatch loop run by each EM-core.
- * A call to em_init_core() MUST be made on each EM-core before using other
- * EM API functions to create EOs, queues etc. or calling em_dispatch().
- *
- * @param arg  passed arg actually of type 'appl_shm_t *', i.e. appl shared mem
+ * @param sync       Application start-up and tear-down synchronization vars
+ * @param appl_conf  Application configuration
  */
-static int
-run_core_fn(void *arg)
+static void startup_core(sync_t *sync, appl_conf_t *appl_conf)
 {
-	odp_shm_t shm;
-	appl_shm_t *appl_shm;
-	void *shm_addr;
-	appl_conf_t *appl_conf;
-	sync_t *sync;
-	em_status_t stat;
-	bool is_thread_per_core;
+	bool is_thread_per_core = appl_shm->em_conf.thread_per_core ? true : false;
 
-	/* thread: depend on the odp helper to call odp_init_local */
-	/* process: parent called odp_init_local, fork creates copy for child */
-
-	appl_shm = (appl_shm_t *)arg;
-
-	/* Look up the appl shared memory - sanity check */
-	shm = odp_shm_lookup("appl_shm");
-	if (unlikely(shm == ODP_SHM_INVALID))
-		APPL_EXIT_FAILURE("appl_shm lookup failed");
-	shm_addr = odp_shm_addr(shm);
-	if (unlikely(shm_addr == NULL || shm_addr != (void *)appl_shm))
-		APPL_EXIT_FAILURE("obtaining shared mem addr failed:\n"
-				  "shm_addr:%p appl_shm:%p",
-				  shm_addr, appl_shm);
-
-	appl_conf = &appl_shm->appl_conf;
-	sync = &appl_shm->sync;
-	is_thread_per_core = appl_shm->em_conf.thread_per_core ? true : false;
-
-	/*
-	 * Allow testing different startup scenarios:
-	 */
 	switch (appl_conf->startup_mode) {
 	case STARTUP_ALL_CORES:
 		/*
-		 * All EM-cores start-up and init before appication setup
+		 * All EM-cores start-up and init before application setup
 		 */
 		startup_all_cores(sync, appl_conf, is_thread_per_core);
 		break;
@@ -1000,52 +1091,36 @@ run_core_fn(void *arg)
 				  appl_conf->startup_mode);
 		break;
 	}
+}
 
-	APPL_PRINT("%s() on EM-core:%02d\n", __func__, em_core_id());
-
-	/*
-	 * Enter the EM event dispatch loop (0==forever) on this EM-core.
-	 */
-	int core_id = em_core_id();
+/**
+ * Dispatch-loop done for application, prepare for controlled shutdown
+ */
+static void terminate_core(sync_t *sync, appl_conf_t *appl_conf)
+{	int core_id = em_core_id();
 	uint64_t cores = (uint64_t)em_core_count();
-	uint32_t dispatch_rounds = appl_conf->dispatch_rounds;
-	uint32_t exit_check_rounds = EXIT_CHECK_DISPATCH_ROUNDS;
-	uint32_t rounds;
 
-	if (dispatch_rounds == 0) {
-		/*
-		 * Dispatch forever, in chunks of 'exit_check_rounds',
-		 * or until 'exit_flag' is set by SIGINT (CTRL-C).
-		 */
-		while (!appl_shm->exit_flag)
-			em_dispatch(exit_check_rounds);
-	} else {
-		/*
-		 * Dispatch for 'dispatch_rounds' in chunks of 'rounds',
-		 * or until 'exit_flag' is set by SIGINT (CTRL-C).
-		 */
-		rounds = MIN(dispatch_rounds, exit_check_rounds);
-		do {
-			em_dispatch(rounds);
-			dispatch_rounds -= rounds;
-		} while (dispatch_rounds > rounds && !appl_shm->exit_flag);
+	em_dispatch_duration_t term_duration;
+	em_dispatch_opt_t term_opt;
+	em_dispatch_results_t results = {0};
+	em_status_t stat;
 
-		if (dispatch_rounds > 0) {
-			rounds = MIN(dispatch_rounds, rounds);
-			em_dispatch(rounds);
-		}
-	}
+	em_dispatch_opt_init(&term_opt);
+	term_opt.skip_input_poll = true;
+	term_opt.skip_output_drain = false;
+	term_opt.sched_pause = true;
+
+	term_duration.select = EM_DISPATCH_DURATION_NO_EVENTS_NS;
+	term_duration.no_events.ns = 100000000; /* 100 ms*/
+
 	/*
 	 * Allow apps one more round with 'exit_flag' set to flush events from
 	 * the sched queues etc.
 	 */
 	if (!appl_shm->exit_flag)
 		appl_shm->exit_flag = 1; /* potential race with SIGINT-handler*/
-	em_dispatch(exit_check_rounds);
 
-	/*
-	 * Dispatch-loop done for application, prepare for controlled shutdown
-	 */
+	em_dispatch_duration(&term_duration, &term_opt, NULL);
 
 	uint64_t exit_count = env_atomic64_return_add(&sync->exit_count, 1);
 
@@ -1055,7 +1130,7 @@ run_core_fn(void *arg)
 			/* halt further pktio rx & tx */
 			pktio_halt();
 			/* dispatch with pktio stopped before test_stop()*/
-			em_dispatch(TERM_DISPATCH_ROUNDS);
+			em_dispatch_duration(&term_duration, &term_opt, NULL);
 		}
 		/*
 		 * Stop and delete created application EOs
@@ -1070,7 +1145,7 @@ run_core_fn(void *arg)
 	 * events & notifs.
 	 */
 	do {
-		em_dispatch(TERM_DISPATCH_ROUNDS);
+		em_dispatch_duration(&term_duration, &term_opt, NULL);
 		if (exit_count == 0) {
 			/*
 			 * First core to exit increments 'exit_count' twice -
@@ -1087,8 +1162,14 @@ run_core_fn(void *arg)
 	 * still do some 'empty' dispatch rounds to drain all possibly
 	 * remaining events in the system.
 	 */
-	while (em_dispatch(TERM_DISPATCH_ROUNDS) > 0)
-		;
+	stat = EM_OK;
+	term_opt.skip_input_poll = true;
+	term_opt.skip_output_drain = true;
+	do {
+		stat = em_dispatch_duration(&term_duration, &term_opt, &results);
+		if (stat == EM_OK && results.events == 0)
+			break;
+	} while (stat == EM_OK);
 
 	APPL_PRINT("Left the event dispatch loop on EM-core:%02d\n", core_id);
 
@@ -1111,6 +1192,210 @@ run_core_fn(void *arg)
 	odp_barrier_wait(&sync->exit_barrier);
 
 	/* depend on the odp helper to call odp_term_local */
+}
+
+/**
+ * Legacy dispatch, i.e. use em_dispatch() without options
+ */
+static void run_core_dispatch(uint64_t dispatch_rounds)
+{
+	const uint64_t exit_check_rounds = EXIT_CHECK_DISPATCH_ROUNDS;
+
+	if (dispatch_rounds == 0) {
+		/*
+		 * Dispatch forever, in chunks of 'exit_check_rounds',
+		 * or until 'exit_flag' is set by SIGINT (CTRL-C).
+		 */
+		while (!appl_shm->exit_flag)
+			em_dispatch(exit_check_rounds);
+	} else {
+		/*
+		 * Dispatch for 'dispatch_rounds' in chunks of 'rounds',
+		 * or until 'exit_flag' is set by SIGINT (CTRL-C).
+		 */
+		uint64_t rounds = MIN(dispatch_rounds, exit_check_rounds);
+
+		do {
+			em_dispatch(rounds);
+			dispatch_rounds -= rounds;
+		} while (dispatch_rounds > rounds && !appl_shm->exit_flag);
+
+		if (dispatch_rounds > 0) {
+			rounds = MIN(dispatch_rounds, rounds);
+			em_dispatch(rounds);
+		}
+	}
+}
+
+/**
+ * Dispatch with options (via cmd line arguments), i.e. use em_dispatch_duration()
+ */
+static void run_core_dispatch_duration(const em_dispatch_duration_t *duration,
+				       const em_dispatch_opt_t *opt)
+{
+	const em_dispatch_duration_select_t select = duration->select;
+	em_dispatch_duration_t exit_check_duration = *duration;
+	em_dispatch_results_t results = {0};
+	em_dispatch_results_t results_tot = {0};
+	em_status_t status;
+
+	int64_t rounds_left = 0;
+	int64_t ns_left = 0;
+	int64_t events_left = 0;
+	int64_t noevents_rounds_left = 0;
+	int64_t noevents_ns_left = 0;
+
+	if (select & EM_DISPATCH_DURATION_ROUNDS)
+		rounds_left = duration->rounds;
+	if (select & EM_DISPATCH_DURATION_NS)
+		ns_left = duration->ns;
+	if (select & EM_DISPATCH_DURATION_EVENTS)
+		events_left = duration->events;
+	if (select & EM_DISPATCH_DURATION_NO_EVENTS_ROUNDS)
+		noevents_rounds_left = duration->no_events.rounds;
+	if (select & EM_DISPATCH_DURATION_NO_EVENTS_NS)
+		noevents_ns_left = duration->no_events.ns;
+
+	/*
+	 * Dispatch in chunks of 1s (to check the exit_flag)
+	 */
+	exit_check_duration.select |= EM_DISPATCH_DURATION_NS;
+	exit_check_duration.ns = EXIT_CHECK_DISPATCH_DURATION_NS;
+	if (select & EM_DISPATCH_DURATION_NS)
+		exit_check_duration.ns = MIN(exit_check_duration.ns, duration->ns);
+
+	odp_time_t t1 = odp_time_local();
+
+	do {
+		status = em_dispatch_duration(&exit_check_duration, opt, &results);
+		if (unlikely(status != EM_OK))
+			break;
+
+		results_tot.rounds += results.rounds;
+		results_tot.ns += results.ns;
+		results_tot.events += results.events;
+
+		if (select & EM_DISPATCH_DURATION_ROUNDS) {
+			rounds_left -= results.rounds;
+			if (unlikely(rounds_left <= 0))
+				break;
+			exit_check_duration.rounds = rounds_left;
+		}
+		if (select & EM_DISPATCH_DURATION_NS) {
+			ns_left -= results.ns;
+			if (unlikely(ns_left <= 0))
+				break;
+			if (ns_left < EXIT_CHECK_DISPATCH_DURATION_NS)
+				exit_check_duration.ns = ns_left;
+		}
+		if (select & EM_DISPATCH_DURATION_EVENTS) {
+			events_left -= results.events;
+			if (unlikely(events_left <= 0))
+				break;
+			exit_check_duration.events = events_left;
+		}
+
+		/*
+		 * The 'no-events' updates to '.rounds' and '.ns' are
+		 * approximations only since it is not known if 'no-events'
+		 * could have started in the middle of the last dispatch.
+		 * Can only check against events == 0 here.
+		 */
+		if (select & EM_DISPATCH_DURATION_NO_EVENTS_ROUNDS) {
+			if (results.events == 0) {
+				noevents_rounds_left -= results.rounds;
+				if (unlikely(noevents_rounds_left <= 0))
+					break;
+				exit_check_duration.no_events.rounds = noevents_rounds_left;
+			}
+		}
+		if (select & EM_DISPATCH_DURATION_NO_EVENTS_NS) {
+			if (results.events == 0) {
+				noevents_ns_left -= results.ns;
+				if (unlikely(noevents_ns_left <= 0))
+					break;
+				exit_check_duration.no_events.ns = noevents_ns_left;
+			}
+		}
+	} while (status == EM_OK && !appl_shm->exit_flag);
+
+	odp_time_t t2 = odp_time_local();
+	uint64_t diff_ns = odp_time_diff_ns(t2, t1);
+	double diff_sec = (double)diff_ns / 1.0e9;
+
+	APPL_PRINT("EM-core:%02d dispatched for %g s (%" PRIu64 " ns)\n"
+		   "           total: rounds=%" PRIu64 " ns=%" PRIu64 " events=%" PRIu64 "\n",
+		   em_core_id(), diff_sec, diff_ns,
+		   results_tot.rounds, results_tot.ns, results_tot.events);
+}
+
+/**
+ * Core runner function - application entry on each EM-core
+ *
+ * Application setup and event dispatch loop run by each EM-core.
+ * A call to em_init_core() MUST be made on each EM-core before using other
+ * EM API functions to create EOs, queues etc. or calling em_dispatch().
+ *
+ * @param arg  passed arg actually of type 'appl_shm_t *', i.e. appl shared mem
+ */
+static int run_core_fn(void *arg)
+{
+	odp_shm_t shm;
+	appl_shm_t *appl_shm;
+	void *shm_addr;
+	appl_conf_t *appl_conf;
+	sync_t *sync;
+
+	/* thread: depend on the odp helper to call odp_init_local */
+	/* process: parent called odp_init_local, fork creates copy for child */
+
+	appl_shm = (appl_shm_t *)arg;
+
+	/* Look up the appl shared memory - sanity check */
+	shm = odp_shm_lookup("appl_shm");
+	if (unlikely(shm == ODP_SHM_INVALID))
+		APPL_EXIT_FAILURE("appl_shm lookup failed");
+	shm_addr = odp_shm_addr(shm);
+	if (unlikely(shm_addr == NULL || shm_addr != (void *)appl_shm))
+		APPL_EXIT_FAILURE("obtaining shared mem addr failed:\n"
+				  "shm_addr:%p appl_shm:%p",
+				  shm_addr, appl_shm);
+
+	appl_conf = &appl_shm->appl_conf;
+	sync = &appl_shm->sync;
+
+	/*
+	 * Startup EM-core.
+	 * Allow testing different startup scenarios:
+	 */
+	startup_core(sync, appl_conf);
+
+	APPL_PRINT("%s() on EM-core:%02d\n", __func__, em_core_id());
+
+	/*
+	 * Dispatch on EM-core.
+	 * Enter the EM event dispatch loop on this EM-core.
+	 */
+	if (appl_conf->dispatch_duration.in_use) {
+		/*
+		 * Dispatch with options (via cmd line arguments),
+		 * i.e. use em_dispatch_duration(...)
+		 */
+		run_core_dispatch_duration(&appl_conf->dispatch_duration.duration,
+					   &appl_conf->dispatch_duration.opt);
+	} else {
+		/*
+		 * Legacy dispatch, i.e. use em_dispatch(rounds)
+		 * without other options
+		 */
+		run_core_dispatch(appl_conf->dispatch_rounds);
+	}
+
+	/*
+	 * Terminate EM-core.
+	 * Dispatch-loop done for application, prepare for controlled shutdown
+	 */
+	terminate_core(sync, appl_conf);
 
 	return 0;
 }
@@ -1133,12 +1418,20 @@ run_core_fn(void *arg)
 static void
 parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 {
+#define DURATION_ROUNDS          0x1001
+#define DURATION_NS              0x1002
+#define DURATION_EVENTS          0x1003
+#define DURATION_NOEVENTS_ROUNDS 0x1004
+#define DURATION_NOEVENTS_NS     0x1005
+#define OPT_BURST_SIZE           0x1006
+#define OPT_WAIT_NS              0x1007
+#define OPT_SCHED_PAUSE          0x1008
+
 	static const struct option longopts[] = {
 		{"coremask",         required_argument, NULL, 'c'},
 		{"process-per-core", no_argument,       NULL, 'p'},
 		{"thread-per-core",  no_argument,       NULL, 't'},
 		{"device-id",        required_argument, NULL, 'd'},
-		{"dispatch-rounds",  required_argument, NULL, 'r'},
 		{"eth-interface",    required_argument, NULL, 'i'},
 		{"pktpool-em",       no_argument,       NULL, 'e'},
 		{"pktpool-odp",      no_argument,       NULL, 'o'},
@@ -1148,14 +1441,27 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		{"vecpool-em",       no_argument,       NULL, 'x'},
 		{"vecpool-odp",      no_argument,       NULL, 'y'},
 		{"help",             no_argument,       NULL, 'h'},
+		/* em_dispatch(rounds): */
+		{"dispatch-rounds",  required_argument, NULL, 'r'},
+		/* em_dispatch_duration(duration, opt, ...): */
+		{"duration-rounds",  required_argument, NULL, DURATION_ROUNDS},
+		{"duration-ns",  required_argument, NULL, DURATION_NS},
+		{"duration-events", required_argument, NULL, DURATION_EVENTS},
+		{"duration-noevents-rounds", required_argument, NULL, DURATION_NOEVENTS_ROUNDS},
+		{"duration-noevents-ns", required_argument, NULL, DURATION_NOEVENTS_NS},
+		{"burst-size", required_argument, NULL, OPT_BURST_SIZE},
+		{"wait-ns", required_argument, NULL, OPT_WAIT_NS},
+		{"sched-pause", no_argument, NULL, OPT_SCHED_PAUSE},
 		{NULL, 0, NULL, 0}
 	};
 	static const char *shortopts = "+c:ptd:r:i:oem:vs:xyh";
-	long device_id = -1;
 
 	/* set defaults: */
+	parsed->args_em.device_id = 0;
 	parsed->args_appl.pktio.in_mode = DIRECT_RECV;
 	parsed->args_appl.startup_mode = STARTUP_ALL_CORES;
+	parsed->args_appl.dispatch_duration.in_use = false;
+	parsed->args_appl.dispatch_duration.burst_size = EM_SCHED_MULTI_MAX_BURST;
 
 	opterr = 0; /* don't complain about unknown options here */
 
@@ -1215,23 +1521,23 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		case 'd': { /* --device-id */
 			char *endptr;
 
-			device_id = strtol(optarg, &endptr, 0);
+			long device_id = strtol(optarg, &endptr, 0);
 
-			if (*endptr != '\0' ||
-			    (uint64_t)device_id > UINT16_MAX)
-				APPL_EXIT_FAILURE("Invalid device-id:%s",
-						  optarg);
+			if (*endptr != '\0' || (uint64_t)device_id > UINT16_MAX)
+				APPL_EXIT_FAILURE("Invalid device-id:%s", optarg);
 
 			parsed->args_em.device_id = (uint16_t)(device_id & 0xffff);
 		}
 		break;
 
-		case 'r': /* --dispatch-rounds */
-			parsed->args_appl.dispatch_rounds = atoi(optarg);
-			if (atoi(optarg) < 0)
-				APPL_EXIT_FAILURE("Invalid dispatch-rounds:%s",
-						  optarg);
-			break;
+		case 'r': { /* --dispatch-rounds: em_dispatch(rounds) */
+			long long dispatch_rounds = atoll(optarg);
+
+			if (dispatch_rounds < 0)
+				APPL_EXIT_FAILURE("Invalid dispatch-rounds:%s", optarg);
+			parsed->args_appl.dispatch_rounds = dispatch_rounds;
+		}
+		break;
 
 		case 'i': { /* --eth-interface */
 			int i;
@@ -1318,9 +1624,96 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 			exit(EXIT_SUCCESS);
 			break;
 
+		case DURATION_ROUNDS: {
+			long long rounds = atoll(optarg);
+
+			if (unlikely(rounds <= 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.use_rounds = true;
+			parsed->args_appl.dispatch_duration.rounds = rounds;
+		}
+		break;
+
+		case DURATION_NS: {
+			long long ns = atoll(optarg);
+
+			if (unlikely(ns <= 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.use_ns = true;
+			parsed->args_appl.dispatch_duration.ns = ns;
+		}
+		break;
+
+		case DURATION_EVENTS: {
+			long long events = atoll(optarg);
+
+			if (unlikely(events <= 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.use_events = true;
+			parsed->args_appl.dispatch_duration.events = events;
+		}
+		break;
+
+		case DURATION_NOEVENTS_ROUNDS: {
+			long long noevents_rounds = atoll(optarg);
+
+			if (unlikely(noevents_rounds <= 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.use_noevents_rounds = true;
+			parsed->args_appl.dispatch_duration.noevents_rounds = noevents_rounds;
+		}
+		break;
+
+		case DURATION_NOEVENTS_NS: {
+			long long noevents_ns = atoll(optarg);
+
+			if (unlikely(noevents_ns <= 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.use_noevents_ns = true;
+			parsed->args_appl.dispatch_duration.noevents_ns = noevents_ns;
+		}
+		break;
+
+		case OPT_WAIT_NS: {
+			long long wait_ns = atoll(optarg);
+
+			if (unlikely(wait_ns < 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.wait_ns = wait_ns;
+		}
+		break;
+
+		case OPT_BURST_SIZE: {
+			int burst_size = atoi(optarg);
+
+			if (unlikely(burst_size <= 0))
+				APPL_EXIT_FAILURE("Invalid option: '--%s=%s'",
+						  longopts[long_index].name, optarg);
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.burst_size = burst_size;
+		}
+		break;
+
+		case OPT_SCHED_PAUSE:
+			parsed->args_appl.dispatch_duration.in_use = true;
+			parsed->args_appl.dispatch_duration.sched_pause = true;
+			break;
+
 		default:
 			usage(argv[0]);
-			APPL_EXIT_FAILURE("Unknown option: %c!", opt);
+			APPL_EXIT_FAILURE("Unknown option: '%s'!", argv[optind - 1]);
 			break;
 		}
 	}
@@ -1333,9 +1726,7 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		APPL_EXIT_FAILURE("Give mandatory coremask!");
 	}
 
-	/* Check if a device-id was given, if not use the default '0' */
-	if (device_id == -1) /* not set */
-		parsed->args_em.device_id = 0;
+	/* Print the device-id, use the default '0' if not given. */
 	APPL_PRINT("  Device-id:    0x%" PRIX16 "\n", parsed->args_em.device_id);
 
 	/* Sanity checks: */
@@ -1411,6 +1802,53 @@ parse_args(int argc, char *argv[], parse_args_t *parsed /* out param */)
 		parsed->args_appl.pktio.pktpool_odp = false;
 		parsed->args_appl.pktio.vecpool_em = false;
 		parsed->args_appl.pktio.vecpool_odp = false;
+	}
+
+	/*
+	 * Dispatch duration options - em_dispatch_duration() used.
+	 */
+	if (parsed->args_appl.dispatch_duration.in_use) {
+		/* Don't allow a mix of em_dispatch() and em_dispatch_duration() options */
+		if (unlikely(parsed->args_appl.dispatch_rounds)) {
+			usage(argv[0]);
+			APPL_EXIT_FAILURE("Don't mix em_dispatch() and em_dispatch_duration() options!\n"
+					  "See usage above.");
+		}
+
+		if (parsed->args_appl.dispatch_duration.use_rounds)
+			APPL_PRINT("  Dispatch-duration: rounds=%" PRIu64 "\n",
+				   parsed->args_appl.dispatch_duration.rounds);
+
+		if (parsed->args_appl.dispatch_duration.use_ns) {
+			double sec = (double)parsed->args_appl.dispatch_duration.ns / 1.0e9;
+
+			APPL_PRINT("  Dispatch-duration: ns=%" PRIu64 " (%g s)\n",
+				   parsed->args_appl.dispatch_duration.ns, sec);
+		}
+
+		if (parsed->args_appl.dispatch_duration.use_events)
+			APPL_PRINT("  Dispatch-duration: events=%" PRIu64 "\n",
+				   parsed->args_appl.dispatch_duration.events);
+
+		if (parsed->args_appl.dispatch_duration.use_noevents_rounds)
+			APPL_PRINT("  Dispatch-duration: no-events rounds=%" PRIu64 "\n",
+				   parsed->args_appl.dispatch_duration.noevents_rounds);
+
+		if (parsed->args_appl.dispatch_duration.use_noevents_ns)
+			APPL_PRINT("  Dispatch-duration: no-events ns=%" PRIu64 " (%g ns)\n",
+				   parsed->args_appl.dispatch_duration.noevents_ns,
+				   (double)parsed->args_appl.dispatch_duration.noevents_ns);
+
+		APPL_PRINT("  Dispatch-options:  wait-ns=%" PRIu64 " burst-size=%" PRIu16 " sched-pause=%s\n",
+			   parsed->args_appl.dispatch_duration.wait_ns,
+			   parsed->args_appl.dispatch_duration.burst_size,
+			   parsed->args_appl.dispatch_duration.sched_pause ? "true" : "false");
+	} else {
+		/* Dispatch rounds - em_dispatch_duration() used */
+		const char *str = parsed->args_appl.dispatch_rounds == 0 ? "(=forever)" : "rounds";
+
+		APPL_PRINT("  Dispatch:     %" PRIu64 " %s using em_dispatch()\n",
+			   parsed->args_appl.dispatch_rounds, str);
 	}
 }
 
