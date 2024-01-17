@@ -333,7 +333,7 @@ typedef struct em_timer_ring_param_t {
  * @see em_timer_attr_init, em_timer_ring_attr_init, em_timer_capability
  */
 typedef struct em_timer_attr_t {
-	/** Resolution parameters. set when not creating periodic ring.
+	/** Resolution parameters. Set when not creating periodic ring.
 	 * This gets cleared by em_timer_ring_attr_init
 	 */
 	em_timer_res_param_t resparam;
@@ -1083,6 +1083,30 @@ void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo);
  *
  */
 em_timer_t em_tmo_get_timer(em_tmo_t tmo);
+
+/**
+ * Convert a timer handle to an unsigned integer
+ *
+ * @param timer  timer handle to be converted
+ * @return       uint64_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_timer_t handle.
+ */
+uint64_t em_timer_to_u64(em_timer_t timer);
+
+/**
+ * Convert a timeout handle to an unsigned integer
+ *
+ * @param tmo  timeout handle to be converted
+ * @return     uint64_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_tmo_t handle.
+ */
+uint64_t em_tmo_to_u64(em_tmo_t tmo);
 
 /**
  * @}

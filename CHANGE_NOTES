@@ -1,4 +1,4 @@
-Copyright (c) 2013-2023, Nokia Solutions and Networks
+Copyright (c) 2013-2024, Nokia Solutions and Networks
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
@@ -53,6 +53,93 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.5.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.5 (em-odp/include/),
+  see API additions and changes in em-odp/include/event_machine/README_API.
+  * Queue: replace 'EM_MAX_QUEUES' with config file option 'queue.max_num' and
+           em_queue_get_max_num()
+  * Queue conversions: EM-queue <-> {device-id, queue-id}
+  * Event, pool: em_event_get_pool_subpool()
+  * EM-handle to unsigned integer conversion functions.
+  * EM device-ID: get the current device-id em_device_id()
+
+- EM config file options - runtime config file config/em-odp.conf:
+  New option to limit the maximum number of EM queues that can be created
+  queue: {
+        # The maximum number of EM queues that can be created.
+        #
+        # EM will allocate memory at startup to support 'max_num' queues.
+        # The number must be large enough to cover the EM internal queues as
+        # well as all the static and dynamic queues created by the application.
+        # The smallest acceptable 'max_num' value depends on the values of
+        # EM_MAX_CORES, EM_QUEUE_STATIC_MIN and EM_QUEUE_STATIC_MAX.
+        # The smallest acceptable value allows creating one dynamic EM queue.
+        # The largest 'max_num' depends on ODP capability.
+        # A larger value will consume more memory.
+        max_num = 1024
+        ...
+  }
+
+  The 'queue.max_num' option replaces the removed EM API define 'EM_MAX_QUEUES'
+
+  Config file version number bumped up to "0.0.20"
+
+- Add support for using ODP API 1.43
+  Update EM to be able to run against ODP API v1.43.
+  Maintain compatibility with v1.42.
+
+- Fixes:
+ - Event: fix em_free_multi() when freeing many timer events
+   In remove_active_timers(): if the loop removes the j:th event
+   from the array, and the j+1:th event also happens to be an ODP_EVENT_TIMEOUT,
+   then the function missed removing that following timeout.
+   This is now fixed and the function is refactored.
+   Both em_free() and em_free_multi() are improved to check for these tmos only
+   when periodic ring timers have actually been created - if no ring timers ever
+   created then no checks need to be done.
+
+ - Dispatch: error logging should not access NULL q_elem
+   The error logging in local-queue dispatch should not access the
+   q_elem if it is NULL.
+
+ - configure: prevent '-Wstringop-overflow' warnings by gcc when LTO is enabled
+   GCC can generate false errors about object sizes, especially when LTO is used.
+   As a workaround, make -Wstringop-overflow not generate errors as part of
+   -Werror when GCC version 10 or later is used.
+   Add -Wno-error=stringop-overflow both to CFLAGS and CXXFLAGS.
+
+- Programs:
+ - Programs, common: add cmd line options to dispatch with options
+
+  Add new test program command line options that enables the use
+  of em_dispatch_duration() instead of em_dispatch(), see b) below.
+
+  EM dispatch options (optional):
+    a) using em_dispatch() - default: uses em_dispatch() unless options
+                                      in b) are given.
+      -r, --dispatch-rounds <arg> Number of dispatch rounds (default: 0=forever)
+    b) using em_dispatch_duration() - combinations of these options possible.
+      --duration-rounds <arg> Dispatch for the given number of rounds.
+      --duration-ns <arg> Dispatch for the given time in nanoseconds.
+      --duration-events <arg> Dispatch until the given number of events
+                                        have been handled.
+      --duration-noevents-rounds <arg> Dispatch until no events have been
+                                       received for the given number of rounds.
+      --duration-noevents-ns <arg> Dispatch until no events have been received
+                                   for the given time in nanoseconds.
+      --burst-size <arg> The max number of events the dispatcher will request
+                         in one burst from the scheduler.
+                         (default: EM_SCHED_MULTI_MAX_BURST=%d)
+      --wait-ns <arg> Scheduler wait-for-events timeout in nanoseconds.
+                      The scheduler will wait for events, if no immediately
+                      available, for 'wait_ns' per dispatch round.
+                      (default: 0, do not wait)
+      --sched-pause Pause the scheduler on the calling core when exiting the
+                    EM dispatch function. If enabled, will also resume the
+                    scheduling when entering dispatch (default: don't pause).
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.4.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.4 (em-odp/include/),
@@ -72,7 +159,7 @@ Event Machine (EM) on ODP v3.4.0
   from scheduling when it returns.
 
   Note: the option only affects the em_dispatch() API,
-        not e.g. em_dispatch_opt().
+        not em_dispatch_duration()/_ns()/_rounds()/_events().
 
   dispatch: {
         ...

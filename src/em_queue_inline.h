@@ -124,7 +124,7 @@ queue_elem_get(const em_queue_t queue)
 	queue_idx = queue_id2idx(iq.queue_id);
 
 	if (unlikely(iq.device_id != em_shm->conf.device_id ||
-		     (unsigned int)queue_idx > EM_MAX_QUEUES - 1))
+		     (unsigned int)queue_idx > em_shm->opt.queue.max_num - 1))
 		return NULL;
 
 	queue_elem = &em_shm->queue_tbl.queue_elem[queue_idx];

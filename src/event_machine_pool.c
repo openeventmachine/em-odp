@@ -250,14 +250,12 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 		const uint64_t num = pool_elem->pool_cfg.subpool[i].num;
 		uint64_t used = 0;
 		uint64_t free = 0;
-
 		odp_pool_stats_t odp_stats;
 
-#if ODP_VERSION_API_NUM(1, 37, 2) <= ODP_VERSION_API
 		/* avoid LTO-error: 'odp_stats.thread.first/last' may be used uninitialized */
 		odp_stats.thread.first = 0;
 		odp_stats.thread.last = 0;
-#endif
+
 		int ret = odp_pool_stats(pool_elem->odp_pool[i], &odp_stats);
 
 		RETURN_ERROR_IF(ret, EM_ERR_LIB_FAILED, EM_ESCOPE_POOL_INFO,
@@ -607,4 +605,9 @@ void em_pool_subpool_stats_selected_print(em_pool_t pool, const int subpools[],
 					  const em_pool_stats_opt_t *opt)
 {
 	subpools_stats_selected_print(pool, subpools, num_subpools, opt);
+}
+
+uint64_t em_pool_to_u64(em_pool_t pool)
+{
+	return (uint64_t)pool;
 }

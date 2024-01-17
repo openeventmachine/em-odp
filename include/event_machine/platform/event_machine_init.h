@@ -300,6 +300,18 @@ em_status_t
 em_term_core(void);
 
 /**
+ * Return the EM device-id for this instance.
+ *
+ * This is a convenience function that returns the EM device-id given by the
+ * user to em_init() via the em_conf_t::device_id field.
+ *
+ * The function should only be called after a successful EM initialization.
+ *
+ * @return the device-id of this EM instance.
+ */
+uint16_t em_device_id(void);
+
+/**
  * @}
  */
 #ifdef __cplusplus

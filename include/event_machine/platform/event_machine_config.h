@@ -119,16 +119,16 @@ extern "C" {
 #define EM_CONFIG_POOLS  16
 
 /**
- * @def EM_MAX_QUEUES
- * Maximum total number of queues
- */
-#define EM_MAX_QUEUES  1024  /* Should be <= odp-max-queues */
-
-/**
  * @def EM_QUEUE_NAME_LEN
  * Maximum queue name string length
  */
 #define EM_QUEUE_NAME_LEN  32
+
+/**
+ * @def EM_MAX_OUTPUT_QUEUES
+ * Maximum number of output queues
+ */
+#define EM_MAX_OUTPUT_QUEUES 64
 
 /**
  * @def EM_MAX_ATOMIC_GROUPS
@@ -303,7 +303,7 @@ extern "C" {
 #define EM_EVENT_GROUP_SAFE_MODE  1
 
 /**
- * @def EM_DEBUG_TIMESTAMPS
+ * @def EM_DEBUG_TIMESTAMP_ENABLE
  * Enable Debug Timestamps for timing analysis. This may reduce performance
  * but allows to trace dispatcher timings. Timestamps are per dispatcher (thread
  * local).
@@ -312,7 +312,7 @@ extern "C" {
  * '1': enabled, lower overhead but potentially inaccurate (no HW barriers)
  * '2': enabled, strict version with full HW barriers
  *
- * @note em-odp: the 'EM_DEBUG_TIMESTAMPS' value can be overridden by a command-line
+ * @note em-odp: the 'EM_DEBUG_TIMESTAMP_ENABLE' value can be overridden by a command-line
  *               option to the 'configure' script, e.g.:
  *               $build> ../configure ... --enable-debug-timestamps=N
  *               The overridden value will be made available to the application

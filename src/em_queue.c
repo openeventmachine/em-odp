@@ -90,6 +90,41 @@ read_config_file(void)
 	EM_PRINT("EM-queue config:\n");
 
 	/*
+	 * Option: queue.max_num
+	 */
+	conf_str = "queue.max_num";
+	ret = em_libconfig_lookup_int(&em_shm->libconfig, conf_str, &val);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
+		return -1;
+	}
+	/* Need to have enough space for all queues */
+	if (val <= (EM_QUEUE_STATIC_NUM + MAX_INTERNAL_QUEUES)) {
+		EM_LOG(EM_LOG_ERR,
+		       "Bad config value '%s = %d', Value must be larger than %d\n"
+		       "to have space for static queues, internal ctrl queues and\n"
+		       "at least one dynamic queue.\n",
+		       conf_str, val, (EM_QUEUE_STATIC_NUM + MAX_INTERNAL_QUEUES));
+		return -1;
+	}
+
+	if ((unsigned int)val > UINT16_MAX) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d', Value > UINT16_MAX\n",
+		       conf_str, val);
+		return -1;
+	}
+	/* Check that odp supports the given number of queues */
+	if ((unsigned int)val > em_shm->queue_tbl.odp_queue_capability.max_queues) {
+		EM_LOG(EM_LOG_ERR, "Bad config value '%s = %d', Value > odp-max-queues:%u\n",
+		       conf_str, val, em_shm->queue_tbl.odp_queue_capability.max_queues);
+		return -1;
+	}
+
+	/* store & print the value */
+	em_shm->opt.queue.max_num = (unsigned int)val;
+	EM_PRINT("  %s: %d\n", conf_str, val);
+
+	/*
 	 * Option: queue.min_events_default
 	 */
 	conf_str = "queue.min_events_default";
@@ -195,9 +230,7 @@ queue_init(queue_tbl_t *const queue_tbl,
 	memset(queue_pool, 0, sizeof(queue_pool_t));
 	memset(queue_pool_static, 0, sizeof(queue_pool_t));
 	env_atomic32_init(&em_shm->queue_count);
-
-	if (read_config_file())
-		return EM_ERR_LIB_FAILED;
+	env_atomic32_init(&em_shm->queue_tbl.output_queue_count);
 
 	/* Retieve and store the ODP queue capabilities into 'queue_tbl' */
 	ret = odp_queue_capability(odp_queue_capa);
@@ -209,13 +242,27 @@ queue_init(queue_tbl_t *const queue_tbl,
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"odp_schedule_capability():%d failed", ret);
 
-	RETURN_ERROR_IF(odp_queue_capa->max_queues < EM_MAX_QUEUES,
-			EM_ERR_TOO_LARGE, EM_ESCOPE_INIT,
-			"EM_MAX_QUEUES:%i > odp-max-queues:%u",
-			EM_MAX_QUEUES, odp_queue_capa->max_queues);
+	if (read_config_file())
+		return EM_ERR_LIB_FAILED;
+
+	unsigned int max_queues = em_shm->opt.queue.max_num;
+
+	size_t qelem_tbl_sz = sizeof(queue_elem_t) * max_queues;
+	size_t qname_tbl_sz = sizeof(char) * EM_QUEUE_NAME_LEN * max_queues;
+	size_t shm_sz = qelem_tbl_sz + qname_tbl_sz;
+
+	void *shm_tbl = env_shared_reserve("EM q_elem tbl and names", shm_sz);
+
+	RETURN_ERROR_IF(!shm_tbl, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"env_shared_reserve() failed when reserving \"EM q_elem tbl and names\"");
+	memset(shm_tbl, 0, shm_sz);
+
+	/* Store the q_elem tbl and q_name tbl pointers, points into the allocated shared mem */
+	em_shm->queue_tbl.queue_elem = shm_tbl;
+	em_shm->queue_tbl.name = (char(*)[EM_QUEUE_NAME_LEN])((uintptr_t)shm_tbl + qelem_tbl_sz);
 
 	/* Initialize the queue element table */
-	for (int i = 0; i < EM_MAX_QUEUES; i++)
+	for (unsigned int i = 0; i < max_queues; i++)
 		queue_tbl->queue_elem[i].queue = (uint32_t)(uintptr_t)queue_idx2hdl(i);
 
 	/* Initialize the static queue pool */
@@ -224,9 +271,11 @@ queue_init(queue_tbl_t *const queue_tbl,
 	if (queue_pool_init(queue_tbl, queue_pool_static, min, max) != 0)
 		return EM_ERR_LIB_FAILED;
 
+	uint16_t last_dyn_queue = (uint16_t)(max_queues - 1 + EM_QUEUE_RANGE_OFFSET);
+
 	/* Initialize the dynamic queue pool */
 	min = queue_id2idx(FIRST_DYN_QUEUE);
-	max = queue_id2idx(LAST_DYN_QUEUE);
+	max = queue_id2idx(last_dyn_queue);
 	if (queue_pool_init(queue_tbl, queue_pool, min, max) != 0)
 		return EM_ERR_LIB_FAILED;
 
@@ -237,6 +286,11 @@ queue_init(queue_tbl_t *const queue_tbl,
 	ret = queue_init_prio_map(min, max, em_shm->queue_prio.num_runtime);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"mapping odp priorities failed: %d", ret);
+
+	/* Initialize output queue free indexes */
+	for (unsigned int i = 0; i < EM_MAX_OUTPUT_QUEUES; i++)
+		em_shm->queue_tbl.output_queue_idx_free[i] = true;
+
 	return EM_OK;
 }
 
@@ -347,13 +401,14 @@ queue_term_local(void)
 /**
  * Allocate a new EM queue
  *
- * @param queue  EM queue handle if a specific EM queue is requested,
- *               EM_QUEUE_UNDEF if any EM queue will do.
+ * @param queue         EM queue handle if a specific EM queue is requested,
+ *                      EM_QUEUE_UNDEF if any EM queue will do.
+ * @param[out] err_str  Output var for error message in in case of failure.
  *
  * @return EM queue handle
  * @retval EM_QUEUE_UNDEF on failure
  */
-em_queue_t queue_alloc(em_queue_t queue, const char **err_str)
+em_queue_t queue_alloc(em_queue_t queue, const char **err_str /*out*/)
 {
 	queue_elem_t *queue_elem;
 	objpool_elem_t *queue_pool_elem;
@@ -376,9 +431,10 @@ em_queue_t queue_alloc(em_queue_t queue, const char **err_str)
 		internal_queue_t iq;
 
 		iq.queue = queue;
-		if (iq.queue_id < EM_QUEUE_STATIC_MIN ||
+		if (iq.device_id != em_shm->conf.device_id ||
+		    iq.queue_id < EM_QUEUE_STATIC_MIN ||
 		    iq.queue_id > LAST_INTERNAL_QUEUE) {
-			*err_str = "queue handle not from static range!";
+			*err_str = "Invalid queue requested or handle not from static range!";
 			return EM_QUEUE_UNDEF;
 		}
 
@@ -647,6 +703,11 @@ queue_delete(queue_elem_t *const queue_elem)
 			em_free(q_out->output_fn_args_event);
 			q_out->output_fn_args_event = EM_EVENT_UNDEF;
 		}
+
+		env_spinlock_lock(&em_shm->queue_tbl.output_queue_lock);
+		em_shm->queue_tbl.output_queue_idx_free[q_out->idx] = true;
+		env_atomic32_dec(&em_shm->queue_tbl.output_queue_count);
+		env_spinlock_unlock(&em_shm->queue_tbl.output_queue_lock);
 	}
 
 	if (queue_elem->odp_queue != ODP_QUEUE_INVALID &&
@@ -1042,6 +1103,14 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 {
 	const em_queue_conf_t *qconf = setup->conf;
 	const em_output_queue_conf_t *output_conf = qconf->conf;
+	uint32_t nbr_output_queues;
+
+	nbr_output_queues = env_atomic32_add_return(&em_shm->queue_tbl.output_queue_count, 1);
+
+	if (unlikely(nbr_output_queues >= EM_MAX_OUTPUT_QUEUES)) {
+		*err_str = "Q-setup-output: too many output queues";
+		return -1;
+	}
 
 	q_elem->priority = EM_QUEUE_PRIO_UNDEF;
 	q_elem->type = EM_QUEUE_TYPE_OUTPUT;
@@ -1053,8 +1122,18 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 
 	if (unlikely(output_conf->output_fn == NULL)) {
 		*err_str = "Q-setup-output: invalid output function";
-		return -1;
+		return -2;
 	}
+
+	env_spinlock_lock(&em_shm->queue_tbl.output_queue_lock);
+	for (unsigned int i = 0; i < EM_MAX_OUTPUT_QUEUES; i++) {
+		if (em_shm->queue_tbl.output_queue_idx_free[i]) {
+			em_shm->queue_tbl.output_queue_idx_free[i] = false;
+			q_elem->output.idx = i;
+			break;
+		}
+	}
+	env_spinlock_unlock(&em_shm->queue_tbl.output_queue_lock);
 
 	/* copy whole output conf */
 	q_elem->output.output_conf = *output_conf;
@@ -1071,7 +1150,7 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 				      EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
 		if (unlikely(args_event == EM_EVENT_UNDEF)) {
 			*err_str = "Q-setup-output: alloc output_fn_args fails";
-			return -2;
+			return -3;
 		}
 		/* store the event handle for em_free() later */
 		q_elem->output.output_fn_args_event = args_event;
@@ -1106,12 +1185,12 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_LF &&
 	    odp_queue_capa->plain.lockfree.max_num == 0) {
 		*err_str = "Q-setup-output: non-blocking, lock-free unsched queues unavailable";
-		return -3;
+		return -4;
 	}
 	if (odp_queue_param.nonblocking == ODP_NONBLOCKING_WF &&
 	    odp_queue_capa->plain.waitfree.max_num == 0) {
 		*err_str = "Q-setup-output: non-blocking, wait-free unsched queues unavailable";
-		return -4;
+		return -5;
 	}
 
 	/* output-queue dequeue protected by q_elem->output.lock */
@@ -1124,7 +1203,7 @@ queue_setup_output(queue_elem_t *q_elem, const queue_setup_t *setup,
 
 	if (unlikely(err)) {
 		*err_str = "Q-setup-output: plain odp queue creation failed!";
-		return -5;
+		return -6;
 	}
 
 	return 0;
@@ -1340,6 +1419,7 @@ void print_queue_elem_info(void)
 	       "  output {\t%3zu B\t%2zu B\n"
 	       "   .conf:\t%3zu B\t%2zu B\n"
 	       "   .args_event:\t%3zu B\t%2zu B\n"
+	       "   .idx:\t%3zu B\t%2zu B\n"
 	       "   .lock:\t%3zu B\t%2zu B\n"
 	       "  }\n"
 	       "}\n"
@@ -1372,6 +1452,7 @@ void print_queue_elem_info(void)
 	       sizeof_field(queue_elem_t, output.output_conf),
 	       offsetof(queue_elem_t, output.output_fn_args_event),
 	       sizeof_field(queue_elem_t, output.output_fn_args_event),
+	       offsetof(queue_elem_t, output.idx), sizeof_field(queue_elem_t, output.idx),
 	       offsetof(queue_elem_t, output.lock), sizeof_field(queue_elem_t, output.lock),
 	       offsetof(queue_elem_t, eo_elem), sizeof_field(queue_elem_t, eo_elem),
 	       offsetof(queue_elem_t, queue_group), sizeof_field(queue_elem_t, queue_group),
@@ -1393,6 +1474,10 @@ void print_queue_capa(void)
 	char plain_lf_sz[24] = "n/a";
 	char plain_wf_sz[24] = "n/a";
 	char sched_sz[24] = "nolimit";
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
+
+	/* Last dynamic EM queue */
+	uint16_t last_dyn_queue = (uint16_t)(max_queues - 1 + EM_QUEUE_RANGE_OFFSET);
 
 	if (queue_capa->plain.max_size > 0)
 		snprintf(plain_sz, sizeof(plain_sz), "%u",
@@ -1445,16 +1530,16 @@ void print_queue_capa(void)
 		 "    internal range: [%d - %d] ([0x%x - 0x%x])\n"
 		 "    dynamic range:  [%d - %d] ([0x%x - 0x%x])\n"
 		 "\n",
-		 EM_MAX_QUEUES, EM_MAX_QUEUES,
+		 max_queues, max_queues,
 		 EM_QUEUE_RANGE_OFFSET, EM_QUEUE_RANGE_OFFSET,
-		 EM_QUEUE_STATIC_MIN, LAST_DYN_QUEUE,
-		 EM_QUEUE_STATIC_MIN, LAST_DYN_QUEUE,
+		 EM_QUEUE_STATIC_MIN, last_dyn_queue,
+		 EM_QUEUE_STATIC_MIN, last_dyn_queue,
 		 EM_QUEUE_STATIC_MIN, EM_QUEUE_STATIC_MAX,
 		 EM_QUEUE_STATIC_MIN, EM_QUEUE_STATIC_MAX,
 		 FIRST_INTERNAL_QUEUE, LAST_INTERNAL_QUEUE,
 		 FIRST_INTERNAL_QUEUE, LAST_INTERNAL_QUEUE,
-		 FIRST_DYN_QUEUE, LAST_DYN_QUEUE,
-		 FIRST_DYN_QUEUE, LAST_DYN_QUEUE);
+		 FIRST_DYN_QUEUE, last_dyn_queue,
+		 FIRST_DYN_QUEUE, last_dyn_queue);
 }
 
 void print_queue_prio_info(void)

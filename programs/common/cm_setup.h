@@ -170,10 +170,19 @@ typedef struct {
 	unsigned int num_procs;
 	/** number of threads */
 	unsigned int num_threads;
-	/** dispatch rounds before returning */
-	uint32_t dispatch_rounds;
 	/** Start-up mode */
 	startup_mode_t startup_mode;
+
+	/** dispatch rounds before returning: using em_dispatch(dispatch_rounds) */
+	uint64_t dispatch_rounds;
+
+	/** dispatch with options using em_dispatch_duration(duration, opt, ...) */
+	struct {
+		/** Use em_dispatch_duration() function: true/false */
+		bool in_use;
+		em_dispatch_duration_t duration;
+		em_dispatch_opt_t opt;
+	} dispatch_duration;
 
 	/** number of memory pools set up for the application */
 	unsigned int num_pools;

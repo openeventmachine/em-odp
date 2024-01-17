@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [4])
+m4_define([em_version_api_minor], [5])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -175,6 +175,11 @@ EM_CHECK_CFLAG([-Wno-vla]) # Allow variable-length arrays (vla), for clang.
 AS_IF([test "$GCC" == yes],
       AS_IF([test `$CC -dumpversion | cut -d '.' -f 1` -ge 10],
 	    EM_CHECK_CFLAG([-Wno-error=array-bounds])
+	    EM_CHECK_CFLAG([-Wno-error=stringop-overflow])
+	    EM_CHECK_CXXFLAG([-Wno-error=stringop-overflow])
+	    # --enable-check-level=0 (=EM_CHECK_LEVEL) might produce
+	    # false "not initialized" errors, convert to warnings instead.
+	    EM_CHECK_CFLAG([-Wno-error=maybe-uninitialized])
       )
 )
 
@@ -307,7 +312,7 @@ EM_DEBUG_TIMESTAMP_ENABLE=""
 AC_ARG_ENABLE([debug-timestamps],
 	      [AS_HELP_STRING([--enable-debug-timestamps[[=VAL]]],
 			      [Override the 'EM_DEBUG_TIMESTAMP_ENABLE' define, valid
-			       values are 0...2, yes(=1) or no value(=1), 2=strict time
+			       values are 0...2, yes(=1) or no value(=0), 2=strict time
 			       [default=disabled, value from source code]])],
 	      [AS_IF([test "$enableval" -ge 0 -a "$enableval" -le 2 2>/dev/null],
 		     [debug_timestamps_info="yes:$enableval (EM_DEBUG_TIMESTAMP_ENABLE=$enableval)"

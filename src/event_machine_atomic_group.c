@@ -231,7 +231,7 @@ em_queue_create_ag(const char *name, em_queue_prio_t prio,
 		atomic_group_elem_get(atomic_group);
 	const char *err_str = "";
 
-	if (unlikely(ag_elem == NULL || !atomic_group_allocated(ag_elem))) {
+	if (unlikely(!ag_elem || !atomic_group_allocated(ag_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_CREATE_AG,
 			       "Invalid Atomic Group:%" PRI_AGRP "",
 			       atomic_group);
@@ -251,6 +251,14 @@ em_queue_create_ag(const char *name, em_queue_prio_t prio,
 	}
 
 	q_elem = queue_elem_get(queue);
+	if (unlikely(!q_elem)) {
+		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_QUEUE_CREATE_AG,
+			       "Atomic Group Q:%" PRI_QUEUE " - q_elem = NULL",
+			       queue);
+		queue_free(queue);
+		return EM_QUEUE_UNDEF;
+	}
+
 	/* Add queue to atomic group list */
 	atomic_group_add_queue_list(ag_elem, q_elem);
 
@@ -263,13 +271,12 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 			  const em_queue_conf_t *conf)
 {
 	em_queue_t queue_static;
-	queue_elem_t *q_elem;
 	em_queue_group_t queue_group;
 	atomic_group_elem_t *const ag_elem =
 		atomic_group_elem_get(atomic_group);
 	const char *err_str = "";
 
-	RETURN_ERROR_IF(ag_elem == NULL || !atomic_group_allocated(ag_elem),
+	RETURN_ERROR_IF(!ag_elem || !atomic_group_allocated(ag_elem),
 			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
 			"Invalid Atomic Group:%" PRI_AGRP "", atomic_group);
 
@@ -279,13 +286,26 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 				    queue_group, queue, atomic_group, conf,
 				    &err_str);
 
-	RETURN_ERROR_IF(queue_static == EM_QUEUE_UNDEF ||
-			queue_static != queue,
+	RETURN_ERROR_IF(queue_static == EM_QUEUE_UNDEF,
 			EM_ERR_NOT_FREE, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
-			"Atomic Group static queue creation failed! (%s)",
-			err_str);
+			"Atomic Group static queue:%" PRI_QUEUE " creation failed! (%s)",
+			queue, err_str);
 
-	q_elem = queue_elem_get(queue);
+	queue_elem_t *q_elem = queue_elem_get(queue_static);
+
+	/* Fatal error if q_elem == NULL, should never happen if queue_static != UNDEF */
+	RETURN_ERROR_IF(!q_elem, EM_FATAL(EM_ERR_BAD_POINTER),
+			EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
+			"Queue elem NULL - req:%" PRI_QUEUE " vs. %" PRI_QUEUE "(=NULL)",
+			queue, queue_static);
+
+	if (unlikely(queue_static != queue)) {
+		queue_delete(q_elem);
+		return INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
+				      "Queue error - req:%" PRI_QUEUE " vs. %" PRI_QUEUE "",
+				      queue, queue_static);
+	}
+
 	/* Add queue to atomic group list */
 	atomic_group_add_queue_list(ag_elem, q_elem);
 
@@ -419,6 +439,8 @@ em_atomic_group_queue_get_first(unsigned int *num,
 	const atomic_group_elem_t *const agrp_elem =
 		atomic_group_elem_get(atomic_group);
 
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
+
 	if (unlikely(agrp_elem == NULL || !atomic_group_allocated(agrp_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG,
 			       EM_ESCOPE_ATOMIC_GROUP_QUEUE_GET_FIRST,
@@ -436,7 +458,7 @@ em_atomic_group_queue_get_first(unsigned int *num,
 		*num = num_queues;
 
 	if (num_queues == 0) {
-		_agrp_q_iter_idx = EM_MAX_QUEUES; /* UNDEF = _get_next() */
+		_agrp_q_iter_idx = max_queues; /* UNDEF = _get_next() */
 		return EM_QUEUE_UNDEF;
 	}
 
@@ -458,7 +480,7 @@ em_atomic_group_queue_get_first(unsigned int *num,
 	       !q_elem->flags.in_atomic_group ||
 	       q_elem->agrp.atomic_group != _agrp_q_iter_agrp) {
 		_agrp_q_iter_idx++;
-		if (_agrp_q_iter_idx >= EM_MAX_QUEUES)
+		if (_agrp_q_iter_idx >= max_queues)
 			return EM_QUEUE_UNDEF;
 		q_elem = &q_elem_tbl[_agrp_q_iter_idx];
 	}
@@ -469,7 +491,9 @@ em_atomic_group_queue_get_first(unsigned int *num,
 em_queue_t
 em_atomic_group_queue_get_next(void)
 {
-	if (_agrp_q_iter_idx >= EM_MAX_QUEUES - 1)
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
+
+	if (_agrp_q_iter_idx >= max_queues - 1)
 		return EM_QUEUE_UNDEF;
 
 	_agrp_q_iter_idx++;
@@ -482,10 +506,15 @@ em_atomic_group_queue_get_next(void)
 	       !q_elem->flags.in_atomic_group ||
 	       q_elem->agrp.atomic_group != _agrp_q_iter_agrp) {
 		_agrp_q_iter_idx++;
-		if (_agrp_q_iter_idx >= EM_MAX_QUEUES)
+		if (_agrp_q_iter_idx >= max_queues)
 			return EM_QUEUE_UNDEF;
 		q_elem = &q_elem_tbl[_agrp_q_iter_idx];
 	}
 
 	return queue_idx2hdl(_agrp_q_iter_idx);
+}
+
+uint64_t em_atomic_group_to_u64(em_atomic_group_t atomic_group)
+{
+	return (uint64_t)atomic_group;
 }

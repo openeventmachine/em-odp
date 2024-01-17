@@ -389,6 +389,7 @@ em_queue_t
 em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 {
 	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
 
 	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_QUEUE_GET_FIRST,
@@ -406,7 +407,7 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 		*num = num_queues;
 
 	if (num_queues == 0) {
-		_qgrp_q_iter_idx = EM_MAX_QUEUES; /* UNDEF = _get_next() */
+		_qgrp_q_iter_idx = max_queues; /* UNDEF = _get_next() */
 		return EM_QUEUE_UNDEF;
 	}
 
@@ -427,7 +428,7 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 	while (!queue_allocated(q_elem) ||
 	       q_elem->queue_group != _qgrp_q_iter_qgrp) {
 		_qgrp_q_iter_idx++;
-		if (_qgrp_q_iter_idx >= EM_MAX_QUEUES)
+		if (_qgrp_q_iter_idx >= max_queues)
 			return EM_QUEUE_UNDEF;
 		q_elem = &q_elem_tbl[_qgrp_q_iter_idx];
 	}
@@ -438,7 +439,9 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 em_queue_t
 em_queue_group_queue_get_next(void)
 {
-	if (_qgrp_q_iter_idx >= EM_MAX_QUEUES - 1)
+	const unsigned int max_queues = em_shm->opt.queue.max_num;
+
+	if (_qgrp_q_iter_idx >= max_queues - 1)
 		return EM_QUEUE_UNDEF;
 
 	_qgrp_q_iter_idx++;
@@ -450,10 +453,15 @@ em_queue_group_queue_get_next(void)
 	while (!queue_allocated(q_elem) ||
 	       q_elem->queue_group != _qgrp_q_iter_qgrp) {
 		_qgrp_q_iter_idx++;
-		if (_qgrp_q_iter_idx >= EM_MAX_QUEUES)
+		if (_qgrp_q_iter_idx >= max_queues)
 			return EM_QUEUE_UNDEF;
 		q_elem = &q_elem_tbl[_qgrp_q_iter_idx];
 	}
 
 	return queue_idx2hdl(_qgrp_q_iter_idx);
+}
+
+uint64_t em_queue_group_to_u64(em_queue_group_t queue_group)
+{
+	return (uint64_t)queue_group;
 }

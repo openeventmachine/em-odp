@@ -552,7 +552,7 @@ em_pool_get_name(em_pool_t pool, char *name /*out*/, size_t maxlen);
  * @see em_pool_get_next()
  */
 em_pool_t
-em_pool_get_first(unsigned int *num);
+em_pool_get_first(unsigned int *num /*out*/);
 
 /**
  * Return the next event pool handle.
@@ -640,7 +640,7 @@ em_pool_info_print_all(void);
  *
  * @see em_pool_cfg_t::stats_opt and em_pool_stats_t.
  */
-em_status_t em_pool_stats(em_pool_t pool, em_pool_stats_t *pool_stats/*out*/);
+em_status_t em_pool_stats(em_pool_t pool, em_pool_stats_t *pool_stats /*out*/);
 
 /**
  * Reset statistics for an EM pool.
@@ -683,16 +683,16 @@ void em_pool_stats_print(em_pool_t pool);
  * at the end of 'subpools' can not be fetched. The function will not modify
  * corresponding 'subpool_stats'.
  *
- * @param         pool          EM pool handle
- * @param         subpools      Array of subpool indices, must contain
- *                              'num_subpools' valid subpool-indices.
- *                              0 <= indices < number of subpools 'pool' has.
- * @param         num_subpools  Number of subpools to retrieve statistics for.
- *                              0 < num_subpools <= number of subpools 'pool' has.
- * @param[out] subpool_stats    Array of subpool statistics, must have room for
- *                              'num_subpools' entries of subpool statistics.
- *                              A successful call writes to this array the requested
- *                              subpool statistics [out].
+ * @param       pool           EM pool handle
+ * @param       subpools       Array of subpool indices, must contain
+ *                             'num_subpools' valid subpool-indices.
+ *                             0 <= indices < number of subpools 'pool' has.
+ * @param       num_subpools   Number of subpools to retrieve statistics for.
+ *                             0 < num_subpools <= number of subpools 'pool' has.
+ * @param[out]  subpool_stats  Array of subpool statistics, must have room for
+ *                             'num_subpools' entries of subpool statistics.
+ *                             A successful call writes to this array the requested
+ *                             subpool statistics [out].
  *
  * @return number of stats successfully fetched (equal to 'num_subpools' if all
  *         successful) or 0 on error.
@@ -718,7 +718,7 @@ void em_pool_stats_print(em_pool_t pool);
  */
 int
 em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
-		      em_pool_subpool_stats_t subpool_stats[]/*out*/);
+		      em_pool_subpool_stats_t subpool_stats[/*out*/]);
 
 /**
  * Reset statistics for subpool(s) of an EM pool.
@@ -766,7 +766,7 @@ void em_pool_subpool_stats_print(em_pool_t pool, const int subpools[], int num_s
  * @param         pool           EM pool handle
  * @param[out]    pool_stats     Pointer to pool statistics. A successful call
  *                               writes to this pointer the requested pool statistics.
- * @opt           opt            Used to select the statistic counters to read
+ * @param         opt            Used to select the statistic counters to read
  *
  * @return EM_OK if the selected statistics of all subpools of 'pool' are read
  * successfully
@@ -786,7 +786,7 @@ em_pool_stats_selected(em_pool_t pool, em_pool_stats_selected_t *pool_stats/*out
  * in the statistics.
  *
  * @param      pool      EM pool handle
- * @opt        opt       Used to select the statistic counters to print
+ * @param      opt       Used to select the statistic counters to print
  *
  * Uses em_pool_stats_selected() when printing the selected pool statistics.
  */
@@ -808,17 +808,17 @@ void em_pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt
  * indices are given at the end of 'subpools' can not be fetched. The function
  * will not modify corresponding 'subpool_stats'.
  *
- * @param         pool          EM pool handle
- * @param         subpools      Array of subpool indices, must contain
- *                              'num_subpools' valid subpool-indices.
- *                              0 <= indices < number of subpools 'pool' has.
- * @param         num_subpools  Number of subpools to retrieve statistics for.
- *                              0 < num_subpools <= number of subpools 'pool' has.
- * @param[out] subpool_stats    Array of subpool statistics, must have room for
- *                              'num_subpools' entries of subpool statistics.
- *                              A successful call writes to this array the requested
- *                              subpool statistics [out].
- * @opt               opt       Used to select the statistic counters to read
+ * @param       pool          EM pool handle
+ * @param       subpools      Array of subpool indices, must contain
+ *                            'num_subpools' valid subpool-indices.
+ *                            0 <= indices < number of subpools 'pool' has.
+ * @param       num_subpools  Number of subpools to retrieve statistics for.
+ *                            0 < num_subpools <= number of subpools 'pool' has.
+ * @param[out]  subpool_stats Array of subpool statistics, must have room for
+ *                            'num_subpools' entries of subpool statistics.
+ *                            A successful call writes to this array the
+ *                            requested subpool statistics [out].
+ * @param       opt           Used to select the statistic counters to read
  *
  * @return number of subpool_stats successfully fetched (equal to 'num_subpools'
  *         if all successful) or 0 on error.
@@ -845,7 +845,7 @@ void em_pool_stats_selected_print(em_pool_t pool, const em_pool_stats_opt_t *opt
  * @see em_pool_cfg_t::stats_opt, em_pool_subpool_stats_selected_t and em_pool_stats_opt_t.
  */
 int em_pool_subpool_stats_selected(em_pool_t pool, const int subpools[], int num_subpools,
-				   em_pool_subpool_stats_selected_t subpool_stats[]/*out*/,
+				   em_pool_subpool_stats_selected_t subpool_stats[/*out*/],
 				   const em_pool_stats_opt_t *opt);
 
 /**
@@ -859,12 +859,23 @@ int em_pool_subpool_stats_selected(em_pool_t pool, const int subpools[], int num
  *                           0 <= indices < number of subpools pool has
  * @param      num_subpools  Number of subpools to print statistics for
  *                           0 < num_subpools <= number of subpools pool has
- * @opt        opt           Used to select the statistic counters to print
+ * @param      opt           Used to select the statistic counters to print
  *
  * Uses em_pool_subpool_stats_selected() when printing the selected subpool statistics.
  */
 void em_pool_subpool_stats_selected_print(em_pool_t pool, const int subpools[],
 					  int num_subpools, const em_pool_stats_opt_t *opt);
+/**
+ * Convert an EM pool handle to an unsigned integer
+ *
+ * @param pool  EM pool handle to be converted
+ * @return  uint64_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_pool_t handle.
+ */
+uint64_t em_pool_to_u64(em_pool_t pool);
 
 /**
  * @}

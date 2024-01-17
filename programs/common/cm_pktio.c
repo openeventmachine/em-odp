@@ -105,9 +105,6 @@ void pktio_mem_reserve(void)
 	if (unlikely(pktio_shm != NULL))
 		APPL_EXIT_FAILURE("pktio shared memory ptr set - already initialized?");
 
-#if ODP_VERSION_API_NUM(1, 33, 0) > ODP_VERSION_API
-	flags |= ODP_SHM_SINGLE_VA;
-#else
 	odp_shm_capability_t shm_capa;
 	int ret = odp_shm_capability(&shm_capa);
 
@@ -116,7 +113,7 @@ void pktio_mem_reserve(void)
 
 	if (shm_capa.flags & ODP_SHM_SINGLE_VA)
 		flags |= ODP_SHM_SINGLE_VA;
-#endif
+
 	/* Reserve packet I/O shared memory */
 	shm = odp_shm_reserve("pktio_shm", sizeof(pktio_shm_t),
 			      ODP_CACHE_LINE_SIZE, flags);

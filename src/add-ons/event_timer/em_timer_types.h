@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2017, Nokia Solutions and Networks
+ *   Copyright (c) 2017-2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -49,15 +49,26 @@ typedef struct event_timer_t {
 
 /* Timer */
 typedef struct {
-	odp_ticketlock_t timer_lock; /* locks handling of these values */
-	odp_pool_t shared_tmo_pool;  /* shared tmo pool if used */
-	odp_pool_t ring_tmo_pool;    /* odp timeout pool for ring timers */
-	uint32_t num_rings;	     /* counter for shared pool mgmt */
-	uint32_t num_timers;	     /* all timers count for cleanup */
-	uint32_t ring_reserved;      /* how many events reserved by ring timers so far */
-	uint32_t reserved;           /* how many tmos reserved by timers so far */
-	event_timer_t timer[EM_ODP_MAX_TIMERS];
+	/* locks handling of these values */
+	odp_ticketlock_t timer_lock;
+	/* shared tmo pool if used */
+	odp_pool_t shared_tmo_pool;
+	/* odp timeout event pool for ring timers */
+	odp_pool_t ring_tmo_pool;
+	/* counter for shared pool mgmt */
+	uint32_t num_rings;
+	/* all timers count for cleanup */
+	uint32_t num_timers;
+	/* how many events reserved by ring timers so far */
+	uint32_t ring_reserved;
+	/* how many tmos reserved by timers so far */
+	uint32_t reserved;
+	/* how many times em_timer_ring_create() has been called, incremented only */
+	uint32_t num_ring_create_calls;
+	/* to verify that the timer data has been initialized before use */
 	uint32_t init_check;
+	/* event timers */
+	event_timer_t timer[EM_ODP_MAX_TIMERS];
 } timer_storage_t;
 
 /* EM timeout handle points to this. Holds the timer state.
@@ -75,8 +86,8 @@ typedef struct em_timer_timeout_t {
 	odp_buffer_t odp_buffer;	/* this data is in odp buffer */
 	/* 2nd cache line: */
 	em_timer_t timer;		/* related timer (can't lookup from odp timer pool) */
-	odp_pool_t ring_tmo_pool;	/* if ring: this is the pool for odp timeout */
-	odp_event_t odp_timeout;	/* if ring: this is pre-allocated odp timeout */
+	odp_pool_t ring_tmo_pool;	/* if ring: this is the pool for odp timeout event */
+	odp_event_t odp_timeout;	/* if ring: this is the pre-allocated odp timeout event */
 	em_tmo_stats_t stats;		/* per tmo statistics */
 } em_timer_timeout_t;
 

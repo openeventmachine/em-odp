@@ -960,6 +960,18 @@ em_queue_t
 em_eo_queue_get_next(void);
 
 /**
+ * Convert an EO handle to an unsigned integer
+ *
+ * @param eo  EO handle to be converted
+ * @return    uint64_t value that can be used to print/display the handle
+ *
+ * @note This routine is intended to be used for diagnostic purposes
+ * to enable applications to e.g. generate a printable value that represents
+ * an em_eo_t handle.
+ */
+uint64_t em_eo_to_u64(em_eo_t eo);
+
+/**
  * @}
  */
 #ifdef __cplusplus

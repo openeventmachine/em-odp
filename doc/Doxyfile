@@ -986,7 +986,8 @@ EXCLUDE_SYMBOLS        =
 # that contain example code fragments that are included (see the \include
 # command).
 
-EXAMPLE_PATH           = $(SRCDIR)/programs/common \
+EXAMPLE_PATH           = $(SRCDIR)/programs/bench \
+                         $(SRCDIR)/programs/common \
                          $(SRCDIR)/programs/example \
                          $(SRCDIR)/programs/packet_io \
                          $(SRCDIR)/programs/performance

@@ -237,13 +237,13 @@ _dispatch_local(stash_entry_t entry)
 	/* Event might originate from outside (via polled pktio) of EM and need init */
 	event = event_init_odp(odp_event, true/*is_extev*/, &ev_hdr/*out*/);
 
-	if (unlikely(q_elem == NULL || q_elem->state != EM_QUEUE_STATE_READY)) {
+	if (unlikely(!q_elem || q_elem->state != EM_QUEUE_STATE_READY)) {
 		em_free(event);
 		/* Consider removing the logging */
 		EM_LOG(EM_LOG_PRINT,
-		       "EM info: %s(): localQ:%" PRIx32 ":\n"
+		       "EM info: %s(): localQ:%" PRI_QUEUE ":\n"
 		       "Not ready - state:%d drop:1 event\n",
-		       __func__, q_elem->queue, q_elem->state);
+		       __func__, queue, q_elem ? q_elem->state : 0);
 		return;
 	}
 
@@ -293,14 +293,13 @@ _dispatch_local_multi(const stash_entry_t entry_tbl[], const int num)
 		event_init_odp_multi(&odp_evtbl[idx], ev_tbl/*out*/, evhdr_tbl/*out*/,
 				     ev_cnt, true/*is_extev*/);
 
-		if (unlikely(q_elem == NULL || q_elem->state != EM_QUEUE_STATE_READY)) {
+		if (unlikely(!q_elem || q_elem->state != EM_QUEUE_STATE_READY)) {
 			em_free_multi(ev_tbl, ev_cnt);
 			/* Consider removing the logging */
 			EM_LOG(EM_LOG_PRINT,
-			       "EM info: %s(): localQ:%" PRIx32 ":\n"
+			       "EM info: %s(): localQ:%" PRI_QUEUE ":\n"
 			       "Not ready - state:%d drop:%d events\n",
-			       __func__, q_elem->queue,
-			       q_elem->state, ev_cnt);
+			       __func__, queue, q_elem ? q_elem->state : 0, ev_cnt);
 			idx += ev_cnt;
 			continue;
 		}
@@ -609,7 +608,7 @@ to_active(void)
 }
 
 /**
- * @brief Dispatcher calls the scheduler and request events for preocessing
+ * @brief Dispatcher calls the scheduler and requests events for processing
  */
 static inline int
 dispatch_schedule(odp_queue_t *odp_queue /*out*/, uint64_t sched_wait,
