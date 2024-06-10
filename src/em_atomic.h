@@ -36,7 +36,7 @@ extern "C" {
 #endif
 
 /*
- * Types and macros to avoid #ifdef EM_64_BIT/EM_32_BIT thoughout the code
+ * Types and macros to avoid #ifdef EM_64_BIT/EM_32_BIT throughout the code
  */
 
 #if defined(EM_64_BIT)

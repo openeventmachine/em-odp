@@ -508,7 +508,7 @@ void pktio_init(const appl_conf_t *appl_conf)
 
 	odp_ticketlock_init(&pktio_shm->tbl_lookup.lock);
 	pktio_shm->tbl_lookup.tbl_idx = 0;
-	pktio_shm->tbl_lookup.ops = odph_cuckoo_table_ops;
+	pktio_shm->tbl_lookup.ops = cuckoo_table_ops;
 	odp_ticketlock_lock(&pktio_shm->tbl_lookup.lock);
 	pktio_shm->tbl_lookup.tbl =
 	pktio_shm->tbl_lookup.ops.f_create("RX-lookup-tbl", MAX_RX_PKT_QUEUES,
@@ -765,7 +765,7 @@ static void pktin_config(const char *dev, int if_idx, odp_pktio_t pktio,
 
 	if (pktin_polled_mode(in_mode)) {
 		/*
-		 * Store all pktin queues in a stash - each core 'gets' aquires
+		 * Store all pktin queues in a stash - each core 'gets' acquires
 		 * a pktin queue to use from this stash.
 		 */
 		pktin_queue_stashing_create(if_idx, in_mode);
@@ -1012,7 +1012,7 @@ plain_queue_release(odp_queue_t queue)
 static inline int /* nbr of pkts enqueued */
 pktin_lookup_enqueue(odp_packet_t pkt_tbl[], int pkts)
 {
-	const odph_table_get_value f_get = pktio_shm->tbl_lookup.ops.f_get;
+	const table_get_value f_get = pktio_shm->tbl_lookup.ops.f_get;
 	rx_queue_burst_t *const rx_qbursts = pktio_locm.rx_qbursts;
 	int pkts_enqueued = 0; /* return value */
 	int valid_pkts = 0;

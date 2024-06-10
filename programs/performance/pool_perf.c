@@ -319,8 +319,9 @@ void do_work(uint64_t ns)
 		;
 }
 
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -374,7 +375,7 @@ void add_to_bin(int bin, int64_t ns)
 
 void print_bin(int bin)
 {
-	APPL_PRINT("\nBin '%s' counts:\n# upto ns\t", g_bin_names[bin]);
+	APPL_PRINT("\nBin '%s' counts:\n# up to ns\t", g_bin_names[bin]);
 	for (int i = 0; i < NUM_BINS; i++)
 		APPL_PRINT("%-13ld", g_bins[bin][i].upto_ns);
 	APPL_PRINT("\n# \t\t");
@@ -788,7 +789,7 @@ void print_uptime(void)
 
 void print_setup(void)
 {
-	APPL_PRINT("\n Cores:             %d\n", em_core_count());
+	APPL_PRINT("\n Cores:             %u\n", perf_shm->core_count);
 	APPL_PRINT(" Loops:             %u\n", g_options.loops);
 	APPL_PRINT(" Batch per loop:    %u\n", g_options.perloop);
 	APPL_PRINT(" Parallel events:   %u\n", g_options.events);
@@ -808,9 +809,9 @@ void print_setup(void)
 		char type[10] = {0};
 
 		if (g_options.pool.type == EM_EVENT_TYPE_SW)
-			strcpy(type, "SW");
+			strncpy(type, "SW", sizeof(type));
 		else
-			strcpy(type, "PACKET");
+			strncpy(type, "PACKET", sizeof(type));
 		APPL_PRINT(" Test pool:         %u * %uB, cache %u, %s\n",
 			   g_options.pool.num, g_options.pool.size,
 			   g_options.pool.cache, type);
@@ -834,11 +835,11 @@ void restart(em_queue_t testq)
 		test_msg *msg = em_event_pointer(ev);
 
 		memset(msg, 0, sizeof(test_msg));
-		for (int i = 0; i < MAX_ALLOCS; i++) {
+		for (int j = 0; j < MAX_ALLOCS; j++) {
 			if (g_options.use_odp)
-				msg->events[i].odp_ev = ODP_EVENT_INVALID;
+				msg->events[j].odp_ev = ODP_EVENT_INVALID;
 			else
-				msg->events[i].em_ev = EM_EVENT_UNDEF;
+				msg->events[j].em_ev = EM_EVENT_UNDEF;
 		}
 		msg->times.alloc.min_ns = INT64_MAX;
 		msg->times.alloc.max_ns = INT64_MIN;
@@ -858,9 +859,12 @@ void restart(em_queue_t testq)
 	APPL_PRINT("Start, sent %u context events\n", g_options.events);
 }
 
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
-	test_fatal_if(em_core_count() > MAX_CORES, "Too many cores");
+	test_fatal_if(appl_conf->core_count > MAX_CORES, "Too many cores");
+
+	/* Store the number of EM-cores running the application */
+	perf_shm->core_count = appl_conf->core_count;
 
 	perf_shm->ts_overhead = try_timestamp_overhead();
 	APPL_PRINT("time stamp pair overhead seems to be %lu ns\n",
@@ -925,7 +929,7 @@ void test_start(appl_conf_t *const appl_conf)
 		      "EO start:%" PRI_STAT " %" PRI_STAT "", ret, start_ret);
 }
 
-void test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_status_t ret;
@@ -950,8 +954,10 @@ void test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
+
 	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
 	em_unregister_error_handler();
 	env_shared_free(perf_shm);
@@ -1000,7 +1006,7 @@ void print_global_stat(void)
 	/* per core */
 	APPL_PRINT("\ncore#   #allocs     #frees      #events     #burst avg\n");
 	APPL_PRINT("------------------------------------------------------\n");
-	for (int i = 0; i < em_core_count(); i++)
+	for (unsigned int i = 0; i < perf_shm->core_count; i++)
 		APPL_PRINT("%-8d%-12lu%-12lu%-12lu%-12.2f\n",
 			   i, perf_shm->counts[i].allocs,
 			   perf_shm->counts[i].frees,

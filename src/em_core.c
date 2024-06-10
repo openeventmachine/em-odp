@@ -30,9 +30,8 @@
 
 #include "em_include.h"
 
-em_status_t
-core_map_init(core_map_t *const core_map, int core_count,
-	      const em_core_mask_t *phys_mask)
+em_status_t core_map_init(core_map_t *const core_map, int core_count,
+			  const em_core_mask_t *phys_mask)
 {
 	int phys_id = 0;
 	int logic_id = 0;
@@ -53,6 +52,7 @@ core_map_init(core_map_t *const core_map, int core_count,
 	memset(core_map, 0, sizeof(core_map_t));
 
 	env_spinlock_init(&core_map->lock);
+	odp_atomic_init_u32(&core_map->current_core_count, 0);
 
 	/* Store the EM core count, returned by em_core_count() */
 	core_map->count = core_count;
@@ -72,12 +72,12 @@ core_map_init(core_map_t *const core_map, int core_count,
 	return EM_OK;
 }
 
-em_status_t
-core_map_init_local(core_map_t *const core_map)
+em_status_t core_map_init_local(core_map_t *const core_map)
 {
 	em_locm_t *const locm = &em_locm;
 	const int phys_core = odp_cpu_id();
 	const int odp_thr = odp_thread_id();
+	int32_t current_core_count;
 
 	if (unlikely(phys_core >= EM_MAX_CORES))
 		return EM_ERR_BAD_ID;
@@ -94,9 +94,28 @@ core_map_init_local(core_map_t *const core_map)
 		return EM_ERR_TOO_LARGE;
 
 	env_spinlock_lock(&core_map->lock);
+	current_core_count = odp_atomic_fetch_inc_u32(&core_map->current_core_count);
 	core_map->thr_vs_logic.logic[odp_thr] = locm->core_id;
 	core_map->thr_vs_logic.odp_thr[locm->core_id] = odp_thr;
 	env_spinlock_unlock(&core_map->lock);
+
+	EM_DBG("EM-core%02d: %s() - current core count:%d\n",
+	       em_locm.core_id, __func__, current_core_count + 1);
+
+	return EM_OK;
+}
+
+em_status_t core_map_term_local(core_map_t *const core_map)
+{
+	int32_t current_core_count = odp_atomic_fetch_dec_u32(&core_map->current_core_count);
+
+	if (unlikely(current_core_count < 1)) {
+		EM_LOG(EM_LOG_ERR, "Current core count invalid: %d", current_core_count);
+		return EM_ERR_TOO_SMALL;
+	}
+
+	EM_DBG("EM-core%02d: %s() - current core count:%d\n",
+	       em_locm.core_id, __func__, current_core_count);
 
 	return EM_OK;
 }
@@ -132,7 +151,7 @@ void mask_em2odp(const em_core_mask_t *const em_core_mask,
 		return;
 	}
 
-	/* EM cores are consequtive 0 -> em_core_count()-1 */
+	/* EM cores are consecutive 0 -> em_core_count()-1 */
 	for (int i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, em_core_mask)) {
 			odp_thread_id = logic_to_thr_core_id(i);
@@ -149,7 +168,7 @@ void mask_em2phys(const em_core_mask_t *const em_core_mask,
 
 	odp_cpumask_zero(odp_cpumask);
 
-	/* EM cores are consequtive 0 -> em_core_count()-1 */
+	/* EM cores are consecutive 0 -> em_core_count()-1 */
 	for (int i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, em_core_mask)) {
 			cpu_id = logic_to_phys_core_id(i);

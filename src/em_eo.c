@@ -96,7 +96,7 @@ em_status_t
 eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool)
 {
 	int ret;
-	const int cores = em_core_count();
+	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
 
 	memset(eo_tbl, 0, sizeof(eo_tbl_t));
 	memset(eo_pool, 0, sizeof(eo_pool_t));
@@ -111,12 +111,12 @@ eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool)
 		eo_elem->stash = ODP_STASH_INVALID;
 	}
 
-	ret = objpool_init(&eo_pool->objpool, cores);
+	ret = objpool_init(&eo_pool->objpool, objpool_subpools);
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (int i = 0; i < EM_MAX_EOS; i++)
-		objpool_add(&eo_pool->objpool, i % cores,
+	for (uint32_t i = 0; i < EM_MAX_EOS; i++)
+		objpool_add(&eo_pool->objpool, i % objpool_subpools,
 			    &eo_tbl->eo_elem[i].eo_pool_elem);
 
 	env_atomic32_init(&em_shm->eo_count);

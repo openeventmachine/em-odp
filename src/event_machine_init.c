@@ -36,7 +36,6 @@
  */
 
 #include "em_include.h"
-#include "add-ons/event_timer/em_timer.h"
 
 /** EM shared memory */
 em_shm_t *em_shm;
@@ -63,8 +62,7 @@ void em_conf_init(em_conf_t *conf)
 	em_pool_cfg_init(&conf->default_pool_cfg);
 }
 
-em_status_t
-em_init(const em_conf_t *conf)
+em_status_t em_init(const em_conf_t *conf)
 {
 	em_status_t stat;
 	int ret;
@@ -170,6 +168,8 @@ em_init(const em_conf_t *conf)
 		stat = esv_init();
 		RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 				"esv_init() failed:%" PRI_STAT "", stat);
+	} else {
+		esv_disabled_warn_config();
 	}
 
 	/* Initialize EM callbacks/hooks */
@@ -219,7 +219,7 @@ em_init(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"create_ctrl_queues() failed:%" PRI_STAT "", stat);
 
-	/* timer add-on */
+	/* Initialize EM Timer */
 	if (conf->event_timer) {
 		stat = timer_init(&em_shm->timers);
 		RETURN_ERROR_IF(stat != EM_OK,
@@ -241,8 +241,7 @@ em_init(const em_conf_t *conf)
 	return EM_OK;
 }
 
-em_status_t
-em_init_core(void)
+em_status_t em_init_core(void)
 {
 	em_locm_t *const locm = &em_locm;
 	odp_shm_t shm;
@@ -297,7 +296,7 @@ em_init_core(void)
 			"queue_init_local() failed:%" PRI_STAT "", stat);
 
 	/*
-	 * Initialize timer add-on. If global init was not done (config),
+	 * Initialize EM timer. If global init was not done (config),
 	 * this is just a NOP
 	 */
 	stat = timer_init_local();
@@ -339,13 +338,58 @@ em_init_core(void)
 	return EM_OK;
 }
 
-em_status_t
-em_term(const em_conf_t *conf)
+static void flush_scheduler_events(void)
 {
+	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
+	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
+	int num_events;
+
+	do {
+		num_events = odp_schedule_multi_no_wait(NULL, odp_ev_tbl, EM_SCHED_MULTI_MAX_BURST);
+		/* the check 'num_events > EM_SCHED_MULTI_MAX_BURST' avoids a gcc warning */
+		if (num_events <= 0 || num_events > EM_SCHED_MULTI_MAX_BURST)
+			break;
+		/*
+		 * Events might originate from outside of EM and need init.
+		 */
+		event_init_odp_multi(odp_ev_tbl, em_ev_tbl/*out*/, ev_hdr_tbl/*out*/,
+				     num_events, true/*is_extev*/);
+		em_free_multi(em_ev_tbl, num_events);
+	} while (num_events > 0);
+}
+
+em_status_t em_term(const em_conf_t *conf)
+{
+	em_locm_t *const locm = &em_locm;
 	em_status_t stat;
 	int ret;
 
 	(void)conf;
+
+	/*
+	 * Join all queue groups to be able to flush all events
+	 * from the scheduler from this core.
+	 */
+	queue_group_join_all();
+
+	/*
+	 * Flush all events in the scheduler.
+	 * Run loop twice: first with sched enabled and then paused.
+	 */
+	if (locm->is_sched_paused) {
+		locm->is_sched_paused = false;
+		odp_schedule_resume();
+	}
+	for (int i = 0; i < 2; i++) {
+		flush_scheduler_events();
+		locm->is_sched_paused = true;
+		odp_schedule_pause();
+	}
+
+	stat = delete_ctrl_queues();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"delete_ctrl_queues() failed:%" PRI_STAT "", stat);
 
 	if (em_shm->conf.event_timer)
 		timer_term(&em_shm->timers);
@@ -380,17 +424,28 @@ em_term(const em_conf_t *conf)
 	return EM_OK;
 }
 
-em_status_t
-em_term_core(void)
+em_status_t em_term_core(void)
 {
 	em_status_t stat = EM_OK;
 	em_status_t ret_stat = EM_OK;
 	em_locm_t *const locm = &em_locm;
 
-	if (em_core_id() == 0)
-		delete_ctrl_queues();
+	/*
+	 * Poll internal unscheduled ctrl queues to complete ctrl actions
+	 * and flush them.
+	 */
+	poll_unsched_ctrl_queue();
 
-	/* Stop timer add-on. Just a NOP if timer was not enabled (config) */
+	/*
+	 * Flush the scheduler from locally stashed events.
+	 */
+	if (!locm->is_sched_paused) {
+		locm->is_sched_paused = true;
+		odp_schedule_pause();
+	}
+	flush_scheduler_events();
+
+	/* Stop EM Timer. Just a NOP if timer was not enabled (config) */
 	stat = timer_term_local();
 	if (stat != EM_OK) {
 		ret_stat = stat;
@@ -414,41 +469,9 @@ em_term_core(void)
 			       "queue_term_local() fails: %" PRI_STAT "", stat);
 	}
 
-	/*
-	 * Flush all events in the scheduler.
-	 */
-	if (locm->is_sched_paused) {
-		locm->is_sched_paused = false;
-		odp_schedule_resume();
-	}
-
-	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
-	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	odp_queue_t odp_queue;
-	int num_events;
-
-	/* run loop twice: first with sched enabled and then paused */
-	for (int i = 0; i < 2; i++) {
-		do {
-			num_events =
-			odp_schedule_multi_no_wait(&odp_queue, odp_ev_tbl,
-						   EM_SCHED_MULTI_MAX_BURST);
-			/* the check 'num_events > EM_SCHED_MULTI_MAX_BURST' avoids a gcc warning */
-			if (num_events <= 0 || num_events > EM_SCHED_MULTI_MAX_BURST)
-				break;
-			/*
-			 * Events might originate from outside of EM and need init.
-			 */
-			event_init_odp_multi(odp_ev_tbl, em_ev_tbl/*out*/,
-					     ev_hdr_tbl/*out*/, num_events,
-					     true/*is_extev*/);
-			em_free_multi(em_ev_tbl, num_events);
-		} while (num_events > 0);
-
-		locm->is_sched_paused = true;
-		odp_schedule_pause();
-	}
+	stat = core_map_term_local(&em_shm->core_map);
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM_CORE,
+			"core_map_term_local() failed:%" PRI_STAT "", stat);
 
 	return ret_stat == EM_OK ? EM_OK : EM_ERR;
 }

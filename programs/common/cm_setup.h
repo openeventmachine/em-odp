@@ -166,6 +166,8 @@ typedef struct {
 typedef struct {
 	/** application name */
 	char name[APPL_NAME_LEN];
+	/** Number of EM cores to create */
+	unsigned int core_count;
 	/** number of processes */
 	unsigned int num_procs;
 	/** number of threads */
@@ -224,13 +226,13 @@ int cm_setup(int argc, char *argv[]);
  * All examples implement the test_init(), test_start(), test_stop() and
  * test_term() functions to keep common main() function.
  */
-void test_init(void);
+void test_init(const appl_conf_t *appl_conf);
 
-void test_start(appl_conf_t *const appl_conf);
+void test_start(const appl_conf_t *appl_conf);
 
-void test_stop(appl_conf_t *const appl_conf);
+void test_stop(const appl_conf_t *appl_conf);
 
-void test_term(void);
+void test_term(const appl_conf_t *appl_conf);
 
 int appl_vlog(em_log_level_t level, const char *fmt, va_list args);
 

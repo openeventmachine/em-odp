@@ -154,6 +154,8 @@ typedef struct app_eo_ctx_t {
 } app_eo_ctx_t;
 
 typedef struct timer_app_shm_t {
+	/* Number of EM cores running the application */
+	unsigned int core_count;
 	em_pool_t pool;
 	app_eo_ctx_t eo_context;
 	em_timer_t hb_tmr;

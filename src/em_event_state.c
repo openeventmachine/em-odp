@@ -1132,7 +1132,7 @@ static int read_config_file(void)
 	bool val_bool = false;
 	int ret;
 
-	EM_PRINT("EM ESV config:\n");
+	EM_PRINT("EM ESV config: (EM_ESV_ENABLE=%d)\n", EM_ESV_ENABLE);
 
 	/*
 	 * Option: esv.enable - runtime enable/disable
@@ -1205,4 +1205,23 @@ em_status_t esv_init(void)
 		return EM_ERR_LIB_FAILED;
 
 	return EM_OK;
+}
+
+void esv_disabled_warn_config(void)
+{
+	const char *conf_str = "esv.enable";
+	bool val_bool = false;
+	int ret;
+
+	EM_PRINT("EM ESV config: (EM_ESV_ENABLE=%d)\n", EM_ESV_ENABLE);
+	EM_PRINT("  ESV disabled\n");
+
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret))
+		return; /* ESV state option not found in runtime, no warning */
+
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
+
+	if (unlikely(val_bool))
+		EM_PRINT("  WARNING: ESV disabled (build-time) - config file option IGNORED!\n");
 }

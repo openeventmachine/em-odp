@@ -64,28 +64,28 @@ void print_event_info(void)
 	       "esv.state_cnt:\t%3zu B\t%2zu B\n"
 	       "esv.state:\t%3zu B\t%2zu B\n"
 	       "flags:\t\t%3zu B\t%2zu B\n"
+	       "align_offset:\t%3zu B\t%2zu B\n"
 	       "event_type:\t%3zu B\t%2zu B\n"
 	       "event:\t\t%3zu B\t%2zu B\n"
 	       "event_size:\t%3zu B\t%2zu B\n"
 	       "egrp_gen:\t%3zu B\t%2zu B\n"
 	       "egrp:\t\t%3zu B\t%2zu B\n"
-	       "user_area info:\t%3zu B\t%2zu B\n"
-	       "align_offset:\t%3zu B\t%2zu B\n"
 	       "tmo:\t\t%3zu B\t%2zu B\n"
+	       "user_area info:\t%3zu B\t%2zu B\n"
 	       "end_hdr_data:\t%3zu B\t%2zu B\n"
 	       "  <pad>\t\t%3zu B\n"
 	       "end:\t\t%3zu B\t%2zu B\n",
 	       offsetof(event_hdr_t, state_cnt), sizeof_field(event_hdr_t, state_cnt),
 	       offsetof(event_hdr_t, state), sizeof_field(event_hdr_t, state),
 	       offsetof(event_hdr_t, flags), sizeof_field(event_hdr_t, flags),
+	       offsetof(event_hdr_t, align_offset), sizeof_field(event_hdr_t, align_offset),
 	       offsetof(event_hdr_t, event_type), sizeof_field(event_hdr_t, event_type),
 	       offsetof(event_hdr_t, event), sizeof_field(event_hdr_t, event),
 	       offsetof(event_hdr_t, event_size), sizeof_field(event_hdr_t, event_size),
 	       offsetof(event_hdr_t, egrp_gen), sizeof_field(event_hdr_t, egrp_gen),
 	       offsetof(event_hdr_t, egrp), sizeof_field(event_hdr_t, egrp),
-	       offsetof(event_hdr_t, user_area), sizeof_field(event_hdr_t, user_area),
-	       offsetof(event_hdr_t, align_offset), sizeof_field(event_hdr_t, align_offset),
 	       offsetof(event_hdr_t, tmo), sizeof_field(event_hdr_t, tmo),
+	       offsetof(event_hdr_t, user_area), sizeof_field(event_hdr_t, user_area),
 	       offsetof(event_hdr_t, end_hdr_data), sizeof_field(event_hdr_t, end_hdr_data),
 	       offsetof(event_hdr_t, end) - offsetof(event_hdr_t, end_hdr_data),
 	       offsetof(event_hdr_t, end), sizeof_field(event_hdr_t, end));
@@ -267,7 +267,9 @@ em_status_t event_vector_max_size(em_event_t vector_event, uint32_t *max_size /*
 	odp_event_t odp_event = event_em2odp(vector_event);
 	odp_packet_vector_t pktvec = odp_packet_vector_from_event(odp_event);
 	odp_pool_t odp_pool = odp_packet_vector_pool(pktvec);
-	em_pool_t pool = pool_odp2em(odp_pool);
+	pool_subpool_t pool_subpool = pool_subpool_odp2em(odp_pool);
+	em_pool_t pool = (em_pool_t)(uintptr_t)pool_subpool.pool;
+	int subpool = pool_subpool.subpool;
 
 	if (unlikely(pool == EM_POOL_UNDEF)) {
 		/*
@@ -280,7 +282,6 @@ em_status_t event_vector_max_size(em_event_t vector_event, uint32_t *max_size /*
 	}
 
 	const mpool_elem_t *pool_elem = pool_elem_get(pool);
-	int i = 0;
 
 	if (unlikely(!pool_elem ||
 		     (EM_CHECK_LEVEL > 2 && !pool_allocated(pool_elem)))) {
@@ -289,10 +290,7 @@ em_status_t event_vector_max_size(em_event_t vector_event, uint32_t *max_size /*
 				      "Invalid pool:%" PRI_POOL "", pool);
 	}
 
-	/* find subpool index 'i' that corresponds to 'odp_pool' */
-	for (i = 0; i < pool_elem->num_subpools && pool_elem->odp_pool[i] != odp_pool; i++)
-		; /* find subpool-index 'i' */
-	if (unlikely(i == pool_elem->num_subpools)) {
+	if (unlikely(subpool >= pool_elem->num_subpools)) {
 		/* not found */
 		*max_size = 0;
 		return INTERNAL_ERROR(EM_ERR_NOT_FOUND, escope,
@@ -300,7 +298,7 @@ em_status_t event_vector_max_size(em_event_t vector_event, uint32_t *max_size /*
 	}
 
 	/* subpool index found, store corresponding size */
-	*max_size = pool_elem->size[i];
+	*max_size = pool_elem->size[subpool];
 
 	return EM_OK;
 }

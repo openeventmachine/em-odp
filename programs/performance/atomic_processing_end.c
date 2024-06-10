@@ -160,6 +160,8 @@ typedef struct {
 typedef struct {
 	/* Event pool used by this application */
 	em_pool_t pool;
+	/* Number of EM cores running the application */
+	uint64_t core_count;
 	/* EO context array */
 	eo_context_array_elem_t perf_eo_context[NUM_EO] ENV_CACHE_LINE_ALIGNED;
 	/* Array of core specific data accessed by using its core index */
@@ -229,9 +231,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -261,8 +263,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_queue_t queue_a, queue_b;
@@ -279,17 +280,19 @@ test_start(appl_conf_t *const appl_conf)
 	else
 		perf_shm->pool = EM_POOL_DEFAULT;
 
+	/* Store the number of EM-cores running the application */
+	perf_shm->core_count = appl_conf->core_count;
+
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   perf_shm->pool);
 
 	test_fatal_if(perf_shm->pool == EM_POOL_UNDEF,
@@ -375,8 +378,7 @@ test_start(appl_conf_t *const appl_conf)
 	env_sync_mem();
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_eo_t eo;
@@ -411,9 +413,9 @@ test_stop(appl_conf_t *const appl_conf)
 	}
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -600,7 +602,7 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 		/* core ready with rounds, check if other cores are also ready*/
 		ready_count = env_atomic64_get(&perf_shm->ready_count);
 
-		if (ready_count == (uint64_t)em_core_count()) {
+		if (ready_count == perf_shm->core_count) {
 			/* Change mode after last round */
 			perf_shm->core_stat[core].atomic_processing_end =
 				!call_atomic_processing_end;
@@ -613,7 +615,7 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 			env_atomic64_add_return(&perf_shm->seen_all_ready, 1);
 
 			/* Last core to see 'all ready' resets the counters */
-			if (seen_all_ready == (uint64_t)em_core_count()) {
+			if (seen_all_ready == perf_shm->core_count) {
 				env_atomic64_set(&perf_shm->ready_count, 0);
 				env_atomic64_set(&perf_shm->seen_all_ready, 0);
 			}
@@ -796,7 +798,7 @@ print_result(perf_stat_t *const perf_stat)
 	const uint32_t hz = env_core_hz();
 	const double mhz = ((double)hz) / 1000000.0;
 	const double cycles_per_event = perf_stat->cycles_per_event;
-	const double events_per_sec = mhz * em_core_count() /
+	const double events_per_sec = mhz * perf_shm->core_count /
 				      cycles_per_event; /* Million events/s*/
 	const uint64_t print_count = perf_stat->print_count++;
 

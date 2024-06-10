@@ -47,6 +47,18 @@ COMPILE_TIME_ASSERT(EM_EVENT_USER_AREA_MAX_SIZE < UINT16_MAX,
  */
 #define ALIGN_OFFSET_MAX  ((int)(16))
 
+/* ALIGN_OFFSET_MAX <= 2^bits - 1, must fit into event_hdr_t::align_offset */
+COMPILE_TIME_ASSERT(ALIGN_OFFSET_MAX <=
+		    ((1 << (sizeof_field(event_hdr_t, align_offset) * 8)) - 1),
+		    ALIGN_OFFSET_MAX__TOO_LARGE);
+
+/**
+ * @brief Undef value for a pool_subpool_t
+ * pool_subpool_undef = {.pool = EM_POOL_UNDEF, .subpool = 0};
+ */
+const pool_subpool_t pool_subpool_undef = {.pool = (uint32_t)(uintptr_t)EM_POOL_UNDEF,
+					   .subpool = 0};
+
 static inline mpool_elem_t *
 mpool_poolelem2pool(objpool_elem_t *const objpool_elem)
 {
@@ -281,7 +293,7 @@ static inline int read_config_align_offset(const libconfig_group_t *align_offset
 					    (int *)&cfg->align_offset.value);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR,
-		       "'%s.align_offset.value' not found or wront type\n",
+		       "'%s.align_offset.value' not found or wrong type\n",
 		       pool_cfg_str);
 		return -1;
 	}
@@ -359,7 +371,7 @@ static inline int read_config_pkt_headroom(const libconfig_group_t *pkt_headroom
 					    (int *)&cfg->pkt.headroom.value);
 	if (unlikely(!ret)) {
 		EM_LOG(EM_LOG_ERR,
-		       "'%s.pkt.headroom.value' not found or wront type\n",
+		       "'%s.pkt.headroom.value' not found or wrong type\n",
 		       pool_cfg_str);
 		return -1;
 	}
@@ -1196,7 +1208,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	em_pool_t pool_default;
 	startup_pool_conf_t *startup_pool_conf;
 	bool default_pool_set = false;
-	const int cores = em_core_count();
+	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
 
 	/* Return error if em_pool_subpool_stats_t differs from odp_pool_stats_t */
 	if (check_em_pool_subpool_stats())
@@ -1210,11 +1222,11 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	memset(mpool_pool, 0, sizeof(mpool_pool_t));
 	env_atomic32_init(&em_shm->pool_count);
 
-	ret = objpool_init(&mpool_pool->objpool, cores);
+	ret = objpool_init(&mpool_pool->objpool, objpool_subpools);
 	if (ret != 0)
 		return EM_ERR_OPERATION_FAILED;
 
-	for (int i = 0; i < EM_CONFIG_POOLS; i++) {
+	for (uint32_t i = 0; i < EM_CONFIG_POOLS; i++) {
 		pool = pool_idx2hdl(i);
 		mpool_elem_t *mpool_elem = pool_elem_get(pool);
 
@@ -1228,7 +1240,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 			mpool_elem->size[j] = 0;
 		}
 
-		objpool_add(&mpool_pool->objpool, i % cores,
+		objpool_add(&mpool_pool->objpool, i % objpool_subpools,
 			    &mpool_elem->objpool_elem);
 	}
 
@@ -1236,7 +1248,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	if (odp_pool_max_index() >= POOL_ODP2EM_TBL_LEN)
 		return EM_ERR_TOO_LARGE;
 	for (int i = 0; i < POOL_ODP2EM_TBL_LEN; i++)
-		mpool_tbl->pool_odp2em[i] = EM_POOL_UNDEF;
+		mpool_tbl->pool_subpool_odp2em[i].both = pool_subpool_undef.both;
 
 	/* Store common ODP pool capabilities in the mpool_tbl for easy access*/
 	if (odp_pool_capability(&mpool_tbl->odp_pool_capability) != 0)
@@ -1407,6 +1419,37 @@ int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg, const char **err_str/*out*/)
 	ret = invalid_pool_cache_cfg(pool_cfg, err_str/*out*/);
 
 	return ret; /* 0: success, <0: error */
+}
+
+int check_pool_uarea_persistence(const em_pool_cfg_t *pool_cfg, const char **err_str/*out*/)
+{
+#if ODP_VERSION_API_NUM(1, 42, 0) <= ODP_VERSION_API
+	bool has_uarea_persistence;
+	const odp_pool_capability_t *capa = &em_shm->mpool_tbl.odp_pool_capability;
+
+	switch (pool_cfg->event_type) {
+	case EM_EVENT_TYPE_SW:
+		has_uarea_persistence = capa->buf.uarea_persistence ? true : false;
+		*err_str = "buf-pool (EM_EVENT_TYPE_SW)";
+		break;
+	case EM_EVENT_TYPE_PACKET:
+		has_uarea_persistence = capa->pkt.uarea_persistence ? true : false;
+		*err_str = "pkt-pool (EM_EVENT_TYPE_PACKET)";
+		break;
+	case EM_EVENT_TYPE_VECTOR:
+		has_uarea_persistence = capa->vector.uarea_persistence ? true : false;
+		*err_str = "vector-pool (EM_EVENT_TYPE_VECTOR)";
+		break;
+	default:
+		has_uarea_persistence = false;
+		*err_str = "unknown pool-type";
+		break;
+	}
+
+	return has_uarea_persistence ? 0 : -1; /* 0: success, <0: not supported */
+#else
+	return 0;
+#endif
 }
 
 /*
@@ -1785,6 +1828,9 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 					    align_offset, odp_align, uarea_size);
 		}
 
+		mpool_elem->size[i] = pool_cfg->subpool[i].size;
+		mpool_elem->stats_opt = pool_params.stats;
+
 		snprintf(pool_name, sizeof(pool_name), "%" PRI_POOL ":%d-%s",
 			 mpool_elem->em_pool, i, mpool_elem->name);
 		pool_name[sizeof(pool_name) - 1] = '\0';
@@ -1794,18 +1840,18 @@ create_subpools(const em_pool_cfg_t *pool_cfg,
 		if (unlikely(odp_pool == ODP_POOL_INVALID))
 			return -1;
 
+		mpool_elem->odp_pool[i] = odp_pool;
+		mpool_elem->num_subpools++; /* created subpools for delete */
+
 		int odp_pool_idx = odp_pool_index(odp_pool);
 
 		if (unlikely(odp_pool_idx < 0))
 			return -2;
 
-		/* Store mapping from odp-pool (idx) to em-pool */
-		mpool_tbl->pool_odp2em[odp_pool_idx] = mpool_elem->em_pool;
-
-		mpool_elem->odp_pool[i] = odp_pool;
-		mpool_elem->size[i] = pool_cfg->subpool[i].size;
-		mpool_elem->num_subpools++; /* created subpools for delete */
-		mpool_elem->stats_opt = pool_params.stats;
+		/* Store mapping from odp-pool (idx) to em-pool & subpool */
+		mpool_tbl->pool_subpool_odp2em[odp_pool_idx].pool =
+			(uint32_t)(uintptr_t)mpool_elem->em_pool;
+		mpool_tbl->pool_subpool_odp2em[odp_pool_idx].subpool = i;
 
 		/* odp_pool_print(odp_pool); */
 	}
@@ -1963,18 +2009,18 @@ pool_delete(em_pool_t pool)
 			return EM_ERR_NOT_FOUND;
 
 		odp_pool_idx = odp_pool_index(odp_pool);
-		if (unlikely(odp_pool_idx < 0))
-			return EM_ERR_BAD_ID;
 
 		ret = odp_pool_destroy(odp_pool);
 		if (unlikely(ret))
 			return EM_ERR_LIB_FAILED;
 
-		/* Clear mapping from odp-pool (idx) to em-pool */
-		mpool_tbl->pool_odp2em[odp_pool_idx] = EM_POOL_UNDEF;
-
 		mpool_elem->odp_pool[i] = ODP_POOL_INVALID;
 		mpool_elem->size[i] = 0;
+
+		/* Clear mapping from odp-pool (idx) to em-pool & subpool */
+		if (unlikely(odp_pool_idx < 0))
+			return EM_ERR_BAD_ID;
+		mpool_tbl->pool_subpool_odp2em[odp_pool_idx].both = pool_subpool_undef.both;
 	}
 
 	mpool_elem->name[0] = '\0';

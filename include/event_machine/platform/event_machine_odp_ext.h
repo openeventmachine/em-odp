@@ -47,7 +47,6 @@ extern "C" {
 #include <odp_api.h>
 #include <event_machine/api/event_machine_types.h>
 #include <event_machine/platform/event_machine_hw_types.h>
-#include <event_machine/add-ons/event_machine_timer.h>
 
 /**
  * Get the associated ODP queue.
@@ -245,7 +244,7 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num);
 em_pool_t em_odp_pool2em(odp_pool_t odp_pool);
 
 /**
- * @brief Get the ODP schedule group that corresponds to the given EM queue gruop
+ * @brief Get the ODP schedule group that corresponds to the given EM queue group
  *
  * @param queue_group
  *

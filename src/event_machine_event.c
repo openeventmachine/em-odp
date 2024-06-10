@@ -36,8 +36,7 @@ em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool)
 	em_event_type_t major_type = em_event_type_major(type);
 
 	if (EM_CHECK_LEVEL > 0 &&
-	    unlikely(size == 0 || !pool_elem ||
-		     em_event_type_major(type) == EM_EVENT_TYPE_TIMER_IND)) {
+	    unlikely(size == 0 || !pool_elem || major_type == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ALLOC,
 			       "Invalid args: size:%u type:%u pool:%" PRI_POOL "",
 			       size, type, pool);
@@ -765,6 +764,57 @@ void *em_event_pointer(em_event_t event)
 	return ev_ptr;
 }
 
+void *em_event_pointer_and_size(em_event_t event, uint32_t *size /*out*/)
+{
+	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_POINTER_AND_SIZE,
+			       "event undefined!");
+		return NULL;
+	}
+
+	if (!size) {
+		/* User not interested in 'size',
+		 * fall back to em_event_pointer() functionality
+		 */
+		void *ev_ptr = event_pointer(event);
+
+		if (EM_CHECK_LEVEL > 0 && unlikely(!ev_ptr))
+			INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EVENT_POINTER_AND_SIZE,
+				       "Event pointer NULL (unsupported event type)");
+		return ev_ptr;
+	}
+
+	const odp_event_t odp_event = event_em2odp(event);
+	const odp_event_type_t odp_etype = odp_event_type(odp_event);
+	uint32_t event_size = 0;
+	void *ev_ptr = NULL; /* return value */
+
+	if (odp_etype == ODP_EVENT_PACKET) {
+		const odp_packet_t odp_pkt = odp_packet_from_event(odp_event);
+
+		ev_ptr = odp_packet_data_seg_len(odp_pkt, &event_size);
+	} else if (odp_etype == ODP_EVENT_BUFFER) {
+		const odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
+		const event_hdr_t *ev_hdr = odp_buffer_user_area(odp_buf);
+		const uint32_t align_offset = ev_hdr->align_offset;
+
+		ev_ptr = odp_buffer_addr(odp_buf);
+		if (align_offset)
+			ev_ptr = (void *)((uintptr_t)ev_ptr + 32 - align_offset);
+		event_size = ev_hdr->event_size;
+	}
+
+	if (EM_CHECK_LEVEL > 0 && unlikely(!ev_ptr)) {
+		INTERNAL_ERROR(EM_ERR_BAD_TYPE, EM_ESCOPE_EVENT_POINTER_AND_SIZE,
+			       "Event pointer NULL (odp event type:%u)", odp_etype);
+		/* NULL for unrecognized odp_etype, also for vectors and timer ring tmos */
+		return NULL;
+	}
+
+	*size = event_size;
+	return ev_ptr;
+}
+
 uint32_t em_event_get_size(em_event_t event)
 {
 	if (unlikely(EM_CHECK_LEVEL > 0 && event == EM_EVENT_UNDEF)) {
@@ -798,6 +848,10 @@ uint32_t em_event_get_size(em_event_t event)
 static inline odp_pool_t event_get_odp_pool(em_event_t event)
 {
 	odp_event_t odp_event = event_em2odp(event);
+
+#if ODP_VERSION_API_NUM(1, 43, 0) <= ODP_VERSION_API
+	return odp_event_pool(odp_event);
+#else
 	odp_event_type_t type = odp_event_type(odp_event);
 	odp_pool_t odp_pool = ODP_POOL_INVALID;
 
@@ -816,6 +870,7 @@ static inline odp_pool_t event_get_odp_pool(em_event_t event)
 	}
 
 	return odp_pool;
+#endif
 }
 
 em_pool_t em_event_get_pool(em_event_t event)
@@ -854,31 +909,15 @@ em_pool_t em_event_get_pool_subpool(em_event_t event, int *subpool /*out*/)
 	if (unlikely(odp_pool == ODP_POOL_INVALID))
 		return EM_POOL_UNDEF;
 
-	em_pool_t pool = pool_odp2em(odp_pool);
+	pool_subpool_t pool_subpool = pool_subpool_odp2em(odp_pool);
 
-	if (!subpool || pool == EM_POOL_UNDEF)
-		return pool; /* return the pool (or undef), subpool:don't care */
-
-	/*
-	 * EM pool found - obtain subpool information.
-	 */
-	const mpool_elem_t *pool_elem = pool_elem_get(pool);
-
-	if (unlikely(!pool_elem))
+	if (unlikely(pool_subpool.pool == (uint32_t)(uintptr_t)EM_POOL_UNDEF))
 		return EM_POOL_UNDEF;
 
-	for (int i = 0; i < pool_elem->num_subpools; i++) {
-		if (pool_elem->odp_pool[i] == odp_pool) {
-			*subpool = i;
-			return pool; /* success! return pool & subpool */
-		}
-	}
+	if (subpool)
+		*subpool = pool_subpool.subpool;
 
-	/* Error: pool found but no subpool - should never happen! */
-	INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_GET_POOL_SUBPOOL,
-		       "No matching subpool found from EM pool:%" PRI_POOL "",
-		       pool);
-	return EM_POOL_UNDEF;
+	return (em_pool_t)(uintptr_t)pool_subpool.pool;
 }
 
 em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype)

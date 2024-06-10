@@ -31,7 +31,7 @@
 /**
  * @file
  *
- * Event Machine timer add-on basic test.
+ * Event Machine timer basic test.
  *
  * Simple test for timer (does not test everything). Creates and deletes random
  * timers and checks how accurate the timeout indications are against timer
@@ -52,7 +52,6 @@
 #include <stdatomic.h>
 
 #include <event_machine.h>
-#include <event_machine/add-ons/event_machine_timer.h>
 #include <event_machine/platform/env/environment.h>
 
 #include "cm_setup.h"
@@ -274,8 +273,9 @@ static em_status_t eo_error_handler(em_eo_t eo, em_status_t error,
  *
  * @see cm_setup() for setup and dispatch.
  */
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	/* first core creates ShMem */
@@ -316,7 +316,7 @@ void test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_timer_attr_t attr;
@@ -341,14 +341,13 @@ void test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   m_shm->pool);
 
 	test_fatal_if(m_shm->pool == EM_POOL_UNDEF,
@@ -441,8 +440,7 @@ void test_start(appl_conf_t *const appl_conf)
 		   (int)((APP_HEARTBEAT_MS * APP_CHECK_LIMIT) / 1000));
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_status_t ret;
@@ -470,9 +468,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
 	if (m_shm != NULL) {
 		env_shared_free(m_shm);

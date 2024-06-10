@@ -322,7 +322,7 @@ static int setting_get_child(const config_setting_t *parent, const char *path,
  * name 'd'.
  *
  * name[out]	Pointer where last setting name will be stored
- * setting[out]	Ponter where second last setting will be stored
+ * setting[out]	Pointer where second last setting will be stored
  */
 static int list_get_setting(const libconfig_list_t *list, int index,
 			    const char *path, char *name/*out*/,
@@ -428,7 +428,7 @@ int em_libconfig_list_lookup_string(const libconfig_list_t *list, int index,
  * gets second last setting 'c' from group and the last setting name 'd'.
  *
  * name[out]	Pointer where last setting name will be stored
- * setting[out]	Ponter where second last setting will be stored
+ * setting[out]	Pointer where second last setting will be stored
  */
 static int group_get_setting(libconfig_list_t *group, const char *path,
 			     char *name/*out*/, config_setting_t **setting/*out*/)

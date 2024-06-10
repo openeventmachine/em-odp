@@ -52,7 +52,6 @@ extern "C" {
 #include <event_machine.h>
 #include <event_machine/helper/event_machine_helper.h>
 #include <event_machine/platform/env/environment.h>
-#include <event_machine/platform/add-ons/event_machine_timer_hw_specific.h>
 
 /* ODP API */
 #include <odp_api.h>
@@ -90,7 +89,7 @@ extern "C" {
 #include "em_sync_api_types.h"
 #include "em_hook_types.h"
 #include "em_libconfig_types.h"
-#include "add-ons/event_timer/em_timer_types.h"
+#include "em_timer_types.h"
 #include "em_cli_types.h"
 
 #include "em_mem.h"
@@ -115,6 +114,7 @@ extern "C" {
 #include "em_libconfig.h"
 #include "em_chaining.h"
 #include "em_cli.h"
+#include "em_timer.h"
 
 #ifdef __cplusplus
 }

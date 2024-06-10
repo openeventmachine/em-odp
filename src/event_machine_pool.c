@@ -88,6 +88,15 @@ em_pool_create(const char *name, em_pool_t pool, const em_pool_cfg_t *pool_cfg)
 		return EM_POOL_UNDEF;
 	}
 
+	err = check_pool_uarea_persistence(pool_cfg, &err_str);
+
+	if (unlikely(err)) {
+		INTERNAL_ERROR(EM_ERR_NOT_SUPPORTED, EM_ESCOPE_POOL_CREATE,
+			       "Pool create: user area persistence unsupported(%d): %s",
+			       err, err_str);
+		return EM_POOL_UNDEF;
+	}
+
 	pool_created = pool_create(name, pool, pool_cfg);
 
 	if (unlikely(pool_created == EM_POOL_UNDEF ||

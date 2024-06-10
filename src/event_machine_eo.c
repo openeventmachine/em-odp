@@ -467,7 +467,7 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue)
 	 * Poll the core-local unscheduled control-queue for events.
 	 * These events request the core to do a core-local operation (or nop).
 	 * Poll and handle events until 'locm->sync_api.in_progress == false'
-	 * indicating that this sync-API is 'done' on all conserned cores.
+	 * indicating that this sync-API is 'done' on all concerned cores.
 	 */
 	while (locm->sync_api.in_progress)
 		poll_unsched_ctrl_queue();
@@ -548,7 +548,7 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues)
 	 * Poll the core-local unscheduled control-queue for events.
 	 * These events request the core to do a core-local operation (or nop).
 	 * Poll and handle events until 'locm->sync_api.in_progress == false'
-	 * indicating that this sync-API is 'done' on all conserned cores.
+	 * indicating that this sync-API is 'done' on all concerned cores.
 	 */
 	while (locm->sync_api.in_progress)
 		poll_unsched_ctrl_queue();
@@ -814,7 +814,7 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf)
 		 * Poll the core-local unscheduled control-queue for events.
 		 * These events request the core to do a core-local operation (or nop).
 		 * Poll and handle events until 'locm->sync_api.in_progress == false'
-		 * indicating that this sync-API is 'done' on all conserned cores.
+		 * indicating that this sync-API is 'done' on all concerned cores.
 		 */
 		while (locm->sync_api.in_progress)
 			poll_unsched_ctrl_queue();
@@ -961,7 +961,7 @@ em_eo_stop_sync(em_eo_t eo)
 	 * Poll the core-local unscheduled control-queue for events.
 	 * These events request the core to do a core-local operation (or nop).
 	 * Poll and handle events until 'locm->sync_api.in_progress == false'
-	 * indicating that this sync-API is 'done' on all conserned cores.
+	 * indicating that this sync-API is 'done' on all concerned cores.
 	 */
 	while (locm->sync_api.in_progress)
 		poll_unsched_ctrl_queue();

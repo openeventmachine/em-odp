@@ -710,7 +710,7 @@ em_event_group_abort(em_event_group_t event_group)
 	egrp_counter_t current_count;
 	egrp_counter_t new_count;
 
-	/* Attemp to set count to zero before count reaches zero */
+	/* Attempt to set count to zero before count reaches zero */
 	do {
 		current_count.all = EM_ATOMIC_GET(&egrp_elem->post.atomic);
 

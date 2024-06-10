@@ -28,7 +28,7 @@ Test Schedule Latency
     @{app_args} =    Create List    --    --levents    2
 
     @{regex_match} =    Create List
-    ...    Backround work: 2 normal priority events with 2.00us work
+    ...    Background work: 2 normal priority events with 2.00us work
     ...    ${FIRST_REGEX}
     ...    : bg events\\(M\\) rate\\(M/s\\)
     ...    Done\\s*-\\s*exit

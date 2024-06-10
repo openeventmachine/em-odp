@@ -320,9 +320,9 @@ error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -350,8 +350,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	eo_context_t *eo_ctx;
 	em_status_t ret, start_fn_ret = EM_ERROR;
@@ -370,16 +369,15 @@ test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "    Max. test queue groups:   %i\n"
 		   "    sizeof queue_context_tbl: %i kB\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   perf_shm->pool, EM_MAX_QUEUE_GROUPS - 1,
 		   q_ctx_size / 1024);
 
@@ -390,7 +388,7 @@ test_start(appl_conf_t *const appl_conf)
 	perf_shm->test_status.mhz = ((double)perf_shm->test_status.cpu_hz) /
 				    1000000.0;
 	perf_shm->test_status.reset_flag = 0;
-	perf_shm->test_status.num_cores = em_core_count();
+	perf_shm->test_status.num_cores = appl_conf->core_count;
 	perf_shm->test_status.num_qgrp = 0;
 
 	env_atomic64_init(&perf_shm->test_status.ready_count);
@@ -423,8 +421,7 @@ test_start(appl_conf_t *const appl_conf)
 	init_queue_groups(MIN_NUM_QUEUE_GROUPS);
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_eo_t eo = perf_shm->eo;
@@ -442,9 +439,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);

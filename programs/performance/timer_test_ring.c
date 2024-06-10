@@ -51,7 +51,6 @@
 #include <sys/mman.h>
 
 #include <event_machine.h>
-#include <event_machine/add-ons/event_machine_timer.h>
 #include <odp_api.h>
 #include <event_machine/platform/event_machine_odp_ext.h>
 
@@ -137,7 +136,7 @@ static void dump_trace(app_eo_ctx_t *eo_ctx);
 static void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 		     em_queue_t *queue, void **q_ctx);
 static void exit_cb(em_eo_t eo);
-static void extra_delay(rnd_state_t *rnd, int core, unsigned int tmri, unsigned int toi);
+static void extra_delay(rnd_state_t *rnd, int core, unsigned int tmri, unsigned int tmoi);
 
 /* --------------------------------------- */
 em_status_t my_error_handler(em_eo_t eo, em_status_t error,
@@ -261,7 +260,7 @@ static inline void trace_add(uint64_t ts, trace_op_t op, uint32_t val,
 	m_tracecount++;
 }
 
-static void extra_delay(rnd_state_t *rnd, int core, unsigned int tmri, unsigned int toi)
+static void extra_delay(rnd_state_t *rnd, int core, unsigned int tmri, unsigned int tmoi)
 {
 	uint64_t t1 = TEST_TIME_FN();
 	uint64_t ns;
@@ -275,7 +274,7 @@ static void extra_delay(rnd_state_t *rnd, int core, unsigned int tmri, unsigned 
 		ns = g_options.delay_us * 1000UL;
 	}
 
-	trace_add(TEST_TIME_FN(), TRACE_OP_DELAY, core, tmri, toi, (void *)ns, NULL);
+	trace_add(TEST_TIME_FN(), TRACE_OP_DELAY, core, tmri, tmoi, (void *)ns, NULL);
 	while (TEST_TIME_FN() < (ns + t1)) {
 		/* delay */
 	};
@@ -302,11 +301,10 @@ static void dump_trace(app_eo_ctx_t *eo_ctx)
 		fprintf(df, "#BEGIN RING TRACE FORMAT 1\n");
 		/* dump setup */
 		fprintf(df, "cores,loops,num_timer,num_tmo,recreate_tmr,reuse_tmo,reuse_ev,delay_us,tracelen,ver\n");
-		fprintf(df, "%d,%u,%u,%u,%u,%u,%u,%ld,%u,%s\n",
-			em_core_count(), g_options.loops, g_options.num_timers, g_options.num_tmo,
-					 g_options.recreate, g_options.reuse_tmo,
-					 g_options.reuse_ev, g_options.delay_us,
-					 g_options.tracelen, VERSION);
+		fprintf(df, "%u,%u,%u,%u,%u,%u,%u,%ld,%u,%s\n", m_shm->core_count,
+			g_options.loops, g_options.num_timers, g_options.num_tmo,
+			g_options.recreate, g_options.reuse_tmo, g_options.reuse_ev,
+			g_options.delay_us, g_options.tracelen, VERSION);
 		/* dump timeouts */
 		fprintf(df, "#TMO:\ntmr,tmo,tick_hz,res_ns,base_hz,mul,startrel\n");
 		for (unsigned int tmr = 0; tmr < g_options.num_timers; tmr++)
@@ -360,21 +358,22 @@ static void print_timers(void)
 		test_fatal_if(em_timer_get_attr(tmr[i], &attr) != EM_OK, "Can't get timer info\n");
 
 		APPL_PRINT("Timer \"%s\" info:\n", attr.name);
-		APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resparam.res_ns);
-		if (!(attr.flags & EM_TIMER_FLAG_RING))
-			APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.resparam.max_tmo / 1000);
-		APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
-		APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
-		APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n", em_timer_get_freq(tmr[i]));
 		APPL_PRINT("  -is ring: ");
 		if (attr.flags & EM_TIMER_FLAG_RING) {
 			double hz = frac2float(attr.ringparam.base_hz);
 
 			APPL_PRINT(" yes (base_hz %.3f, max_mul %lu)\n",
 				   hz, attr.ringparam.max_mul);
+			APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.ringparam.res_ns);
+			APPL_PRINT("  -clk_src: %d\n", attr.ringparam.clk_src);
 		} else {
 			APPL_PRINT("no\n");
+			APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.resparam.res_ns);
+			APPL_PRINT("  -max_tmo: %" PRIu64 " ms\n", attr.resparam.max_tmo / 1000);
+			APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 		}
+		APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
+		APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n", em_timer_get_freq(tmr[i]));
 	}
 }
 
@@ -805,7 +804,7 @@ static void restart(app_eo_ctx_t *eo_ctx, int count)
 		create_test_timer(eo_ctx);
 
 	/* clear event counts, leave profiles */
-	for (int c = 0; c < em_core_count(); c++)
+	for (unsigned int c = 0; c < m_shm->core_count; c++)
 		for (unsigned int t = 0; t < g_options.num_timers; t++)
 			for (unsigned int to = 0; to < g_options.num_tmo; to++)
 				eo_ctx->cdat[c].count[t][to] = 0;
@@ -984,7 +983,7 @@ static bool handle_tmo(app_eo_ctx_t *eo_ctx, em_event_t event, uint64_t now)
 
 static void global_summary(app_eo_ctx_t *eo_ctx)
 {
-	int cores = em_core_count();
+	int cores = m_shm->core_count;
 
 	APPL_PRINT("\nGLOBAL SUMMARY:\n");
 
@@ -1030,7 +1029,7 @@ static void analyze_and_print(app_eo_ctx_t *eo_ctx, int loop)
 {
 	APPL_PRINT("Analysis for loop %u :\n", loop);
 
-	int cores = em_core_count();
+	int cores = m_shm->core_count;
 	uint64_t counts[MAX_TEST_TIMERS][MAX_TEST_TMO];
 
 	memset(counts, 0, sizeof(counts));
@@ -1072,8 +1071,9 @@ static void analyze_and_print(app_eo_ctx_t *eo_ctx, int loop)
 		   total, runsecs, ((double)total / runsecs) / 1000000);
 }
 
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	/* first core creates shared memory */
@@ -1088,13 +1088,20 @@ void test_init(void)
 		/* initialize it */
 		if (m_shm)
 			memset(m_shm, 0, sizeof(timer_app_shm_t));
+		else
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
+				   "ShMem init failed on EM-core: %u", core);
 
 		if (EXTRA_PRINTS)
 			APPL_PRINT("%luk shared memory for app context\n",
 				   sizeof(timer_app_shm_t) / 1024);
 
+		/* Store the number of EM-cores running the application */
+		m_shm->core_count = appl_conf->core_count;
+
 		if (g_options.tracelen) {
-			size_t tlen = em_core_count() * g_options.tracelen * sizeof(trace_entry_t);
+			size_t tlen = m_shm->core_count *
+				      g_options.tracelen * sizeof(trace_entry_t);
 
 			odp_shm_trace = odp_shm_reserve(SHM_TRACE_NAME, tlen, 64, 0);
 			if (odp_shm_trace == ODP_SHM_INVALID) {
@@ -1121,11 +1128,10 @@ void test_init(void)
 		}
 
 		m_shm = odp_shm_addr(odp_shm);
+		if (!m_shm)
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
+				   "ShMem init failed on EM-core: %u", core);
 	}
-
-	if (m_shm == NULL)
-		test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-			   "ShMem init failed on EM-core: %u", core);
 
 	if (EXTRA_PRINTS)
 		APPL_PRINT("Shared mem at %p on core %d\n", m_shm, core);
@@ -1148,7 +1154,7 @@ void test_init(void)
 /**
  * Startup of the timer ring test EM application
  */
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_timer_attr_t attr;
@@ -1222,7 +1228,7 @@ void test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(stat != EM_OK, "Failed to start EO!");
 }
 
-void test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	if (appl_conf->num_procs > 1) {
 		APPL_PRINT("%s(): skip\n", __func__);
@@ -1252,8 +1258,10 @@ void test_stop(appl_conf_t *const appl_conf)
 	APPL_PRINT("test_stopped\n");
 }
 
-void test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
+
 	if (m_shm != NULL) {
 		odp_shm_free(odp_shm);
 		m_shm = NULL;
@@ -1309,7 +1317,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	eo_ctx->next_change = 2;
 
 	if (g_options.profile) {
-		for (int c = 0; c < em_core_count(); c++)
+		for (unsigned int c = 0; c < m_shm->core_count; c++)
 			for (int p = 0; p < NUM_PROFILES; p++)
 				eo_ctx->cdat[c].prof[p].min = UINT64_MAX;
 	}

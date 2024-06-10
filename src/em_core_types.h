@@ -47,6 +47,10 @@ extern "C" {
 typedef struct {
 	/** core map lock */
 	env_spinlock_t lock;
+
+	/** Number of EM cores currently running (em_init_core() called) */
+	odp_atomic_u32_t current_core_count;
+
 	/** Number of EM cores */
 	int count;
 	struct {

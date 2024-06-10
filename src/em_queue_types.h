@@ -92,7 +92,7 @@ typedef struct {
 } queue_setup_t;
 
 /**
- * Internal represenation of the EM queue handle
+ * Internal representation of the EM queue handle
  * The EM queue handle contains a 16-bit queue-id and a 16-bit device-id.
  */
 typedef union {
@@ -139,7 +139,7 @@ typedef enum queue_state {
 	/*
 	 * Non-scheduled queue (UNSCHED, OUTPUT) state use the UNSCHEDULED-state.
 	 */
-	/* Use separete value for unscheduled queues to catch illegal usage */
+	/* Use separate value for unscheduled queues to catch illegal usage */
 	EM_QUEUE_STATE_UNSCHEDULED = 255
 } queue_state_e;
 /**

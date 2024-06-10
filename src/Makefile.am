@@ -33,11 +33,14 @@ $(top_srcdir)/include/event_machine/api/event_machine_eo.h \
 $(top_srcdir)/include/event_machine/api/event_machine_error.h \
 $(top_srcdir)/include/event_machine/api/event_machine_event.h \
 $(top_srcdir)/include/event_machine/api/event_machine_event_group.h \
+$(top_srcdir)/include/event_machine/api/event_machine_packet.h \
 $(top_srcdir)/include/event_machine/api/event_machine_queue.h \
 $(top_srcdir)/include/event_machine/api/event_machine_queue_group.h \
 $(top_srcdir)/include/event_machine/api/event_machine_scheduler.h \
 $(top_srcdir)/include/event_machine/api/event_machine_types.h \
-$(top_builddir)/include/event_machine/api/event_machine_version.h
+$(top_srcdir)/include/event_machine/api/event_machine_timer.h \
+$(top_builddir)/include/event_machine/api/event_machine_version.h \
+$(top_builddir)/include/event_machine/api/event_machine_deprecated.h
 
 emhelperincludedir = $(includedir)/event_machine/helper
 emhelperinclude_HEADERS = \
@@ -58,11 +61,11 @@ $(top_srcdir)/include/event_machine/platform/event_machine_hw_types.h \
 $(top_srcdir)/include/event_machine/platform/event_machine_hooks.h \
 $(top_srcdir)/include/event_machine/platform/event_machine_init.h \
 $(top_srcdir)/include/event_machine/platform/event_machine_pool.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_odp_ext.h
+$(top_srcdir)/include/event_machine/platform/event_machine_odp_ext.h \
+$(top_srcdir)/include/event_machine/platform/event_machine_timer_hw_specific.h
 
 emaddonsincludeplatformdir = $(includedir)/event_machine/platform/add-ons
-emaddonsincludeplatform_HEADERS = \
-$(top_srcdir)/include/event_machine/platform/add-ons/event_machine_timer_hw_specific.h
+emaddonsincludeplatform_HEADERS =
 
 emenvincludedir = $(includedir)/event_machine/platform/env
 emenvinclude_HEADERS = \
@@ -91,6 +94,7 @@ event_machine_hooks.c \
 event_machine_hw_specific.c \
 event_machine_init.c \
 event_machine_odp_ext.c \
+event_machine_packet.c \
 event_machine_pool.c \
 event_machine_queue_group.c \
 event_machine_queue.c \
@@ -184,11 +188,11 @@ misc/objpool.h \
 misc/list.h \
 misc/optparse.h \
 	\
-add-ons/event_timer/event_machine_timer.c \
-add-ons/event_timer/em_timer.c \
-add-ons/event_timer/em_timer_conf.h \
-add-ons/event_timer/em_timer.h \
-add-ons/event_timer/em_timer_types.h
+event_machine_timer.c \
+em_timer.c \
+em_timer_conf.h \
+em_timer.h \
+em_timer_types.h
 
 __LIB__libemodp_la_LIBADD = $(ODP_LIBS)
 __LIB__libemodp_la_LIBADD += $(LIBCONFIG_LIBS)

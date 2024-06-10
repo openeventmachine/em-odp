@@ -52,7 +52,6 @@
 #include <signal.h>
 
 #include <event_machine.h>
-#include <event_machine/add-ons/event_machine_timer.h>
 #include <event_machine/platform/env/environment.h>
 #include <odp_api.h>
 
@@ -178,6 +177,8 @@ typedef struct app_eo_ctx_t {
 } app_eo_ctx_t;
 
 typedef struct timer_app_shm_t {
+	/* Number of EM cores running the application */
+	unsigned int core_count;
 	em_pool_t pool;
 	app_eo_ctx_t eo_context;
 	em_timer_t hb_tmr;
@@ -408,7 +409,7 @@ void send_stop(app_eo_ctx_t *eo_ctx)
 
 void cleanup(app_eo_ctx_t *eo_ctx)
 {
-	int cores = em_core_count();
+	int cores = m_shm->core_count;
 
 	for (int i = 0; i < cores; i++) {
 		eo_ctx->cdat[i].count = 0;
@@ -421,20 +422,20 @@ void cleanup(app_eo_ctx_t *eo_ctx)
 
 void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 {
-	int cores = em_core_count();
-	FILE *fle = stdout;
+	int cores = m_shm->core_count;
+	FILE *file = stdout;
 
 	if (strcmp(name, "stdout"))
-		fle = fopen(g_options.csv, "w");
-	if (fle == NULL) {
+		file = fopen(g_options.csv, "w");
+	if (file == NULL) {
 		APPL_PRINT("FAILED to open trace file\n");
 		return;
 	}
 
-	fprintf(fle, "\n\n#BEGIN TRACE FORMAT 2\n"); /* for offline analyzers */
-	fprintf(fle, "res_ns,res_hz,period_ns,max_period_ns,clksrc,num_tmo,loops,");
-	fprintf(fle, "traces,noskip,SW-ver,bg,mz,timers\n");
-	fprintf(fle, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s,\"%d/%lu\",\"%d/%lu\",%d\n",
+	fprintf(file, "\n\n#BEGIN TRACE FORMAT 2\n"); /* for offline analyzers */
+	fprintf(file, "res_ns,res_hz,period_ns,max_period_ns,clksrc,num_tmo,loops,");
+	fprintf(file, "traces,noskip,SW-ver,bg,mz,timers\n");
+	fprintf(file, "%lu,%lu,%lu,%lu,%d,%d,%d,%d,%d,%s,\"%d/%lu\",\"%d/%lu\",%d\n",
 		g_options.res_ns,
 		g_options.res_hz,
 		g_options.period_ns,
@@ -448,18 +449,18 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 		g_options.bg_events, g_options.bg_time_ns / 1000UL,
 		g_options.mz_mb, g_options.mz_ns / 1000000UL,
 		g_options.num_timers);
-	fprintf(fle, "time_hz,meas_time_hz,timer_hz,meas_timer_hz,linux_hz\n");
-	fprintf(fle, "%lu,%lu,%lu,%lu,%lu\n",
+	fprintf(file, "time_hz,meas_time_hz,timer_hz,meas_timer_hz,linux_hz\n");
+	fprintf(file, "%lu,%lu,%lu,%lu,%lu\n",
 		eo_ctx->time_hz,
 		eo_ctx->meas_time_hz,
 		eo_ctx->test_hz,
 		eo_ctx->meas_test_hz,
 		eo_ctx->linux_hz);
 
-	fprintf(fle, "tmo_id,period_ns,period_ticks,ack_late");
-	fprintf(fle, ",start_tick,start_ns,first_ns,first\n");
+	fprintf(file, "tmo_id,period_ns,period_ticks,ack_late");
+	fprintf(file, ",start_tick,start_ns,first_ns,first\n");
 	for (int i = 0; i < g_options.num_periodic; i++) {
-		fprintf(fle, "%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+		fprintf(file, "%d,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
 			i, eo_ctx->tmo_data[i].period_ns,
 			eo_ctx->tmo_data[i].ticks,
 			eo_ctx->tmo_data[i].ack_late,
@@ -469,10 +470,10 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 			eo_ctx->tmo_data[i].first);
 	}
 
-	fprintf(fle, "id,op,tick,time_ns,linux_time_ns,counter,core,timer\n");
+	fprintf(file, "id,op,tick,time_ns,linux_time_ns,counter,core,timer\n");
 	for (int c = 0; c < cores; c++) {
 		for (int i = 0; i < eo_ctx->cdat[c].count; i++) {
-			fprintf(fle, "%d,%s,%lu,%lu,%lu,%d,%d,%d\n",
+			fprintf(file, "%d,%s,%lu,%lu,%lu,%d,%d,%d\n",
 				eo_ctx->cdat[c].trc[i].id,
 				op_labels[eo_ctx->cdat[c].trc[i].op],
 				eo_ctx->cdat[c].trc[i].tick,
@@ -483,9 +484,9 @@ void write_trace(app_eo_ctx_t *eo_ctx, const char *name)
 				eo_ctx->cdat[c].trc[i].tidx);
 		}
 	}
-	fprintf(fle, "#END TRACE\n\n");
-	if (fle != stdout)
-		fclose(fle);
+	fprintf(file, "#END TRACE\n\n");
+	if (file != stdout)
+		fclose(file);
 }
 
 void show_global_stats(app_eo_ctx_t *eo_ctx)
@@ -538,7 +539,7 @@ uint64_t random_work_ns(rnd_state_t *rng)
 
 tmo_trace *find_tmo(app_eo_ctx_t *eo_ctx, int id, int count, int *last)
 {
-	int cores = em_core_count();
+	int cores = m_shm->core_count;
 	tmo_trace *trc = NULL;
 	int last_count = 0;
 
@@ -633,7 +634,7 @@ bool timing_statistics(app_eo_ctx_t *eo_ctx)
 	/* basic statistics, more with offline tools (-w) */
 	uint64_t max_ts = 0, min_ts = 0, first_ts = 0;
 	int64_t tgt_max = 0;
-	const int cores = em_core_count();
+	const int cores = m_shm->core_count;
 	uint64_t system_used = eo_ctx->stopped - eo_ctx->started;
 	bool stop_loops = false;
 
@@ -784,7 +785,7 @@ void profile_all_stats(int cores, app_eo_ctx_t *eo_ctx)
 
 void analyze(app_eo_ctx_t *eo_ctx)
 {
-	int cores = em_core_count();
+	int cores = m_shm->core_count;
 	int cancelled = 0;
 	int job_del = 0;
 
@@ -1198,7 +1199,7 @@ int do_bg_work(em_event_t evt, app_eo_ctx_t *eo_ctx)
 void handle_heartbeat(app_eo_ctx_t *eo_ctx, em_event_t event)
 {
 	app_msg_t *msg = (app_msg_t *)em_event_pointer(event);
-	int cores = em_core_count();
+	int cores = m_shm->core_count;
 	int done = 0;
 	e_state state = __atomic_load_n(&eo_ctx->state, __ATOMIC_SEQ_CST);
 	static int runs;
@@ -1557,8 +1558,9 @@ int parse_my_args(int first, int argc, char *argv[])
 /**
  * Before EM - Init
  */
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	/* first core creates ShMem */
@@ -1588,7 +1590,7 @@ void test_init(void)
 /**
  * Startup of the timer test EM application
  */
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_queue_t queue;
@@ -1600,6 +1602,9 @@ void test_start(appl_conf_t *const appl_conf)
 	em_core_mask_t mask;
 	em_queue_group_t grp;
 	em_atomic_group_t agrp;
+
+	/* Store the number of EM-cores running the application */
+	m_shm->core_count = appl_conf->core_count;
 
 	if (appl_conf->num_procs > 1) {
 		APPL_PRINT("\n!! Multiple PROCESS MODE NOT SUPPORTED !!\n\n");
@@ -1824,9 +1829,9 @@ first_timer_create(app_eo_ctx_t *eo_ctx)
 		      "get_freq() failed, timer:%" PRI_TMR "", m_shm->test_tmr[0]);
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	const int core = em_core_id();
 	em_status_t ret;
 	em_eo_t eo;
@@ -1856,8 +1861,9 @@ test_stop(appl_conf_t *const appl_conf)
 	free(m_shm->eo_context.tmo_data);
 }
 
-void test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);

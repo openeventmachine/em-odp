@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -53,18 +53,17 @@ extern "C" {
  * Creates an implementation dependent error report string from EM
  * internal errors.
  *
- * @param str           Output string pointer
- * @param size          Maximum string length in characters
- * @param eo            EO id
- * @param error         Error code (EM internal)
- * @param escope        Error scope (EM internal)
- * @param args          Variable arguments
+ * @param[out] str     Output string pointer
+ * @param      size    Maximum string length in characters
+ * @param      eo      EO id
+ * @param      error   Error code (EM internal)
+ * @param      escope  Error scope (EM internal)
+ * @param      args    Variable arguments
  *
  * @return Output string length.
  */
-int
-em_error_format_string(char *str, size_t size, em_eo_t eo, em_status_t error,
-		       em_escope_t escope, va_list args);
+int em_error_format_string(char *str /*out*/, size_t size, em_eo_t eo,
+			   em_status_t error, em_escope_t escope, va_list args);
 
 /*
  * Physical core ids
@@ -80,19 +79,18 @@ em_error_format_string(char *str, size_t size, em_eo_t eo, em_status_t error,
  *
  * @return Physical core id or -1 on error.
  */
-int
-em_core_id_get_physical(int core);
+int em_core_id_get_physical(int core);
 
 /**
  * Converts a logical core mask to a physical core mask
  *
  * Mainly needed when interfacing HW specific APIs.
  *
- * @param phys          Core mask of physical core ids
- * @param logic         Core mask of logical (Event Machine) core ids
+ * @param[out] phys   Core mask of physical core ids
+ * @param      logic  Core mask of logical (Event Machine) core ids
  */
-void
-em_core_mask_get_physical(em_core_mask_t *phys, const em_core_mask_t *logic);
+void em_core_mask_get_physical(em_core_mask_t *phys /*out*/,
+			       const em_core_mask_t *logic);
 
 #ifdef __cplusplus
 }

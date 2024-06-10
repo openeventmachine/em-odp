@@ -57,18 +57,18 @@
 
 #define EM_LOG(level, fmt, ...) \
 	do { \
-		em_locm_t *const locm = &em_locm; \
-		if (locm && locm->log_fn) \
-			locm->log_fn((level), fmt, ## __VA_ARGS__); \
+		em_log_func_t log_fn = em_locm.log_fn; \
+		if (log_fn) \
+			log_fn((level), fmt, ## __VA_ARGS__); \
 		else \
 			em_shm->log_fn((level), fmt, ## __VA_ARGS__); \
 	} while (0)
 
 #define EM_VLOG(level, fmt, args) \
 	do { \
-		em_locm_t *const locm = &em_locm; \
-		if (locm && locm->vlog_fn) \
-			locm->vlog_fn((level), fmt, (args)); \
+		em_vlog_func_t vlog_fn = em_locm.vlog_fn; \
+		if (vlog_fn) \
+			vlog_fn((level), fmt, (args)); \
 		else \
 			em_shm->vlog_fn((level), fmt, (args)); \
 	} while (0)

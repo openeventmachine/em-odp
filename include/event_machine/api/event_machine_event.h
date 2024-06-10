@@ -62,7 +62,7 @@
  * data: for events of (major) type sw buffer or packet use em_event_pointer()
  * while for vector events the contained array of event handles must be accessed
  * with em_event_vector_tbl() instead. Use the (major part of the) event type to
- * distiguish between vectors and other types of events.
+ * distinguish between vectors and other types of events.
  *
  * ### Event References
  * Normally, each event is associated with one event handle (em_event_t) - each
@@ -106,6 +106,21 @@
  * See em_pool_create(), em_event_uarea_get(), em_event_uarea_id_get/set() and
  * em_event_uarea_info() for more information on the event user area and its
  * associated ID.
+ *
+ * ### Vector Events
+ * Event (major) Type: EM_EVENT_TYPE_VECTOR
+ *
+ * Vector events contain a table of events.
+ * All events in the event-table must be of major type EM_EVENT_TYPE_PACKET.
+ * Storing events of another type into the event-table is an error and leads to
+ * undefined behaviour.
+ * Event vector pools are created with em_pool_create() with the pool event-type
+ * set to EM_EVENT_TYPE_VECTOR. Event vectors can then be allocated from vector
+ * pools by calling em_alloc(..., vector_pool).
+ * To free the vector event along with all events it contains, use em_free() or
+ * em_free_multi().
+ * To free the vector event only, not the events it contains,
+ * use em_event_vector_free().
  */
 
 #ifdef __cplusplus
@@ -118,6 +133,15 @@ extern "C" {
 /**
  * Allocate an event.
  *
+ * Allocate a new event from the given pool. The pool used must support events
+ * of the requested (major) type:
+ * - Events of (major) type EM_EVENT_TYPE_SW can be allocated from pools
+ *   created to support event types EM_EVENT_TYPE_SW or EM_EVENT_TYPE_PACKET.
+ * - Events of (major) type EM_EVENT_TYPE_PACKET can be allocated from pools
+ *   created to support the event type EM_EVENT_TYPE_PACKET.
+ * - Event vectors of (major) type EM_EVENT_TYPE_VECTOR can be allocated from
+ *   pools created to support the event type EM_EVENT_TYPE_VECTOR.
+ *
  * The memory address of the allocated event is system specific and can depend
  * on the given pool, event size and type. The returned event (handle) may refer
  * to a memory buffer, packet or vector etc., i.e. the event structure is event
@@ -127,17 +151,22 @@ extern "C" {
  * event (handle) to a pointer to the event payload or access the vector table.
  * EM does not initialize the payload data.
  *
- * EM_EVENT_TYPE_SW with minor type '0' is reserved for direct portability -
- * it is always guaranteed to produce an event with contiguous payload that can
- * directly be used by the application up to the given size (no HW specific
- * descriptors etc. are visible). This event payload will be 64-bit aligned
- * by default (unless explicitly configured otherwise).
- *
- * EM_POOL_DEFAULT can be used as a pool handle if there's no need to use a
- * specific event pool (up to the size- or event limits of that pool).
+ * Concerning events and pools of type EM_EVENT_TYPE_SW or EM_EVENT_TYPE_PACKET:
+ * - EM_EVENT_TYPE_SW with minor type '0' is reserved for direct portability -
+ *   it is always guaranteed to produce an event with contiguous payload that can
+ *   directly be used by the application up to the given size (no HW specific
+ *   descriptors etc. are visible). This event payload will be 64-bit aligned
+ *   by default (unless explicitly configured otherwise).
+ * - EM_POOL_DEFAULT can be used as a pool handle if there's no need to use a
+ *   specific event pool (up to the size- or event limits of that pool).
  *
  * Additionally it is guaranteed, that two separate buffers never share a cache
  * line (to avoid false sharing).
+ *
+ * @note Vector events must always have their major event type set to
+ *       EM_EVENT_TYPE_VECTOR or EM will not recognize them as vectors.
+ *       Also, the event type for periodic timer ring events,
+ *       EM_EVENT_TYPE_TIMER_IND, must NOT be used with em_alloc().
  *
  * @param size         1) Packet & sw-buf: event size in bytes (B), size > 0.
  *                     2) Vector: number of event handles that should fit into
@@ -168,6 +197,11 @@ em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool);
  * events, and will return the actual number of events that were successfully
  * allocated from the given pool.
  *
+ * @note Vector events must always have their major event type set to
+ *       EM_EVENT_TYPE_VECTOR or EM will not recognize them as vectors.
+ *       Also, the event type for periodic timer ring events,
+ *       EM_EVENT_TYPE_TIMER_IND, must NOT be used with em_alloc_multi().
+ *
  * @param[out] events  Output event array, events are allocated and filled by
  *                     em_alloc_multi(). The given array must fit 'num' events.
  * @param      num     Number of events to allocate and write into 'events[]'
@@ -183,6 +217,8 @@ em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool);
  *
  * @return Number of events actually allocated from the pool (0 ... num) and
  *         written into the output array 'events[]'.
+ *
+ * @see em_alloc() for more documentation.
  */
 int em_alloc_multi(em_event_t events[/*out*/], int num,
 		   uint32_t size, em_event_type_t type, em_pool_t pool);
@@ -273,26 +309,67 @@ int em_send_multi(const em_event_t events[], int num, em_queue_t queue);
 /**
  * Get a pointer to the event structure/data.
  *
- * Returns a pointer to the event structure or NULL. The event structure is
- * implementation and event type specific. It may be a directly accessible
- * buffer of memory, packet headers and data or user specified content etc.
+ * Returns a pointer to the beginning of the event data or NULL in case of error.
+ * The structure/content of the event data is user and/or event type specific.
+ * It may be a directly accessible buffer of memory, contain packet headers and
+ * data or have user specified content etc.
  * Use em_event_get_type() and em_event_type_major() to determine the type
  * of the event.
  *
  * @note em_event_pointer() should NOT be used with events of (major) type
- *       EM_EVENT_TYPE_VECTOR - usage with vectors returns NULL and an error
- *       is reported.
+ *       EM_EVENT_TYPE_VECTOR or EM_EVENT_TYPE_TIMER_IND - usage with these
+ *       types of events returns NULL and an error is reported.
  *       Instead, when dealing with event vectors, use em_event_vector_tbl() to
  *       get access to the vector table.
+ *       Further, periodic timer-ring timeout indication events have no user
+ *       accessible payload.
  *
  * @param event  Event handle
  *
- * @return Event structure/data pointer
+ * @return Pointer to the beginning of the event data
  * @retval NULL on unsupported event type or other error
  *
  * @see em_event_vector_tbl() when dealing with vector events.
  */
 void *em_event_pointer(em_event_t event);
+
+/**
+ * @brief Get a pointer to the event structure/data as well as the event size.
+ *
+ * Returns a pointer to the beginning of the event data as well as the event
+ * type specific payload size via the output arg 'size'.
+ *
+ * This API is a combination of em_event_pointer() and em_event_get_size() since
+ * both are often needed, especially in the EO-receive function where event
+ * payload manipulation naturally takes place.
+ *
+ * The structure/content of the event data is user and/or event type specific.
+ * It may be a directly accessible buffer of memory, contain packet headers and
+ * data or have user specified content etc.
+ * Use em_event_get_type() to determine the type of the event or rely on the
+ * 'type' argument provided to the EO-receive function (em_receive_func_t).
+ * Use em_event_type_major() to get the major part of the event type.
+ *
+ * @note Do not use this API function for vector events (major event type
+ *       EM_EVENT_TYPE_VECTOR) or periodic timer ring timeout events
+ *       (event type EM_EVENT_TYPE_TIMER_IND).
+ *       Instead, for vectors use the em_event_vector_...() APIs.
+ *       Timer ring timeout events have no user accessible data.
+ *
+ * @param      event  Event handle
+ * @param[out] size   Optional output arg into which the event type specific
+ *                    payload size (in bytes) is stored. Use 'size=NULL' if no
+ *                    size information is needed. Only set by the function when
+ *                    no errors occurred. For events of (major) type sw buf or
+ *                    packet the size is the available buffer/payload size in
+ *                    bytes (B).
+ *
+ * @return Pointer to the beginning of the event data
+ * @retval NULL on unsupported event type or other error ('size' not touched)
+ *
+ * @see em_event_pointer(), em_event_get_size()
+ */
+void *em_event_pointer_and_size(em_event_t event, uint32_t *size /*out*/);
 
 /**
  * Returns the event payload size in bytes (B) of the given event
@@ -358,6 +435,10 @@ em_pool_t em_event_get_pool_subpool(em_event_t event, int *subpool /*out*/);
  *
  * @note Vector events must always have their major type set to
  *       EM_EVENT_TYPE_VECTOR or EM will not recognize them as vectors.
+ *       Also, timer ring events must always have their event type set to
+ *       EM_EVENT_TYPE_TIMER_IND or EM will not recognize them as periodic
+ *       timer ring timeout events.
+ *       Trying to set an incorrect type for these events result in error.
  *
  * @param event         Event handle
  * @param newtype	New type for the event
@@ -457,7 +538,7 @@ int em_event_same_type_multi(const em_event_t events[], int num,
  * @note Registered API-callback hooks for em_send...() (em_api_hook_send_t)
  *       will NOT be called.
  * @note Marking an event "sent" with an event group (corresponding to
- *       em_send_group()) is currrently NOT supported.
+ *       em_send_group()) is currently NOT supported.
  *
  * @param event    Event to be marked as "sent"
  * @param queue    Destination queue (must be scheduled, i.e. atomic,
@@ -472,7 +553,7 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue);
 /**
  * Unmark an event previously marked as "sent" (i.e mark as "unsent")
  *
- * @note This is for recovery situations only and can potenially crash the
+ * @note This is for recovery situations only and can potentially crash the
  *       application if used incorrectly!
  *
  * Revert an event's "sent" state, as set by em_event_mark_send(), back to the
@@ -553,7 +634,7 @@ void em_event_mark_free(em_event_t event);
  * @brief Unmark an event previously marked as "free"
  *        (i.e mark as "allocated" again).
  *
- * @note This is for recovery situations only and can potenially crash the
+ * @note This is for recovery situations only and can potentially crash the
  *       application if used incorrectly! Unmarking the free-state of an event
  *       that has already been freed will lead to fatal error.
  *
@@ -616,7 +697,7 @@ void em_event_mark_free_multi(const em_event_t events[], int num);
 /**
  * @brief Unmark multiple events previously marked as "free".
  *
- * @note This is for recovery situations only and can potenially crash the
+ * @note This is for recovery situations only and can potentially crash the
  *       application if used incorrectly!
  *
  * Similar to em_event_unmark_free(), but allows to do the "free"-unmarking of
@@ -677,15 +758,15 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/);
  * @note Other event metadata, internal headers and state are _NOT_ cloned
  *       (e.g. the event-group of a cloned event is EM_EVENT_GROUP_UNDEF etc).
  *
- * @param event Event to be cloned, must be a valid event.
- * @param pool  Optional event pool to allocate the partially cloned event from.
- *              Use 'EM_POOL_UNDEF' to clone from the same pool as 'event'
- *              was allocated from.
- *              The event-type of 'event' must be suitable for allocation
- *              from 'pool' (e.g. EM_EVENT_TYPE_PACKET can not be
- *              allocated from a pool supporting only EM_EVENT_TYPE_SW).
- *              The user area size of events from 'pool' must be large
- *              enough to fit the cloned user area (if 'clone_uarea = true').
+ * @param event  Event to be cloned, must be a valid event.
+ * @param pool   Optional event pool to allocate the partially cloned event from.
+ *               Use 'EM_POOL_UNDEF' to clone from the same pool as 'event'
+ *               was allocated from.
+ *               The event-type of 'event' must be suitable for allocation
+ *               from 'pool' (e.g. EM_EVENT_TYPE_PACKET can not be
+ *               allocated from a pool supporting only EM_EVENT_TYPE_SW).
+ *               The user area size of events from 'pool' must be large
+ *               enough to fit the cloned user area (if 'clone_uarea = true').
  * @param offset Byte offset into the event payload
  * @param len    Number of bytes to copy/clone.
  * @param clone_uarea Set 'true' to also clone the event user area (true/false).
@@ -696,6 +777,9 @@ em_event_t em_event_clone(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/);
  */
 em_event_t em_event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_UNDEF*/,
 			       uint32_t offset, uint32_t len, bool clone_uarea);
+/*
+ * Event User Area
+ */
 
 /**
  * @brief Get a pointer to the event user area, optionally along with its size.
@@ -875,8 +959,8 @@ em_status_t em_event_uarea_info(em_event_t event,
  * The event is freed when the last reference, including the original event,
  * is freed.
  *
- * Currently only references to events of (major) type EM_EVENT_PACKET can be
- * created.
+ * Currently only references to events of (major) type EM_EVENT_TYPE_PACKET can
+ * be created.
  *
  * It is not allowed to use event references with event groups since assigning
  * an event that has references to an event group would assign all the
@@ -910,19 +994,6 @@ bool em_event_has_ref(em_event_t event);
 
 /*
  * Event Vectors
- * Event (major) Type: EM_EVENT_TYPE_VECTOR
- *
- * Vector events contain a table of events.
- * All events in the event-table must be of major type EM_EVENT_TYPE_PACKET.
- * Storing events of another type into the event-table is an error and leads to
- * undefined behaviour.
- * Event vector pools are created with em_pool_create() with the pool event-type
- * set to EM_EVENT_TYPE_VECTOR. Event vectors can then be allocated from vector
- * pools by calling em_alloc(..., vector_pool).
- * To free the vector event along with all events it contains, use em_free() or
- * em_free_multi().
- * To free the vector event only, not the events it contains,
- * use em_event_vector_free().
  */
 
 /**

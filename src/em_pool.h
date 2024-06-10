@@ -49,6 +49,9 @@ extern "C" {
 int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg,
 		     const char **err_str/*out*/);
 
+int check_pool_uarea_persistence(const em_pool_cfg_t *pool_cfg,
+				 const char **err_str/*out*/);
+
 em_status_t
 pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	  const em_pool_cfg_t *default_pool_cfg);
@@ -135,7 +138,7 @@ pool_count(void);
  * Get the EM event-pool that an odp-pool belongs to.
  *
  * An EM event-pool consists of up to EM_MAX_SUBPOOLS subpools (that are
- * odp-pools) - a table (em_shm->mpool_tbl.pool_odp2em[]) contains the
+ * odp-pools) - a table (em_shm->mpool_tbl.pool_subpool_odp2em[]) contains the
  * mapping and is populated during em_pool_create() calls.
  */
 static inline em_pool_t
@@ -143,7 +146,7 @@ pool_odp2em(odp_pool_t odp_pool)
 {
 	/*
 	 * 'idx' is in the range: 0 to odp_pool_max_index(), which is smaller
-	 * than the length of the em_shm->mpool_tbl.pool_odp2em[] array
+	 * than the length of the em_shm->mpool_tbl.pool_subpool_odp2em[] array
 	 * (verified at startup in pool_init()).
 	 */
 	int idx = odp_pool_index(odp_pool);
@@ -151,7 +154,30 @@ pool_odp2em(odp_pool_t odp_pool)
 	if (unlikely(idx < 0))
 		return EM_POOL_UNDEF;
 
-	return em_shm->mpool_tbl.pool_odp2em[idx];
+	return (em_pool_t)(uintptr_t)em_shm->mpool_tbl.pool_subpool_odp2em[idx].pool;
+}
+
+/**
+ * Get the EM event-pool and subpool that an odp-pool belongs to.
+ *
+ * An EM event-pool consists of up to EM_MAX_SUBPOOLS subpools (that are
+ * odp-pools) - a table (em_shm->mpool_tbl.pool_subpool_odp2em[]) contains the
+ * mapping and is populated during em_pool_create() calls.
+ */
+static inline pool_subpool_t
+pool_subpool_odp2em(odp_pool_t odp_pool)
+{
+	/*
+	 * 'idx' is in the range: 0 to odp_pool_max_index(), which is smaller
+	 * than the length of the em_shm->mpool_tbl.pool_subpool_odp2em[] array
+	 * (verified at startup in pool_init()).
+	 */
+	int idx = odp_pool_index(odp_pool);
+
+	if (unlikely(idx < 0))
+		return pool_subpool_undef; /* .pool=EM_POOL_UNDEF, .subpool=0 */
+
+	return em_shm->mpool_tbl.pool_subpool_odp2em[idx];
 }
 
 #ifdef __cplusplus

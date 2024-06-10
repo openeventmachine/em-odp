@@ -511,6 +511,19 @@ static int event_pointer(void)
 	return i;
 }
 
+static int event_pointer_and_size(void)
+{
+	em_event_t *event_tbl = gbl_args->event_tbl;
+	void **ptr = gbl_args->ptr_tbl;
+	uint32_t *u32 = gbl_args->u32_tbl;
+	int i;
+
+	for (i = 0; i < REPEAT_COUNT; i++)
+		ptr[i] = em_event_pointer_and_size(event_tbl[i], &u32[i]);
+
+	return i;
+}
+
 static int event_uarea_get(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
@@ -606,6 +619,19 @@ static int event_get_pool(void)
 
 	for (i = 0; i < REPEAT_COUNT; i++)
 		pool[i] = em_event_get_pool(event_tbl[i]);
+
+	return i;
+}
+
+static int event_get_pool_subpool(void)
+{
+	em_event_t *event_tbl = gbl_args->event_tbl;
+	em_pool_t *pool = gbl_args->pool_tbl;
+	int subpool = 0;
+	int i;
+
+	for (i = 0; i < REPEAT_COUNT; i++)
+		pool[i] = em_event_get_pool_subpool(event_tbl[i], &subpool);
 
 	return i;
 }
@@ -1051,6 +1077,38 @@ bench_info_t test_suite[] = {
 		   "em_event_pointer(sw)"),
 	BENCH_INFO(event_pointer, create_packets, free_events, 0,
 		   "em_event_pointer(pkt)"),
+	BENCH_INFO(event_pointer_and_size, create_sw_events, free_events, 0,
+		   "em_event_pointer_and_size(sw)"),
+	BENCH_INFO(event_pointer_and_size, create_packets, free_events, 0,
+		   "em_event_pointer_and_size(pkt)"),
+	BENCH_INFO(event_get_size, create_sw_events, free_events, 0,
+		   "em_event_get_size(sw)"),
+	BENCH_INFO(event_get_size, create_packets, free_events, 0,
+		   "em_event_get_size(pkt)"),
+	BENCH_INFO(event_get_type, create_sw_events, free_events, 0,
+		   "em_event_get_type(sw)"),
+	BENCH_INFO(event_get_type, create_packets, free_events, 0,
+		   "em_event_get_type(pkt)"),
+	BENCH_INFO(event_get_type_multi, create_sw_events_multi, free_events_multi, 0,
+		   "em_event_get_type_multi(sw)"),
+	BENCH_INFO(event_get_type_multi, create_packets_multi, free_events_multi, 0,
+		   "em_event_get_type_multi(pkt)"),
+	BENCH_INFO(event_same_type_multi, create_sw_events_multi, free_events_multi, 0,
+		   "em_event_same_type_multi(sw)"),
+	BENCH_INFO(event_same_type_multi, create_packets_multi, free_events_multi, 0,
+		   "em_event_same_type_multi(pkt)"),
+	BENCH_INFO(event_set_type, create_sw_events, free_events, 0,
+		   "em_event_set_type(sw)"),
+	BENCH_INFO(event_set_type, create_packets, free_events, 0,
+		   "em_event_set_type(pkt)"),
+	BENCH_INFO(event_get_pool, create_sw_events, free_events, 0,
+		   "em_event_get_pool(sw)"),
+	BENCH_INFO(event_get_pool, create_packets, free_events, 0,
+		   "em_event_get_pool(pkt)"),
+	BENCH_INFO(event_get_pool_subpool, create_sw_events, free_events, 0,
+		   "em_event_get_pool_subpool(sw)"),
+	BENCH_INFO(event_get_pool_subpool, create_packets, free_events, 0,
+		   "em_event_get_pool_subpool(pkt)"),
 	BENCH_INFO(event_uarea_get, create_sw_events, free_events, 0,
 		   "em_event_uarea_get(sw, null)"),
 	BENCH_INFO(event_uarea_get, create_packets, free_events, 0,
@@ -1081,30 +1139,6 @@ bench_info_t test_suite[] = {
 		   "event_uarea_info(pkt)"),
 	BENCH_INFO(event_uarea_info, create_ext_packets, free_events, 0,
 		   "event_uarea_info(ext-pkt)"),
-	BENCH_INFO(event_get_size, create_sw_events, free_events, 0,
-		   "em_event_get_size(sw)"),
-	BENCH_INFO(event_get_size, create_packets, free_events, 0,
-		   "em_event_get_size(pkt)"),
-	BENCH_INFO(event_get_type, create_sw_events, free_events, 0,
-		   "em_event_get_type(sw)"),
-	BENCH_INFO(event_get_type, create_packets, free_events, 0,
-		   "em_event_get_type(pkt)"),
-	BENCH_INFO(event_get_type_multi, create_sw_events_multi, free_events_multi, 0,
-		   "em_event_get_type_multi(sw)"),
-	BENCH_INFO(event_get_type_multi, create_packets_multi, free_events_multi, 0,
-		   "em_event_get_type_multi(pkt)"),
-	BENCH_INFO(event_same_type_multi, create_sw_events_multi, free_events_multi, 0,
-		   "em_event_same_type_multi(sw)"),
-	BENCH_INFO(event_same_type_multi, create_packets_multi, free_events_multi, 0,
-		   "em_event_same_type_multi(pkt)"),
-	BENCH_INFO(event_set_type, create_sw_events, free_events, 0,
-		   "em_event_set_type(sw)"),
-	BENCH_INFO(event_set_type, create_packets, free_events, 0,
-		   "em_event_set_type(pkt)"),
-	BENCH_INFO(event_get_pool, create_sw_events, free_events, 0,
-		   "em_event_get_pool(sw)"),
-	BENCH_INFO(event_get_pool, create_packets, free_events, 0,
-		   "em_event_get_pool(pkt)"),
 	BENCH_INFO(event_vector_tbl, create_vectors, free_events, 0, NULL),
 	BENCH_INFO(event_vector_size, create_vectors, free_events, 0, NULL),
 	BENCH_INFO(event_vector_max_size, create_vectors, free_events, 0, NULL),

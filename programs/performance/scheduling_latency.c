@@ -194,7 +194,7 @@ void print_stats(int64_t start_time, int64_t loop_start_time, uint64_t count)
 
 	APPL_PRINT(": time(h) cores events(M) rate(M/s) min[ns] max[ns] avg[ns] min ev#     max ev#     max_do[ns] max_eo[ns]\n");
 	APPL_PRINT(": %-7.3f %-5d %-9lu %-9.3f %-7lu %-7lu %-7lu %-11lu %-11lu %-10lu %lu\n",
-		   runtime / (60 * 60), em_core_count(), count / 1000000, rate,
+		   runtime / (60 * 60), perf_shm->core_count, count / 1000000, rate,
 		   perf_shm->times.mint, perf_shm->times.maxt, average,
 		   perf_shm->times.minnum, perf_shm->times.maxnum,
 		   perf_shm->times.maxdisp, perf_shm->times.max_eo_time);
@@ -316,8 +316,9 @@ em_status_t error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_
 	return test_error_handler(eo, error, escope, args);
 }
 
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -358,9 +359,10 @@ uint64_t try_timestamp_overhead(void)
 	return oh;
 }
 
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
-	(void)appl_conf;
+	/* Store the number of EM-cores running the application */
+	perf_shm->core_count = appl_conf->core_count;
 
 	perf_shm->ts_overhead = (int64_t)try_timestamp_overhead();
 	APPL_PRINT("odp_time_global_ns pair overhead seems to be %lu ns\n", perf_shm->ts_overhead);
@@ -421,7 +423,7 @@ void test_start(appl_conf_t *const appl_conf)
 	em_eo_add_queue_sync(perf_shm->eo, q2);
 
 	if (g_options.lo_events)
-		APPL_PRINT("Backround work: %lu normal priority events with %.2fus work\n",
+		APPL_PRINT("Background work: %lu normal priority events with %.2fus work\n",
 			   g_options.lo_events, g_options.work_ns / 1000.0);
 
 	if (g_options.atomic_end)
@@ -449,7 +451,7 @@ void test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("Starting %lu loops\n", g_options.loops);
 }
 
-void test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_eo_t eo;
@@ -475,8 +477,10 @@ void test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
+
 	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
 	em_unregister_error_handler();
 	env_shared_free(perf_shm);

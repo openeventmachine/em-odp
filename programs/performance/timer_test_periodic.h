@@ -208,7 +208,6 @@ typedef struct app_msg_t {
 	int tidx;
 	int id;
 	uint64_t arg;
-
 } app_msg_t;
 
 typedef enum e_state {

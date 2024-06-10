@@ -32,7 +32,6 @@
 
 #include <stdatomic.h>
 #include <odp_api.h>
-#include <event_machine/add-ons/event_machine_timer.h>
 #include "em_timer_conf.h"
 
 /* per timer (ODP timer pool) */

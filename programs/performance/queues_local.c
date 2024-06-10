@@ -348,9 +348,9 @@ error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -378,8 +378,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	eo_context_t *eo_ctx;
 	em_status_t ret, start_ret = EM_ERROR;
@@ -398,16 +397,15 @@ test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "    Max. NUM_QUEUES:          %i\n"
 		   "    sizeof queue_context_tbl: %i kB\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   perf_shm->pool, NUM_QUEUES, q_ctx_size / 1024);
 
 	test_fatal_if(perf_shm->pool == EM_POOL_UNDEF,
@@ -416,7 +414,7 @@ test_start(appl_conf_t *const appl_conf)
 	perf_shm->test_status.cpu_hz = env_core_hz();
 	perf_shm->test_status.cpu_mhz = (double)perf_shm->test_status.cpu_hz /
 					1000000.0;
-	perf_shm->test_status.num_cores = em_core_count();
+	perf_shm->test_status.num_cores = appl_conf->core_count;
 	perf_shm->test_status.free_flag = 0;
 
 	env_atomic64_init(&perf_shm->test_status.ready_count);
@@ -456,8 +454,7 @@ test_start(appl_conf_t *const appl_conf)
 /**
  * Stop the test, only run on one core
  */
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_status_t ret;
@@ -496,9 +493,9 @@ test_stop(appl_conf_t *const appl_conf)
 /**
  * Terminate the test, only run on one core
  */
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -591,7 +588,8 @@ queue_step(void)
 	perf_shm->test_status.queues = queue_count;
 	perf_shm->test_status.step++;
 
-	APPL_PRINT("\nNumber of queues: %d - scheduled:%d + local:%d\n",
+	APPL_PRINT("\n"
+		   "Number of queues: %d - scheduled:%d + local:%d\n",
 		   perf_shm->test_status.queues,
 		   (perf_shm->test_status.queues * NUM_SCHED_QUEUES) / NUM_EOS,
 		   (perf_shm->test_status.queues * NUM_LOCAL_QUEUES) / NUM_EOS);

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2016, Nokia Solutions and Networks
+ *   Copyright (c) 2016-2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -30,7 +30,7 @@
 
 /**
  * @file
- * EM ODP specific timer definition template
+ * EM ODP specific timer definitions
  */
 #ifndef EVENT_MACHINE_TIMER_HW_SPECIFIC_H
 #define EVENT_MACHINE_TIMER_HW_SPECIFIC_H

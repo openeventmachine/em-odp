@@ -30,7 +30,7 @@
  *   ---------------------------------------------------------------------
  *   Some notes about the implementation:
  *
- *   EM timer add-on API is close to ODP timer, but there are issues
+ *   EM Timer API is close to ODP timer, but there are issues
  *   making this code a bit more complex than it could be:
  *
  *   1) no periodic timer in ODP
@@ -44,13 +44,11 @@
  *   create performance penalty, but so far it looks like the penalty is not
  *   too large and does simplify the code otherwise. Also timeouts could be
  *   pre-allocated as the API separates creation and arming.
- *   Most of the syncronization is handled by ODP timer, a ticketlock is used
+ *   Most of the synchronization is handled by ODP timer, a ticketlock is used
  *   for high level management API.
  *
  */
 #include "em_include.h"
-#include <event_machine_timer.h>
-#include "em_timer.h"
 
 /* timer handle = index + 1 (UNDEF 0) */
 #define TMR_I2H(x) ((em_timer_t)(uintptr_t)((x) + 1))
@@ -742,7 +740,15 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr)
 	timer->flags = tmr_attr->flags;
 	timer->plain_q_ok = capa.queue_type_plain;
 	timer->is_ring = false;
+
+#if ODP_VERSION_API_NUM(1, 43, 0) <= ODP_VERSION_API
+	if (odp_timer_pool_start_multi(&timer->odp_tmr_pool, 1) != 1) {
+		reason = "odp_timer_pool_start_multi failed";
+		goto error_locked;
+	}
+#else
 	odp_timer_pool_start();
+#endif
 	em_shm->timers.num_timers++;
 	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
@@ -942,8 +948,16 @@ em_timer_t em_timer_ring_create(const em_timer_attr_t *ring_attr)
 	timer->is_ring = true;
 	tmrs->num_ring_create_calls++;
 
+#if ODP_VERSION_API_NUM(1, 43, 0) <= ODP_VERSION_API
+	if (odp_timer_pool_start_multi(&timer->odp_tmr_pool, 1) != 1) {
+		reason = "odp_timer_pool_start_multi failed";
+		goto error_locked;
+	}
+#else
 	odp_timer_pool_start();
-	odp_ticketlock_unlock(&tmrs->timer_lock);
+#endif
+
+	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
 	TMR_DBG_PRINT("ret %" PRI_TMR ", total timers %u\n", TMR_I2H(i), tmrs->num_timers);
 	return TMR_I2H(i);
@@ -1791,6 +1805,7 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)
 		tmr_attr->ringparam.base_hz.denom = poolinfo.param.periodic.base_freq_hz.denom;
 		tmr_attr->ringparam.max_mul = poolinfo.param.periodic.max_multiplier;
 		tmr_attr->ringparam.res_ns = poolinfo.param.res_ns;
+		tmr_attr->ringparam.clk_src = clk;
 		memset(&tmr_attr->resparam, 0, sizeof(em_timer_res_param_t));
 	}
 

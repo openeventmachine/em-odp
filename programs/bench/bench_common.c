@@ -86,7 +86,6 @@ int run_benchmarks(void *arg)
 		uint32_t round = 1;
 
 		for (j = 0; j < args->num_bench && !odp_atomic_load_u32(&exit_thread); round++) {
-			int ret;
 			const char *desc;
 			const bench_info_t *bench = &args->bench[j];
 			uint32_t max_rounds = opt->rounds;
@@ -115,15 +114,15 @@ int run_benchmarks(void *arg)
 			else
 				c1 = odp_cpu_cycles();
 
-			ret = bench->run();
+			int bench_ret = bench->run();
 
 			if (meas_time)
 				t2 = odp_time_local();
 			else
 				c2 = odp_cpu_cycles();
 
-			if (!ret) {
-				ODPH_ERR("Benchmark %s failed\n", desc);
+			if (!bench_ret) {
+				ODPH_ERR("Benchmark %s failed: %d\n", desc, bench_ret);
 				args->bench_failed = -1;
 				ret = -1;
 				goto exit;

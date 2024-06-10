@@ -69,8 +69,8 @@ ${INVALID_ALIGN_OFFSET_PRINT} =    SEPARATOR=
 ...    Max align_offset is \\d+ and it must be power of 2
 
 ${INVALID_PKT_HEADROOM_PRINT} =    SEPARATOR=
-...    'startup_pools.conf\\[0\\].pool_cfg.pkt.headroom.value' 256 too larg
-...    e \\(max=128\\)
+...    'startup_pools.conf\\[0\\].pool_cfg.pkt.headroom.value' 512 too larg
+...    e \\(max=[0-9]+\\)
 
 ${INVALID_NAME_PRINT} =    SEPARATOR=
 ...    'startup_pools.conf\\[0\\].name' has wrong data type\\(expect string\\)
@@ -79,7 +79,7 @@ ${INVALID_OR_NO_IN_USE_PRINT} =    SEPARATOR=
 ...    'startup_pools.conf\\[0\\].pool_cfg.align_offset.in_use' not found or wrong type
 
 ${NO_VALUE_PRINT} =    SEPARATOR=
-...    'startup_pools.conf\\[0\\].pool_cfg.align_offset.value' not found or wront type
+...    'startup_pools.conf\\[0\\].pool_cfg.align_offset.value' not found or wrong type
 
 # Output for each test startup_pools conf
 &{CONF_OUT} =
