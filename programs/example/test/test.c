@@ -150,9 +150,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 	char name[] = "TestSharedMem";
 
@@ -167,8 +167,7 @@ test_init(void)
 		memset(test_shm, 0, sizeof(test_shm_t));
 }
 
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_status_t stat, stat_eo_start = EM_ERROR;
@@ -179,16 +178,12 @@ test_start(appl_conf_t *const appl_conf)
 	printf("\n"
 	       "**********************************************************\n"
 	       "EM APPLICATION: '%s' initializing:\n"
-	       "  %s: %s() - EM-core:%i\n"
-	       "  Application running on %d EM-cores (procs:%d, threads:%d).\n"
+	       "  %s: %s() - EM-core:%02d\n"
+	       "  Application running on %u EM-cores (procs:%u, threads:%u).\n"
 	       "**********************************************************\n"
 	       "\n",
-	       appl_conf->name,
-	       NO_PATH(__FILE__), __func__,
-	       em_core_id(),
-	       em_core_count(),
-	       appl_conf->num_procs,
-	       appl_conf->num_threads);
+	       appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
+	       appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads);
 
 	/* Create 3 test queues, one per scheduled queue type: */
 	assert(NBR_TEST_QUEUES >= 3);
@@ -232,8 +227,7 @@ test_start(appl_conf_t *const appl_conf)
 		APPL_EXIT_FAILURE("test-eo start failed!");
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	const em_eo_t eo = test_shm->test_eo;
@@ -251,9 +245,9 @@ test_stop(appl_conf_t *const appl_conf)
 		APPL_EXIT_FAILURE("test-eo delete failed!");
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	printf("%s() on EM-core %d\n", __func__, core);

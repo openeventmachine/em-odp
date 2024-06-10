@@ -140,15 +140,18 @@ typedef union {
 
 typedef struct {
 	/**
-	 * Event type determines the pool type used:
+	 * The event type determines the pool type used:
 	 *    - EM_EVENT_TYPE_SW creates subpools of type 'ODP_POOL_BUFFER'
-	 *      This kind of EM pool CANNOT be used to create events of major
-	 *      type EM_EVENT_TYPE_PACKET.
+	 *      This kind of EM pool can be used to allocate events of major
+	 *      type EM_EVENT_TYPE_SW.
 	 *    - EM_EVENT_TYPE_PACKET creates subpools of type 'ODP_POOL_PACKET'
-	 *      This kind of EM pool can be used for events of all kinds.
+	 *      This kind of EM pool can be used to allocate events of major
+	 *      type EM_EVENT_TYPE_PACKET or EM_EVENT_TYPE_SW.
 	 *    - EM_EVENT_TYPE_VECTOR creates subpools of type 'ODP_POOL_VECTOR'
-	 *      This kind of EM pool can ONLY be used for creating event vectors
-	 * @note Only major types are considered here, setting minor is error
+	 *      This kind of EM pool can ONLY be used to allocate event
+	 *      vectors of major event type EM_EVENT_TYPE_VECTOR.
+	 * @note Only major event types are considered here, setting the minor
+	 *       type is an error.
 	 */
 	em_event_type_t event_type;
 	/**
@@ -569,7 +572,7 @@ em_pool_t
 em_pool_get_next(void);
 
 /**
- * Retieve information about an EM pool.
+ * Retrieve information about an EM pool.
  *
  * @param      pool        EM pool handle
  * @param[out] pool_info   Pointer to pool info that will be written

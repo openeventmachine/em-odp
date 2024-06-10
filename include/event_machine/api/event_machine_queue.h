@@ -203,7 +203,7 @@ em_queue_create(const char *name, em_queue_type_t type, em_queue_prio_t prio,
 		em_queue_group_t group, const em_queue_conf_t *conf);
 
 /**
- * Create a new queue with a static queue hande (i.e. given by the user).
+ * Create a new queue with a static queue handle (i.e. given by the user).
  *
  * Note, that the system may have a limited amount of static handles available,
  * so prefer the use of dynamic queues, unless static handles are really needed.
@@ -460,13 +460,13 @@ em_queue_get_next(void);
 /**
  * Get a unique index corresponding to the given EM queue handle.
  *
- * Returns a unique index in the range 0...EM_MAX_QUEUES-1.
+ * Returns a unique index in the range 0 to em_queue_get_max_num() - 1.
  * The same EM queue handle will always map to the same index.
  *
  * Only meaningful for queues created within the current EM instance.
  *
  * @param queue  EM queue handle
- * @return Index in the range 0...EM_MAX_QUEUES-1
+ * @return Index in the range 0 to em_queue_get_max_num() - 1
  */
 int em_queue_get_index(em_queue_t queue);
 

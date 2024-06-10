@@ -49,7 +49,7 @@ COMPILE_TIME_ASSERT(sizeof(em_event_t) == sizeof(odp_event_t),
  *
  * Used to detect whether the event's event-header has been initialized by EM.
  *
- * Set the odp-pkt/vector user-flag to be able to recognize events that EM  has
+ * Set the odp-pkt/vector user-flag to be able to recognize events that EM has
  * created vs. events from pkt-input that needs their ev-hdrs to be initialized
  * before further EM processing.
  */
@@ -157,6 +157,26 @@ typedef struct ODP_PACKED {
 } ev_hdr_state_t;
 
 /**
+ * Event User Area metadata in the event header
+ */
+typedef union {
+	uint32_t all;
+	struct {
+		/** is the user area id set? */
+		uint32_t isset_id : 1;
+		/** is the uarea initialized? */
+		uint32_t isinit   : 1;
+		/** requested size (bytes), <= EM_EVENT_USER_AREA_MAX_SIZE */
+		uint32_t size     : 14;
+		/** user area id */
+		uint32_t id       : 16;
+	};
+} ev_hdr_user_area_t;
+
+COMPILE_TIME_ASSERT(sizeof(ev_hdr_user_area_t) == sizeof(uint32_t),
+		    EV_HDR_USER_AREA_T_SIZE_ERROR);
+
+/**
  * Event header
  *
  * SW & I/O originated events.
@@ -190,23 +210,30 @@ typedef struct event_hdr {
 	 * Event flags
 	 */
 	union {
-		uint16_t all;
+		uint8_t all;
 		struct {
 			/**
 			 * Indicate that this event has (or had) references and
 			 * some of the ESV checks must be omitted (evgen).
 			 * Will be set for the whole lifetime of the event.
 			 */
-			uint16_t refs_used : 1;
+			uint8_t refs_used : 1;
 			/**
 			 * Indicate that this event is used as tmo indication.
 			 * See em_tmo_type_t. Initially 0 = EM_TMO_TYPE_NONE
 			 */
-			uint16_t tmo_type  : 2;
-			/** reserved bits */
-			uint16_t rsvd      : 13;
+			uint8_t tmo_type : 2;
+
+			/** currently unused bits */
+			uint8_t unused : 5;
 		};
 	} flags;
+
+	/**
+	 * Payload alloc alignment offset.
+	 * Value is copied from pool_elem->align_offset for easy access.
+	 */
+	uint8_t align_offset;
 
 	/**
 	 * Event type, contains major and minor parts
@@ -220,6 +247,10 @@ typedef struct event_hdr {
 
 	/**
 	 * Event size
+	 *
+	 * buf: current size
+	 * pkt & vec: original alloc size (otherwise not used, odp size used)
+	 * periodic ring timer tmo (EM_EVENT_TYPE_TIMER_IND): 0
 	 */
 	uint32_t event_size;
 
@@ -233,34 +264,17 @@ typedef struct event_hdr {
 	 */
 	em_event_group_t egrp;
 
-	union {
-		uint32_t all;
-		struct {
-			/** is the user area id set? */
-			uint32_t isset_id : 1;
-			/** is the uarea initialized? */
-			uint32_t isinit   : 1;
-			/** requested size (bytes), <= EM_EVENT_USER_AREA_MAX_SIZE */
-			uint32_t size     : 14;
-			/** user area id */
-			uint32_t id       : 16;
-		};
-	} user_area;
-
-	/**
-	 * Payload alloc alignment offset/push into free area of ev_hdr.
-	 * Only used by events based on ODP buffers that have the ev_hdr in the
-	 * beginning of the buf payload (pkts use 'user-area' for ev_hdr).
-	 * Value is copied from pool_elem->align_offset for easy access.
-	 */
-	uint16_t align_offset;
-
 	/**
 	 * Holds the tmo handle in case event is used as timeout indication.
 	 * Only valid if flags.tmo_type is not EM_TMO_TYPE_NONE (0).
 	 * Initialized only when used as timeout indication by timer code.
 	 */
 	em_tmo_t tmo;
+
+	/**
+	 * Event User Area metadata
+	 */
+	ev_hdr_user_area_t user_area;
 
 	/**
 	 * End of event header data,

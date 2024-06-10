@@ -40,9 +40,9 @@ typedef struct {
 } q_grp_done_callback_args_t;
 
 static em_status_t core_queue_groups_create(void);
-static em_status_t core_queue_group_update_local(void);
+static em_status_t core_queue_group_join(void);
 static em_queue_group_t default_queue_group_create(void);
-static em_queue_group_t default_queue_group_update_local(void);
+static em_queue_group_t default_queue_group_join(void);
 
 static em_queue_group_t
 queue_group_create_escope(const char *name, const em_core_mask_t *mask,
@@ -122,7 +122,7 @@ read_config_file(void)
 em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 			     queue_group_pool_t *const queue_group_pool)
 {
-	const int cores = em_core_count();
+	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
 	queue_group_elem_t *queue_group_elem;
 	int ret;
 
@@ -141,13 +141,13 @@ em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 		list_init(&queue_group_elem->queue_list);
 	}
 
-	ret = objpool_init(&queue_group_pool->objpool, cores);
+	ret = objpool_init(&queue_group_pool->objpool, objpool_subpools);
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (int i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
+	for (uint32_t i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
 		queue_group_elem = &queue_group_tbl->queue_group_elem[i];
-		objpool_add(&queue_group_pool->objpool, i % cores,
+		objpool_add(&queue_group_pool->objpool, i % objpool_subpools,
 			    &queue_group_elem->queue_group_pool_elem);
 	}
 
@@ -181,10 +181,10 @@ em_status_t queue_group_init_local(void)
 	/*
 	 * Update the EM default queue group with this cores information
 	 */
-	em_queue_group_t def_qgrp = default_queue_group_update_local();
+	em_queue_group_t def_qgrp = default_queue_group_join();
 
 	if (def_qgrp != EM_QUEUE_GROUP_DEFAULT) {
-		EM_LOG(EM_LOG_ERR, "default_queue_group_update_local() failed!\n");
+		EM_LOG(EM_LOG_ERR, "default_queue_group_join() failed!\n");
 		return EM_ERR_LIB_FAILED;
 	}
 
@@ -193,10 +193,10 @@ em_status_t queue_group_init_local(void)
 	 * if enabled by config.
 	 */
 	if (em_shm->opt.queue_group.create_core_queue_groups) {
-		em_status_t stat = core_queue_group_update_local();
+		em_status_t stat = core_queue_group_join();
 
 		if (stat != EM_OK) {
-			EM_LOG(EM_LOG_ERR, "core_queue_group_update_local():%" PRI_STAT "\n", stat);
+			EM_LOG(EM_LOG_ERR, "core_queue_group_join():%" PRI_STAT "\n", stat);
 			return EM_ERR_LIB_FAILED;
 		}
 	}
@@ -312,7 +312,7 @@ static em_queue_group_t default_queue_group_create(void)
 	 * Don't use the ODP_SCHED_GROUP_WORKER or other predefined ODP groups
 	 * since those groups can't be modified.
 	 * Create the group without any cores/threads and update it during
-	 * em_init_core() -> default_queue_group_update_local() calls for each
+	 * em_init_core() -> default_queue_group_join() calls for each
 	 * EM core.
 	 */
 	default_qgrp_elem->odp_sched_group = ODP_SCHED_GROUP_INVALID;
@@ -331,10 +331,11 @@ static em_queue_group_t default_queue_group_create(void)
  * core local init and add the ODP thread-id to the scheduling mask.
  * Run by each call to em_init_core().
  */
-static em_queue_group_t default_queue_group_update_local(void)
+static em_queue_group_t default_queue_group_join(void)
 {
 	queue_group_elem_t *default_qgrp_elem;
 	odp_thrmask_t odp_joinmask;
+	const int core_id = em_locm.core_id;
 	const int odp_thr = odp_thread_id();
 	int ret;
 
@@ -347,6 +348,7 @@ static em_queue_group_t default_queue_group_update_local(void)
 	odp_thrmask_set(&odp_joinmask, odp_thr);
 
 	env_spinlock_lock(&default_qgrp_elem->lock);
+	em_core_mask_set(core_id, &default_qgrp_elem->core_mask);
 	/* Join this thread into the "EM default" schedule group */
 	ret = odp_schedule_group_join(default_qgrp_elem->odp_sched_group,
 				      &odp_joinmask);
@@ -356,6 +358,37 @@ static em_queue_group_t default_queue_group_update_local(void)
 		return EM_QUEUE_GROUP_UNDEF;
 
 	return EM_QUEUE_GROUP_DEFAULT;
+}
+
+/**
+ * @brief The calling core joins all available queue groups
+ *
+ * Main use case for em_term(): to be able to flush the scheduler with only the
+ * last EM-core running we need to modify all queue groups to include this last
+ * core in the queue groups' core masks
+ */
+void queue_group_join_all(void)
+{
+	em_queue_group_t qgrp = em_queue_group_get_first(NULL);
+	const int core_id = em_locm.core_id;
+
+	while (qgrp != EM_QUEUE_GROUP_UNDEF) {
+		queue_group_elem_t *qgrp_elem = queue_group_elem_get(qgrp);
+
+		env_spinlock_lock(&qgrp_elem->lock);
+
+		int allocated = queue_group_allocated(qgrp_elem);
+		bool ongoing_delete = qgrp_elem->ongoing_delete;
+
+		if (allocated && !ongoing_delete &&
+		    !em_core_mask_isset(core_id, &qgrp_elem->core_mask)) {
+			em_core_mask_set(core_id, &qgrp_elem->core_mask);
+			q_grp_add_core(qgrp_elem);
+		}
+		env_spinlock_unlock(&qgrp_elem->lock);
+
+		qgrp = em_queue_group_get_next();
+	}
 }
 
 static em_status_t core_queue_groups_create(void)
@@ -392,7 +425,7 @@ static em_status_t core_queue_groups_create(void)
 		/*
 		 * Create a new odp schedule group for each EM core.
 		 * Create the group without the core/thread set and update it
-		 * during em_init_core() -> core_queue_group_update_local()
+		 * during em_init_core() -> core_queue_group_join()
 		 * calls for each EM core.
 		 */
 		qgrp_elem->odp_sched_group = ODP_SCHED_GROUP_INVALID;
@@ -411,7 +444,7 @@ static em_status_t core_queue_groups_create(void)
 	return EM_OK;
 }
 
-static em_status_t core_queue_group_update_local(void)
+static em_status_t core_queue_group_join(void)
 {
 	char qgrp_name[EM_QUEUE_GROUP_NAME_LEN];
 	int core = em_core_id();
@@ -976,7 +1009,7 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	env_spinlock_unlock(&qgrp_elem->lock);
 
 	/*
-	 * Send add/rem-req events to all other conserned cores.
+	 * Send add/rem-req events to all other concerned cores.
 	 * Note: if .ongoing_delete = true:
 	 *       Treat errors as EM_FATAL because failures will leave
 	 *       .ongoing_delete = true for the group until restart of EM.
@@ -1079,7 +1112,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	env_spinlock_unlock(&qgrp_elem->lock);
 
 	/*
-	 * Send add/rem-req events to all other conserned cores.
+	 * Send add/rem-req events to all other concerned cores.
 	 * Note: if .ongoing_delete = true:
 	 *       Treat errors as EM_FATAL because failures will leave
 	 *       .ongoing_delete = true for the group until restart of EM.
@@ -1096,7 +1129,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	 * Poll the core-local unscheduled control-queue for events.
 	 * These events request the core to do a core-local operation (or not).
 	 * Poll and handle events until 'locm->sync_api.in_progress == false'
-	 * indicating that this sync-API is 'done' on all conserned cores.
+	 * indicating that this sync-API is 'done' on all concerned cores.
 	 */
 	while (locm->sync_api.in_progress)
 		poll_unsched_ctrl_queue();
@@ -1164,7 +1197,7 @@ static void q_grp_rem_core(const queue_group_elem_t *qgrp_elem)
 
 		em_core_mask_tostr(mask_str, EM_CORE_MASK_STRLEN,
 				   &qgrp_elem->core_mask);
-		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_GROUP_ADD_CORE,
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_GROUP_REM_CORE,
 			       "QGrp REM core%02d: odp_schedule_group_leave(thr:%d):%d\n"
 			       "QueueGroup:%" PRI_QGRP " core-mask:%s",
 			       em_core_id(), odp_thr, ret, queue_group, mask_str);

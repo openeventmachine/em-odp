@@ -134,6 +134,15 @@ static inline bool esv_enabled(void)
  */
 em_status_t esv_init(void);
 /**
+ * In the case that ESV has been disabled during compile time, verify that the compile-time
+ * option and runtime config file options do not clash - warn the user otherwise!
+ *
+ * The user might not notice that the run time config file option has no effect if ESV has
+ * been disabled during compile time. The warning printed at startup is meant to notify the
+ * user that ESV will be disabled no matter the content in the run time config file.
+ */
+void esv_disabled_warn_config(void);
+/**
  * Set the initial event state during em_pool_create() when preallocating events
  */
 em_event_t evstate_prealloc(const em_event_t event, event_hdr_t *const ev_hdr);

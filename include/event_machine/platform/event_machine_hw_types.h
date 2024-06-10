@@ -65,13 +65,30 @@ EM_HANDLE_T(em_pool_t);
  * Major event types.
  */
 typedef enum em_event_type_major_e {
-	EM_EVENT_TYPE_UNDEF      = 0,       /**< Undef event type */
-	EM_EVENT_TYPE_SW         = 1 << 24, /**< SW event */
-	EM_EVENT_TYPE_PACKET     = 2 << 24, /**< Packet event */
-	EM_EVENT_TYPE_TIMER      = 3 << 24, /**< Timer event */
-	EM_EVENT_TYPE_CRYPTO     = 4 << 24, /**< Crypto event */
-	EM_EVENT_TYPE_VECTOR     = 5 << 24, /**< Event contains a (packet) vector */
-	EM_EVENT_TYPE_TIMER_IND  = 6 << 24  /**< Read-only no payload timeout notification */
+	/** Undef event type */
+	EM_EVENT_TYPE_UNDEF      = 0,
+
+	/** SW event */
+	EM_EVENT_TYPE_SW         = 1 << 24,
+
+	/** Packet event */
+	EM_EVENT_TYPE_PACKET     = 2 << 24,
+
+	/** Timer event */
+	EM_EVENT_TYPE_TIMER      = 3 << 24,
+
+	/** Crypto event */
+	EM_EVENT_TYPE_CRYPTO     = 4 << 24,
+
+	/** Event contains a (packet) vector */
+	EM_EVENT_TYPE_VECTOR     = 5 << 24,
+
+	/**
+	 * Ring timer: read-only, no-payload periodic timeout indication.
+	 * Only the ring timer should set this type, the user must never set
+	 * this type manually via em_alloc...() or em_event_set_type().
+	 */
+	EM_EVENT_TYPE_TIMER_IND  = 6 << 24
 } em_event_type_major_e;
 
 /**
@@ -259,7 +276,7 @@ typedef enum em_status_e {
 	EM_ERR_NOT_FREE         = 8,
 	/** Resource not found */
 	EM_ERR_NOT_FOUND        = 9,
-	/** Not properly initialiazed (e.g. not using provided initializer) */
+	/** Not properly initialized (e.g. not using provided initializer) */
 	EM_ERR_NOT_INITIALIZED  = 10,
 	/** Implementation missing (placeholder) */
 	EM_ERR_NOT_IMPLEMENTED  = 11,

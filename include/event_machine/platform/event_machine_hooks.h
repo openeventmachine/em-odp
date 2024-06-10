@@ -201,7 +201,7 @@ typedef void (*em_idle_hook_while_idle_t)(void);
  * EM API functions will call an API hook if given by the user through this
  * struct to em_init(). E.g. em_alloc() will call api_hooks->alloc(...) if
  * api_hooks->alloc != NULL. Not all hooks need to be provided, use NULL for
- * unsused hooks.
+ * unused hooks.
  *
  * @note Not all EM API funcs have associated hooks, only the most used
  *       functions (in the fast path) are included.
@@ -244,7 +244,7 @@ typedef struct {
  * -	to_active_hook when a core gets events after being idle
  * -	while_idle_hook when a core continues being idle
  *
- * Not all the idle hooks need to be provided, use NULL for unsused idle hooks.
+ * Not all the idle hooks need to be provided, use NULL for unused idle hooks.
  *
  * @note Notice that doing heavy processing in the hooks might significantly
  *	 impact performance.

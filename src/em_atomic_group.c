@@ -39,7 +39,7 @@ atomic_group_init(atomic_group_tbl_t *const atomic_group_tbl,
 		  atomic_group_pool_t *const atomic_group_pool)
 {
 	atomic_group_elem_t *atomic_group_elem;
-	const int cores = em_core_count();
+	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
 	int ret;
 
 	memset(atomic_group_tbl, 0, sizeof(atomic_group_tbl_t));
@@ -62,13 +62,13 @@ atomic_group_init(atomic_group_tbl_t *const atomic_group_tbl,
 		env_atomic32_init(&agrp_elem->num_queues);
 	}
 
-	ret = objpool_init(&atomic_group_pool->objpool, cores);
+	ret = objpool_init(&atomic_group_pool->objpool, objpool_subpools);
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (int i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
+	for (uint32_t i = 0; i < EM_MAX_ATOMIC_GROUPS; i++) {
 		atomic_group_elem = &atomic_group_tbl->ag_elem[i];
-		objpool_add(&atomic_group_pool->objpool, i % cores,
+		objpool_add(&atomic_group_pool->objpool, i % objpool_subpools,
 			    &atomic_group_elem->atomic_group_pool_elem);
 	}
 

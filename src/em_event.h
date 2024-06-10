@@ -114,7 +114,7 @@ evhdr_init_pkt(event_hdr_t *ev_hdr, em_event_t event,
 			event = evstate_update(event, ev_hdr, is_extev);
 		}
 	}
-	ev_hdr->flags.all = 0;
+	ev_hdr->flags.all = 0; /* clear only after evstate_...() */
 
 	return event;
 }
@@ -204,7 +204,7 @@ evhdr_init_pkt_multi(event_hdr_t *const ev_hdrs[],
 
 	for (int i = 0; i < needs_init_num; i++) {
 		idx = needs_init_idx[i];
-		ev_hdrs[idx]->flags.all = 0;
+		ev_hdrs[idx]->flags.all = 0; /* clear only after evstate_...() */
 		ev_hdrs[idx]->event_type = EM_EVENT_TYPE_PACKET;
 		ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
 		ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
@@ -236,6 +236,7 @@ evhdr_init_pktvec(event_hdr_t *ev_hdr, em_event_t event,
 	 * ODP pkt from outside of EM - not allocated by EM & needs init
 	 */
 	odp_packet_vector_user_flag_set(odp_pktvec, USER_FLAG_SET);
+	/* can clear flags before evstate_...(), flags.refs_used not set for vecs */
 	ev_hdr->flags.all = 0;
 	ev_hdr->event_type = EM_EVENT_TYPE_VECTOR;
 	ev_hdr->egrp = EM_EVENT_GROUP_UNDEF;
@@ -298,6 +299,7 @@ evhdr_init_pktvec_multi(event_hdr_t *ev_hdrs[/*out*/],
 			}
 			/* else events[i] = events[i] */
 		} else {
+			odp_packet_vector_user_flag_set(odp_pktvecs[i], USER_FLAG_SET);
 			needs_init_idx[needs_init_num] = i;
 			needs_init_num++;
 		}
@@ -313,11 +315,11 @@ evhdr_init_pktvec_multi(event_hdr_t *ev_hdrs[/*out*/],
 	if (!esv_ena) {
 		for (int i = 0; i < needs_init_num; i++) {
 			idx = needs_init_idx[i];
-			odp_packet_vector_user_flag_set(odp_pktvecs[idx], USER_FLAG_SET);
-			ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
+			ev_hdrs[idx]->flags.all = 0;
 			ev_hdrs[idx]->event_type = EM_EVENT_TYPE_VECTOR;
-			ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
 			ev_hdrs[idx]->event = events[idx];
+			ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+			ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
 		}
 
 		return;
@@ -328,10 +330,11 @@ evhdr_init_pktvec_multi(event_hdr_t *ev_hdrs[/*out*/],
 	 */
 	for (int i = 0; i < needs_init_num; i++) {
 		idx = needs_init_idx[i];
-		odp_packet_vector_user_flag_set(odp_pktvecs[idx], USER_FLAG_SET);
-		ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
+		/* can clear flags before evstate_...(), flags.refs_used not set for vecs */
+		ev_hdrs[idx]->flags.all = 0;
 		ev_hdrs[idx]->event_type = EM_EVENT_TYPE_VECTOR;
 		ev_hdrs[idx]->egrp = EM_EVENT_GROUP_UNDEF;
+		ev_hdrs[idx]->user_area.all = 0; /* uarea fields init when used */
 	}
 
 	if (!em_shm->opt.esv.prealloc_pools) {
@@ -556,7 +559,7 @@ event_alloc_buf(const mpool_elem_t *const pool_elem, uint32_t size)
 
 	/*
 	 * odp buffer now allocated - init the EM event header
-	 * at the beginning of the buffer.
+	 * in the odp user area.
 	 */
 	event_hdr_t *const ev_hdr = odp_buffer_user_area(odp_buf);
 	odp_event_t odp_event = odp_buffer_to_event(odp_buf);
@@ -860,7 +863,7 @@ event_alloc_pkt_multi(em_event_t events[/*out*/], const int num,
 			ev_hdrs[i]->event_type = type;
 			if (!esv_ena)
 				ev_hdrs[i]->event = events[i];
-			ev_hdrs[i]->event_size = size;
+			ev_hdrs[i]->event_size = size; /* original size */
 			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
 
 			ev_hdrs[i]->user_area.all = 0;
@@ -1031,7 +1034,7 @@ event_alloc_vector_multi(em_event_t events[/*out*/], const int num,
 			ev_hdrs[i]->event_type = type;
 			if (!esv_ena)
 				ev_hdrs[i]->event = events[i];
-			ev_hdrs[i]->event_size = size;
+			ev_hdrs[i]->event_size = size; /* original vec size */
 			ev_hdrs[i]->egrp = EM_EVENT_GROUP_UNDEF;
 
 			ev_hdrs[i]->user_area.all = 0;
@@ -1130,6 +1133,8 @@ event_prealloc(const mpool_elem_t *pool_elem, uint32_t size)
 
 		(void)evstate_prealloc(event, ev_hdr);
 	}
+	ev_hdr->flags.all = 0; /* clear only after evstate_alloc() */
+	ev_hdr->user_area.all = 0;
 
 	event_prealloc_hdr_t *prealloc_hdr = (event_prealloc_hdr_t *)ev_hdr;
 

@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [5])
+m4_define([em_version_api_minor], [6])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -169,6 +169,7 @@ EM_CHECK_CFLAG([-Wformat-security])
 EM_CHECK_CFLAG([-Wundef])
 EM_CHECK_CFLAG([-Wwrite-strings])
 EM_CHECK_CFLAG([-Wno-vla]) # Allow variable-length arrays (vla), for clang.
+EM_CHECK_CFLAG([-Wshadow=local])
 
 # GCC 10,11 sometimes gets confused about object sizes and gives bogus warnings.
 # Make the affected warnings generate only warnings, not errors.
@@ -297,6 +298,20 @@ AC_ARG_ENABLE([debug-print],
 	      ],[])
 # Substitute @EM_DEBUG_PRINT@ into the pkgconfig file libemodp.pc.in
 AC_SUBST([EM_DEBUG_PRINT])
+
+##########################################################################
+# Enable/disable deprecated API definitions
+##########################################################################
+EM_DEPRECATED_API=0
+deprecated=no
+AC_ARG_ENABLE([deprecated],
+    [AS_HELP_STRING([--enable-deprecated],
+		    [enable deprecated API definitions [default=disabled]])],
+    [if test "x$enableval" = "xyes"; then
+	EM_DEPRECATED_API=1
+	deprecated=yes
+    fi])
+AC_SUBST(EM_DEPRECATED_API)
 
 #########################################################################
 # Override EM-define value 'EM_DEBUG_TIMESTAMP_ENABLE' to 0...2
@@ -459,7 +474,7 @@ AC_CONFIG_FILES([
 	programs/common/Makefile
 	programs/example/Makefile
 	programs/example/hello/Makefile
-	programs/example/add-ons/Makefile
+	programs/example/timer/Makefile
 	programs/example/api-hooks/Makefile
 	programs/example/dispatcher/Makefile
 	programs/example/error/Makefile
@@ -474,6 +489,7 @@ AC_CONFIG_FILES([
 
 AC_CONFIG_FILES([
 	include/event_machine/api/event_machine_version.h
+	include/event_machine/api/event_machine_deprecated.h
 	])
 
 ##########################################################################
@@ -641,7 +657,10 @@ AS_IF([test "x$enable_doxygen" != "xno"],
       [DX_HTML_FEATURE(ON)
        DX_PDF_FEATURE(OFF)
        DX_PS_FEATURE(OFF)
-       DX_INIT_DOXYGEN($PACKAGE_NAME, ${srcdir}/doc/Doxyfile, ${builddir}/doc/event_machine_api)
+       DX_DOT_FEATURE(ON)
+       DX_INIT_DOXYGEN($PACKAGE_NAME,
+                       ${srcdir}/doc/Doxyfile,
+                       ${builddir}/doc/event_machine_api)
        AM_COND_IF([HAVE_DOXYGEN], [AC_CONFIG_FILES([doc/Makefile])])
       ])
 
@@ -704,6 +723,7 @@ AC_MSG_RESULT([
 	example programs:	${with_programs}
 	example static linkage:	${enable_static_applications}
 	default config-file:	${default_config_file}
+	deprecated APIs:	${deprecated}
 
 	EM Compile Time Options
 	=======================

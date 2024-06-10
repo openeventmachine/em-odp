@@ -31,7 +31,7 @@
 /**
  * @file
  *
- * Event Machine timer add-on hello world example.
+ * Event Machine Timer hello world example.
  *
  * Timer hello world example to show basic event timer usage. Creates a
  * single EO that starts a periodic and a random one-shot timeout.
@@ -47,7 +47,6 @@
 #include <inttypes.h>
 
 #include <event_machine.h>
-#include <event_machine/add-ons/event_machine_timer.h>
 #include <event_machine/platform/env/environment.h>
 
 #include "cm_setup.h"
@@ -140,8 +139,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -175,7 +175,7 @@ void test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_timer_attr_t attr;
@@ -198,14 +198,13 @@ void test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   m_shm->pool);
 
 	test_fatal_if(m_shm->pool == EM_POOL_UNDEF,
@@ -273,8 +272,7 @@ void test_start(appl_conf_t *const appl_conf)
 	test_fatal_if(stat != EM_OK, "Can't activate tmo!\n");
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_status_t ret;
@@ -300,9 +298,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      m_shm->tmr, ret);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);

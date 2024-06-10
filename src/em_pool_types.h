@@ -84,6 +84,7 @@ typedef struct {
  * Length of the mpool_tbl_t::pool_odp2em[] array
  */
 #define POOL_ODP2EM_TBL_LEN  256
+
 /*
  * Verify at compile time that the mpool_tbl_t::pool_odp2em[] mapping table
  * is large enough.
@@ -93,6 +94,26 @@ COMPILE_TIME_ASSERT(EM_CONFIG_POOLS * EM_MAX_SUBPOOLS <= POOL_ODP2EM_TBL_LEN,
 		    "MPOOL_TBL_T__POOL_ODP2EM__LEN_ERR");
 
 /**
+ * Table entry in the mapping table from odp-pool to em-pool and subpool.
+ * See the mpool_tbl_t::pool_subpool_odp2em[] array.
+ */
+typedef union {
+	struct {
+		uint32_t pool;    /* em_pool_t typecast to uint32_t, always fits */
+		uint32_t subpool;
+	};
+	uint64_t both;
+} pool_subpool_t;
+
+COMPILE_TIME_ASSERT(sizeof(pool_subpool_t) == sizeof(uint64_t), "POOL_SUBPOOL_T__SIZE_ERR");
+
+/**
+ * Undef value for a pool_subpool_t
+ * pool_subpool_undef = {.pool = EM_POOL_UNDEF, .subpool = 0};
+ */
+extern const pool_subpool_t pool_subpool_undef;
+
+/**
  * EM pool element table
  */
 typedef struct {
@@ -100,10 +121,10 @@ typedef struct {
 	mpool_elem_t pool[EM_CONFIG_POOLS];
 
 	/**
-	 * Mapping from odp_pool_index(odp_pool) to em-pool handle.
+	 * Mapping from odp_pool_index(odp_pool) to em-pool handle and subpool.
 	 * Verified at runtime that: POOL_ODP2EM_TBL_LEN > odp_pool_max_index()
 	 */
-	em_pool_t pool_odp2em[POOL_ODP2EM_TBL_LEN] ENV_CACHE_LINE_ALIGNED;
+	pool_subpool_t pool_subpool_odp2em[POOL_ODP2EM_TBL_LEN];
 
 	/** ODP pool capabilities common for all pools */
 	odp_pool_capability_t odp_pool_capability ENV_CACHE_LINE_ALIGNED;

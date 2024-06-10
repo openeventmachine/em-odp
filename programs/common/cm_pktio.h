@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -44,6 +44,9 @@ extern "C" {
 #include <odp/helper/odph_api.h>
 #include <event_machine/platform/env/environment.h>
 #include <event_machine/platform/event_machine_odp_ext.h>
+
+#include "table.h"
+#include "cuckootable.h"
 
 #define IPV4_PROTO_UDP  ODPH_IPPROTO_UDP
 
@@ -98,19 +101,6 @@ extern "C" {
  * @brief The number of core cycles between timed TX buf drain operations
  */
 #define BURST_TX_DRAIN (400000ULL)  /* around 200us at 2 Ghz */
-
-/** Ethernet MAC address */
-typedef union {
-	uint8_t u8[6];
-	uint16_t u16[3];
-} mac_addr_t;
-
-/** IPv4 address */
-typedef union {
-	uint8_t u8[4];
-	uint16_t u16[2];
-	uint32_t u32;
-} ipv4_addr_t;
 
 /**
  * @brief pkt header fields to use as hash key
@@ -268,8 +258,8 @@ typedef struct {
 
 	/** Pkt lookup table, lookup destination em-odp queue for Rx pkts */
 	struct {
-		odph_table_ops_t ops;
-		odph_table_t tbl;
+		table_ops_t ops;
+		table_t tbl;
 		int tbl_idx;
 		odp_ticketlock_t lock;
 	} tbl_lookup;
@@ -434,39 +424,12 @@ em_queue_t pktio_lookup_sw(uint8_t proto, uint32_t ipv4_dst,
 
 odp_pool_t pktio_pool_get(void);
 
-static inline odp_packet_t
-pktio_odp_packet_get(em_event_t em_event)
-{
-	return odp_packet_from_event(em_odp_event2odp(em_event));
-}
-
-static inline em_event_t
-pktio_em_event_get(odp_packet_t odp_pkt)
-{
-	return em_odp_event2em(odp_packet_to_event(odp_pkt));
-}
-
-static inline uint8_t *
-pktio_get_frame(em_event_t event)
-{
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-
-	return odp_packet_data(pkt);
-}
-
-static inline uint32_t
-pktio_get_frame_len(em_event_t event)
-{
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-
-	return odp_packet_len(pkt);
-}
-
 static inline int
 pktio_input_port(em_event_t event)
 {
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-	int input_port = odp_packet_input_index(pkt);
+	const odp_event_t odp_event = em_odp_event2odp(event);
+	const odp_packet_t pkt = odp_packet_from_event(odp_event);
+	const int input_port = odp_packet_input_index(pkt);
 
 	if (unlikely(input_port < 0))
 		return 0;
@@ -479,14 +442,9 @@ pktio_input_port(em_event_t event)
  * packet-event was sent to.
  */
 static inline void
-pktio_get_dst(em_event_t event, uint8_t *proto__out,
+pktio_get_dst(em_event_t pktev, uint8_t *proto__out,
 	      uint32_t *ipv4_dst__out, uint16_t *l4_port_dst__out)
 {
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-	void *pkt_data;
-	odph_ipv4hdr_t *ip;
-	odph_udphdr_t *udp;
-
 	/* if (odp_packet_has_ipv4(pkt)) {
 	 *	ip = (odph_ipv4hdr_t *)odp_packet_l3_ptr(pkt, NULL);
 	 *	*proto__out = ip->proto;
@@ -505,11 +463,9 @@ pktio_get_dst(em_event_t event, uint8_t *proto__out,
 	 */
 
 	/* Note: no actual checks if the headers are present */
-	pkt_data = odp_packet_data(pkt);
-	ip = (odph_ipv4hdr_t *)((uintptr_t)pkt_data +
-				sizeof(odph_ethhdr_t));
-	udp = (odph_udphdr_t *)((uintptr_t)ip +
-				sizeof(odph_ipv4hdr_t));
+	void *pkt_data = em_packet_pointer(pktev);
+	odph_ipv4hdr_t *ip = (odph_ipv4hdr_t *)((uintptr_t)pkt_data + sizeof(odph_ethhdr_t));
+	odph_udphdr_t *udp = (odph_udphdr_t *)((uintptr_t)ip + sizeof(odph_ipv4hdr_t));
 
 	*proto__out = ip->proto;
 	*ipv4_dst__out = ntohl(ip->dst_addr);
@@ -517,11 +473,9 @@ pktio_get_dst(em_event_t event, uint8_t *proto__out,
 }
 
 static inline void
-pktio_swap_eth_addrs(em_event_t event)
+pktio_swap_eth_addrs(em_event_t pktev)
 {
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-
-	odph_ethhdr_t *const eth = odp_packet_data(pkt);
+	odph_ethhdr_t *const eth = em_packet_pointer(pktev);
 	const odph_ethaddr_t eth_tmp_addr = eth->dst;
 
 	eth->dst = eth->src;
@@ -529,17 +483,8 @@ pktio_swap_eth_addrs(em_event_t event)
 }
 
 static inline void
-pktio_swap_addrs(em_event_t event)
+pktio_swap_addrs(em_event_t pktev)
 {
-	odp_packet_t pkt = pktio_odp_packet_get(event);
-	void *pkt_data;
-	odph_ethhdr_t *eth;
-	odph_ethaddr_t eth_tmp_addr;
-	odph_ipv4hdr_t *ip;
-	odp_u32be_t ip_tmp_addr;
-	odph_udphdr_t *udp;
-	odp_u16be_t udp_tmp_port;
-
 	/*
 	 * Needs odp_pktio_config_t::parser.layer = ODP_PROTO_LAYER_L2
 	 * if (odp_packet_has_eth(pkt)) {
@@ -567,21 +512,21 @@ pktio_swap_addrs(em_event_t event)
 	 */
 
 	/* Note: no actual checks if headers are present */
-	pkt_data = odp_packet_data(pkt);
-	eth = (odph_ethhdr_t *)pkt_data;
-	ip = (odph_ipv4hdr_t *)((uintptr_t)pkt_data +
-				sizeof(odph_ethhdr_t));
-	udp = (odph_udphdr_t *)((uintptr_t)ip +
-				sizeof(odph_ipv4hdr_t));
-	eth_tmp_addr = eth->dst;
+	void *pkt_data = em_packet_pointer(pktev);
+	odph_ethhdr_t *eth = (odph_ethhdr_t *)pkt_data;
+	odph_ipv4hdr_t *ip = (odph_ipv4hdr_t *)((uintptr_t)pkt_data + sizeof(odph_ethhdr_t));
+	odph_udphdr_t *udp = (odph_udphdr_t *)((uintptr_t)ip + sizeof(odph_ipv4hdr_t));
+
+	odph_ethaddr_t eth_tmp_addr = eth->dst;
+	odp_u32be_t ip_tmp_addr = ip->src_addr;
+	odp_u16be_t udp_tmp_port = udp->src_port;
+
 	eth->dst = eth->src;
 	eth->src = eth_tmp_addr;
 
-	ip_tmp_addr = ip->src_addr;
 	ip->src_addr = ip->dst_addr;
 	ip->dst_addr = ip_tmp_addr;
 
-	udp_tmp_port = udp->src_port;
 	udp->src_port = udp->dst_port;
 	udp->dst_port = udp_tmp_port;
 }

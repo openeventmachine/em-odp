@@ -145,6 +145,8 @@ typedef struct {
 	uint64_t target_count;
 	/* Current test round/generation  */
 	uint64_t round;
+	/* Number of EM cores running the application */
+	unsigned int core_count;
 	/* EO context */
 	eo_context_t test_eo_ctx ENV_CACHE_LINE_ALIGNED;
 	/* pad size to a multiple of cache line size */
@@ -327,9 +329,9 @@ init_counters(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -358,8 +360,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_queue_t queue;
@@ -375,17 +376,19 @@ test_start(appl_conf_t *const appl_conf)
 	else
 		egrp_shm->pool = EM_POOL_DEFAULT;
 
+	/* Store the number of EM-cores running the application */
+	egrp_shm->core_count = appl_conf->core_count;
+
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   egrp_shm->pool);
 
 	test_fatal_if(egrp_shm->pool == EM_POOL_UNDEF,
@@ -561,8 +564,7 @@ void update_group_count(void)
 	}
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_eo_t eo;
@@ -576,7 +578,7 @@ test_stop(appl_conf_t *const appl_conf)
 	 * Allow the other cores to run the dispatch loop with the 'exit_flag'
 	 * set for a while to free the scheduled events as they are received.
 	 */
-	if (em_core_count() > 1)
+	if (egrp_shm->core_count > 1)
 		delay_spin(env_core_hz() / 100);
 
 	eo = egrp_shm->test_eo_ctx.eo;
@@ -589,9 +591,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -785,7 +787,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			 */
 			env_spinlock_lock(&egrp_data->lock);
 
-			/* Dont send old events forward */
+			/* Don't send old events forward */
 			if (rcvd_event->egrp_gen != egrp_data->gen) {
 				em_free(event);
 			} else {

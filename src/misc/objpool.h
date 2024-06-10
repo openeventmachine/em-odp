@@ -33,8 +33,7 @@
 
 /**
  * @file
- * object-pool types & definitions
- *
+ * Object-pool types & definitions
  */
 
 #ifdef __cplusplus
@@ -44,41 +43,38 @@ extern "C" {
 #include <event_machine/platform/env/environment.h>
 #include <list.h>
 
-#define OBJSUBPOOLS_MAX 32
+#define OBJSUBPOOLS_MAX 8
 
 typedef struct {
 	list_node_t list_node;
-	int subpool_idx;
-	int in_pool;
+	uint32_t subpool_idx; /* 0 -> OBJSUBPOOLS_MAX - 1 */
+	uint32_t in_pool; /* true(1) / false(0) */
 } objpool_elem_t;
 
 typedef union {
-	uint8_t u8[ENV_CACHE_LINE_SIZE];
-
+	uint8_t u8[ENV_CACHE_LINE_SIZE / 2];
 	struct {
 		env_spinlock_t lock;
 		list_node_t list_head;
 	};
+} objsubpool_t;
 
-} objsubpool_t ENV_CACHE_LINE_ALIGNED;
+COMPILE_TIME_ASSERT(2 * sizeof(objsubpool_t) == ENV_CACHE_LINE_SIZE, OBJSUBPOOL_T_SIZE_ERROR);
 
 typedef struct {
-	int nbr_subpools ENV_CACHE_LINE_ALIGNED;
-	objsubpool_t subpool[OBJSUBPOOLS_MAX] ENV_CACHE_LINE_ALIGNED;
+	objsubpool_t subpool[OBJSUBPOOLS_MAX];
+	uint32_t nbr_subpools;
 } objpool_t;
 
-int
-objpool_init(objpool_t *const objpool, int nbr_subpools);
+int objpool_init(objpool_t *const objpool, uint32_t nbr_subpools);
 
-void
-objpool_add(objpool_t *const objpool, int subpool_idx,
-	    objpool_elem_t *const elem);
+void objpool_add(objpool_t *const objpool, uint32_t subpool_idx,
+		 objpool_elem_t *const elem);
 
 objpool_elem_t *
-objpool_rem(objpool_t *const objpool, int subpool_idx);
+objpool_rem(objpool_t *const objpool, uint32_t subpool_idx);
 
-int
-objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem);
+int objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem);
 
 static inline int
 objpool_in_pool(const objpool_elem_t *elem)

@@ -85,7 +85,7 @@ extern "C" {
  *
  * @note Several EM options are configured through compile-time defines.
  *       Run-time options allow using the same EM-lib with different configs.
- *       Also see the overrideable EM runtime config file values,
+ *       Also see the overridable EM runtime config file values,
  *       default file: config/em-odp.config
  *
  * @see em_conf_init(), em_init()
@@ -138,7 +138,7 @@ typedef struct {
 	 * Default value is all-0 and needs to be changed by the user.
 	 * @note EM otherwise operates on logical cores, i.e. enumerated
 	 *       contiguously from 0 to 'core_count-1' and a logical
-	 *       EM core mask has 'core_count' consequtively set bits.
+	 *       EM core mask has 'core_count' consecutively set bits.
 	 *       Example - physical mask vs. corresponding EM core mask:
 	 *          .core_count = 8
 	 *          .physmask: 0xf0f0 (binary: 1111 0000 1111 0000 - 8 set bits)
@@ -253,8 +253,7 @@ void em_conf_init(em_conf_t *conf);
  *
  * @see em_init_core() for EM-core specific init after em_init().
  */
-em_status_t
-em_init(const em_conf_t *conf);
+em_status_t em_init(const em_conf_t *conf);
 
 /**
  * Initialize an EM-core.
@@ -262,13 +261,14 @@ em_init(const em_conf_t *conf);
  * Must be called once by each EM-core (= process, thread or bare metal core).
  * EM queues, EOs, queue groups etc. can be created after a successful return
  * from this function.
+ * Note, the thread or process must be pinned to a unique physical core before
+ * running em_init_core().
  *
  * @return EM_OK if successful.
  *
  * @see em_init()
  */
-em_status_t
-em_init_core(void);
+em_status_t em_init_core(void);
 
 /**
  * Terminate the Event Machine.
@@ -283,8 +283,7 @@ em_init_core(void);
  *
  * @see em_term_core() for EM-core specific termination before em_term().
  */
-em_status_t
-em_term(const em_conf_t *conf);
+em_status_t em_term(const em_conf_t *conf);
 
 /**
  * Terminate an EM-core.
@@ -296,8 +295,7 @@ em_term(const em_conf_t *conf);
  *
  * @see em_term()
  */
-em_status_t
-em_term_core(void);
+em_status_t em_term_core(void);
 
 /**
  * Return the EM device-id for this instance.

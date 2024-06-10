@@ -649,6 +649,8 @@ init_appl_conf(const parse_args_t *parsed, appl_conf_t *appl_conf /* out */)
 	memcpy(appl_conf->name, parsed->args_appl.name, len);
 	appl_conf->name[len - 1] = '\0';
 
+	appl_conf->core_count = parsed->args_em.core_count;
+
 	if (parsed->args_em.thread_per_core) {
 		appl_conf->num_procs = 1;
 		appl_conf->num_threads = parsed->args_em.core_count;
@@ -840,7 +842,7 @@ create_odp_threads(odp_instance_t instance,
  * @param sync       Application start-up and tear-down synchronization vars
  * @param appl_conf  Application configuration
  */
-static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
+static void startup_all_cores(sync_t *sync, const appl_conf_t *appl_conf,
 			      bool is_thread_per_core)
 {
 	/*
@@ -870,7 +872,7 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 	 * started and queues enabled.
 	 */
 	int core_id = em_core_id();
-	uint64_t cores = (uint64_t)em_core_count();
+	uint64_t cores = appl_conf->core_count;
 
 	/* Ensure all EM cores can find the default event pool */
 	if (em_pool_find(EM_POOL_DEFAULT_NAME) != EM_POOL_DEFAULT)
@@ -881,21 +883,17 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
 		/*
 		 * Initialize the application and allocate shared memory.
 		 */
-		test_init();
+		test_init(appl_conf);
 	}
 
 	odp_barrier_wait(&sync->start_barrier);
 
 	if (core_id != 0) {
 		/* Look up the shared memory */
-		test_init();
+		test_init(appl_conf);
 	}
 
-	const char *str = appl_conf->dispatch_rounds == 0 ?
-				"forever" : "rounds";
-
-	APPL_PRINT("Entering the event dispatch loop(%s=%" PRIu64 ") on EM-core:%02d\n",
-		   str, appl_conf->dispatch_rounds, core_id);
+	APPL_PRINT("Entering the event dispatch loop on EM-core:%02d\n", core_id);
 
 	odp_barrier_wait(&sync->start_barrier); /* to print pretty */
 
@@ -945,7 +943,7 @@ static void startup_all_cores(sync_t *sync, appl_conf_t *appl_conf,
  * @param sync       Application start-up and tear-down synchronization vars
  * @param appl_conf  Application configuration
  */
-static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
+static void startup_one_core_first(sync_t *sync, const appl_conf_t *appl_conf,
 				   bool is_thread_per_core)
 {
 	em_status_t stat;
@@ -981,7 +979,7 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
 		/*
 		 * Initialize the application and allocate shared memory.
 		 */
-		test_init();
+		test_init(appl_conf);
 		/*
 		 * Create and start application EOs, pass the appl_conf.
 		 */
@@ -1025,17 +1023,13 @@ static void startup_one_core_first(sync_t *sync, appl_conf_t *appl_conf,
 					  EM_POOL_DEFAULT_NAME, em_core_id());
 
 		/* Look up the shared memory */
-		test_init();
+		test_init(appl_conf);
 	}
 
 	const int core_id = em_core_id();
-	const uint64_t cores = (uint64_t)em_core_count();
+	const uint64_t cores = appl_conf->core_count;
 
-	const char *str = appl_conf->dispatch_rounds == 0 ?
-				"forever" : "rounds";
-
-	APPL_PRINT("Entering the event dispatch loop(%s=%" PRIu64 ") on EM-core:%02d\n",
-		   str, appl_conf->dispatch_rounds, core_id);
+	APPL_PRINT("Entering the event dispatch loop on EM-core:%02d\n", core_id);
 
 	/*
 	 * Keep all cores dispatching until 'test_start()' has been
@@ -1098,7 +1092,7 @@ static void startup_core(sync_t *sync, appl_conf_t *appl_conf)
  */
 static void terminate_core(sync_t *sync, appl_conf_t *appl_conf)
 {	int core_id = em_core_id();
-	uint64_t cores = (uint64_t)em_core_count();
+	uint64_t cores = appl_conf->core_count;
 
 	em_dispatch_duration_t term_duration;
 	em_dispatch_opt_t term_opt;
@@ -1179,7 +1173,7 @@ static void terminate_core(sync_t *sync, appl_conf_t *appl_conf)
 		/*
 		 * Free allocated test resources
 		 */
-		test_term();
+		test_term(appl_conf);
 	}
 
 	odp_barrier_wait(&sync->exit_barrier);

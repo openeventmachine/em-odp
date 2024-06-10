@@ -28,9 +28,6 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "em_include.h"
-#include <event_machine_timer.h>
-
-#include "em_timer.h"
 
 static int read_config_file(void);
 

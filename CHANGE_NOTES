@@ -53,6 +53,78 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.6.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.6 (em-odp/include/),
+  see API additions and changes in em-odp/include/event_machine/README_API.
+  Summary:
+  * Packet event APIs: new API module for manipulation of packet events
+  * Timer API: moved from add-ons to the base EM API
+  * Event: em_event_pointer_and_size()
+  * Deprecation macros/defines
+
+- Add support for using ODP API 1.45
+  Update EM to be able to run against ODP API v1.45.
+
+- Deprecated EM API enable/disable configuration option
+ - Add a new configure-script option that enables/disables decprecated EM APIs.
+   Old EM APIs can be deprecated in new EM releases through the use of
+   deprecation macros and defines found in event_machine_deprecated.h(.in)
+   (additionally see include/event_machine/README_API for API v3.6 description
+    of deprecation macros).
+   The deprecation of an API will cause any use of it to fail the compilation.
+   The user may, however, decide to enable the deprecated APIs (by using
+   --enable-deprecated) during a transition period until the deprecated API
+   usage has been replaced.
+
+   configure.ac:
+   -------------
+   New configure option:
+   --enable-deprecated  enable deprecated EM API definitions [default=disabled]
+
+- Event State Verification (ESV) changes
+ - Added ESV compile-time vs. runtime configuration checks.
+   Verifies that ESV was activated also during
+   compile time (with configure option: '--enable_esv')
+   when enabling it during runtime (via the EM config file: esv.enable = true).
+   Warn the user otherwise.
+   The user might not notice that the run time config file option has no effect
+   if ESV has been disabled during compilation.
+   Example:
+        build> ../configure --disable-esv …  (set the define EM_ESV_ENABLE to 0)
+          vs.
+        <em-odp>/config/em-odp.conf:
+            esv: {
+                    # Runtime ESV enable/disable option.
+                    # Allows the user to disable ESV without recompilation when
+                    # 'configure --enable-esv'.
+                    enable = true
+                    …
+            }
+        will show the following warning at startup:
+        …
+        EM ESV config: (EM_ESV_ENABLE=0)
+          ESV disabled
+          esv.enable: true(1)
+          WARNING: ESV disabled (build-time) - config file option IGNORED!
+        …
+   Note that the warning is only printed, no other action is taken.
+
+- EM Termination
+ - Move functionality from em_term_core() to em_term().
+   Now em_term_core() only flushes events stashed locally on the core
+   and em_term() flushes the rest of the events at the end.
+   Additionally, em_term() joins all available queue groups to be able to
+   flush all events from the scheduler before terminating.
+
+- Programs
+ - New performance test programs added
+   - programs/performance/queues_output.c
+     Event Machine performance test for output queues.
+   - programs/performance/loop_vectors.c
+     Event Machine performance test for vector events
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.5.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.5 (em-odp/include/),
@@ -556,7 +628,7 @@ Event Machine (EM) on ODP v2.9.0
 - EM Command Line Interface (EM CLI) update
   - Further EM CLI commands added, use the command "help" to see all available
     commands:
-	(<em-odp.conf>: cli.enable = true)
+        (<em-odp.conf>: cli.enable = true)
         $> telnet localhost 55555
         EM-ODP> help
         Commands available:
@@ -621,7 +693,7 @@ Event Machine (EM) on ODP v2.8.0
     em_eo_start_sync(), em_queue_group_modify_sync() etc. are allowed.
     Previously only one sync-operation at a time was permitted, now there is
     no limit.
-    One restriction remains: conserned cores need to be dispatching
+    One restriction remains: concerned cores need to be dispatching
     (or processing other sync-API calls) for the operations to complete.
     A core that has left the dispatch loop or is sleeping etc. will not allow
     the sync-API operation to complete.
@@ -879,10 +951,10 @@ Event Machine on ODP v2.5.0
    "
   Note: ESV-errors are always reported with the same error-code:​
         EM_FATAL(EM_ERR_EVENT_STATE) = 0x80000010​
-	'prev-state' shows the previous good state of the event. i.e. the
-	previous place where EM observed the event in a valid state.
-	'new-state' shows the current detected illegal state that
-	caused the error.
+        'prev-state' shows the previous good state of the event. i.e. the
+        previous place where EM observed the event in a valid state.
+        'new-state' shows the current detected illegal state that
+        caused the error.
 
   Using ESV has an impact on performance.
   Each event-state transition updates an atomic counter and stores further
@@ -1158,9 +1230,10 @@ Event Machine on ODP v1.3.0
 --------------------------------------------------------------------------------
 - Support for EM API v1.3 (em-odp/include), see API changes in
   em-odp/include/event_machine/README_API
-- Support for EM add-ons APIs, here the EM event timer API v1.0, read about
-  add-on APIs in em-odp/include/event_machine/add-ons/README.
-  See new event timer examples/tests in em-odp/programs/example/add-ons/
+- Support for EM add-ons APIs, read about add-on APIs in
+  em-odp/include/event_machine/add-ons/README.
+- EM event timer API v1.0.
+  See new event timer examples/tests in em-odp/programs/example/timer/
 
 --------------------------------------------------------------------------------
 Event Machine on ODP v1.2.3

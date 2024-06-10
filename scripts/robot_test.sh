@@ -30,8 +30,7 @@ apps["queue_types_ag"]=programs/example/queue/queue_types_ag
 apps["queue_types_local"]=programs/example/queue/queue_types_local
 apps["queue_group"]=programs/example/queue_group/queue_group
 apps["startup_pools"]=programs/example/hello/hello
-apps["timer_hello"]=programs/example/add-ons/timer_hello
-apps["timer_test"]=programs/example/add-ons/timer_test
+apps["timer_hello"]=programs/example/timer/timer_hello
 
 # Performance Apps
 apps["atomic_processing_end"]=programs/performance/atomic_processing_end
@@ -41,12 +40,14 @@ apps["loop_refs"]=programs/performance/loop_refs
 apps["pairs"]=programs/performance/pairs
 apps["queue_groups"]=programs/performance/queue_groups
 apps["queues_local"]=programs/performance/queues_local
+apps["queues_output"]=programs/performance/queues_output
 apps["queues_unscheduled"]=programs/performance/queues_unscheduled
 apps["queues"]=programs/performance/queues
 apps["send_multi"]=programs/performance/send_multi
 apps["timer_test_periodic"]=programs/performance/timer_test_periodic
 apps["pool_perf"]=programs/performance/pool_perf
 apps["scheduling_latency"]=programs/performance/scheduling_latency
+apps["timer_test"]=programs/performance/timer_test
 apps["timer_test_ring"]=programs/performance/timer_test_ring
 
 # Set up conf files for robot tests

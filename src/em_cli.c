@@ -48,7 +48,7 @@ static void print_em_info_help(void)
 			    "\n"
 			    "Options:\n"
 			    "  -a, --all\tPrint all EM info\n"
-			    "  -p, --cpu-arch\tPrint cpu architure\n"
+			    "  -p, --cpu-arch\tPrint cpu architecture\n"
 			    "  -c, --conf\tPrint default and runtime configurations\n"
 			    "  -h, --help\tDisplay this help\n";
 	odph_cli_log(usage);

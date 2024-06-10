@@ -105,7 +105,7 @@ extern "C" {
 /**
  * @def EM_QUEUE_RANGE_OFFSET
  * Determines the EM queue handles range to use.
- * Note: value must be >=1 and <='UINT16_MAX-EM_MAX_QUEUES+1'
+ * Note: value must be >= 1 and <= 'UINT16_MAX - em_queue_get_max_num() + 1'
  *   idx     EM Queue handle
  *    0   ->   0 + offset
  *    1   ->   1 + offset

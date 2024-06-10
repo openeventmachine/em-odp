@@ -41,12 +41,10 @@
 extern "C" {
 #endif
 
-em_status_t
-core_map_init(core_map_t *const core_map, int core_count,
-	      const em_core_mask_t *phys_mask);
-
-em_status_t
-core_map_init_local(core_map_t *const core_map);
+em_status_t core_map_init(core_map_t *const core_map, int core_count,
+			  const em_core_mask_t *phys_mask);
+em_status_t core_map_init_local(core_map_t *const core_map);
+em_status_t core_map_term_local(core_map_t *const core_map);
 
 static inline int
 logic_to_phys_core_id(const int logic_core)

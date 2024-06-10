@@ -48,6 +48,7 @@ extern "C" {
 em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 			     queue_group_pool_t *const queue_group_pool);
 em_status_t queue_group_init_local(void);
+void queue_group_join_all(void);
 
 em_queue_group_t
 queue_group_create(const char *name, const em_core_mask_t *mask,

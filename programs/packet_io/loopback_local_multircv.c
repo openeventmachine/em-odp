@@ -36,7 +36,7 @@
  * multi-event receive function).
  *
  * The application (EO) receives a batch of UDP datagrams and exchanges
- * the src-dst addesses before sending the datagrams back out.
+ * the src-dst addresses before sending the datagrams back out.
  *
  * Based on lopback_local.c
  */
@@ -73,7 +73,7 @@
 
 /**
  * Test with all different queue types simultaneously:
- * LOCAL, ATOMIC, PARALLELL, PARALLEL_ORDERED
+ * LOCAL, ATOMIC, PARALLEL, PARALLEL_ORDERED
  */
 #define QUEUE_TYPE_MIX  0 /* 0=False or 1=True */
 
@@ -190,6 +190,10 @@ typedef struct {
 typedef struct {
 	/** EO (application) context */
 	eo_context_t eo_ctx;
+
+	/* Number of EM cores running the application */
+	unsigned int core_count;
+
 	/**
 	 * Array containing the contexts of all the queues handled by the EO.
 	 * A queue context contains the flow/queue specific data for the
@@ -252,9 +256,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -282,8 +286,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	em_eo_multircv_param_t eo_param;
@@ -291,16 +294,18 @@ test_start(appl_conf_t *const appl_conf)
 	em_status_t ret, start_fn_ret = EM_ERROR;
 	int if_id, i;
 
+	/* Store the number of EM-cores running the application */
+	pkt_shm->core_count = appl_conf->core_count;
+
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads);
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads);
 
 	test_fatal_if(appl_conf->pktio.if_count > MAX_NUM_IF ||
 		      appl_conf->pktio.if_count <= 0,
@@ -391,8 +396,7 @@ test_start(appl_conf_t *const appl_conf)
 	pktio_default_queue(eo_ctx->default_queue);
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	eo_context_t *const eo_ctx = &pkt_shm->eo_ctx;
@@ -411,9 +415,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -459,9 +463,9 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	 * Dimension the number of pktout queues to be equal to the number
 	 * of EM cores per interface to minimize output resource contention.
 	 */
-	test_fatal_if(em_core_count() >= MAX_PKTOUT_QUEUES_PER_IF,
+	test_fatal_if(pkt_shm->core_count >= MAX_PKTOUT_QUEUES_PER_IF,
 		      "No room to store pktout queues");
-	eo_ctx->pktout_queues_per_if = em_core_count();
+	eo_ctx->pktout_queues_per_if = pkt_shm->core_count;
 
 	memset(&queue_conf, 0, sizeof(queue_conf));
 	memset(&output_conf, 0, sizeof(output_conf));
@@ -494,7 +498,7 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	}
 
 	/*
-	 * Default queue for all packets not mathing any
+	 * Default queue for all packets not matching any
 	 * specific input queue criteria
 	 */
 	queue_type = QUEUE_TYPE;

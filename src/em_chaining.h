@@ -95,6 +95,10 @@ send_chaining(em_event_t event, em_queue_t chaining_queue)
 	output_queue = em_shm->event_chaining.output_queues[idx];
 	output_q_elem = queue_elem_get(output_queue);
 
+	RETURN_ERROR_IF(EM_CHECK_LEVEL >= 3 && !output_q_elem,
+			EM_ERR_BAD_ID, EM_ESCOPE_EVENT_SEND_DEVICE,
+			"Invalid output queue:%" PRI_QUEUE "", output_queue);
+
 	return send_output(event, output_q_elem);
 }
 
@@ -123,6 +127,12 @@ send_chaining_multi(const em_event_t events[], const int num,
 	idx = ((uint32_t)iq.device_id + (uint32_t)iq.queue_id) % num_outq;
 	output_queue = em_shm->event_chaining.output_queues[idx];
 	output_q_elem = queue_elem_get(output_queue);
+
+	if (unlikely(EM_CHECK_LEVEL >= 3 && !output_q_elem)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_SEND_DEVICE_MULTI,
+			       "Invalid output queue:%" PRI_QUEUE "", output_queue);
+		return 0;
+	}
 
 	return send_output_multi(events, num, output_q_elem);
 }

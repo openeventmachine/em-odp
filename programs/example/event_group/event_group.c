@@ -129,6 +129,8 @@ COMPILE_TIME_ASSERT(sizeof(core_stat_t) == ENV_CACHE_LINE_SIZE,
 typedef struct {
 	/* Event pool used by this application */
 	em_pool_t pool;
+	/* Number of EM cores running the application */
+	unsigned int core_count;
 	/* EO context */
 	eo_context_t eo_context ENV_CACHE_LINE_ALIGNED;
 	/*
@@ -177,9 +179,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -208,8 +210,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_event_t event;
 	em_eo_t eo;
@@ -228,17 +229,19 @@ test_start(appl_conf_t *const appl_conf)
 	else
 		egrp_shm->pool = EM_POOL_DEFAULT;
 
+	/* Store the number of EM-cores running the application */
+	egrp_shm->core_count = appl_conf->core_count;
+
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   egrp_shm->pool);
 
 	test_fatal_if(egrp_shm->pool == EM_POOL_UNDEF,
@@ -297,8 +300,7 @@ test_start(appl_conf_t *const appl_conf)
 		      "Send:%" PRI_STAT " Queue:%" PRI_QUEUE "", ret, queue);
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_status_t ret;
@@ -318,9 +320,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -420,7 +422,6 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	env_time_t diff_time, start_time, end_time;
 	uint64_t rcv_ev_cnt;
 	uint64_t cfg_ev_cnt;
-	int i;
 	int ready;
 
 	(void)type;
@@ -471,7 +472,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		 * send them using the event group to trigger the notification
 		 * event configured above with em_event_group_apply()
 		 */
-		for (i = 0; i < eo_ctx->event_count; i++) {
+		for (int i = 0; i < eo_ctx->event_count; i++) {
 			em_event_t ev_data;
 			event_group_test_t *egrp_test_data;
 
@@ -566,7 +567,7 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 		/* Sum up the amount of data events processed on each core */
 		rcv_ev_cnt = 0;
-		for (i = 0; i < em_core_count(); i++)
+		for (unsigned int i = 0; i < egrp_shm->core_count; i++)
 			rcv_ev_cnt += egrp_shm->core_stats[i].rcv_ev_cnt;
 
 		/*

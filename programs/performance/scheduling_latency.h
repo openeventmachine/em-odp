@@ -9,7 +9,7 @@
 #define TIMING_MAGIC	0xCAFEBEEF0000CAFE
 #define BACKGROUND_MAGIC	0xBEEFBEEFCAFECAFE
 
-void test_init(void);
+void test_init(const appl_conf_t *appl_conf);
 
 /* EO context */
 typedef struct app_eo_ctx {
@@ -57,6 +57,8 @@ typedef struct perf_shm_t {
 	uint64_t stat_mcount;
 	uint64_t stat_lcount;
 
+	/* Number of EM cores running the application */
+	unsigned int core_count;
 } perf_shm_t;
 
 typedef struct test_msg {

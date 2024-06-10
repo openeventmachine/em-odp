@@ -19,7 +19,7 @@
 #error "MAX_ALLOCS need to be pwr of 2"
 #endif
 
-void test_init(void);
+void test_init(const appl_conf_t *appl_conf);
 
 /* EO context */
 typedef struct app_eo_ctx {
@@ -87,6 +87,8 @@ typedef struct perf_shm_t {
 	uint64_t start_time;
 	odp_spinlock_t lock; /* used with times update */
 
+	/* Number of EM cores running the application */
+	unsigned int core_count;
 } perf_shm_t;
 
 typedef union {

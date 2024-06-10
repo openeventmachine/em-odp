@@ -41,7 +41,7 @@ COMPILE_TIME_ASSERT(EM_ESCOPE(EM_ESCOPE_API_MASK),
 COMPILE_TIME_ASSERT(EM_ESCOPE(EM_ESCOPE_INTERNAL_MASK),
 		    EM_ESCOPE_INTERNAL_IS_NOT_PART_OF_EM_ESCOPE__ERROR);
 
-static int error_handler_initialized; /* statics always initialized to 0 */
+static int error_handler_initialized; /* static always initialized to 0 */
 
 static early_log_t early_log = {default_log, vdefault_log};
 

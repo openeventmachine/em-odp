@@ -167,9 +167,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -196,8 +196,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	/*
 	 * Store the event pool to use, use the EM default pool if no other
@@ -211,14 +210,13 @@ test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   perf_shm->pool);
 
 	test_fatal_if(perf_shm->pool == EM_POOL_UNDEF,
@@ -307,8 +305,7 @@ test_start(appl_conf_t *const appl_conf)
 	env_sync_mem();
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_eo_t eo;
@@ -333,9 +330,9 @@ test_stop(appl_conf_t *const appl_conf)
 	}
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	const int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -420,8 +417,8 @@ perf_receive_multi(void *eo_context, em_event_t event_tbl[], int num,
 
 	if (ALLOC_FREE_PER_EVENT) {
 		em_free_multi(event_tbl, num);
-		int ret = em_alloc_multi(event_tbl, num, sizeof(perf_event_t),
-			       EM_EVENT_TYPE_SW, perf_shm->pool);
+		ret = em_alloc_multi(event_tbl, num, sizeof(perf_event_t),
+				     EM_EVENT_TYPE_SW, perf_shm->pool);
 		test_fatal_if(ret != num, "Allocated %d of num:%d events",
 			      ret, num);
 	}

@@ -186,14 +186,14 @@ queue_pool_init(queue_tbl_t *const queue_tbl,
 		queue_pool_t *const queue_pool,
 		int min_qidx, int max_qidx)
 {
-	const int cores = em_core_count();
+	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
 	const int qs_per_pool = (max_qidx - min_qidx + 1);
-	int qs_per_subpool = qs_per_pool / cores;
-	int qs_leftover = qs_per_pool % cores;
-	int subpool_idx = 0;
+	int qs_per_subpool = qs_per_pool / objpool_subpools;
+	int qs_leftover = qs_per_pool % objpool_subpools;
+	uint32_t subpool_idx = 0;
 	int add_cnt = 0;
 
-	if (objpool_init(&queue_pool->objpool, cores) != 0)
+	if (objpool_init(&queue_pool->objpool, objpool_subpools) != 0)
 		return -1;
 
 	for (int i = min_qidx; i <= max_qidx; i++) {
@@ -232,12 +232,12 @@ queue_init(queue_tbl_t *const queue_tbl,
 	env_atomic32_init(&em_shm->queue_count);
 	env_atomic32_init(&em_shm->queue_tbl.output_queue_count);
 
-	/* Retieve and store the ODP queue capabilities into 'queue_tbl' */
+	/* Retrieve and store the ODP queue capabilities into 'queue_tbl' */
 	ret = odp_queue_capability(odp_queue_capa);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"odp_queue_capability():%d failed", ret);
 
-	/* Retieve and store the ODP schedule capabilities into 'queue_tbl' */
+	/* Retrieve and store the ODP schedule capabilities into 'queue_tbl' */
 	ret = odp_schedule_capability(odp_sched_capa);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"odp_schedule_capability():%d failed", ret);
@@ -403,7 +403,7 @@ queue_term_local(void)
  *
  * @param queue         EM queue handle if a specific EM queue is requested,
  *                      EM_QUEUE_UNDEF if any EM queue will do.
- * @param[out] err_str  Output var for error message in in case of failure.
+ * @param[out] err_str  Output var for error message in case of failure.
  *
  * @return EM queue handle
  * @retval EM_QUEUE_UNDEF on failure

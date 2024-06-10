@@ -85,7 +85,7 @@
 
 /**
  * Test with different queue types if set to '1':
- * ATOMIC, PARALLELL, PARALLEL_ORDERED and LOCAL
+ * ATOMIC, PARALLEL, PARALLEL_ORDERED and LOCAL
  */
 #define QUEUE_TYPE_MIX  1 /* 0=False or 1=True(default) */
 
@@ -100,7 +100,7 @@
 
 /**
  * The number of Queue Type permutations:
- * Four (4) queue types (LOCAL, ATOMIC, PARALLELL, PARALLEL-ORDERED) in
+ * Four (4) queue types (LOCAL, ATOMIC, PARALLEL, PARALLEL-ORDERED) in
  * three (3) stages gives 4*4*4 = 64 permutations.
  * Only used if QUEUE_TYPE_MIX is '1'
  */
@@ -279,9 +279,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -309,8 +309,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo_1st, eo_2nd, eo_3rd;
 	em_queue_t default_queue, pktout_queue;
@@ -331,13 +330,12 @@ test_start(appl_conf_t *const appl_conf)
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads);
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads);
 
 	test_fatal_if(appl_conf->pktio.if_count > MAX_NUM_IF ||
 		      appl_conf->pktio.if_count <= 0,
@@ -377,9 +375,9 @@ test_start(appl_conf_t *const appl_conf)
 	 * Dimension the number of pktout queues to be equal to the number
 	 * of EM cores per interface to minimize output resource contention.
 	 */
-	test_fatal_if(em_core_count() >= MAX_PKTOUT_QUEUES_PER_IF,
+	test_fatal_if(appl_conf->core_count >= MAX_PKTOUT_QUEUES_PER_IF,
 		      "No room to store pktout queues");
-	pkt_shm->pktout_queues_per_if = em_core_count();
+	pkt_shm->pktout_queues_per_if = appl_conf->core_count;
 
 	memset(&queue_conf, 0, sizeof(queue_conf));
 	memset(&output_conf, 0, sizeof(output_conf));
@@ -626,8 +624,7 @@ test_start(appl_conf_t *const appl_conf)
 	env_sync_mem();
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_status_t ret;
@@ -665,9 +662,9 @@ test_stop(appl_conf_t *const appl_conf)
 	}
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);

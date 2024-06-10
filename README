@@ -120,10 +120,6 @@ Usually EM work better with the following config changes:
     outside of EM can't be tracked, thus disable this.
       sched_basic.order_stash_size = 512 -> 0
 
-- Stash: Disable strict stash size.
-  Rely on stash 'put' return value to determine operation status.
-     stash.strict_size = 1 -> 0
-
 ===============================================================================
 CPU Architecture specific options
 ===============================================================================

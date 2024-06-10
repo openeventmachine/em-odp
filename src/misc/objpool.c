@@ -35,15 +35,14 @@
 static inline objpool_elem_t *
 objpool_node2elem(list_node_t *const list_node);
 
-int
-objpool_init(objpool_t *const objpool, int nbr_subpools)
+int objpool_init(objpool_t *const objpool, uint32_t nbr_subpools)
 {
 	if (nbr_subpools > OBJSUBPOOLS_MAX)
 		nbr_subpools = OBJSUBPOOLS_MAX;
 
 	objpool->nbr_subpools = nbr_subpools;
 
-	for (int i = 0; i < nbr_subpools; i++) {
+	for (uint32_t i = 0; i < nbr_subpools; i++) {
 		objsubpool_t *const subpool = &objpool->subpool[i];
 
 		env_spinlock_init(&subpool->lock);
@@ -53,28 +52,27 @@ objpool_init(objpool_t *const objpool, int nbr_subpools)
 	return 0;
 }
 
-void
-objpool_add(objpool_t *const objpool, int subpool_idx,
-	    objpool_elem_t *const elem)
+void objpool_add(objpool_t *const objpool, uint32_t subpool_idx,
+		 objpool_elem_t *const elem)
 {
-	const int idx = subpool_idx % objpool->nbr_subpools;
+	const uint32_t idx = subpool_idx % objpool->nbr_subpools;
 	objsubpool_t *const subpool = &objpool->subpool[idx];
 
 	elem->subpool_idx = idx;
 
 	env_spinlock_lock(&subpool->lock);
 	list_add(&subpool->list_head, &elem->list_node);
-	elem->in_pool = 1;
+	elem->in_pool = 1; /* true */
 	env_spinlock_unlock(&subpool->lock);
 }
 
 objpool_elem_t *
-objpool_rem(objpool_t *const objpool, int subpool_idx)
+objpool_rem(objpool_t *const objpool, uint32_t subpool_idx)
 {
 	objpool_elem_t *elem = NULL;
 
-	for (int i = 0; i < objpool->nbr_subpools; i++) {
-		const int idx = (subpool_idx + i) % objpool->nbr_subpools;
+	for (uint32_t i = 0; i < objpool->nbr_subpools; i++) {
+		const uint32_t idx = (subpool_idx + i) % objpool->nbr_subpools;
 		objsubpool_t *const subpool = &objpool->subpool[idx];
 
 		env_spinlock_lock(&subpool->lock);
@@ -83,7 +81,7 @@ objpool_rem(objpool_t *const objpool, int subpool_idx)
 
 		if (node != NULL) {
 			elem = objpool_node2elem(node);
-			elem->in_pool = 0;
+			elem->in_pool = 0; /* false */
 		}
 
 		env_spinlock_unlock(&subpool->lock);
@@ -95,17 +93,16 @@ objpool_rem(objpool_t *const objpool, int subpool_idx)
 	return NULL;
 }
 
-int
-objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem)
+int objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem)
 {
-	const int idx = elem->subpool_idx;
+	const uint32_t idx = elem->subpool_idx;
 	objsubpool_t *const subpool = &objpool->subpool[idx];
 	int ret = -1;
 
 	env_spinlock_lock(&subpool->lock);
 	if (elem->in_pool) {
 		list_rem(&subpool->list_head, &elem->list_node);
-		elem->in_pool = 0;
+		elem->in_pool = 0; /* false */
 		ret = 0;
 	}
 	env_spinlock_unlock(&subpool->lock);
@@ -116,6 +113,5 @@ objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem)
 static inline objpool_elem_t *
 objpool_node2elem(list_node_t *const list_node)
 {
-	return (objpool_elem_t *)((uintptr_t)list_node -
-				  offsetof(objpool_elem_t, list_node));
+	return (objpool_elem_t *)((uintptr_t)list_node - offsetof(objpool_elem_t, list_node));
 }

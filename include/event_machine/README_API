@@ -2,8 +2,122 @@
 EM API Release Notes
 --------------------------------------------------------------------------------
 
+- See em-odp/CHANGE_NOTES for changed and added features other than API changes.
 - See em-odp/README for usage and compilation instructions.
-- See em-odp/CHANGE_NOTES for changed and added features.
+
+--------------------------------------------------------------------------------
+API 3.6 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=6)
+--------------------------------------------------------------------------------
+1. Packet event APIs
+   (see include/event_machine/api/event_machine_packet.h)
+
+ - Added EM APIs for basic manipulation of packet events (i.e. events allocated
+   from EM pools created with event type EM_EVENT_TYPE_PACKET).
+   More advanced packet manipulation should be done via ODP APIs by first
+   converting the EM event to an ODP packet
+   (see include/event_machine/platform/event_machine_odp_ext.h).
+   Packet events contain a certain amount of headroom before the start of the
+   actual packet data. The headroom allows new data, e.g. additional protocol
+   headers, to be inserted before the start of the existing packet data. The
+   amount of headroom available for newly allocated packets can be configured
+   globally via the EM config file or, specifically for a pool via the
+   em_pool_cfg_t struct passed to em_pool_create().
+   Similarly, the packet may contain a certain amount of tailroom that can be
+   used to extend the payload with additional data. The tailroom is located
+   after the end of the packet payload until the end of the packet buffer.
+   Pushing out the head/tail via APIs is required to include head- or tailroom
+   into the packet data.
+
+   EM APIs:
+   void *em_packet_pointer(em_event_t pktev);
+   uint32_t em_packet_size(em_event_t pktev);
+   void *em_packet_pointer_and_size(em_event_t pktev, uint32_t *size /*out*/);
+   void *em_packet_resize(em_event_t pktev, uint32_t size);
+   uint32_t em_packet_headroom(em_event_t pktev);
+   uint32_t em_packet_tailroom(em_event_t pktev);
+   void *em_packet_push_head(em_event_t pktev, uint32_t len);
+   void *em_packet_pull_head(em_event_t pktev, uint32_t len);
+   void *em_packet_push_tail(em_event_t pktev, uint32_t len);
+   void *em_packet_pull_tail(em_event_t pktev, uint32_t len);
+   em_status_t em_packet_reset(em_event_t pktev, uint32_t size);
+
+   Note: All EM packet-APIs require that the event is an actual packet - not a
+         buffer, vector or timeout etc.!
+         Consider using EM_CHECK_LEVEL=3 in testing to catch illegal
+         event types etc (../configure --enable-check-level=3).
+
+2. Timer
+   (see include/event_machine/api/event_machine_timer.h)
+
+ - Moved the EM timer API from the add-on API to the base EM API.
+   The EM timer API was earlier considered and add-on to the base EM API and
+   thus located in the add-ons API directory
+   (old: include/event_machine/add-ons/event_machine_timer.h).
+   The new location for the timer APIs is in the normal EM API include folder:
+   include/event_machine/api/event_machine_timer.h.
+   Using the timer does not require the user to manually include the add-ons
+   header files, instead including only event_machine.h is enough.
+   To preserve backwards compatibility, the old EM timer API file has been left
+   in the add-ons directory but the file has no content - all content is now in
+   the new header file.
+
+   The EM Timer version number defines have been left in the API for now but
+   are updated with the actual EM API version instead.
+   These timer version defines will be removed in a later release:
+   /** Deprecated
+    *  Major EM Timer API version. Marks possibly backwards incompatible changes.
+    *  EM timer is now part of EM API. Use EM_API_VERSION_MAJOR instead.
+    */
+   #define EM_TIMER_API_VERSION_MAJOR	EM_API_VERSION_MAJOR
+   /** Deprecated
+    *  Minor EM Timer API version. Marks possibly backwards incompatible changes.
+    *  EM Timer is now part of EM API. Use EM_API_VERSION_MINOR instead.
+    */
+   #define EM_TIMER_API_VERSION_MINOR	EM_API_VERSION_MINOR
+
+3. Event
+   (see include/event_machine/api/event_machine_event.h)
+
+ - Add the new EM API em_event_pointer_and_size() that combines the APIs
+   em_event_pointer() and em_event_get_size() into one call to reduce API
+   overhead. The user often needs both the event data pointer as well as the
+   size when processing the event.
+
+   EM API:
+   void *em_event_pointer_and_size(em_event_t event, uint32_t *size /*out*/);
+
+ - Update the API documentation for em_alloc(), em_alloc_multi(),
+   em_event_pointer() and em_event_set_type() to more clearly state the intended
+   usage and the suitable event types.
+
+4. Deprecation macros
+   (see include/event_machine/api/event_machine_deprecated.h.in
+    or the generated .h file)
+
+ - The EM_DEPRECATED_API define was added into the API. Its value can be used to
+   check whether deprecated EM API definitions are enabled or disabled.
+   Deprecated APIs are disabled by default.
+   The deprecated APIs are meant to be removed completely in a later
+   API version but can be accessed by the user for a while by setting the
+   EM_DEPRECATED_API define.
+ - The EM_DEPRECATE() macro enforces deprecation of API definitions.
+   When deprecated APIs are disabled, the macro renames the API definitions so
+   that the application cannot use them any more.
+   No EM APIs have yet been marked as "deprecated" by these macros / defines,
+   but will be in coming releases.
+
+   See the release CHANGE_NOTES for a description on how to enable/disable
+   deprecated APIs.
+
+5. Misc.
+ - api, escope: add hex printf-format specifier PRIxESCOPE
+   Add the PRIxESCOPE printf format specifier to easier print.
+   EM error scopes as hexadecimal values (instead of decimal).
+
+ - api, init, doc: pin to unique core before em_init_core()
+   Update the em_init_core() documentation:
+   "Note, the thread or process must be pinned to a unique physical core before
+    running em_init_core()."
 
 --------------------------------------------------------------------------------
 API 3.5 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=5)
@@ -173,7 +287,7 @@ API 3.4 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=4)
 API 3.3 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=3)
 --------------------------------------------------------------------------------
 1. Timer
-   (see include/event_machine/add-ons/event_machine_timer.h for documentation)
+   (see include/event_machine/api/event_machine_timer.h for documentation)
 
  - Timer Ring
    - Add a new event type EM_EVENT_TYPE_TIMER_IND that will be used by the
@@ -224,7 +338,7 @@ API 3.3 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=3)
 API 3.2 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=2)
 --------------------------------------------------------------------------------
 1. Timer: timer version updated to v2.3,
-   (see include/event_machine/add-ons/event_machine_timer.h for documentation)
+   (see include/event_machine/api/event_machine_timer.h for documentation)
 
  - Timer Ring
    EM APIs:
@@ -433,7 +547,7 @@ API 3.1 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=1)
    or the EM config file.
 
 2. Timer
-   (see include/event_machine/add-ons/event_machine_timer.h for documentation)
+   (see include/event_machine/api/event_machine_timer.h for documentation)
 
    em_tmo_set_rel/abs/periodic():
    - Clarification of return value on error:
@@ -745,7 +859,7 @@ API 2.6 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=6)
 Backwards compatible with EM 2.5 API
 
 1. Timer:
-   (see em-odp/include/event_machine/add-ons/event_machine_timer.h for details)
+   (see em-odp/include/event_machine/api/event_machine_timer.h for details)
   - Add new timer clock source choices (em_timer_clksrc_t) to select the
     timer clock source in case multiple are supported:
     EM_TIMER_CLKSRC_0, EM_TIMER_CLKSRC_1, ...(up to)..., EM_TIMER_CLKSRC_5.
@@ -800,7 +914,7 @@ Backwards compatible with EM 2.5 API
     - void em_event_unmark_free(em_event_t event);
     - void em_event_unmark_free_multi(const em_event_t events[], int num);
     Unmark event(s) previously marked as "free" (i.e mark as "allocated" again).
-    Note: This is for recovery situations only and can potenially crash the
+    Note: This is for recovery situations only and can potentially crash the
           application if used incorrectly! Unmarking the free-state of an event
           that has already been freed will lead to fatal error.
     - em_event_unmark_free(): Revert an event's "free" state, as set by
@@ -867,7 +981,7 @@ Not backwards compatible with previous API version, API 2.5 contains modified
 types and functions requiring small changes to older code.
 
 1. Timer: timer version updated from v2.0 to v2.1,
-   see em-odp/include/event_machine/add-ons/event_machine_timer.h for details.
+   see em-odp/include/event_machine/api/event_machine_timer.h for details.
    - New Timer APIs for tick<->ns conversions:
      - em_timer_tick_to_ns()
      - em_timer_ns_to_tick()
@@ -896,7 +1010,7 @@ types and functions requiring small changes to older code.
 
    - em_event_unmark_send(event): Unmark an event previously marked as "sent"
                                   (i.e mark as "unsent")
-     Note: This is for recovery situations only and can potenially crash the
+     Note: This is for recovery situations only and can potentially crash the
            application if used incorrectly!
      Revert an event's "sent" state, as set by em_event_mark_send(), back to the
      state before that function call.
@@ -935,7 +1049,7 @@ Not backwards compatible with previous API version, API 2.4 contains modified
 types requiring small changes to older code.
 
 1. Timer: timer version updated from v1.1 to v2.0,
-   see em-odp/include/event_machine/add-ons/event_machine_timer.h for details.
+   see em-odp/include/event_machine/api/event_machine_timer.h for details.
    New or updated timer types and APIs:
    - em_timer_attr_t: *updated* type that MUST be initialized with
                       em_timer_attr_init() before passing it to
@@ -1144,7 +1258,7 @@ API 2.1 (EM_API_VERSION_MAJOR=2, EM_API_VERSION_MINOR=1)
     Note: EM_API_HOOKS_ENABLE must be set to '1' to enable API-hooks (default=1)
     See include/event_machine/platform/event_machine_hooks.h
  3. EM pool info and statistics:
-    em_pool_info() - retieve information about an EM event pool
+    em_pool_info() - Retrieve information about an EM event pool
     em_pool_info_print() - print EM Pool information for a given event pool
     em_pool_info_print_all() - print EM Pool information for all event pools.
     Note: Set EM config file: pool.statistics_enable=true to enable event pool
@@ -1255,7 +1369,7 @@ API 1.3 (EM_API_VERSION_MAJOR=1, EM_API_VERSION_MINOR=3)
  4. New API to send multiple events (em_send_multi, em_send_group_multi) for
     potential performance gain.
  5. New API to receive multiple events from unscheduled queues.
- 6. Event timer API (add-on). See add-ons/event_machine_timer.h
+ 6. Event timer API. See event_machine_timer.h
  7. Added API to change event type (if compatible). See event_machine_event.h
  8. UNDEF - values of -1 (FFFFFFFF) deprecated. Implementation should use
     value 0 for any UNDEF. This makes it safer to initialize data to 0.

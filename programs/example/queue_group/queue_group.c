@@ -169,6 +169,10 @@ COMPILE_TIME_ASSERT(sizeof(core_stat_t) == ENV_CACHE_LINE_SIZE,
  */
 typedef struct qgrp_shm_t {
 	em_pool_t pool ENV_CACHE_LINE_ALIGNED;
+
+	/* Number of EM cores running the application */
+	unsigned int core_count;
+
 	/** The application has seen the exit_flag and is ready for tear down */
 	env_atomic32_t exit_ack;
 
@@ -250,9 +254,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -281,8 +285,7 @@ test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void
-test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	app_event_t *app_event;
 	em_event_t event;
@@ -292,7 +295,6 @@ test_start(appl_conf_t *const appl_conf)
 	em_status_t err, start_err = EM_ERROR;
 	em_eo_t eo;
 	em_notif_t notif_tbl[1];
-	int core_count = em_core_count();
 
 	/*
 	 * Store the event pool to use, use the EM default pool if no other
@@ -303,26 +305,28 @@ test_start(appl_conf_t *const appl_conf)
 	else
 		qgrp_shm->pool = EM_POOL_DEFAULT;
 
+	/* Store the number of EM-cores running the application */
+	qgrp_shm->core_count = appl_conf->core_count;
+
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "  using event pool:%" PRI_POOL "\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads,
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads,
 		   qgrp_shm->pool);
 
 	test_fatal_if(qgrp_shm->pool == EM_POOL_UNDEF,
 		      "Undefined application event pool!");
 
-	test_fatal_if(core_count > MAX_CORES,
+	test_fatal_if(qgrp_shm->core_count > MAX_CORES,
 		      "Test started on too many cores(%i)!\n"
 		      "Max supported core count for this test is: %u\n",
-		      core_count, MAX_CORES);
+		      qgrp_shm->core_count, MAX_CORES);
 
 	env_atomic32_init(&qgrp_shm->exit_ack);
 	env_atomic32_set(&qgrp_shm->exit_ack, 0);
@@ -384,8 +388,7 @@ test_start(appl_conf_t *const appl_conf)
 		      start_err);
 }
 
-void
-test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	em_status_t err;
@@ -421,9 +424,9 @@ test_stop(appl_conf_t *const appl_conf)
 		      egrp, err, eo);
 }
 
-void
-test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %02d\n", __func__, core);
@@ -704,7 +707,6 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 		}
 	} else {
 		em_notif_t egroup_notif_tbl[1];
-		int i;
 
 		/* Reuse the event */
 		app_event->notif.id = EVENT_NOTIF;
@@ -721,17 +723,17 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 		test_fatal_if(err != EM_OK,
 			      "em_event_group_apply():%" PRI_STAT "", err);
 
-		for (i = 0; i < EVENT_DATA_ALLOC_NBR; i++) {
+		for (int i = 0; i < EVENT_DATA_ALLOC_NBR; i++) {
 			em_event_t ev_data = em_alloc(sizeof(app_event_t),
 						      EM_EVENT_TYPE_SW,
 						      qgrp_shm->pool);
 			test_fatal_if(ev_data == EM_EVENT_UNDEF,
 				      "Event alloc failed!");
 
-			app_event_t *app_event = em_event_pointer(ev_data);
+			app_event_t *data_event = em_event_pointer(ev_data);
 
-			app_event->id = EVENT_DATA;
-			app_event->data.used_group = eo_ctx->test_qgrp;
+			data_event->id = EVENT_DATA;
+			data_event->data.used_group = eo_ctx->test_qgrp;
 
 			err = em_send_group(ev_data, eo_ctx->test_queue,
 					    eo_ctx->event_group);
@@ -802,7 +804,7 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 	 * group actually received events and that other cores do not
 	 * get any events.
 	 */
-	core_count = em_core_count();
+	core_count = qgrp_shm->core_count;
 	for (i = 0; i < core_count; i++) {
 		const uint64_t ev_count = qgrp_shm->core_stat[i].event_count;
 		char mstr[EM_CORE_MASK_STRLEN];
@@ -963,7 +965,7 @@ start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 		 "%s%03i", TEST_QGRP_NAME_BASE, 0);
 
 	em_core_mask_zero(&eo_ctx->core_mask_max);
-	em_core_mask_set_count(em_core_count(), &eo_ctx->core_mask_max);
+	em_core_mask_set_count(qgrp_shm->core_count, &eo_ctx->core_mask_max);
 
 	/*
 	 * The values used below in calculations are derived from the way the

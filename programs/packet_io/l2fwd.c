@@ -90,6 +90,10 @@ typedef struct {
 typedef struct {
 	/** EO (application) context */
 	eo_context_t eo_ctx;
+
+	/* Number of EM cores running the application */
+	unsigned int core_count;
+
 	/**
 	 * Array containing the contexts of all the queues handled by the EO.
 	 * A queue context contains the flow/queue specific data for the
@@ -152,8 +156,9 @@ int main(int argc, char *argv[])
  *
  * @see cm_setup() for setup and dispatch.
  */
-void test_init(void)
+void test_init(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	if (core == 0) {
@@ -189,23 +194,25 @@ void test_init(void)
  *
  * @see cm_setup() for setup and dispatch.
  */
-void test_start(appl_conf_t *const appl_conf)
+void test_start(const appl_conf_t *appl_conf)
 {
 	em_eo_t eo;
 	eo_context_t *eo_ctx;
 	em_status_t ret, start_fn_ret = EM_ERROR;
 	int if_id, if_qcnt, i;
 
+	/* Store the number of EM-cores running the application */
+	l2fwd_shm->core_count = appl_conf->core_count;
+
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
 		   "EM APPLICATION: '%s' initializing:\n"
-		   "  %s: %s() - EM-core:%i\n"
-		   "  Application running on %d EM-cores (procs:%d, threads:%d)\n"
+		   "  %s: %s() - EM-core:%d\n"
+		   "  Application running on %u EM-cores (procs:%u, threads:%u)\n"
 		   "***********************************************************\n"
 		   "\n",
 		   appl_conf->name, NO_PATH(__FILE__), __func__, em_core_id(),
-		   em_core_count(),
-		   appl_conf->num_procs, appl_conf->num_threads);
+		   appl_conf->core_count, appl_conf->num_procs, appl_conf->num_threads);
 
 	test_fatal_if(appl_conf->pktio.if_count > MAX_NUM_IF ||
 		      appl_conf->pktio.if_count <= 0,
@@ -269,7 +276,7 @@ void test_start(appl_conf_t *const appl_conf)
 		      ret, start_fn_ret);
 }
 
-void test_stop(appl_conf_t *const appl_conf)
+void test_stop(const appl_conf_t *appl_conf)
 {
 	const int core = em_core_id();
 	eo_context_t *const eo_ctx = &l2fwd_shm->eo_ctx;
@@ -288,8 +295,9 @@ void test_stop(appl_conf_t *const appl_conf)
 		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
-void test_term(void)
+void test_term(const appl_conf_t *appl_conf)
 {
+	(void)appl_conf;
 	int core = em_core_id();
 
 	APPL_PRINT("%s() on EM-core %d\n", __func__, core);
@@ -315,8 +323,6 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	pktio_tx_fn_args_t pktio_tx_fn_args; /* user defined content */
 	em_status_t ret;
 	eo_context_t *const eo_ctx = eo_context;
-	int if_id;
-	int i, j;
 
 	(void)conf;
 
@@ -332,9 +338,9 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	 * Dimension the number of pktout queues to be equal to the number
 	 * of EM cores per interface to minimize output resource contention.
 	 */
-	test_fatal_if(em_core_count() >= MAX_PKTOUT_QUEUES_PER_IF,
+	test_fatal_if(l2fwd_shm->core_count >= MAX_PKTOUT_QUEUES_PER_IF,
 		      "No room to store pktout queues");
-	eo_ctx->pktout_queues_per_if = em_core_count();
+	eo_ctx->pktout_queues_per_if = l2fwd_shm->core_count;
 
 	memset(&queue_conf, 0, sizeof(queue_conf));
 	memset(&output_conf, 0, sizeof(output_conf));
@@ -351,9 +357,10 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	/* Content of 'pktio_tx_fn_args' set in loop */
 
 	/* Create the packet output queues for each interface */
-	for (i = 0; i < eo_ctx->if_count; i++) {
-		if_id = eo_ctx->if_ids[i];
-		for (j = 0; j < eo_ctx->pktout_queues_per_if; j++) {
+	for (int i = 0; i < eo_ctx->if_count; i++) {
+		int if_id = eo_ctx->if_ids[i];
+
+		for (int j = 0; j < eo_ctx->pktout_queues_per_if; j++) {
 			char qname[EM_QUEUE_NAME_LEN];
 
 			snprintf(qname, sizeof(qname), "pktout-queue-%d-%d", i, j);
