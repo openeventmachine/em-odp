@@ -1,0 +1,231 @@
+#nav-tree {
+  background-image:url('');
+  background-color: #FFFFFF;
+}
+
+
+#nav-tree .selected {
+  background-image: url('');
+  background-color: #F0F0F0;
+  text-shadow: 0px 0px 0px rgba(0, 0, 0, 0.0);
+}
+
+
+#nav-tree .selected a {
+  text-decoration:none;
+  color: #124191;
+  background-color: #F0F0F0;
+}
+
+.tabs {
+    background-image: url('');
+    background-color: #F0F0F0;
+
+}
+
+.tabs2 {
+    background-image: url('');
+    background-color: #FFFFFF;
+
+}
+
+.tabs3 {
+    background-image: url('');
+    background-color: #F0F0F0;
+
+}
+
+.tablist li {
+    background-image: url('');
+}
+
+.tablist a {
+    background-image:url('');
+    color: #124191;
+    text-shadow: 0px 0px 0px rgba(255, 255, 255, 255);
+}
+
+
+.tablist a:hover {
+    background-image: url('');
+    color: #124191;
+    text-shadow: 0px 0px 0px rgba(0, 0, 0, 0);
+    text-decoration: none;
+}
+
+.tablist li.current a {
+    background-image: url('');
+    color: #124191;
+    text-shadow: 0px 0px 0px rgba(0, 0, 0, 0);
+}
+
+
+h2.groupheader {
+        border-bottom: 1px solid #124191;
+        color: #124191;
+}
+
+
+h1.glow, h2.glow, h3.glow, h4.glow, h5.glow, h6.glow {
+        text-shadow: 0 0 15px #124191;
+}
+
+div.qindex, div.navtab{
+        background-color: #FFFFFF;
+        border: 1px solid #124191;
+}
+
+a {
+        color: #124191;
+}
+
+.contents a:visited {
+        color: #124191;
+}
+
+a.qindexHL {
+        font-weight: bold;
+        background-color: #FFFFFF;
+        color: #ffffff;
+        border: 1px double #124191;
+}
+
+.contents a.qindexHL:visited {
+        color: #ffffff;
+}
+
+div.ah {
+        background-color: #124191;
+}
+
+body {
+        background-color: white;
+        color: #124191;
+}
+
+td.indexkey {
+        background-color: #F0F0F0;
+        border: 1px solid #124191;
+}
+
+td.indexvalue {
+        background-color: #FFFFFF;
+        border: 1px solid #124191;
+}
+
+tr.memlist {
+        background-color: #124191;
+}
+
+pre.fragment {
+        border: 1px solid #124191;
+        background-color: #FFFFFF;
+}
+
+div.fragment {
+        background-color: #FCFCFD;
+        border: 1px solid #124191;
+}
+
+div.line.glow {
+        background-color: #124191;
+        box-shadow: 0 0 10px #124191;
+}
+
+.mdescLeft, .mdescRight,
+.memItemLeft, .memItemRight,
+.memTemplItemLeft, .memTemplItemRight, .memTemplParams {
+        background-color: #F0F0F0;
+}
+
+.mdescLeft, .mdescRight {
+        color: #124191;
+}
+
+.memTemplParams {
+        color: #124191;
+}
+
+.memtemplate {
+        color: #124191;
+}
+
+.memnav {
+        background-color: #F0F0F0;
+        border: 1px solid #124191;
+}
+
+.memproto, dl.reflist dt {
+        border-top: 1px solid #124191;
+        border-left: 1px solid #124191;
+        border-right: 1px solid #124191;
+        background-image:url('');
+        background-color: #F0F0F0;
+}
+
+.memdoc, dl.reflist dd {
+        border-bottom: 1px solid #124191;
+        border-left: 1px solid #124191;
+        border-right: 1px solid #124191;
+        background-color: #FFFFFF;
+        background-image:url('');
+
+}
+
+.fieldtable th {
+        background-image:url('');
+}
+
+.tabsearch {
+        background-image: url('');
+}
+
+.navpath ul
+{
+        background-image:url('');
+}
+
+.navpath li
+{
+        background-image:url('');
+}
+
+.dirtab {
+        border: 1px solid ##F0F0F0;
+}
+
+th.dirtab {
+        background: #FFFFFF;
+}
+
+
+div.header
+{
+        border-bottom: 1px solid #124191;
+        background-image:url('');	
+}
+
+
+#titlearea
+{
+        border-bottom: 1px solid #124191;
+}
+
+div.zoom
+{
+        border: 1px solid #124191;
+}
+
+dl.citelist dt {
+        color:#124191;
+}
+
+div.toc {
+        background-color: #F0F0F0;
+        border: 1px solid #124191;
+}
+
+div.toc h3 {
+        color: #124191;
+}
+

@@ -1,0 +1,98 @@
+var group__em__pool =
+[
+    [ "em_pool_stats_opt_t", "d7/daa/unionem__pool__stats__opt__t.html", [
+      [ "all", "d7/daa/unionem__pool__stats__opt__t.html#ae874b968d5e4ee020b1dfe13dc24b52a", null ],
+      [ "alloc_fails", "d7/daa/unionem__pool__stats__opt__t.html#af2104223375c807dd9cc5ea60c59632d", null ],
+      [ "alloc_ops", "d7/daa/unionem__pool__stats__opt__t.html#a63d9e5e6c6557adedaf7f8bd55716d2c", null ],
+      [ "available", "d7/daa/unionem__pool__stats__opt__t.html#aeb9aa09052aaf5c1dc676e9c37158b00", null ],
+      [ "cache_alloc_ops", "d7/daa/unionem__pool__stats__opt__t.html#a475bb0b3c200f443c5a2fba43eb28537", null ],
+      [ "cache_available", "d7/daa/unionem__pool__stats__opt__t.html#a89db4638059bea5bf864b77328d6455d", null ],
+      [ "cache_free_ops", "d7/daa/unionem__pool__stats__opt__t.html#a9c4deb3dc799c04a616062cd0e66c621", null ],
+      [ "core_cache_available", "d7/daa/unionem__pool__stats__opt__t.html#a90a386dcead2a8f93433938b7d5746e7", null ],
+      [ "free_ops", "d7/daa/unionem__pool__stats__opt__t.html#a6e38c2fdf485cf409fe937d9836acac5", null ],
+      [ "total_ops", "d7/daa/unionem__pool__stats__opt__t.html#afa25225ca397c7f6c34b1ec1156b0642", null ]
+    ] ],
+    [ "em_pool_cfg_t", "d2/db5/structem__pool__cfg__t.html", [
+      [ "__internal_check", "d2/db5/structem__pool__cfg__t.html#a751890882d1327539e870004a10a1219", null ],
+      [ "align_offset", "d2/db5/structem__pool__cfg__t.html#a5d5c3de702b043a17ebb03c5b6ce0953", null ],
+      [ "cache_size", "d2/db5/structem__pool__cfg__t.html#a783e3e9dafe05be89ccfe13b3949842d", null ],
+      [ "event_type", "d2/db5/structem__pool__cfg__t.html#a8df13d5f2195860c030809996ca4f493", null ],
+      [ "headroom", "d2/db5/structem__pool__cfg__t.html#a43f2542fbe55988d39a1309a471be0ca", null ],
+      [ "in_use", "d2/db5/structem__pool__cfg__t.html#aaf3a99d80aa7a7dfa9fb5b52144d3b33", null ],
+      [ "num", "d2/db5/structem__pool__cfg__t.html#a3f8e331ebdc0f001c76e4b89b40124e6", null ],
+      [ "num_subpools", "d2/db5/structem__pool__cfg__t.html#a3929a4fcd68d78ef12347bb6f230fd3a", null ],
+      [ "opt", "d2/db5/structem__pool__cfg__t.html#aeb45ad9c124ad61ee95c45bee4ad5cab", null ],
+      [ "pkt", "d2/db5/structem__pool__cfg__t.html#a4dce14acd39022674ccfcce8a8cbea1c", null ],
+      [ "size", "d2/db5/structem__pool__cfg__t.html#aa74d6a49cffa671532948eaac1dadfc2", null ],
+      [ "size", "d2/db5/structem__pool__cfg__t.html#aa5bc1f167d26d7ea9c30f8d720fe209a", null ],
+      [ "stats_opt", "d2/db5/structem__pool__cfg__t.html#a7604bafa5930f894afd91ef34c9239c2", null ],
+      [ "subpool", "d2/db5/structem__pool__cfg__t.html#aa67ebf1bba1e9239f2332030aaf39e2a", null ],
+      [ "user_area", "d2/db5/structem__pool__cfg__t.html#af05251345624f789214a15dd627d0bba", null ],
+      [ "value", "d2/db5/structem__pool__cfg__t.html#a5e0eec3471d58a55b3a94efddd7b5da7", null ]
+    ] ],
+    [ "em_pool_info_t", "d4/d3e/structem__pool__info__t.html", [
+      [ "align_offset", "d4/d3e/structem__pool__info__t.html#a6c0f684cc60dd050ebb18028e3368b63", null ],
+      [ "cache_size", "d4/d3e/structem__pool__info__t.html#aba60a82cb6b2d88054f51976afd9bd53", null ],
+      [ "em_pool", "d4/d3e/structem__pool__info__t.html#a32f386c392436c7be85b2022000c74c1", null ],
+      [ "event_type", "d4/d3e/structem__pool__info__t.html#a37dea5cffc45ddbaa168c9226fb9e86a", null ],
+      [ "free", "d4/d3e/structem__pool__info__t.html#a0aa06027cf00b09286a6bcaf2d317f81", null ],
+      [ "name", "d4/d3e/structem__pool__info__t.html#a493ace5c7a408a738d6e5844ebcf027e", null ],
+      [ "num", "d4/d3e/structem__pool__info__t.html#adafe8db21ac7693d5344a25f067fc273", null ],
+      [ "num_subpools", "d4/d3e/structem__pool__info__t.html#a8333bd4bab58f8554271a39557120e4b", null ],
+      [ "size", "d4/d3e/structem__pool__info__t.html#a5c693e2376743687e7dc632a4298b56e", null ],
+      [ "subpool", "d4/d3e/structem__pool__info__t.html#acc749f16a97a4b74c4b81b784ccf70e9", null ],
+      [ "used", "d4/d3e/structem__pool__info__t.html#adc4ca290552402b6b013aeeea478aa2f", null ],
+      [ "user_area_size", "d4/d3e/structem__pool__info__t.html#a7dfc3cefcf651a18001cf98905f07e04", null ]
+    ] ],
+    [ "em_pool_subpool_stats_t", "d1/d6f/structem__pool__subpool__stats__t.html", [
+      [ "__internal_use", "d1/d6f/structem__pool__subpool__stats__t.html#a8008bae10248dc88c111fd64142431fb", null ],
+      [ "alloc_fails", "d1/d6f/structem__pool__subpool__stats__t.html#ae38f3cca7ad48ca2cff5aa5b6dbe349e", null ],
+      [ "alloc_ops", "d1/d6f/structem__pool__subpool__stats__t.html#ab5a4ae4d9a7a927a1211b7f95b6b98e5", null ],
+      [ "available", "d1/d6f/structem__pool__subpool__stats__t.html#a423a0fb84f4fd1e313886701fb50c31f", null ],
+      [ "cache_alloc_ops", "d1/d6f/structem__pool__subpool__stats__t.html#afbe8bc4459e2150bff33f5b15873ebe6", null ],
+      [ "cache_available", "d1/d6f/structem__pool__subpool__stats__t.html#a56da1d99fde16051d08ea4bc916f0f62", null ],
+      [ "cache_free_ops", "d1/d6f/structem__pool__subpool__stats__t.html#a3ec9237bafde7242ad6b90a96498e0f1", null ],
+      [ "free_ops", "d1/d6f/structem__pool__subpool__stats__t.html#a73d6fc9e23e96073df9d8f2516bc17e8", null ],
+      [ "total_ops", "d1/d6f/structem__pool__subpool__stats__t.html#a638d262f5d7dced41ed52047594f1773", null ]
+    ] ],
+    [ "em_pool_stats_t", "d5/d3f/structem__pool__stats__t.html", [
+      [ "num_subpools", "d5/d3f/structem__pool__stats__t.html#a729fe779c728711ab74ad5602b765b1d", null ],
+      [ "subpool_stats", "d5/d3f/structem__pool__stats__t.html#a316e72daaf4d48db8c35f5779ecf2270", null ]
+    ] ],
+    [ "em_pool_subpool_stats_selected_t", "d8/d6f/structem__pool__subpool__stats__selected__t.html", [
+      [ "alloc_fails", "d8/d6f/structem__pool__subpool__stats__selected__t.html#aa3041b1011dd6849cd6d480e69bc626a", null ],
+      [ "alloc_ops", "d8/d6f/structem__pool__subpool__stats__selected__t.html#a70295ac7d255973f89ca776b68d458b9", null ],
+      [ "available", "d8/d6f/structem__pool__subpool__stats__selected__t.html#a047542a622aaff7fbb33fa22a986a113", null ],
+      [ "cache_alloc_ops", "d8/d6f/structem__pool__subpool__stats__selected__t.html#a84a218373755e484e1ae7a378a7b9809", null ],
+      [ "cache_available", "d8/d6f/structem__pool__subpool__stats__selected__t.html#aa4bca7de04a51f70b6970099a5a84951", null ],
+      [ "cache_free_ops", "d8/d6f/structem__pool__subpool__stats__selected__t.html#aadd20792598738e6565887f7f19796a2", null ],
+      [ "free_ops", "d8/d6f/structem__pool__subpool__stats__selected__t.html#a44a45a4dcf68213019defc2e5decbafe", null ],
+      [ "total_ops", "d8/d6f/structem__pool__subpool__stats__selected__t.html#a83b0cd846e5172235e4bf88374e6a317", null ]
+    ] ],
+    [ "em_pool_stats_selected_t", "d3/d2f/structem__pool__stats__selected__t.html", [
+      [ "num_subpools", "d3/d2f/structem__pool__stats__selected__t.html#acd104be649624461ad0051c9c75b5e3c", null ],
+      [ "subpool_stats", "d3/d2f/structem__pool__stats__selected__t.html#a44d9a8163ba1c21e73d434c580f99def", null ]
+    ] ],
+    [ "em_pool_cfg_init", "d1/d85/group__em__pool.html#ga0a0585d9c293ce9d93d2b7235935313a", null ],
+    [ "em_pool_create", "d1/d85/group__em__pool.html#ga05acc37c035cef81910e8ea77e5db158", null ],
+    [ "em_pool_delete", "d1/d85/group__em__pool.html#ga8021ff58ae3dd773ed68e05e85ee987c", null ],
+    [ "em_pool_find", "d1/d85/group__em__pool.html#ga047e211cf77a56a6b70bd56e9f55deb8", null ],
+    [ "em_pool_get_first", "d1/d85/group__em__pool.html#ga7da289a6375bac6c9da4e45ebb8fb99f", null ],
+    [ "em_pool_get_name", "d1/d85/group__em__pool.html#ga7a3b305f95fe7752eb8d1112ce36475e", null ],
+    [ "em_pool_get_next", "d1/d85/group__em__pool.html#gafd45cd2c69ff84edc6df6f40ffd4361d", null ],
+    [ "em_pool_get_num_subpools", "d1/d85/group__em__pool.html#ga5efa245513f034bec14d3bba081e3dff", null ],
+    [ "em_pool_info", "d1/d85/group__em__pool.html#ga7926181e9c357cf3365b554a6f8b4492", null ],
+    [ "em_pool_info_print", "d1/d85/group__em__pool.html#ga7e5d4bfa167258fa53ff26c0ab34341b", null ],
+    [ "em_pool_info_print_all", "d1/d85/group__em__pool.html#gaf6ee35b00ebe708a43b61d6ef88f6fac", null ],
+    [ "em_pool_stats", "d1/d85/group__em__pool.html#gac56a8d04682e799e1690056d62679c73", null ],
+    [ "em_pool_stats_print", "d1/d85/group__em__pool.html#ga576421b1f19e1822d37e3cb4ab6549f7", null ],
+    [ "em_pool_stats_reset", "d1/d85/group__em__pool.html#ga4410a6b51081f3f20db7c5b089d7cb2e", null ],
+    [ "em_pool_stats_selected", "d1/d85/group__em__pool.html#ga5d1ef7d07efcd99c2a8c6729eed91e0b", null ],
+    [ "em_pool_stats_selected_print", "d1/d85/group__em__pool.html#ga3581111c5e89e08b83d905d1c6377754", null ],
+    [ "em_pool_subpool_stats", "d1/d85/group__em__pool.html#ga8f0ba2aa2a3ff0eaa5b4a072db3f1027", null ],
+    [ "em_pool_subpool_stats_print", "d1/d85/group__em__pool.html#ga27f837e134c4923011cdb8ef9306b1bc", null ],
+    [ "em_pool_subpool_stats_reset", "d1/d85/group__em__pool.html#ga14e33ec6f99522724fd426134533eae9", null ],
+    [ "em_pool_subpool_stats_selected", "d1/d85/group__em__pool.html#ga1da78c8bb4b76f9234b1b3ee8f534661", null ],
+    [ "em_pool_subpool_stats_selected_print", "d1/d85/group__em__pool.html#ga10d146ba0504309c4bd390d52efaae96", null ],
+    [ "em_pool_to_u64", "d1/d85/group__em__pool.html#ga14d87b95f372d7d8b4068c81e61f57c1", null ]
+];
