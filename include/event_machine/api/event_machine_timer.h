@@ -928,16 +928,26 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev);
 /**
  * Get a list of currently active timers.
  *
- * Returned timer handles can be used to query more information or to
- * destroy all existing timers.
+ * The timer handles returned via 'tmr_list' can be used for further timer
+ * queries or to destroy existing timers.
  *
- * The actual number of timers is always returned but 'tmr_list' will only be
- * written up to the given 'max' length.
+ * The return value always reflects the actual number of timers in the
+ * EM instance but the output parameter 'tmr_list' is only written up to the
+ * given 'max' length.
  *
- * @param [out] tmr_list  Pointer to array of timer handles
- * @param max             Max number of handles that can written into tmr_list
+ * Note that the return value (number of timers) can be greater than the given
+ * 'max'. It is the user's responsibility to check the return value against the
+ * given 'max'.
  *
- * @return number of active timers
+ * To only get the current number of active timers, without any timer handles
+ * output, use the following: num_timers = em_timer_get_all(NULL, 0);
+ *
+ * @param[out] tmr_list  Pointer to an array of timer handles.
+ *                       Use NULL if only interested in the return value.
+ * @param      max       Max number of handles that can be written into tmr_list
+ *                       'max' is ignored if 'tmr_list' is NULL.
+ *
+ * @return The number of active timers
  */
 int em_timer_get_all(em_timer_t *tmr_list, int max);
 

@@ -41,14 +41,13 @@
 extern "C" {
 #endif
 
-void
-print_em_info(void);
+void print_version_info(void);
 
-void
-print_cpu_arch_info(void);
+void print_em_info(void);
 
-void
-print_core_map_info(void);
+void print_cpu_arch_info(void);
+
+void print_core_map_info(void);
 
 #ifdef __cplusplus
 }

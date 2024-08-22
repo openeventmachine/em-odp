@@ -6,6 +6,56 @@ EM API Release Notes
 - See em-odp/README for usage and compilation instructions.
 
 --------------------------------------------------------------------------------
+API 3.7 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=7)
+--------------------------------------------------------------------------------
+1. Timer, fix: em_timer_get_all() always returns the actual number of timers.
+   (see include/event_machine/api/event_machine_timer.h)
+
+   The API em_timer_get_all(*tmr_list, max) should, according to the API spec,
+   always return the actual number of timers regardless of the value of 'max'.
+   The prev implementation returned a value from 0 to 'max' even if there was
+   more timers - this is now fixed and the API documentation has been updated.
+
+  num_timers = em_timer_get_all(NULL, 0);
+  would now always return the number of timers.
+
+  When you also need a list of the timer handles:
+  num_timers = em_timer_get_all(tmr_list, max);
+  if (num_timers > max) {
+	/* more timers exist than could be filled into 'tmr_list' */
+  }
+
+2. Helper: Print EM information
+   (see include/event_machine/helper/event_machine_helper.h)
+
+   Two new helper APIs were added to enable printing EM version information
+   as well as various information about the running EM instance.
+
+   Helper APIs:
+   void em_version_print(void) - Print EM related version information
+   void em_info_print(void)    - Print miscellaneous EM information
+
+   Both em_init() and em_version_print() will output version information:
+     ===========================================================
+     EM version information: em-odp
+     ===========================================================
+     EM API version:         3.7
+     EM version:             3.7.0, 64 bit (EM_CHECK_LEVEL:3, EM_ESV_ENABLE:1)
+     EM build info:          v3.7.0-18-g7ea320af 2024-08-21 14:36
+     ODP API version:        1.45.0
+     ODP impl name:          odp-linux
+     ODP impl details:       odp-linux 1.45.0-0 (v1.45.0) 1.45.0.0
+     CPU model:              Intel(R) Xeon(R) Gold 6212U CPU
+     CPU arch:               x86
+     CPU ISA version:        Unknown
+      SW ISA version (ODP):  x86_64
+      SW ISA version (EM):   x86_64
+
+   The helper API em_info_print() prints various data about the running
+   EM instance that previously were part of the em_init() printouts (removed
+   from em_init() to reduce startup clutter, printed now only on demand).
+
+--------------------------------------------------------------------------------
 API 3.6 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=6)
 --------------------------------------------------------------------------------
 1. Packet event APIs

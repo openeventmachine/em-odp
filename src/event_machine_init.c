@@ -120,8 +120,6 @@ em_status_t em_init(const em_conf_t *conf)
 		       sizeof(em_shm->conf.api_hooks));
 	}
 
-	env_spinlock_init(&em_shm->init.lock);
-
 	/* Initialize the log & error handling */
 	log_init();
 	error_init();
@@ -154,10 +152,10 @@ em_status_t em_init(const em_conf_t *conf)
 	 * Masks must be a subset of logical EM core mask. Zero mask means
 	 * that input_poll_fn and output_drain_fn are run on all EM cores.
 	 */
-	stat = input_poll_init(&em_shm->core_map.logic_mask, conf);
+	stat = input_poll_check(&em_shm->core_map.logic_mask, conf);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"input_poll_init() failed:%" PRI_STAT "", stat);
-	stat = output_drain_init(&em_shm->core_map.logic_mask, conf);
+	stat = output_drain_check(&em_shm->core_map.logic_mask, conf);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"output_drain_init() failed:%" PRI_STAT "", stat);
 
@@ -238,6 +236,11 @@ em_status_t em_init(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"emcli_init() failed:%" PRI_STAT "", stat);
 
+	/*
+	 * Print EM and ODP version information
+	 */
+	print_version_info();
+
 	return EM_OK;
 }
 
@@ -247,7 +250,6 @@ em_status_t em_init_core(void)
 	odp_shm_t shm;
 	em_shm_t *shm_addr;
 	em_status_t stat;
-	int init_count;
 
 	/* Lookup the EM shared memory on each EM-core */
 	shm = odp_shm_lookup("em_shm");
@@ -280,14 +282,12 @@ em_status_t em_init_core(void)
 			"dispatch_init_local() failed:%" PRI_STAT "", stat);
 
 	/* Check if input_poll_fn should be executed on this core */
-	stat = input_poll_init_local(&locm->do_input_poll,
-				     locm->core_id, &em_shm->conf);
+	stat = input_poll_init_local();
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
 			"input_poll_init_local() failed:%" PRI_STAT "", stat);
 
 	/* Check if output_drain_fn should be executed on this core */
-	stat = output_drain_init_local(&locm->do_output_drain,
-				       locm->core_id, &em_shm->conf);
+	stat = output_drain_init_local();
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
 			"output_drain_init_local() failed:%" PRI_STAT "", stat);
 
@@ -320,18 +320,7 @@ em_status_t em_init_core(void)
 		for (int i = 0; i < EM_DEBUG_TSP_LAST; i++)
 			locm->debug_ts[i] = 1;
 
-	env_spinlock_lock(&em_shm->init.lock);
-	init_count = ++em_shm->init.em_init_core_cnt;
-	env_spinlock_unlock(&em_shm->init.lock);
-
 	/* Now OK to call EM APIs */
-
-	/* Print info about the Env&HW when the last core has initialized */
-	if (init_count == em_core_count()) {
-		print_em_info();
-		/* Last */
-		em_shm->init.em_init_done = 1;
-	}
 
 	env_sync_mem();
 

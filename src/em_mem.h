@@ -59,8 +59,6 @@ typedef struct {
 	em_vlog_func_t vlog_fn;
 	/** EM configuration as given to em_init() */
 	em_conf_t conf ENV_CACHE_LINE_ALIGNED;
-	/** Initialization state data */
-	init_t init ENV_CACHE_LINE_ALIGNED;
 	/** EM config file options */
 	opt_t opt ENV_CACHE_LINE_ALIGNED;
 	/** Mapping between physical core id <-> EM core id */

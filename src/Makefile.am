@@ -79,7 +79,7 @@ $(top_srcdir)/include/event_machine/platform/env/env_sharedmem.h \
 $(top_srcdir)/include/event_machine/platform/env/env_spinlock.h \
 $(top_srcdir)/include/event_machine/platform/env/env_time.h
 
-BUILT_SOURCES = include/em_libconfig_config.h
+BUILT_SOURCES = $(top_builddir)/include/em_libconfig_config.h
 
 __LIB__libemodp_la_SOURCES = \
 event_machine_atomic_group.c \

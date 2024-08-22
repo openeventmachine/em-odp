@@ -31,7 +31,7 @@ AS_IF([test -z "$1"] || [test ! -f $1],
       [AC_MSG_ERROR([Default configuration file not found: $1])], [])
 
 conf_ver=_em_config_version
-file_ver=`$SED 's/ //g' $1 | $GREP -oP '(?<=config_file_version=").*?(?=")'`
+file_ver=$($SED 's/ //g' $1 | $GREP -oP '(?<=config_file_version=").*?(?=")')
 
 AS_IF([test "x$conf_ver" = "x$file_ver"], [],
       [AC_MSG_ERROR([Configuration file version mismatch:

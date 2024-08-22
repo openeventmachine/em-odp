@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2023, Nokia Solutions and Networks
+ *   Copyright (c) 2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -31,7 +31,10 @@
 /**
  * @file
  *
- * Event Machine performance test example
+ * Event Machine performance test example using event vectors.
+ *
+ * Test based on the 'loop' test but changed to use event vectors instead of
+ * separate events.
  *
  * Measures the average cycles consumed during an event send-sched-receive loop
  * for a certain number of EOs in the system. The test has a number of EOs, each
@@ -229,8 +232,11 @@ void test_start(const appl_conf_t *appl_conf)
 	em_pool_cfg_init(&vec_pool_cfg);
 	vec_pool_cfg.event_type = EM_EVENT_TYPE_VECTOR;
 	vec_pool_cfg.num_subpools = 1;
-	vec_pool_cfg.subpool[0].cache_size = 0; /* all allocated in startup */
-	vec_pool_cfg.subpool[0].num = NUM_EO * NUM_EVENT_PER_QUEUE;
+	if (ALLOC_FREE_PER_EVENT)
+		vec_pool_cfg.subpool[0].cache_size = 32;
+	else
+		vec_pool_cfg.subpool[0].cache_size = 0; /* all allocated in startup */
+	vec_pool_cfg.subpool[0].num = NUM_EO * NUM_EVENT_PER_QUEUE * 2;
 	vec_pool_cfg.subpool[0].size = MAX_VECTOR_SIZE;
 
 	vec_pool = em_pool_create("vector-pool", EM_POOL_UNDEF, &vec_pool_cfg);
@@ -443,14 +449,43 @@ perf_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	}
 
 	if (ALLOC_FREE_PER_EVENT) {
-		em_pool_t pool = perf_shm->pool;
+		if (em_event_type_major(type) == EM_EVENT_TYPE_VECTOR) {
+			em_pool_t vec_pool = perf_shm->vec_pool;
 
-		if (em_event_type_major(type) == EM_EVENT_TYPE_VECTOR)
-			pool = perf_shm->vec_pool;
+			em_event_t *vectbl = NULL;
+			uint32_t vec_sz = em_event_vector_tbl(event, &vectbl);
 
-		em_free(event);
-		event = em_alloc(sizeof(perf_event_t), type, pool);
-		test_fatal_if(event == EM_EVENT_UNDEF, "Event alloc fails");
+			test_fatal_if(!vec_sz || !vectbl,
+				      "Vector table invalid: sz=%d vectbl=%p)",
+				      vec_sz, vectbl);
+
+			em_event_t vec = em_alloc(vec_sz, EM_EVENT_TYPE_VECTOR, vec_pool);
+
+			test_fatal_if(vec == EM_EVENT_UNDEF,
+				      "Vector allocation failed, sz=%u, events=%" PRIi64 "",
+				      vec_sz, events + 1);
+
+			em_event_t *vectbl_new = NULL;
+			uint32_t sz_new = em_event_vector_tbl(vec, &vectbl_new);
+
+			test_fatal_if(sz_new || !vectbl_new,
+				      "Vector table invalid: sz=%d vectbl=%p)",
+				      sz_new, vectbl_new);
+
+			for (uint32_t i = 0; i < vec_sz; i++)
+				vectbl_new[i] = vectbl[i];
+
+			em_event_vector_size_set(vec, vec_sz);
+
+			em_event_vector_free(event);
+			event = vec;
+		} else {
+			em_pool_t pool = perf_shm->pool;
+
+			em_free(event);
+			event = em_alloc(sizeof(perf_event_t), type, pool);
+			test_fatal_if(event == EM_EVENT_UNDEF, "Event alloc fails");
+		}
 	}
 
 	/* Send the event back into the queue it originated from, i.e. loop */

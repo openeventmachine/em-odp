@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [6])
+m4_define([em_version_api_minor], [7])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -82,7 +82,6 @@ AM_SILENT_RULES([yes])
 AC_PROG_CXX
 AC_PROG_CC
 AC_PROG_CPP
-AM_PROG_CC_C_O
 AM_PROG_AR
 
 # Use libtool
@@ -144,7 +143,7 @@ AC_ARG_WITH([config-file],
 	    [default_config_file="${withval/#\~/$HOME}"], dnl replace ~ with $HOME
 	    [])
 
-rel_default_config_file=`realpath --relative-to=$(pwd) ${default_config_file}`
+rel_default_config_file=$(realpath --relative-to=$(pwd) ${default_config_file})
 AC_SUBST([default_config_file])
 AC_SUBST([rel_default_config_file])
 
@@ -154,6 +153,7 @@ EM_LIBCONFIG([$rel_default_config_file])
 # Default warning setup
 ##########################################################################
 EM_CFLAGS="$EM_CFLAGS -W -Wall -Werror"
+EM_CXXFLAGS="$EM_CXXFLAGS -W -Wall -Werror"
 
 # Additional warnings:
 EM_CHECK_CFLAG([-Wstrict-prototypes])
@@ -174,7 +174,7 @@ EM_CHECK_CFLAG([-Wshadow=local])
 # GCC 10,11 sometimes gets confused about object sizes and gives bogus warnings.
 # Make the affected warnings generate only warnings, not errors.
 AS_IF([test "$GCC" == yes],
-      AS_IF([test `$CC -dumpversion | cut -d '.' -f 1` -ge 10],
+      AS_IF([test $($CC -dumpversion | cut -d '.' -f 1) -ge 10],
 	    EM_CHECK_CFLAG([-Wno-error=array-bounds])
 	    EM_CHECK_CFLAG([-Wno-error=stringop-overflow])
 	    EM_CHECK_CXXFLAG([-Wno-error=stringop-overflow])
@@ -184,7 +184,21 @@ AS_IF([test "$GCC" == yes],
       )
 )
 
+##########################################################################
+# Compiler optimization flags
+##########################################################################
+
+# Don't allow the compiler to assume the strictest aliasing rules.
+# Unless turned off, the -fstrict-aliasing option is enabled at
+# optimization levels -O2, -O3, -Os.
+EM_CHECK_CFLAG([-fno-strict-aliasing])
+EM_CHECK_CXXFLAG([-fno-strict-aliasing])
+
+##########################################################################
+# Set default C and C++ standard version to be used
+##########################################################################
 EM_CFLAGS="$EM_CFLAGS -std=c11"
+EM_CXXFLAGS="$EM_CXXFLAGS -std=c++11"
 
 # Extra flags for example to suppress certain warning types
 EM_CFLAGS="$EM_CFLAGS $EM_CFLAGS_EXTRA"
@@ -463,7 +477,7 @@ AC_SUBST([EM_SCHED_WAIT_ENABLE])
 # Default include setup
 ##########################################################################
 AM_CFLAGS="$AM_CFLAGS $EM_CFLAGS"
-AM_CXXFLAGS="-std=c++11"
+AM_CXXFLAGS="$AM_CXXFLAGS $EM_CXXFLAGS"
 AM_CPPFLAGS="$AM_CPPFLAGS $EM_CPPFLAGS"
 
 AC_CONFIG_FILES([

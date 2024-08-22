@@ -1,5 +1,8 @@
 atomic_processing_end
 loop
+loop_multircv
+loop_refs
+loop_vectors
 pairs
 queue_groups
 queues
@@ -8,6 +11,5 @@ queues_output
 queues_unscheduled
 send_multi
 timer_test
-timer_test_ring
 timer_test_periodic
-loop_multircv
+timer_test_ring
