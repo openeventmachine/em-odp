@@ -92,6 +92,16 @@ em_error_format_string(char *str, size_t size, em_eo_t eo, em_status_t error,
 	return MIN((int64_t)size, ret + 1);
 }
 
+void em_version_print(void)
+{
+	print_version_info();
+}
+
+void em_info_print(void)
+{
+	print_em_info();
+}
+
 int
 em_core_id_get_physical(int em_core_id)
 {

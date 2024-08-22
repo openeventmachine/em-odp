@@ -6,9 +6,8 @@
 
 #include "em_include.h"
 
-em_status_t
-poll_drain_mask_check(const em_core_mask_t *logic_mask,
-		      const em_core_mask_t *poll_drain_mask)
+static em_status_t poll_drain_mask_check(const em_core_mask_t *logic_mask,
+					 const em_core_mask_t *poll_drain_mask)
 {
 	/* check if mask is zero (all cores, OK) */
 	if (em_core_mask_iszero(poll_drain_mask))
@@ -23,53 +22,55 @@ poll_drain_mask_check(const em_core_mask_t *logic_mask,
 	return EM_OK;
 }
 
-em_status_t
-input_poll_init(const em_core_mask_t *logic_mask, const em_conf_t *conf)
+em_status_t input_poll_check(const em_core_mask_t *logic_mask, const em_conf_t *conf)
 {
-	return poll_drain_mask_check(logic_mask,
-				     &conf->input.input_poll_mask);
+	return poll_drain_mask_check(logic_mask, &conf->input.input_poll_mask);
 }
 
-em_status_t
-output_drain_init(const em_core_mask_t *logic_mask, const em_conf_t *conf)
+em_status_t output_drain_check(const em_core_mask_t *logic_mask, const em_conf_t *conf)
 {
-	return poll_drain_mask_check(logic_mask,
-				     &conf->output.output_drain_mask);
+	return poll_drain_mask_check(logic_mask, &conf->output.output_drain_mask);
 }
 
-em_status_t
-poll_drain_mask_set_local(bool *const result /*out*/, int core_id,
-			  const em_core_mask_t *mask)
+static bool poll_drain_check_local(int core_id, const em_core_mask_t *mask)
 {
 	if (em_core_mask_iszero(mask) || em_core_mask_isset(core_id, mask))
-		*result = true;
-	else
-		*result = false;
+		return true;
+
+	return false;
+}
+
+em_status_t input_poll_init_local(void)
+{
+	const em_conf_t *conf = &em_shm->conf;
+	em_locm_t *const locm = &em_locm;
+
+	if (conf->input.input_poll_fn == NULL) {
+		locm->do_input_poll = false;
+		return EM_OK;
+	}
+
+	const em_core_mask_t *input_poll_mask = &conf->input.input_poll_mask;
+
+	locm->do_input_poll = poll_drain_check_local(locm->core_id, input_poll_mask);
+
 	return EM_OK;
 }
 
-em_status_t
-input_poll_init_local(bool *const result /*out*/, int core_id,
-		      const em_conf_t *conf)
+em_status_t output_drain_init_local(void)
 {
-	if (conf->input.input_poll_fn == NULL) {
-		*result = false;
-		return EM_OK;
-	}
-	return poll_drain_mask_set_local(result, core_id,
-					 &conf->input.input_poll_mask);
-}
+	const em_conf_t *conf = &em_shm->conf;
+	em_locm_t *const locm = &em_locm;
 
-em_status_t
-output_drain_init_local(bool *const result /*out*/, int core_id,
-			const em_conf_t *conf)
-{
 	if (conf->output.output_drain_fn == NULL) {
-		*result = false;
+		locm->do_output_drain = false;
 		return EM_OK;
 	}
-	return poll_drain_mask_set_local(result, core_id,
-					 &conf->output.output_drain_mask);
+	const em_core_mask_t *output_drain_mask = &conf->output.output_drain_mask;
+
+	locm->do_output_drain = poll_drain_check_local(locm->core_id, output_drain_mask);
+
+	return EM_OK;
 }
 
 void core_log_fn_set(em_log_func_t func)

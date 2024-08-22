@@ -920,8 +920,9 @@ queue_setup_scheduled(queue_elem_t *q_elem /*in,out*/,
 	 * Set up a scheduled ODP queue for the EM scheduled queue
 	 */
 	odp_queue_param_t odp_queue_param;
-	odp_schedule_sync_t odp_schedule_sync;
-	odp_schedule_prio_t odp_prio;
+	/* Default values. Always changed unless error: */
+	odp_schedule_sync_t odp_schedule_sync = ODP_SCHED_SYNC_PARALLEL;
+	odp_schedule_prio_t odp_prio = odp_schedule_min_prio();
 
 	/* Init odp queue params to default values */
 	odp_queue_param_init(&odp_queue_param);
@@ -1281,14 +1282,12 @@ em_status_t
 queue_state_change_all(eo_elem_t *const eo_elem, queue_state_t new_state)
 {
 	em_status_t err = EM_OK;
-	queue_elem_t *q_elem;
+	queue_elem_t *q_elem = NULL;
 	list_node_t *pos;
 	const list_node_t *list_node;
 
 	/*
-	 * Loop through all queues associated with the EO, no need for
-	 * eo_elem-lock since this is called only on single core at the
-	 * end of em_eo_start()
+	 * Loop through all queues associated with the EO
 	 */
 	env_spinlock_lock(&eo_elem->lock);
 
@@ -1301,9 +1300,15 @@ queue_state_change_all(eo_elem_t *const eo_elem, queue_state_t new_state)
 
 	env_spinlock_unlock(&eo_elem->lock);
 
-	RETURN_ERROR_IF(err != EM_OK, err, EM_ESCOPE_QUEUE_STATE_CHANGE,
-			"EM-Q:%" PRI_QUEUE " inv. state: %d=>%d",
-			q_elem->queue, q_elem->state, new_state);
+	if (unlikely(err != EM_OK)) {
+		uint32_t queue_u32 = q_elem ? q_elem->queue : 0;
+		queue_state_t state = q_elem ? q_elem->state : EM_QUEUE_STATE_INVALID;
+
+		return INTERNAL_ERROR(err, EM_ESCOPE_QUEUE_STATE_CHANGE,
+				      "EM-Q:%" PRIx32 " inv. state: %d=>%d",
+				      queue_u32, state, new_state);
+	}
+
 	return EM_OK;
 }
 

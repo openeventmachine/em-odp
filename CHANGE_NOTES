@@ -53,6 +53,32 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.7.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.7 (em-odp/include/),
+  see API additions and changes in em-odp/include/event_machine/README_API.
+  Summary:
+  * Timer: em_timer_get_all() update
+  * Helper APIs: em_version_print(), em_info_print()
+
+- Startup printouts changed
+  The EM startup printouts / logging has been changed to reduce startup clutter
+  and give more control to the user about what is being printed and when.
+  EM will print the version information at startup (wuth the same content as
+  produced by the new helper API em_version_print()) but further printouts with
+  info about the running instance has been moved into another new helper API
+  em_info_print(), which the user can now call on demand
+  (as is done by the EM example applications, see programs/common/cm_setup.c).
+
+- configure, build: disable strict-aliasing (use -fno-strict-aliasing)
+
+  Don't allow the compiler to assume the strictest aliasing rules.
+  Unless turned off, the -fstrict-aliasing option is enabled at
+  optimization levels -O2, -O3, -Os.
+
+  EM contains some type casting that might violate C strict aliasing rules.
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.6.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.6 (em-odp/include/),

@@ -50,20 +50,43 @@ extern "C" {
 /**
  * Format error string
  *
- * Creates an implementation dependent error report string from EM
- * internal errors.
+ * Creates an error report string from EM internal errors.
+ * Main use case: application error handlers to create an error report from
+ * EM internal errors.
  *
  * @param[out] str     Output string pointer
  * @param      size    Maximum string length in characters
- * @param      eo      EO id
+ * @param      eo      EO handle
  * @param      error   Error code (EM internal)
  * @param      escope  Error scope (EM internal)
- * @param      args    Variable arguments
+ * @param      args    Variable arguments as passed to the error handler
  *
  * @return Output string length.
  */
 int em_error_format_string(char *str /*out*/, size_t size, em_eo_t eo,
 			   em_status_t error, em_escope_t escope, va_list args);
+/**
+ * @brief Print EM related version information
+ *
+ * Prints the EM version information, as well as version information for the
+ * used ODP and HW etc. (similar to what EM prints at startup).
+ *
+ * For EM API version strings, defines and macros see
+ * include/event_machine/api/event_machine_version.h
+ *
+ * The printed content may vary from one EM release to the next.
+ */
+void em_version_print(void);
+
+/**
+ * @brief Print miscellaneous EM information
+ *
+ * Print information about the running EM instance.
+ * Mainly for debug or startup logging needs.
+ *
+ * The printed content may vary from one EM release to the next.
+ */
+void em_info_print(void);
 
 /*
  * Physical core ids

@@ -1753,23 +1753,26 @@ ack_err:
 
 int em_timer_get_all(em_timer_t *tmr_list, int max)
 {
-	if (EM_CHECK_LEVEL > 0 && unlikely(tmr_list == NULL || max < 1))
-		return 0;
-
-	int num = 0;
-
 	odp_ticketlock_lock(&em_shm->timers.timer_lock);
-	for (int i = 0; i < EM_ODP_MAX_TIMERS; i++) {
-		if (em_shm->timers.timer[i].odp_tmr_pool != ODP_TIMER_POOL_INVALID) {
-			tmr_list[num] = TMR_I2H(i);
-			num++;
-			if (num >= max)
-				break;
+
+	const uint32_t num_timers = em_shm->timers.num_timers;
+
+	if (tmr_list && max > 0 && num_timers > 0) {
+		int num = 0;
+
+		for (int i = 0; i < EM_ODP_MAX_TIMERS; i++) {
+			if (em_shm->timers.timer[i].odp_tmr_pool != ODP_TIMER_POOL_INVALID) {
+				tmr_list[num] = TMR_I2H(i);
+				num++;
+				if (num >= max)
+					break;
+			}
 		}
 	}
+
 	odp_ticketlock_unlock(&em_shm->timers.timer_lock);
 
-	return num;
+	return num_timers;
 }
 
 em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr)

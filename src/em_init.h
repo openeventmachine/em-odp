@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -40,18 +40,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * Initialization status info
- */
-typedef struct {
-	/** init lock */
-	env_spinlock_t lock;
-	/** Is em_init() completed? */
-	int em_init_done;
-	/** The number of EM cores that have run em_init_core() */
-	int em_init_core_cnt;
-} init_t;
 
 /**
  * Pool configuration
@@ -137,27 +125,11 @@ typedef struct {
 	} startup_pools;
 } opt_t;
 
-em_status_t
-poll_drain_mask_check(const em_core_mask_t *logic_mask,
-		      const em_core_mask_t *poll_drain_mask);
+em_status_t input_poll_check(const em_core_mask_t *logic_mask, const em_conf_t *conf);
+em_status_t output_drain_check(const em_core_mask_t *logic_mask, const em_conf_t *conf);
 
-em_status_t
-input_poll_init(const em_core_mask_t *logic_mask, const em_conf_t *conf);
-
-em_status_t
-output_drain_init(const em_core_mask_t *logic_mask, const em_conf_t *conf);
-
-em_status_t
-poll_drain_mask_set_local(bool *const result /*out*/, int core_id,
-			  const em_core_mask_t *mask);
-
-em_status_t
-input_poll_init_local(bool *const result /*out*/, int core_id,
-		      const em_conf_t *conf);
-
-em_status_t
-output_drain_init_local(bool *const result /*out*/, int core_id,
-			const em_conf_t *conf);
+em_status_t input_poll_init_local(void);
+em_status_t output_drain_init_local(void);
 
 /**
  * Set EM core local log function.
@@ -166,8 +138,7 @@ output_drain_init_local(bool *const result /*out*/, int core_id,
  * different log function than EM internal log is needed.
  *
  */
-void
-core_log_fn_set(em_log_func_t func);
+void core_log_fn_set(em_log_func_t func);
 
 /**
  * Set EM core local log function with va_list.

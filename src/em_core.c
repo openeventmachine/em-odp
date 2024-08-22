@@ -144,13 +144,6 @@ void mask_em2odp(const em_core_mask_t *const em_core_mask,
 
 	odp_thrmask_zero(odp_thrmask);
 
-	if (unlikely(!em_shm->init.em_init_done)) {
-		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_INIT,
-			       "Cannot convert EM-mask to ODP-thrmask,\n"
-			       "not all ODP threads are initialized yet.");
-		return;
-	}
-
 	/* EM cores are consecutive 0 -> em_core_count()-1 */
 	for (int i = 0; i < core_count; i++) {
 		if (em_core_mask_isset(i, em_core_mask)) {

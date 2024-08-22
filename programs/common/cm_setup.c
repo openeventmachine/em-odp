@@ -856,6 +856,13 @@ static void startup_all_cores(sync_t *sync, const appl_conf_t *appl_conf,
 
 	odp_barrier_wait(&sync->start_barrier);
 
+	int core_id = em_core_id();
+
+	if (core_id == 0)
+		em_info_print();
+
+	odp_barrier_wait(&sync->start_barrier);
+
 	if (appl_conf->pktio.if_count > 0)
 		pktio_mem_lookup(is_thread_per_core);
 
@@ -871,7 +878,6 @@ static void startup_all_cores(sync_t *sync, const appl_conf_t *appl_conf,
 	 * where they are ready to process events as soon as the EOs have been
 	 * started and queues enabled.
 	 */
-	int core_id = em_core_id();
 	uint64_t cores = appl_conf->core_count;
 
 	/* Ensure all EM cores can find the default event pool */
@@ -1053,6 +1059,9 @@ static void startup_one_core_first(sync_t *sync, const appl_conf_t *appl_conf,
 		if (core_id == 0)
 			env_atomic64_inc(&sync->enter_count);
 	} while (env_atomic64_get(&sync->enter_count) <= 2 * cores);
+
+	if (core_id == 0)
+		em_info_print();
 }
 
 /*

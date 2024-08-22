@@ -312,19 +312,10 @@ void print_cpu_arch_info(void)
 		 "CPU arch:               %s\n"
 		 "CPU ISA version:        %s\n"
 		 " SW ISA version (ODP):  %s\n"
-		 " SW ISA version (EM):   %s\n",
+		 " SW ISA version (EM):   %s\n"
+		 "\n",
 		 odp_cpu_model_str(), cpu_arch,
 		 hw_isa, sw_isa_odp, sw_isa_em);
-}
-
-static void print_odp_info(void)
-{
-	EM_PRINT("ODP API version:        %s\n"
-		 "ODP impl name:          %s\n"
-		 "ODP impl details:       %s\n",
-		 odp_version_api_str(),
-		 odp_version_impl_name(),
-		 odp_version_impl_str());
 }
 
 static void print_mem_info(void)
@@ -401,14 +392,11 @@ static void print_mem_info(void)
 	);
 }
 
-/**
- * Print information about EM & the environment
- */
-void print_em_info(void)
+void print_version_info(void)
 {
 	EM_PRINT("\n"
 		 "===========================================================\n"
-		 "EM Info on target: %s\n"
+		 "EM version information: %s\n"
 		 "===========================================================\n"
 		 "EM API version:         %s\n"
 		 "EM version:             %s, "
@@ -418,13 +406,30 @@ void print_em_info(void)
 		 "32 bit "
 #endif
 		 "(EM_CHECK_LEVEL:%d, EM_ESV_ENABLE:%d)\n"
-		 "EM build info:          %s\n",
+		 "EM build info:          %s\n"
+		 "ODP API version:        %s\n"
+		 "ODP impl name:          %s\n"
+		 "ODP impl details:       %s\n",
 		 EM_TARGET_STR, EM_VERSION_API_STR, EM_VERSION_STR,
 		 EM_CHECK_LEVEL, EM_ESV_ENABLE,
-		 EM_BUILD_INFO_STR);
+		 EM_BUILD_INFO_STR,
+		 odp_version_api_str(),
+		 odp_version_impl_name(),
+		 odp_version_impl_str());
 
-	print_odp_info();
 	print_cpu_arch_info();
+}
+
+/**
+ * Print information about EM & the environment
+ */
+void print_em_info(void)
+{
+	EM_PRINT("\n"
+		 "===========================================================\n"
+		 "EM Info on target: %s\n"
+		 "===========================================================\n",
+		 EM_TARGET_STR);
 	print_mem_info();
 	print_core_map_info();
 	print_queue_capa();

@@ -209,7 +209,6 @@ Test EM Info Print
     # em_info_print
     @{em_info_regex} =    Create List
     ...    ^EM Info on target: em-odp\\s?$(?m)
-    ...    ^EM API version:\\s+\\d+\\.\\d+\\s?$(?m)
     ...    ^Core mapping: EM-core <-> phys-core <-> ODP-thread\\s?$(?m)
     ...    ^ODP Queue Capabilities\\s?$(?m)
     ...    ^EM Queues\\s?$(?m)

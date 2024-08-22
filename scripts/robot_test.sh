@@ -37,6 +37,7 @@ apps["atomic_processing_end"]=programs/performance/atomic_processing_end
 apps["loop"]=programs/performance/loop
 apps["loop_multircv"]=programs/performance/loop_multircv
 apps["loop_refs"]=programs/performance/loop_refs
+apps["loop_vectors"]=programs/performance/loop_vectors
 apps["pairs"]=programs/performance/pairs
 apps["queue_groups"]=programs/performance/queue_groups
 apps["queues_local"]=programs/performance/queues_local
