@@ -33,7 +33,7 @@
  *   EM Timer API is close to ODP timer, but there are issues
  *   making this code a bit more complex than it could be:
  *
- *   1) no periodic timer in ODP
+ *   1) there is no generic periodic timer in ODP
  *   2) unless using the pre-defined timeout event there is no way to access
  *      all necessary information runtime to implement a periodic timer
  *
@@ -320,7 +320,7 @@ static inline bool check_timer_attr(const em_timer_attr_t *tmr_attr)
 	}
 	if (unlikely(tmr_attr->__internal_check != EM_CHECK_INIT_CALLED)) {
 		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_TIMER_CREATE,
-			       "em_timer_attr_t not initialized");
+			       "Not initialized: em_timer_attr_init(tmr_attr) not called");
 		return false;
 	}
 	if (unlikely(tmr_attr->resparam.res_ns && tmr_attr->resparam.res_hz)) {
@@ -340,7 +340,7 @@ static inline bool check_timer_attr_ring(const em_timer_attr_t *ring_attr)
 	}
 	if (EM_CHECK_LEVEL > 0 && unlikely(ring_attr->__internal_check != EM_CHECK_INIT_CALLED)) {
 		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_TIMER_RING_CREATE,
-			       "em_timer_ring_attr_t not initialized");
+			       "Not initialized: em_timer_ring_attr_init(ring_attr) not called");
 		return false;
 	}
 
@@ -349,7 +349,7 @@ static inline bool check_timer_attr_ring(const em_timer_attr_t *ring_attr)
 		     ring_attr->ringparam.max_mul < 1 ||
 		     (ring_attr->flags & EM_TIMER_FLAG_RING) == 0)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_TIMER_RING_CREATE,
-			       "invalid attr values for ring timer");
+			       "Invalid attr values for ring timer");
 		return false;
 	}
 
@@ -1158,16 +1158,14 @@ em_tmo_t em_tmo_create_arg(em_timer_t tmr, em_tmo_flag_t flags,
 	return tmo;
 }
 
-em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
+em_status_t em_tmo_delete(em_tmo_t tmo)
 {
 	if (EM_CHECK_LEVEL > 0) {
-		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF || cur_event == NULL,
+		RETURN_ERROR_IF(tmo == EM_TMO_UNDEF,
 				EM_ERR_BAD_ARG, EM_ESCOPE_TMO_DELETE,
-				"Invalid args: tmo:%" PRI_TMO " cur_event:%p",
-				tmo, cur_event);
+				"Invalid args: tmo:%" PRI_TMO, tmo);
 	}
 
-	*cur_event = EM_EVENT_UNDEF;
 	em_tmo_state_t tmo_state = odp_atomic_load_acq_u32(&tmo->state);
 
 	if (EM_CHECK_LEVEL > 1) {
@@ -1187,45 +1185,29 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 
 	TMR_DBG_PRINT("ODP timer %p\n", tmo->odp_timer);
 
-	/* change this first to increase propability to catch e.g. double delete */
 	odp_atomic_store_rel_u32(&tmo->state, EM_TMO_STATE_UNKNOWN);
 
-	odp_event_t odp_evt;
-
 #if ODP_VERSION_API_NUM(1, 43, 0) <= ODP_VERSION_API
-	/* ODP 1.43 does not allow to delete active timer, do it first */
-	odp_evt = ODP_EVENT_INVALID;
-	if (tmo_state == EM_TMO_STATE_ACTIVE) {
-		int cret;
-
-		if (tmo->is_ring) {
-			cret = odp_timer_periodic_cancel(tmo->odp_timer);
-			RETURN_ERROR_IF(cret != 0, EM_ERR_LIB_FAILED,
-					EM_ESCOPE_TMO_DELETE,
-					"ring active but odp timer cancel failed, rv %d\n", cret);
-		} else {
-			cret = odp_timer_cancel(tmo->odp_timer, &odp_evt);
-			RETURN_ERROR_IF(cret == ODP_TIMER_FAIL, EM_ERR_LIB_FAILED,
-					EM_ESCOPE_TMO_DELETE,
-					"was active but odp timer cancel failed, rv %d\n", cret);
-		}
-
-		TMR_DBG_PRINT("tmo cancelled first, odp rv %d\n", cret);
-	}
-
+	/* ODP 1.43 odp_timer_free() returns status */
 	int fret = odp_timer_free(tmo->odp_timer);
 
 	RETURN_ERROR_IF(fret != 0, EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
 			"odp timer free failed!?, rv %d\n", fret);
 #else
+	/* Older than ODP 1.43 odp_timer_free() returns an event */
+	odp_event_t odp_evt;
+
+	odp_evt = ODP_EVENT_INVALID;
 	odp_evt = odp_timer_free(tmo->odp_timer);
+
+	RETURN_ERROR_IF(odp_evt != ODP_EVENT_INVALID, EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
+			"odp timer free returned an event %p\n", odp_evt);
 #endif
+
 	odp_buffer_t tmp = tmo->odp_buffer;
-	em_event_t tmo_ev = EM_EVENT_UNDEF;
 
 	tmo->odp_timer = ODP_TIMER_INVALID;
 	tmo->odp_buffer = ODP_BUFFER_INVALID;
-	tmo->timer = EM_TIMER_UNDEF;
 
 	if (tmo->is_ring && tmo->odp_timeout != ODP_EVENT_INVALID) {
 		TMR_DBG_PRINT("ring: free unused ODP timeout ev %p\n", tmo->odp_timeout);
@@ -1233,22 +1215,10 @@ em_status_t em_tmo_delete(em_tmo_t tmo, em_event_t *cur_event)
 		tmo->odp_timeout = ODP_EVENT_INVALID;
 	}
 
-	if (odp_evt != ODP_EVENT_INVALID) {
-		/* these errors no not free buffer to prevent potential further corruption */
-		RETURN_ERROR_IF(EM_CHECK_LEVEL > 2 && !odp_event_is_valid(odp_evt),
-				EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
-				"Corrupted tmo event returned");
-		RETURN_ERROR_IF(tmo->is_ring, EM_ERR_LIB_FAILED, EM_ESCOPE_TMO_DELETE,
-				"odp_timer_free returned event %p for a ring!\n", odp_evt);
-
-		tmo_ev = event_odp2em(odp_evt);
-		if (esv_enabled())
-			tmo_ev = evstate_em2usr(tmo_ev, event_to_hdr(tmo_ev), EVSTATE__TMO_DELETE);
-	}
-
 	odp_buffer_free(tmp);
-	*cur_event = tmo_ev;
-	TMR_DBG_PRINT("tmo %p delete ok, event returned %p\n", tmo, tmo_ev);
+
+	TMR_DBG_PRINT("tmo %p delete ok\n", tmo);
+
 	return EM_OK;
 }
 
@@ -1600,18 +1570,22 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event)
 	odp_event_t odp_ev = ODP_EVENT_INVALID;
 	int ret = odp_timer_cancel(tmo->odp_timer, &odp_ev);
 
-	if (ret != 0) { /* speculative, odp does not today separate fail and too late */
+	if (ret == ODP_TIMER_TOO_NEAR) {
 		if (EM_CHECK_LEVEL > 1) {
 			RETURN_ERROR_IF(odp_ev != ODP_EVENT_INVALID,
 					EM_ERR_BAD_STATE, EM_ESCOPE_TMO_CANCEL,
-					"Bug? ODP timer cancel fail but return event!");
+					"ODP timer cancel return TOONEAR but return event!");
 		}
-		TMR_DBG_PRINT("fail, odpret %d. Assume TOONEAR\n", ret);
-		return EM_ERR_TOONEAR; /* expired, other cases caught above */
+		TMR_DBG_PRINT("ODP returned TOONEAR\n");
+		return EM_ERR_TOONEAR;
 	}
 
+	RETURN_ERROR_IF(ret == ODP_TIMER_FAIL,
+			EM_ERR_BAD_STATE, EM_ESCOPE_TMO_CANCEL,
+			"ODP timer cancel fail!");
+
 	/*
-	 * Cancel successful (ret == 0): odp_ev contains the canceled tmo event
+	 * Cancel successful (ret == ODP_TIMER_SUCCESS): odp_ev contains the canceled tmo event
 	 */
 
 	if (EM_CHECK_LEVEL > 2) {

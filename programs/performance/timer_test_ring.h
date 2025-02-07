@@ -51,8 +51,8 @@ const char *descopts[] = {
 	"Relative start offset in timer ticks. Default 0. Can be comma separated list.",
 	"Add extra processing delay per tmo receive, ns. Default 0. Negative is random up to",
 	"Delete and re-create timers every loop, default no",
-	"Re-use tmo handles (new loop), default no",
-	"Re-use tmo event (new loop), default no",
+	"Reuse tmo handles (new loop), default no",
+	"Reuse tmo event (new loop), default no",
 	"Profile API call times, default no",
 	"Print usage and exit",
 	NULL

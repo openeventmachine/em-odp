@@ -529,7 +529,7 @@ uint64_t random_work_ns(rnd_state_t *rng)
 
 	random_r(&rng->rdata, &r1);
 	r = (uint64_t)r1;
-	if (r % 100 >= g_options.work_prop) /* propability of work roughly */
+	if (r % 100 >= g_options.work_prop) /* probability of work roughly */
 		return 0;
 
 	random_r(&rng->rdata, &r1);
@@ -1072,7 +1072,9 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 				add_prof(eo_ctx, t1, OP_PROF_CANCEL, msg);
 			test_fatal_if(ret == EM_OK, "tmo_cancel ok, expecting fail here!\n");
 		} else {
-			ret = em_tmo_delete(msg->tmo, &tmo_event);
+			if (em_tmo_get_state(msg->tmo) == EM_TMO_STATE_ACTIVE)
+				em_tmo_cancel(msg->tmo, &tmo_event);
+			ret = em_tmo_delete(msg->tmo);
 			if (g_options.profile)
 				add_prof(eo_ctx, t1, OP_PROF_DELETE, msg);
 			test_fatal_if(ret != EM_OK, "tmo_delete failed, ret %" PRI_STAT "!\n", ret);
@@ -1929,7 +1931,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	APPL_PRINT(" use NOSKIP:   %s\n", g_options.noskip ? "yes" : "no");
 	APPL_PRINT(" profile API:  %s\n", g_options.profile ? "yes" : "no");
 	APPL_PRINT(" dispatch prof:%s\n", g_options.dispatch ? "yes" : "no");
-	APPL_PRINT(" work propability:%u %%\n", g_options.work_prop);
+	APPL_PRINT(" work probability:%u %%\n", g_options.work_prop);
 	if (g_options.work_prop) {
 		APPL_PRINT(" min_work:     %luns\n", g_options.min_work_ns);
 		APPL_PRINT(" max_work:     %luns\n", g_options.max_work_ns);
@@ -2086,7 +2088,9 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 		return EM_OK;
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
-		em_tmo_delete(eo_ctx->heartbeat_tmo, &event);
+		if (em_tmo_get_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->heartbeat_tmo, &event);
+		em_tmo_delete(eo_ctx->heartbeat_tmo);
 		eo_ctx->heartbeat_tmo = EM_TMO_UNDEF;
 		if (event != EM_EVENT_UNDEF)
 			em_free(event);
@@ -2098,7 +2102,9 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 	for (int i = 0; i < g_options.num_periodic; i++) {
 		if (eo_ctx->tmo_data[i].handle != EM_TMO_UNDEF) {
 			event = EM_EVENT_UNDEF;
-			em_tmo_delete(eo_ctx->tmo_data[i].handle, &event);
+			if (em_tmo_get_state(eo_ctx->tmo_data[i].handle) == EM_TMO_STATE_ACTIVE)
+				em_tmo_cancel(eo_ctx->tmo_data[i].handle, &event);
+			em_tmo_delete(eo_ctx->tmo_data[i].handle);
 			eo_ctx->tmo_data[i].handle = EM_TMO_UNDEF;
 			if (event != EM_EVENT_UNDEF)
 				em_free(event);

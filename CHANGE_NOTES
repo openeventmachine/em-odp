@@ -53,6 +53,36 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.8.0
+--------------------------------------------------------------------------------
+- Support for EM API v3.8 (em-odp/include/),
+  see API additions and changes in em-odp/include/event_machine/README_API.
+  Summary:
+  * Timer: change the em_tmo_delete() API function and
+           enhance the timeout cancel and delete logic.
+     NOTE: Both an API and functional change, requires changes to
+           user code logic!
+  * Init: check that em_conf_init() has been called before em_init()
+
+- Fixes:
+ - timer: fix proper handling of the return values of odp_timer_cancel()
+   The odp_timer_cancel() return values changed in ODP v1.41.1.
+   The return value separates failure from expired timeout.
+
+ - event, fix: update check for setting vector evtype
+   In em_event_set_type(), when setting a new event type for a vector event:
+   The new major event type is only used if EM_CHECK_LEVEL >= 1, thus move the
+   variable declaration inside the if-statment.
+   Avoids potential compilation warnings with EM_CHECK_LEVEL = 0.
+
+- Programs:
+ - New performance test program added.
+  - programs/performance/loop_united.c
+    Combines the existing performance test programs pairs, loop, loop_multircv,
+    loop_refs and loop_vectors into a single program that can run all the
+    individual tests via command line options.
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.7.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.7 (em-odp/include/),

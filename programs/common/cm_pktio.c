@@ -1226,7 +1226,7 @@ int pktio_tx(const em_event_t events[], const unsigned int num,
 				    MAX_TX_BURST_BUFS);
 	pktio_tx_fn_args_t *const args = output_fn_args;
 	const int if_port = (int)(args->if_id % IF_MAX_NUM);
-	/* Select tx-burst onto which to temporaily store pkt/event until tx */
+	/* Select tx-burst onto which to temporarily store pkt/event until tx */
 	tx_burst_t *const tx_burst = &pktio_shm->tx_burst[if_port][burst_idx];
 	uint64_t prev_cnt;
 	int ret;

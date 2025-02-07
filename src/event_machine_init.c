@@ -60,6 +60,7 @@ void em_conf_init(em_conf_t *conf)
 	}
 	memset(conf, 0, sizeof(em_conf_t));
 	em_pool_cfg_init(&conf->default_pool_cfg);
+	conf->__internal_check = EM_CHECK_INIT_CALLED;
 }
 
 em_status_t em_init(const em_conf_t *conf)
@@ -69,6 +70,10 @@ em_status_t em_init(const em_conf_t *conf)
 
 	RETURN_ERROR_IF(!conf, EM_FATAL(EM_ERR_BAD_ARG), EM_ESCOPE_INIT,
 			"Conf pointer NULL!");
+
+	RETURN_ERROR_IF(conf->__internal_check != EM_CHECK_INIT_CALLED,
+			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_INIT,
+			"Not initialized: em_conf_init(conf) not called");
 
 	stat = early_log_init(conf->log.log_fn, conf->log.vlog_fn);
 	RETURN_ERROR_IF(stat != EM_OK, EM_FATAL(stat),
@@ -190,7 +195,7 @@ em_status_t em_init(const em_conf_t *conf)
 			"event_init() failed:%" PRI_STAT "", stat);
 
 	stat = event_group_init(&em_shm->event_group_tbl,
-				&em_shm->event_group_pool);
+				&em_shm->event_group_stash);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"event_group_init() failed:%" PRI_STAT "", stat);
 
@@ -400,6 +405,10 @@ em_status_t em_term(const em_conf_t *conf)
 			"pool_term() failed:%" PRI_STAT "", stat);
 
 	env_shared_free(em_shm->queue_tbl.queue_elem);
+
+	stat = event_group_term();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			"event_group_term() failed.");
 
 	/*
 	 * Free the EM shared memory

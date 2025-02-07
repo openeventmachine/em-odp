@@ -444,7 +444,8 @@ em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param);
  * Immediately delete the given EO and free the identifier.
  *
  * NOTE, that an EO can only be deleted after it has been stopped using
- * em_eo_stop(), otherwise another core might still access the EO data.
+ * em_eo_stop() with notifications or em_eo_stop_sync(), otherwise another core
+ * might still access the EO data.
  * All associated queues must be removed before deleting an EO.
  *
  * A sequence of

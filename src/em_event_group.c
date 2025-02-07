@@ -30,48 +30,99 @@
 
 #include "em_include.h"
 
-static inline event_group_elem_t *
-egrp_poolelem2egrp(objpool_elem_t *const event_group_pool_elem)
-{
-	return (event_group_elem_t *)((uintptr_t)event_group_pool_elem -
-			offsetof(event_group_elem_t, event_group_pool_elem));
-}
-
 em_status_t
 event_group_init(event_group_tbl_t *const event_group_tbl,
-		 event_group_pool_t *const event_group_pool)
+		 odp_stash_t *const event_group_stash)
 {
+	uint32_t idx;
+	uint32_t val;
+	odp_stash_t stash;
+	em_status_t err_status;
 	event_group_elem_t *egrp_elem;
-	const uint32_t objpool_subpools = OBJSUBPOOLS_MAX;
+	odp_stash_param_t stash_param;
+	odp_stash_capability_t stash_capa;
 
-	int ret;
+	if (odp_stash_capability(&stash_capa, ODP_STASH_TYPE_FIFO) != 0)
+		return EM_ERR_LIB_FAILED;
+
+	if (stash_capa.max_num.u32 < EM_MAX_EVENT_GROUPS) {
+		EM_LOG(EM_LOG_ERR,
+		       "Maximum number of event groups(%d) exceeds the maximum\n"
+		       "number of object handles(%" PRIu64 ") a stash can hold.\n",
+		       EM_MAX_EVENT_GROUPS, stash_capa.max_num.u32);
+		return EM_ERR_TOO_LARGE;
+	}
 
 	memset(event_group_tbl, 0, sizeof(event_group_tbl_t));
-	memset(event_group_pool, 0, sizeof(event_group_pool_t));
 	env_atomic32_init(&em_shm->event_group_count);
 
-	for (int i = 0; i < EM_MAX_EVENT_GROUPS; i++) {
-		em_event_group_t egrp = egrp_idx2hdl(i);
+	odp_stash_param_init(&stash_param);
 
-		egrp_elem = event_group_elem_get(egrp);
-		if (unlikely(!egrp_elem))
-			return EM_ERR_BAD_POINTER;
+	stash_param.type = ODP_STASH_TYPE_FIFO;
+	stash_param.put_mode = ODP_STASH_OP_MT;
+	stash_param.get_mode = ODP_STASH_OP_MT;
+	stash_param.num_obj = EM_MAX_EVENT_GROUPS;
+	stash_param.obj_size = sizeof(uint32_t);
 
-		egrp_elem->event_group = egrp; /* store handle */
+	stash = odp_stash_create("event_grp", &stash_param);
+	if (stash == ODP_STASH_INVALID)
+		return EM_ERR_LIB_FAILED;
+
+	for (idx = 0; idx < EM_MAX_EVENT_GROUPS; idx++) {
+		egrp_elem = &em_shm->event_group_tbl.egrp_elem[idx];
+
+		egrp_elem->event_group = egrp_idx2hdl(idx); /* store handle */
 		egrp_elem->all = 0; /* set num_notif = 0, ready = 0 */
 		env_atomic64_set(&egrp_elem->post.atomic, 0);
 		env_atomic64_set(&egrp_elem->pre.atomic, 0);
+
+		egrp_elem->in_stash = true;
+		if (odp_stash_put_u32(stash, &idx, 1) != 1) {
+			err_status = EM_ERR_LIB_FAILED;
+			egrp_elem->in_stash = false;
+			goto error_return;
+		}
 	}
 
-	ret = objpool_init(&event_group_pool->objpool, objpool_subpools);
-	if (ret != 0)
+	*event_group_stash = stash;
+	return EM_OK;
+
+error_return:
+	/* Empty the stash before destroying it */
+	for (uint32_t i = 0; i < idx; i++) {
+		odp_stash_get_u32(stash, &val, 1);
+
+		egrp_elem = &em_shm->event_group_tbl.egrp_elem[i];
+
+		egrp_elem->event_group = EM_EVENT_GROUP_UNDEF;
+		egrp_elem->in_stash = false;
+	}
+
+	odp_stash_destroy(stash);
+	return err_status;
+}
+
+em_status_t event_group_term(void)
+{
+	uint32_t tmp;
+	int32_t num;
+	odp_stash_t stash = em_shm->event_group_stash;
+
+	while (1) {
+		num = odp_stash_get_u32(stash, &tmp, 1);
+
+		if (num == 1)
+			continue;
+
+		if (num == 0)
+			break;
+
+		EM_PRINT("Stash get failed: %i\n", num);
 		return EM_ERR_LIB_FAILED;
-
-	for (uint32_t i = 0; i < EM_MAX_EVENT_GROUPS; i++) {
-		egrp_elem = &event_group_tbl->egrp_elem[i];
-		objpool_add(&event_group_pool->objpool, i % objpool_subpools,
-			    &egrp_elem->event_group_pool_elem);
 	}
+
+	if (odp_stash_destroy(stash))
+		return EM_ERR_LIB_FAILED;
 
 	return EM_OK;
 }
@@ -79,31 +130,40 @@ event_group_init(event_group_tbl_t *const event_group_tbl,
 em_event_group_t
 event_group_alloc(void)
 {
-	const event_group_elem_t *egrp_elem;
-	objpool_elem_t *egrp_pool_elem;
+	uint32_t idx;
+	event_group_elem_t *egrp_elem;
 
-	egrp_pool_elem = objpool_rem(&em_shm->event_group_pool.objpool,
-				     em_core_id());
-	if (unlikely(egrp_pool_elem == NULL))
+	if (unlikely(odp_stash_get_u32(em_shm->event_group_stash, &idx, 1) != 1))
 		return EM_EVENT_GROUP_UNDEF;
 
-	egrp_elem = egrp_poolelem2egrp(egrp_pool_elem);
+	if (EM_EVENT_GROUP_SAFE_MODE && idx >= EM_MAX_EVENT_GROUPS)
+		return EM_EVENT_GROUP_UNDEF;
+
+	egrp_elem = &em_shm->event_group_tbl.egrp_elem[idx];
+	egrp_elem->in_stash = false;
 
 	env_atomic32_inc(&em_shm->event_group_count);
-	return egrp_elem->event_group;
+
+	return egrp_idx2hdl(idx);
 }
 
 em_status_t
 event_group_free(em_event_group_t event_group)
 {
 	event_group_elem_t *egrp_elem = event_group_elem_get(event_group);
+	uint32_t idx = (uint32_t)egrp_hdl2idx(event_group);
 
 	if (unlikely(egrp_elem == NULL))
 		return EM_ERR_BAD_ID;
 
-	objpool_add(&em_shm->event_group_pool.objpool,
-		    egrp_elem->event_group_pool_elem.subpool_idx,
-		    &egrp_elem->event_group_pool_elem);
+	if (unlikely(egrp_elem->in_stash))
+		return EM_ERR_BAD_STATE;
+
+	egrp_elem->in_stash = true;
+	if (unlikely(odp_stash_put_u32(em_shm->event_group_stash, &idx, 1) != 1)) {
+		egrp_elem->in_stash = false;
+		return EM_ERR_LIB_FAILED;
+	}
 
 	env_atomic32_dec(&em_shm->event_group_count);
 	return EM_OK;
@@ -139,7 +199,7 @@ void event_group_info_print(void)
 	 * by iterating with em_event_group_get_next() if event groups are added
 	 * or removed in parallel by another core. Thus space for 10 extra event
 	 * groups is reserved. If more than 10 event groups are added by other
-	 * cores in paralle, we print only information of the (egrp_num + 10)
+	 * cores in parallel, we print only information of the (egrp_num + 10)
 	 * event groups.
 	 *
 	 * The extra 1 byte is reserved for the terminating null byte.

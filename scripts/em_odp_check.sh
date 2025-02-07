@@ -29,17 +29,17 @@ IGNORE+='STRNCPY',
 IGNORE+='TRACING_LOGGING'
 
 # Run cleanfile
-$DIR/cleanfile $1 2> /dev/null
+"$DIR"/cleanfile "$1" 2> /dev/null
 
 # Run checkpatch
-$DIR/checkpatch.pl --file --no-tree --ignore $IGNORE --mailback --strict --terse \
- --no-summary --show-types $1 2> /dev/null
+"$DIR"/checkpatch.pl --file --no-tree --ignore $IGNORE --mailback --strict --terse \
+ --no-summary --show-types "$1" 2> /dev/null
 ret_checkpatch=$?
 
 # Run codespell (if installed) with default dictionary-file from installation
 ret_codespell=0
 if which codespell > /dev/null; then
-	codespell $1 --ignore-words-list=ptd,numer,stdio,endcode
+	codespell "$1" --ignore-words-list=ptd,numer,stdio,endcode
 	ret_codespell=$?
 fi
 

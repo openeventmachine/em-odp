@@ -90,8 +90,9 @@ typedef struct {
 
 	/** The event group handle associated with this element */
 	em_event_group_t event_group;
-	/** Associated pool element for this event group */
-	objpool_elem_t event_group_pool_elem;
+
+	/** true/false, event group is in stash(free/unused) */
+	bool in_stash;
 } event_group_elem_t ENV_CACHE_LINE_ALIGNED;
 
 COMPILE_TIME_ASSERT(offsetof(event_group_elem_t, all) + sizeof(uint64_t)
@@ -104,13 +105,6 @@ typedef struct {
 	/** Event group element table */
 	event_group_elem_t egrp_elem[EM_MAX_EVENT_GROUPS];
 } event_group_tbl_t;
-
-/**
- * Pool of free event groups
- */
-typedef struct {
-	objpool_t objpool;
-} event_group_pool_t;
 
 #ifdef __cplusplus
 }

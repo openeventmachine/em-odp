@@ -1386,7 +1386,7 @@ int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg, const char **err_str/*out*/)
 		return -1;
 	}
 	if (pool_cfg->__internal_check != EM_CHECK_INIT_CALLED) {
-		*err_str = "Pool config not initialized";
+		*err_str = "Not initialized: em_pool_cfg_init(pool_cfg) not called";
 		return -1;
 	}
 

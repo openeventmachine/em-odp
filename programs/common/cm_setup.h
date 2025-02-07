@@ -217,7 +217,7 @@ typedef struct {
 extern appl_shm_t *appl_shm;
 
 /**
- * Common setup function for the appliations,
+ * Common setup function for the applications,
  * usually called directly from main().
  */
 int cm_setup(int argc, char *argv[]);

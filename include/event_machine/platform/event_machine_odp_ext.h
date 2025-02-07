@@ -213,7 +213,7 @@ void em_odp_events2em(const odp_event_t odp_events[/*num*/],
  *  - print ODP-level pool statistics with ODP APIs etc.
  *
  * Note that direct allocations and free:s via ODP APIs will bypass
- * EM checks (e.g. ESV) and might cause errors unless properely handled:
+ * EM checks (e.g. ESV) and might cause errors unless properly handled:
  *  - use em_odp_event2em() to initialize as an EM event
  *  - use em_event_mark_free() before ODP-free operations (SW- or HW-free)
  *

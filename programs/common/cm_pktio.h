@@ -141,7 +141,7 @@ typedef struct {
  * the associated 'pktout_queue' at once.
  */
 typedef struct tx_burst {
-	/** store tx pkts temporaily in 'queue' before bursting onto tx */
+	/** store tx pkts temporarily in 'queue' before bursting onto tx */
 	odp_queue_t queue ODP_ALIGNED_CACHE;
 	/** count the number of events in 'queue', updated atomically */
 	odp_atomic_u64_t cnt;

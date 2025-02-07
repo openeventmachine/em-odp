@@ -63,7 +63,7 @@ const char *descopts[] = {
 	"Write raw trace data in csv format to given file e.g.-wtest.csv (default stdout)",
 	"Number of test runs, 0 to run forever",
 	"Trace buffer size (events per core). Optional stop threshold % e.g. -t100,80 to stop 80% before full",
-	"Extra work per tmo: -e1,20,50 e.g. min_us,max_us,propability % of work",
+	"Extra work per tmo: -e1,20,50 e.g. min_us,max_us,probability % of work",
 	"Extra background job: -j2,20,500,10 e.g. num,time_us,total_kB,chunk_kB",
 	"Create timer without NOSKIP option",
 	"Measure API calls",
@@ -102,11 +102,11 @@ const char *instructions =
 "\nBy default there is no background load and the handling of incoming\n"
 "timeouts (to high priority parallel queue) is minimized. Extra work can be\n"
 "added in two ways:\n\n"
-"1) --extra-work min us, max us, propability %\n"
+"1) --extra-work min us, max us, probability %\n"
 "	this will add random delay between min-max before calling ack().\n"
-"	Delay is added with the given propability (100 for all tmos)\n"
+"	Delay is added with the given probability (100 for all tmos)\n"
 "	e.g. -e10,100,50 to add random delay between 10 and 100us with 50%\n"
-"	propability\n"
+"	probability\n"
 "2) --background-job  num,length us,total_kB,chunk_kB\n"
 "	this adds background work handled via separate low priority parallel\n"
 "	queue. num events are sent at start. Receiving touches given amount\n"

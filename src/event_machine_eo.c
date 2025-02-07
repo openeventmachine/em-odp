@@ -127,7 +127,7 @@ em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param)
 
 	if (unlikely(!param ||
 		     param->__internal_check != EM_CHECK_INIT_CALLED)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EO_CREATE_MULTIRCV,
+		INTERNAL_ERROR(EM_ERR_NOT_INITIALIZED, EM_ESCOPE_EO_CREATE_MULTIRCV,
 			       "Invalid param ptr:\n"
 			       "Use em_eo_multircv_param_init() before create");
 		return EM_EO_UNDEF;

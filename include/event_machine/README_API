@@ -6,6 +6,43 @@ EM API Release Notes
 - See em-odp/README for usage and compilation instructions.
 
 --------------------------------------------------------------------------------
+API 3.8 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=8)
+--------------------------------------------------------------------------------
+1. Timer: change the em_tmo_delete() API function and
+          enhance the timeout cancel and delete logic.
+   (see include/event_machine/api/event_machine_timer.h)
+
+   NOTE: Both an API and functional change, requires changes to user code logic!
+
+   Remove the possibility to delete an active timeout.
+   The API function em_tmo_delete() does not return the timeout event anymore.
+   Only an inactive timeout can be deleted. The timeout must be successfully
+   canceled, or the timeout must be expired and the corresponding timeout event
+   received, before deletion. The user must be prepared to receive the last
+   timeout event if cancelling the timeout fails (e.g. too late) and only after
+   that delete the timeout.
+   A periodic or a periodic ring timeout can be deleted after a successful
+   cancel, or if cancel fails with EM_ERR_TOONEAR when em_tmo_ack() has returned
+   EM_ERR_CANCELED - this indicates that the acknowledged timeout is canceled
+   and that it was the last timeout event coming for that periodic timeout.
+   The change is needed to make the API more robust and reliable.
+
+2. Init: check that em_conf_init() has been called before em_init()
+   (see include/event_machine/platform/event_machine_init.h)
+
+   Verify that the user has called em_conf_init(conf) to initialize the
+   EM configuration with default values before calling em_init(conf),
+   otherwise an error is reported an em_init() returns failure.
+
+	em_conf_t conf;
+	em_conf_init(&conf); /* Mandatory! */
+	conf. ... = ...;     /* Set needed EM options */
+	...
+	ret = em_init(&conf); /* Initialize EM once */
+	...
+	ret = em_init_core(); /* Initialize each EM-core separately */
+
+--------------------------------------------------------------------------------
 API 3.7 (EM_VERSION_API_MAJOR=3, EM_VERSION_API_MINOR=7)
 --------------------------------------------------------------------------------
 1. Timer, fix: em_timer_get_all() always returns the actual number of timers.

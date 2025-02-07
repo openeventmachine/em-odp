@@ -281,7 +281,7 @@ static void alloc_free_event(void)
 /* Write selected pool stats without cache_available counters to a different csv
  * file than the csv file for pool stats with cache_available. since selected
  * pool stats with and without cache_available are in different scale. Different
- *  file means they will be ploted in different charts in our benchmark website.
+ * file means they will be plotted in different charts in our benchmark website.
  */
 static void write_result_to_csv(void)
 {

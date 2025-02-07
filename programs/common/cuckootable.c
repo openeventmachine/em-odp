@@ -152,7 +152,7 @@ typedef struct ODP_ALIGNED_CACHE {
  * Aligns input parameter to the next power of 2
  *
  * @param x
- *   The integer value to algin
+ *   The integer value to align
  *
  * @return
  *   Input parameter aligned to the next power of 2

@@ -89,8 +89,8 @@ typedef struct {
 	atomic_group_pool_t atomic_group_pool ENV_CACHE_LINE_ALIGNED;
 	/** Event group table */
 	event_group_tbl_t event_group_tbl ENV_CACHE_LINE_ALIGNED;
-	/** Event group pool of free/unused queue groups */
-	event_group_pool_t event_group_pool ENV_CACHE_LINE_ALIGNED;
+	/** Event group stash of free/unused queue groups */
+	odp_stash_t event_group_stash ENV_CACHE_LINE_ALIGNED;
 	/** Error handler structure */
 	error_handler_t error_handler ENV_CACHE_LINE_ALIGNED;
 

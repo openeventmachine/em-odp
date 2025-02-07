@@ -228,7 +228,7 @@ void test_start(const appl_conf_t *appl_conf)
 		   error_shm->pool);
 
 	/*
-	 * Register the application specifig global error handler
+	 * Register the application specific global error handler
 	 * This replaces the EM internal default error handler
 	 */
 	ret = em_register_error_handler(global_error_handler);

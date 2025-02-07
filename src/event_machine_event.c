@@ -946,12 +946,14 @@ em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype)
 	}
 	case ODP_EVENT_PACKET_VECTOR: {
 		odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
-		em_event_type_t new_major = em_event_type_major(newtype);
 
-		if (EM_CHECK_LEVEL >= 1)
+		if (EM_CHECK_LEVEL >= 1) {
+			em_event_type_t new_major = em_event_type_major(newtype);
+
 			RETURN_ERROR_IF(new_major != EM_EVENT_TYPE_VECTOR,
 					EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_SET_TYPE,
 					"Event type:0x%x not suitable for a vector", newtype);
+		}
 		ev_hdr = odp_packet_vector_user_area(odp_pktvec);
 		break;
 	}

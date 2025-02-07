@@ -3,7 +3,7 @@ AC_PREREQ([2.69])
 # Version
 ############################
 m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [7])
+m4_define([em_version_api_minor], [8])
 m4_define([em_version_implementation], [0])
 m4_define([em_version_fix], [0])
 
@@ -724,6 +724,7 @@ AC_MSG_RESULT([
 	am_cppflags:		${AM_CPPFLAGS}
 	cflags:			${CFLAGS}
 	am_cflags:		${AM_CFLAGS}
+	cxxflags:		${CXXFLAGS}
 	am_cxxflags:		${AM_CXXFLAGS}
 	ld:			${LD}
 	ldflags:		${LDFLAGS}
