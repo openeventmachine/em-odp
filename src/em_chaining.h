@@ -41,34 +41,34 @@ extern "C" {
 #endif
 
 #pragma GCC visibility push(default)
+
 /**
- * This function is declared as a weak symbol, indicating that the user should
- * override it during linking with another implementation if event chaining is
- * used.
+ * Send an event to out of EM.
+ * This function is declared as a weak symbol in default implementation
+ * in em_chaining.c, indicating that the user can override it during
+ * linking with another implementation if event chaining is used.
  */
-__attribute__((weak))
 em_status_t event_send_device(em_event_t event, em_queue_t queue);
+
 /**
- * This function is declared as a weak symbol, indicating that the user should
- * override it during linking with another implementation if event chaining is
- * used.
+ * Send multiple events to out of EM.
+ * This function is declared as a weak symbol in default implementation
+ * in em_chaining.c, indicating that the user can override it during
+ * linking with another implementation if event chaining is used.
  */
-__attribute__((weak))
-int event_send_device_multi(const em_event_t events[], int num,
-			    em_queue_t queue);
+int event_send_device_multi(const em_event_t events[], int num, em_queue_t queue);
+
 #pragma GCC visibility pop
 
 /**
- * Initialize event chaining during start-up
+ * Initialize event chaining during start-up.
  */
-em_status_t
-chaining_init(event_chaining_t *event_chaining);
+em_status_t chaining_init(event_chaining_t *event_chaining);
 
 /**
- * Terminate event chaining during shut-down
+ * Terminate event chaining during shut-down.
  */
-em_status_t
-chaining_term(const event_chaining_t *event_chaining);
+em_status_t chaining_term(const event_chaining_t *event_chaining);
 
 /**
  * Send an event to out of EM (e.g. to another device) via event-chaining and a

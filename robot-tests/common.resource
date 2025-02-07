@@ -72,7 +72,7 @@ Run EM-ODP Test
 
     # sleep_time: sleep time (in seconds) before sending SIGINT to the em-odp application
     # regex_match: regex pattern that must be matched
-    [Arguments]    ${sleep_time}    ${regex_match}
+    [Arguments]    ${sleep_time}    ${regex_match}    ${args}=@{EMPTY}
 
     # In order to start application log from a new line
     Log To Console    \n
@@ -80,6 +80,7 @@ Run EM-ODP Test
     # Run application with given arguments
     ${app_handle} =    Process.Start Process  taskset  -c  ${TASKSET_CORES}  ${APPLICATION}
     ...    @{CM_ARGS}
+    ...    @{args}
     ...    stderr=STDOUT
     ...    shell=True
     ...    stdout=${TEMPDIR}/stdout.txt

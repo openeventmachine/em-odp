@@ -35,15 +35,16 @@ int chaining_output(const em_event_t events[], const unsigned int num,
 		    const em_queue_t output_queue, void *output_fn_args);
 
 /**
- * This function is declared as a weak symbol in em_chaining.h, meaning that the
- * user can override it during linking with another implementation.
+ * Default implementation is declared as a weak symbol, meaning that the
+ * user can override the function during linking with another implementation.
  */
-em_status_t
-event_send_device(em_event_t event, em_queue_t queue)
+__attribute__((weak))
+em_status_t event_send_device(em_event_t event, em_queue_t queue)
 {
 	internal_queue_t iq = {.queue = queue};
 
 	(void)event;
+
 	return INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
 			      EM_ESCOPE_EVENT_SEND_DEVICE,
 			      "No %s() function given!\t"
@@ -52,16 +53,17 @@ event_send_device(em_event_t event, em_queue_t queue)
 }
 
 /**
- * This function is declared as a weak symbol in em_chaining.h, meaning that the
- * user can override it during linking with another implementation.
+ * Default implementation is declared as a weak symbol, meaning that the
+ * user can override the function during linking with another implementation.
  */
-int
-event_send_device_multi(const em_event_t events[], int num, em_queue_t queue)
+__attribute__((weak))
+int event_send_device_multi(const em_event_t events[], int num, em_queue_t queue)
 {
 	internal_queue_t iq = {.queue = queue};
 
 	(void)events;
 	(void)num;
+
 	INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
 		       EM_ESCOPE_EVENT_SEND_DEVICE_MULTI,
 		       "No %s() function given!\t"

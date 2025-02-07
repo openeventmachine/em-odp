@@ -80,14 +80,14 @@
 #define APP_CHECK_LIMIT		(3 * (APP_CHECK_COUNT + 1)) /* num HB */
 #define APP_CHECK_GUARD		6 /* num HB */
 
-#define APP_CANCEL_MODULO_P	(APP_MAX_PERIODIC * 50) /* cancel propability*/
-#define APP_CANCEL_MODULO	(APP_MAX_TMOS * 5) /* cancel propability */
+#define APP_CANCEL_MODULO_P	(APP_MAX_PERIODIC * 50) /* cancel probability */
+#define APP_CANCEL_MODULO	(APP_MAX_TMOS * 5) /* cancel probability */
 #define APP_CANCEL_MARGIN_NS	100000 /* check limit for cancel fail ok */
 #define APP_LINUX_CLOCK_SRC	CLOCK_MONOTONIC /* for clock_gettime */
 #define APP_INCREASING_DLY	7 /* if not 0, add this to increasing
 				   * delay before calling periodic timer ack
 				   */
-#define APP_INC_DLY_MODULO	15 /* apply increasing delay to every Nth tmo*/
+#define APP_INC_DLY_MODULO	15 /* apply increasing delay to every Nth tmo */
 
 #if APP_VISUAL_DEBUG
 #define VISUAL_DBG(x)		APPL_PRINT(x)
@@ -568,7 +568,11 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 	APPL_PRINT("EO stop\n");
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
-		em_tmo_delete(eo_ctx->heartbeat_tmo, &event);
+		if (em_tmo_get_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->heartbeat_tmo, &event);
+
+		em_tmo_delete(eo_ctx->heartbeat_tmo);
+
 		eo_ctx->heartbeat_tmo = EM_TMO_UNDEF;
 		if (event != EM_EVENT_UNDEF)
 			em_free(event);
@@ -808,7 +812,7 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 	uint64_t t1, t2;
 	struct timespec ts1, ts2;
 
-	/* timeouts allocate new events every time (could re-use old ones).
+	/* timeouts allocate new events every time (could reuse old ones).
 	 * Do this first so we can time just the tmo creation
 	 */
 	for (i = 0; i < APP_MAX_TMOS; i++) {
@@ -829,7 +833,7 @@ void set_timeouts(app_eo_ctx_t *eo_ctx)
 
 	t1 = em_timer_current_tick(m_shm->tmr);
 	clock_gettime(APP_LINUX_CLOCK_SRC, &ts1);
-	/* allocate new tmos every time (could re-use) */
+	/* allocate new tmos every time (could reuse) */
 	for (i = 0; i < APP_MAX_TMOS; i++) {
 		em_tmo_t tmo = em_tmo_create(m_shm->tmr, EM_TMO_FLAG_ONESHOT,
 					     eo_ctx->my_prio_q);
@@ -997,9 +1001,13 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 		if (eo_ctx->oneshot.tmo[i].tmo == EM_TMO_UNDEF)
 			continue;
 
-		if (em_tmo_delete(eo_ctx->oneshot.tmo[i].tmo, &evt) != EM_OK)
+		if (em_tmo_get_state(eo_ctx->oneshot.tmo[i].tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->oneshot.tmo[i].tmo, &evt);
+
+		if (em_tmo_delete(eo_ctx->oneshot.tmo[i].tmo) != EM_OK)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
-				   "Can't delete tmo!\n");
+				   "Can't free tmo!\n");
+
 		eo_ctx->oneshot.tmo[i].tmo = EM_TMO_UNDEF;
 		if (evt != EM_EVENT_UNDEF && !appl_shm->exit_flag) {
 			APPL_PRINT("WARN - tmo_delete returned event,\n"
@@ -1023,7 +1031,10 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 		if (eo_ctx->periodic.tmo[i].tmo == EM_TMO_UNDEF)
 			continue;
 
-		if (em_tmo_delete(eo_ctx->periodic.tmo[i].tmo, &evt) != EM_OK)
+		if (em_tmo_get_state(eo_ctx->periodic.tmo[i].tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->periodic.tmo[i].tmo, &evt);
+
+		if (em_tmo_delete(eo_ctx->periodic.tmo[i].tmo) != EM_OK)
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
 				   "Can't delete periodic tmo!\n");
 		eo_ctx->periodic.tmo[i].tmo = EM_TMO_UNDEF;

@@ -169,7 +169,7 @@ em_status_t em_event_group_delete(em_event_group_t event_group);
  * counted against the current count value. Notification events are sent when
  * all (counted) events have been processed (count is decremented at EO receive
  * return or by calling em_event_group_processing_end()). A new apply call is
- * needed to re-use the event group for another cycle (with a new count and
+ * needed to reuse the event group for another cycle (with a new count and
  * notifications).
  *
  * Notification events can optionally be sent to/tagged with another event
@@ -219,7 +219,7 @@ em_status_t em_event_group_increment(int count);
  *
  * Returns EM_TRUE (1) if the given event group is ready, i.e. the user can do
  * em_event_group_apply() again. A better alternative to this is to use a
- * related notification event to re-use the event group (apply can always be
+ * related notification event to reuse the event group (apply can always be
  * used when handling a notification event from the event group).
  *
  * An event group that has been applied a count but no events sent is not
@@ -368,7 +368,7 @@ em_status_t em_event_group_assign(em_event_group_t event_group);
  * 2) call em_event_group_abort()
  * 3) IF em_event_group_abort() returns EM_OK the operation was successfully
  *    completed meaning the earlier notifications will not be sent thus the
- *    saved notifications can be freed or re-used. Otherwise the call was made
+ *    saved notifications can be freed or reused. Otherwise the call was made
  *    too late and the saved notifications must not be touched as they are to
  *    be sent.
  *

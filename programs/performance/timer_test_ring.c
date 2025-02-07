@@ -395,7 +395,7 @@ static void fix_setup(void)
 	}
 
 	if (g_options.recreate && g_options.reuse_tmo) {
-		APPL_PRINT("\nWARNING: Can't recreate timers AND re-use tmo, re-use disabled\n");
+		APPL_PRINT("\nWARNING: Can't recreate timers AND reuse tmo, reuse disabled\n");
 		g_options.reuse_tmo = false;
 	}
 }
@@ -747,7 +747,7 @@ static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 {
 	int core = em_core_id();
 
-	/* force == true means final cleanup, otherwise may skip if re-use option is active */
+	/* force == true means final cleanup, otherwise may skip if reuse option is active */
 
 	for (unsigned int ti = 0; ti < g_options.num_timers; ti++) {
 		for (unsigned int tmoi = 0; tmoi < g_options.num_tmo; tmoi++) {
@@ -766,7 +766,13 @@ static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 				trace_add(t1, TRACE_OP_TMO_DELETE, core,
 					  ti, tmoi, NULL, eo_ctx->test_tmo[ti][tmoi]);
 
-				em_status_t rv = em_tmo_delete(eo_ctx->test_tmo[ti][tmoi], &ev);
+				em_tmo_state_t tmo_state;
+
+				tmo_state = em_tmo_get_state(eo_ctx->test_tmo[ti][tmoi]);
+				if (tmo_state == EM_TMO_STATE_ACTIVE)
+					em_tmo_cancel(eo_ctx->test_tmo[ti][tmoi], &ev);
+
+				em_status_t rv = em_tmo_delete(eo_ctx->test_tmo[ti][tmoi]);
 
 				profile_add(t1, TEST_TIME_FN(), PROF_TMO_DELETE, eo_ctx, core);
 				test_fatal_if(rv != EM_OK, "tmo_delete fail, tmo = %p!",
@@ -1380,7 +1386,10 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 		APPL_PRINT("EO stop\n");
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
-		em_tmo_delete(eo_ctx->heartbeat_tmo, &event);
+		if (em_tmo_get_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->heartbeat_tmo, &event);
+
+		em_tmo_delete(eo_ctx->heartbeat_tmo);
 		eo_ctx->heartbeat_tmo = EM_TMO_UNDEF;
 		if (event != EM_EVENT_UNDEF)
 			em_free(event);

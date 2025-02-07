@@ -8,7 +8,7 @@ import threading
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
 # Style check script command
-C_CHECK = ROOT_DIR + "/scripts/em_odp_check "
+C_CHECK = ROOT_DIR + "/scripts/em_odp_check.sh "
 
 # File extensions to check
 EXT = ('.c', '.h')

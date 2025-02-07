@@ -132,7 +132,7 @@ em_queue_group_create_sync(const char *name, const em_core_mask_t *mask);
 /**
  * Delete the queue group, asynchronous (non-blocking)
  *
- * Removes all cores from the queue group and free's the handle for re-use.
+ * Removes all cores from the queue group and free's the handle for reuse.
  * All queues in the queue group must be deleted with em_queue_delete() before
  * deleting the queue group.
  *

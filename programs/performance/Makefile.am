@@ -6,6 +6,7 @@ noinst_PROGRAMS = atomic_processing_end \
 		  loop_multircv \
 		  loop_refs \
 		  loop_vectors \
+		  loop_united \
 		  queue_groups \
 		  queues \
 		  queues_unscheduled \
@@ -35,6 +36,9 @@ loop_refs_CFLAGS = $(AM_CFLAGS)
 
 loop_vectors_LDFLAGS = $(AM_LDFLAGS)
 loop_vectors_CFLAGS = $(AM_CFLAGS)
+
+loop_united_LDFLAGS = $(AM_LDFLAGS)
+loop_united_CFLAGS = $(AM_CFLAGS)
 
 queue_groups_LDFLAGS = $(AM_LDFLAGS)
 queue_groups_CFLAGS = $(AM_CFLAGS)
@@ -75,6 +79,7 @@ dist_loop_SOURCES = loop.c
 dist_loop_multircv_SOURCES = loop_multircv.c
 dist_loop_refs_SOURCES = loop_refs.c
 dist_loop_vectors_SOURCES = loop_vectors.c
+dist_loop_united_SOURCES = loop_united.c
 dist_queue_groups_SOURCES = queue_groups.c
 dist_queues_SOURCES = queues.c
 dist_queues_unscheduled_SOURCES = queues_unscheduled.c

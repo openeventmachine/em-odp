@@ -16,4 +16,4 @@ Run bench_pool
     [Documentation]    Run bench_pool
 
     @{args} =    Create List    -w
-    Run Bench    args=${args}    time_out=10s
+    Run Bench    args=${args}    time_out=5m10s

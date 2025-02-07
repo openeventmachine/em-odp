@@ -223,6 +223,14 @@ typedef struct {
 	 * Only used if EM_IDLE_HOOKS_ENABLE != 0
 	 */
 	em_idle_hooks_t idle_hooks;
+
+	/**
+	 * Internal check - don't touch!
+	 *
+	 * EM will verify that em_conf_init() has been called
+	 * before calling em_init().
+	 */
+	uint32_t __internal_check;
 } em_conf_t;
 
 /**

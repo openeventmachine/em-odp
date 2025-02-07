@@ -48,7 +48,7 @@ typedef struct {
 	em_atomic_group_t atomic_group;
 	/** Queue group that the atomic group belongs to */
 	em_queue_group_t queue_group;
-	/** AG pool elem for linking free AGs for AG-alloc */
+	/** AG pool elem for linking free AG:s for AG-alloc */
 	objpool_elem_t atomic_group_pool_elem;
 	/** Internal stashes for events belonging to this group */
 	struct {

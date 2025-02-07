@@ -231,6 +231,7 @@ extern "C" {
  * @example loop_multircv.c
  * @example loop_refs.c
  * @example loop_vectors.c
+ * @example loop_united.c
  * @example pairs.c
  * @example pool_perf.c
  * @example queue_groups.c

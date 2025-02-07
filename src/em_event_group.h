@@ -46,8 +46,9 @@ extern "C" {
 	((unsigned int)egrp_hdl2idx((event_group)) >= EM_MAX_EVENT_GROUPS)
 
 em_status_t
-event_group_init(event_group_tbl_t *const event_group_tbl,
-		 event_group_pool_t *const event_group_pool);
+event_group_init(event_group_tbl_t *const event_group_tbl, odp_stash_t *const event_group_pool);
+
+em_status_t event_group_term(void);
 
 em_event_group_t
 event_group_alloc(void);
@@ -58,7 +59,7 @@ event_group_free(em_event_group_t event_group);
 static inline int
 event_group_allocated(const event_group_elem_t *egrp_elem)
 {
-	return !objpool_in_pool(&egrp_elem->event_group_pool_elem);
+	return !egrp_elem->in_stash;
 }
 
 static inline int
@@ -79,7 +80,7 @@ event_group_elem_get(const em_event_group_t event_group)
 	const int egrp_idx = egrp_hdl2idx(event_group);
 	event_group_elem_t *egrp_elem;
 
-	if (unlikely((unsigned int)egrp_idx > EM_MAX_EVENT_GROUPS - 1))
+	if (unlikely((uint32_t)egrp_idx > EM_MAX_EVENT_GROUPS - 1))
 		return NULL;
 
 	egrp_elem = &em_shm->event_group_tbl.egrp_elem[egrp_idx];

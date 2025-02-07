@@ -389,13 +389,18 @@ static em_status_t app_eo_stop(app_eo_ctx_t *eo_ctx, em_eo_t eo)
 
 	/* cancel and delete ongoing timeouts */
 	if (eo_ctx->periodic_tmo != EM_TMO_UNDEF) {
-		em_tmo_delete(eo_ctx->periodic_tmo, &event);
+		if (em_tmo_get_state(eo_ctx->periodic_tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->periodic_tmo, &event);
+
+		em_tmo_delete(eo_ctx->periodic_tmo);
 		if (event != EM_EVENT_UNDEF)
 			em_free(event);
 	}
 	if (eo_ctx->random_tmo != EM_TMO_UNDEF) {
 		event = EM_EVENT_UNDEF;
-		em_tmo_delete(eo_ctx->random_tmo, &event);
+		if (em_tmo_get_state(eo_ctx->random_tmo) == EM_TMO_STATE_ACTIVE)
+			em_tmo_cancel(eo_ctx->random_tmo, &event);
+		em_tmo_delete(eo_ctx->random_tmo);
 		if (event != EM_EVENT_UNDEF)
 			em_free(event);
 	}
@@ -445,7 +450,7 @@ static void app_eo_receive(app_eo_ctx_t *eo_ctx, em_event_t event,
 					   (msgin->count / 2) + 1);
 			APPL_PRINT((msgin->count & 1) ? "tick\n" : "tock\n");
 
-			/* ack periodic timeout, re-use the same event */
+			/* ack periodic timeout, reuse the same event */
 			ret = em_tmo_ack(msgin->tmo, event);
 			test_fatal_if(ret != EM_OK,
 				      "em_tmo_ack():%" PRI_STAT, ret);
@@ -484,7 +489,7 @@ void new_rand_timeout(app_eo_ctx_t *eo_ctx)
 	uint64_t period;
 	em_status_t stat;
 
-	/* random timeouts allocate new event every time (could re-use) */
+	/* random timeouts allocate new event every time (could reuse) */
 	em_event_t event = em_alloc(sizeof(app_msg_t), EM_EVENT_TYPE_SW,
 				    m_shm->pool);
 	if (!event) {

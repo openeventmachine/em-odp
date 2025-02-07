@@ -44,25 +44,38 @@
  * Further, the EM dispatcher is responsible for passing the events received
  * on a core, from the scheduler, to the correct EO-receive function along with
  * information about which queue the events originated from, what their types
- * are etc.
+ * are etc. Different flavours of the EM dispatch APIs exist along with
+ * configuration options.
  *
  * EM provides APIs to register, or unregister, dispatch callback hooks, i.e.
  * user provided callback functions that will be run just before EM calls the
  * EO-receive function or after returning from it. These callbacks are referred
- * to as enter- and exit-callbacks respectively.
+ * to as dispatch enter- and exit-callbacks respectively.
  * The dispatch callbacks can be used to collect debug information, statistics
- * or implement new functionality. The enter-callback is called before entering
- * the EO-receive function on each core separately. The callback gets all the
- * same arguments as the EO-receive function and can additionally modify them.
- * The exit-callback works in a similar way, but is instead called after the
- * EO-receive function returns and has no arguments except for the EO handle.
+ * or implement new functionality.
+ *
+ * The dispatch enter-callbacks are called before entering the EO-receive
+ * function on each EM-core separately. Events can be dropped by an enter-
+ * callback. Neither the EO-receive function nor any further enter-callbacks
+ * will be called if all events have been dropped by the callbacks already run.
+ * The callback itself needs to handle the events it drops, e.g. free them.
+ *
+ * The dispatch exit-callbacks are called after the EO-receive function returns
+ * and have no arguments except for the EO handle. Note that all exit-callbacks
+ * are always called (even if the enter-callbacks dropped the events causing the
+ * rest of the enter-callbacks and the EO-receive function to be skipped).
+ *
  * Multiple callbacks can be registered. The calling order of multiple
- * registered functions is the order of registration. If the same function is
+ * registered callbacks is the order of registration. If the same function is
  * registered twice then it will be called twice. The max amount of simultaneous
  * callbacks is set by the define 'EM_CALLBACKS_MAX'.
- * If an enter-callback changes the event handle to UNDEF, the next callback
- * will still be called with event as UNDEF, but the EO-receive function won't
- * be called with an UNDEF event.
+ *
+ * EM does not know of any connection or relationship between registered
+ * dispatch enter- and/or exit-callbacks. All dispatch callbacks are treated as
+ * independent entries. Functionality that e.g. depends on both an enter- and an
+ * exit-callback being run must take into acconut that the previous
+ * enter-callbacks might have dropped all events, thus skipping the following
+ * enter-callbacks - but still running all exit-callbacks.
  */
 
 #ifdef __cplusplus
@@ -330,7 +343,7 @@ void em_dispatch_opt_init(em_dispatch_opt_t *opt);
  *	duration.events = 300;
  *	...
  *	do {
-		// Dispatch until '.rounds' or '.ns' or '.events' reached
+ *		// Dispatch until '.rounds' or '.ns' or '.events' reached
  *		status = em_dispatch_duration(&duration, &opt, &results);
  *		...
  *		// Update 'duration' and 'opt' based on 'results'
@@ -497,7 +510,7 @@ em_status_t em_dispatch_rounds(uint64_t rounds,
 uint64_t em_dispatch(uint64_t rounds);
 
 /**
- * Dispatcher global EO-receive enter-callback.
+ * Dispatch enter-callback.
  *
  * Common dispatch callback run before EO-receive functions of both the
  * em_receive_func_t and em_receive_multi_func_t types (i.e. for EOs created
@@ -507,12 +520,10 @@ uint64_t em_dispatch(uint64_t rounds);
  * be useful for debugging, collecting statistics, manipulating events before
  * they reach the EO or implementing new services needing synchronization
  * between cores.
- * Arguments common for both types of EO receive functions are passed as
- * references to the enter-callback (the event-type passed to the single-event
- * receive function case is not passed, use em_event_get/set_type() instead).
- * Arguments are references, i.e. the callback can optionally modify them.
- * If modified, the new values will go to the next callback and eventually to
- * the multi-event EO-receive function.
+ * Some of the arguments common for both types of EO receive functions are
+ * passed as pointers to the enter-callback so that the callback can optionally
+ * modify them. If modified, the new values will go to the next callback and
+ * eventually to the EO-receive function.
  *
  * Events can be dropped by changing the event-entries in the events[num]-array
  * to EM_EVENT_UNDEF. Neither EO-receive nor any further enter-callbacks will
@@ -522,6 +533,11 @@ uint64_t em_dispatch(uint64_t rounds);
  * Note: EM will remove entries of EM_EVENT_UNDEF from the events[]-array before
  *       calling the next enter-callback (if several registered) or the
  *       receive function and adjust 'num' accordingly for the call.
+ *
+ * Functionality that e.g. depends on both an enter- and an exit-callback being
+ * run must take into acconut that the previous enter-callbacks might have
+ * dropped all events, thus skipping the following enter-callbacks - but still
+ * running all exit-callbacks.
  *
  * The EO handle can be used to separate callback functionality per EO and the
  * core id can be obtained for core specific functionality.
@@ -535,7 +551,7 @@ typedef void (*em_dispatch_enter_func_t)(em_eo_t eo, void **eo_ctx,
 					 em_queue_t *queue, void **q_ctx);
 
 /**
- * Dispatcher global EO-receive exit-callback.
+ * Dispatcher exit-callback.
  *
  * The exit-callbacks are run after EO-receive returns.
  * Some arguments given to EO-receive might not be valid afterwards, thus
@@ -543,12 +559,17 @@ typedef void (*em_dispatch_enter_func_t)(em_eo_t eo, void **eo_ctx,
  *
  * Callback functions can be called concurrently from different cores.
  *
+ * Functionality that e.g. depends on both an enter- and an exit-callback being
+ * run must take into acconut that the previous enter-callbacks might have
+ * dropped all events, thus skipping the following enter-callbacks - but still
+ * running all exit-callbacks.
+ *
  * @see em_dispatch_register_exit_cb()
  */
 typedef void (*em_dispatch_exit_func_t)(em_eo_t eo);
 
 /**
- * Register an EO-enter callback
+ * Register a dispatch enter-callback
  *
  * Register a global function to be called by the dispatcher just before calling
  * an EO-receive function. This can be useful for debugging, collecting
@@ -565,21 +586,20 @@ typedef void (*em_dispatch_exit_func_t)(em_eo_t eo);
  * The maximum number of simultaneous callbacks is system specific
  * (EM_CALLBACKS_MAX).
  *
- * @param func          Callback function
+ * @param func  Dispatch enter-callback function
  *
  * @return EM_OK if callback registration succeeded
  *
- * @see em_dispatch_enter_func_t
+ * @see em_dispatch_enter_func_t for further documentation
  */
-em_status_t
-em_dispatch_register_enter_cb(em_dispatch_enter_func_t func);
+em_status_t em_dispatch_register_enter_cb(em_dispatch_enter_func_t func);
 
 /**
- * Unregister an EO-enter callback
+ * Unregister a dispatch enter-callback
  *
- * This can be used to unregister a previously registered enter-function.
+ * This can be used to unregister a previously registered enter-callback.
  *
- * The given function is searched for and if found removed from the call list.
+ * The given function is searched for and, if found, removed from the call list.
  * If the same function has been registered multiple times, only one reference
  * is removed per unregister call.
  * Note that when this function returns, no new calls are made to the removed
@@ -587,15 +607,14 @@ em_dispatch_register_enter_cb(em_dispatch_enter_func_t func);
  * executing the function, so care must be taken before removing anything it may
  * still use.
  *
- * @param func          Callback function
+ * @param func  Dispatch enter-callback function
  *
  * @return EM_OK if the given function was found and removed.
  */
-em_status_t
-em_dispatch_unregister_enter_cb(em_dispatch_enter_func_t func);
+em_status_t em_dispatch_unregister_enter_cb(em_dispatch_enter_func_t func);
 
 /**
- * Register an EO-exit callback
+ * Register a dispatch exit-callback
  *
  * Register a global function to be called by the dispatcher just after return
  * from an EO-receive function.
@@ -610,24 +629,20 @@ em_dispatch_unregister_enter_cb(em_dispatch_enter_func_t func);
  * The maximum number of simultaneous callbacks is system specific
  * (EM_CALLBACKS_MAX).
  *
- * @param func          Callback function
+ * @param func   Dispatch exit-callback function
  *
  * @return EM_OK if callback registration succeeded
  *
- * @see em_dispatch_register_enter_cb(), em_dispatch_unregister_exit_cb()
+ * @see em_dispatch_exit_func_t for further documentation
  */
-em_status_t
-em_dispatch_register_exit_cb(em_dispatch_exit_func_t func);
+em_status_t em_dispatch_register_exit_cb(em_dispatch_exit_func_t func);
 
 /**
- * Unregister an EO-exit callback
+ * Unregister a dispatch exit-callback
  *
- * This can be used to unregister a previously registered exit-function.
+ * This can be used to unregister a previously registered exit-callback.
  *
- * Given function pointer is searched and if found removed from the call list.
- * If one function is registered multiple times only one reference is removed.
- *
- * The given function is searched for and if found removed from the call list.
+ * The given function is searched for and, if found, removed from the call list.
  * If the same function has been registered multiple times, only one reference
  * is removed per unregister call.
  * Note that when this function returns, no new calls are made to the removed
@@ -635,14 +650,13 @@ em_dispatch_register_exit_cb(em_dispatch_exit_func_t func);
  * executing the function, so care must be taken before removing anything it may
  * still use.
  *
- * @param func          Callback function
+ * @param func  Dispatch exit-callback function
  *
  * @return EM_OK if the given function was found and removed.
  *
  * @see em_dispatch_exit_func_t
  */
-em_status_t
-em_dispatch_unregister_exit_cb(em_dispatch_exit_func_t func);
+em_status_t em_dispatch_unregister_exit_cb(em_dispatch_exit_func_t func);
 
 /**
  * @}

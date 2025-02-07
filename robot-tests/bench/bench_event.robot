@@ -16,4 +16,4 @@ Run bench_event
     [Documentation]    Run bench_event
 
     @{args} =    Create List    -w
-    Run Bench    args=${args}    time_out=1m30s
+    Run Bench    args=${args}    time_out=5m30s

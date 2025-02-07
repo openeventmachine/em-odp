@@ -193,7 +193,7 @@ esv_update_state(ev_hdr_state_t *const evstate, const uint16_t api_op,
 		evstate->eo_idx = (int16_t)eo_hdl2idx((em_eo_t)(uintptr_t)q_elem->eo);
 		evstate->queue_idx = (int16_t)queue_hdl2idx((em_queue_t)(uintptr_t)q_elem->queue);
 	}
-	evstate->api_op = (uint8_t)api_op; /* no trucation */
+	evstate->api_op = (uint8_t)api_op; /* no truncation */
 	evstate->core = locm->core_id;
 }
 

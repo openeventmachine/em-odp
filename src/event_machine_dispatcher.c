@@ -144,8 +144,8 @@ em_status_t em_dispatch_duration(const em_dispatch_duration_t *duration,
 		opt = &dispatch_opt_default;
 	} else {
 		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
-				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_DURATION,
-				"Bad argument: em_dispatch_opt_init(opt) not called");
+				EM_ERR_NOT_INITIALIZED, EM_ESCOPE_DISPATCH_DURATION,
+				"Not initialized: em_dispatch_opt_init(opt) not called");
 	}
 
 	if (EM_CHECK_LEVEL > 0) {
@@ -191,8 +191,8 @@ em_status_t em_dispatch_ns(uint64_t ns,
 		opt = &dispatch_opt_default;
 	} else {
 		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
-				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_NS,
-				"Bad argument: em_dispatch_opt_init(opt) not called");
+				EM_ERR_NOT_INITIALIZED, EM_ESCOPE_DISPATCH_NS,
+				"Not initialized: em_dispatch_opt_init(opt) not called");
 	}
 
 	if (EM_CHECK_LEVEL > 0) {
@@ -221,8 +221,8 @@ em_status_t em_dispatch_events(uint64_t events,
 		opt = &dispatch_opt_default;
 	} else {
 		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
-				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_EVENTS,
-				"Bad argument: em_dispatch_opt_init(opt) not called");
+				EM_ERR_NOT_INITIALIZED, EM_ESCOPE_DISPATCH_EVENTS,
+				"Not initialized: em_dispatch_opt_init(opt) not called");
 	}
 
 	if (EM_CHECK_LEVEL > 0) {
@@ -251,8 +251,8 @@ em_status_t em_dispatch_rounds(uint64_t rounds,
 		opt = &dispatch_opt_default;
 	} else {
 		RETURN_ERROR_IF(opt->__internal_check != EM_CHECK_INIT_CALLED,
-				EM_ERR_BAD_ARG, EM_ESCOPE_DISPATCH_ROUNDS,
-				"Bad argument: em_dispatch_opt_init(opt) not called");
+				EM_ERR_NOT_INITIALIZED, EM_ESCOPE_DISPATCH_ROUNDS,
+				"Not initialized: em_dispatch_opt_init(opt) not called");
 	}
 
 	if (EM_CHECK_LEVEL > 0) {

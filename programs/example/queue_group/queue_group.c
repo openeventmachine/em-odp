@@ -570,7 +570,7 @@ notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue)
 	em_core_mask_zero(&core_mask);
 	em_core_mask_set(0, &core_mask);
 
-	/* Re-use event */
+	/* Reuse event */
 	app_event->notif.type = NOTIF_QUEUE_GROUP_MODIFY_DONE_FIRST;
 	app_event->notif.used_group = eo_ctx->notif_qgrp;
 
