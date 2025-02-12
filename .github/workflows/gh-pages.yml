@@ -31,8 +31,9 @@ jobs:
     - name: Deploy
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      uses: crazy-max/ghaction-github-pages@v2.3.0
+      uses: crazy-max/ghaction-github-pages@v4
       with:
         allow_empty_commit: false
         build_dir: ./doc/gh-pages
+        jekyll: false
         target_branch: gh-pages
