@@ -87,3 +87,31 @@ jobs:
           -e TARGET_ARCH=aarch64-linux-gnu
           ghcr.io/opendataplane/odp-docker-images/odp-ci-ubuntu_18.04-arm64
           /root/em-odp/scripts/build.sh
+
+  # Build EM-ODP and run robot tests on github hosted ubuntu arm64 runner
+  Build-Run-on-Ubuntu-arm64-Runner:
+    runs-on: ubuntu-22.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    env:
+      CC: "${{matrix.cc}}"
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install libconfig-dev
+        sudo pip3 install robotframework
+        sudo apt-get install libcli-dev
+        sudo apt-get install telnet
+    - name: Checkout EM-ODP
+      uses: actions/checkout@v4
+    - name: Build EM-ODP
+      run: ./scripts/build.sh
+    - name: Run Robot Tests
+      run: |
+        sudo sysctl -w vm.nr_hugepages=512
+        grep Huge /proc/meminfo
+        sudo /bin/bash ./scripts/robot_test.sh
+
