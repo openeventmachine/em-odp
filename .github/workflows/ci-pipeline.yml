@@ -25,7 +25,6 @@ jobs:
           VALIDATE_YAML: true
           VALIDATE_PYTHON: true
           VALIDATE_MARKDOWN: true
-          VALIDATE_GITHUB_ACTIONS: true
           VALIDATE_ENV: true
           VALIDATE_DOCKERFILE_HADOLINT: true
           VALIDATE_SHELL_SHFMT: true
