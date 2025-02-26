@@ -53,6 +53,18 @@ Examples:
 - See em-odp/include/event_machine/README_API for API changes
 
 --------------------------------------------------------------------------------
+Event Machine (EM) on ODP v3.8.0-1
+--------------------------------------------------------------------------------
+- Fixes:
+ - event: fix em_event_clone_part()
+   In em_event_clone_part(), when cloning an event allocated not from an
+   EM-pool, but directly from an odp-pool, the event header and the EM user area
+   was not copied correctly.
+   When using odp_packet_copy_part() to clone the event, the ODP user area is
+   not copied resulting in an invalid EM event header and EM user area.
+   This is now fixed.
+
+--------------------------------------------------------------------------------
 Event Machine (EM) on ODP v3.8.0
 --------------------------------------------------------------------------------
 - Support for EM API v3.8 (em-odp/include/),

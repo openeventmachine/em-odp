@@ -1361,7 +1361,8 @@ static em_event_t event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_
 		 * Not an EM-pool, e.g. event from external pktio odp-pool.
 		 * Allocate and clone pkt via ODP directly.
 		 */
-		clone_event = pkt_clone_odp(pkt, odp_pool, offset, size, is_clone_part);
+		clone_event = pkt_clone_odp(pkt, odp_pool, offset, size,
+					    clone_uarea, is_clone_part);
 		if (unlikely(clone_event == EM_EVENT_UNDEF)) {
 			INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, escope,
 				       "Cloning from ext odp-pool:%" PRIu64 " failed",

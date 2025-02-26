@@ -51,7 +51,8 @@ COMPILE_TIME_ASSERT(EM_TMO_TYPE_NONE == 0,
 em_status_t event_init(void);
 void print_event_info(void);
 em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool,
-			 uint32_t offset, uint32_t size, bool is_clone_part);
+			 uint32_t offset, uint32_t size,
+			 bool clone_uarea, bool is_clone_part);
 void output_queue_track(queue_elem_t *const output_q_elem);
 void output_queue_drain(const queue_elem_t *output_q_elem);
 void output_queue_buffering_drain(void);

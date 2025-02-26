@@ -103,17 +103,41 @@ void print_event_info(void)
  * Also the ev_hdr in the odp-pkt user_area is copied.
  */
 em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool,
-			 uint32_t offset, uint32_t size, bool is_clone_part)
+			 uint32_t offset, uint32_t size,
+			 bool clone_uarea, bool is_clone_part)
 {
 	odp_packet_t clone_pkt;
 
-	if (is_clone_part)
+	if (is_clone_part) {
+		/* only data is copied, ODP-uarea isn't */
 		clone_pkt = odp_packet_copy_part(pkt, offset, size, pkt_pool);
-	else
-		clone_pkt = odp_packet_copy(pkt, pkt_pool);
+		if (unlikely(clone_pkt == ODP_PACKET_INVALID))
+			return EM_EVENT_UNDEF;
 
-	if (unlikely(clone_pkt == ODP_PACKET_INVALID))
-		return EM_EVENT_UNDEF;
+		const void *src_odp_uarea = odp_packet_user_area(pkt);
+		void *dst_odp_uarea = odp_packet_user_area(clone_pkt);
+		size_t cpy_size = sizeof(event_hdr_t);
+
+		if (clone_uarea) {
+			/* copy ODP-uarea (EM-hdr + EM-uarea) */
+			uint32_t src_uarea_size = odp_packet_user_area_size(pkt);
+			uint32_t dst_uarea_size = odp_packet_user_area_size(clone_pkt);
+
+			if (unlikely(dst_uarea_size < src_uarea_size)) {
+				odp_packet_free(clone_pkt);
+				return EM_EVENT_UNDEF;
+			}
+			/* update 'cpy_size' to include the whole ODP-uarea (EM-hdr + EM-uarea) */
+			cpy_size = src_uarea_size;
+		}
+		/* copy the EM-hdr and possibly also the EM-uarea if requested */
+		memcpy(dst_odp_uarea, src_odp_uarea, cpy_size);
+	} else {
+		/* identical clone, also ODP-uarea (EM-hdr + EM-uarea) is copied */
+		clone_pkt = odp_packet_copy(pkt, pkt_pool);
+		if (unlikely(clone_pkt == ODP_PACKET_INVALID))
+			return EM_EVENT_UNDEF;
+	}
 
 	odp_packet_user_flag_set(clone_pkt, USER_FLAG_SET);
 
@@ -130,9 +154,9 @@ em_event_t pkt_clone_odp(odp_packet_t pkt, odp_pool_t pkt_pool,
 	else
 		clone_hdr->event = clone_event;
 
-	/* clone_hdr->event_type = use parent's type as is */
-	clone_hdr->egrp = EM_EVENT_GROUP_UNDEF;
 	clone_hdr->flags.all = 0;
+	clone_hdr->egrp = EM_EVENT_GROUP_UNDEF;
+	/* other fields: use parent's values as is */
 
 	return clone_event;
 }
