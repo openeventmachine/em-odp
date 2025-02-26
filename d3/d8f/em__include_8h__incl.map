@@ -1,0 +1,93 @@
+<map id="em_include.h" name="em_include.h">
+<area shape="rect" id="node1" title=" " alt="" coords="7337,5,7447,32"/>
+<area shape="rect" id="node2" title=" " alt="" coords="921,437,1004,464"/>
+<area shape="rect" id="node3" title=" " alt="" coords="6401,355,6468,382"/>
+<area shape="rect" id="node4" title=" " alt="" coords="5307,80,5378,107"/>
+<area shape="rect" id="node5" title=" " alt="" coords="5402,80,5491,107"/>
+<area shape="rect" id="node6" href="$d7/d5e/event__machine_8h.html" title=" " alt="" coords="2541,80,2675,107"/>
+<area shape="rect" id="node34" href="$da/d50/event__machine__helper_8h.html" title=" " alt="" coords="43,162,229,203"/>
+<area shape="rect" id="node35" href="$de/d26/environment_8h.html" title=" " alt="" coords="5037,162,5219,203"/>
+<area shape="rect" id="node37" title=" " alt="" coords="4723,266,4808,293"/>
+<area shape="rect" id="node46" title=" " alt="" coords="5515,80,5682,107"/>
+<area shape="rect" id="node47" href="$da/d23/list_8h_source.html" title=" " alt="" coords="5243,169,5333,196"/>
+<area shape="rect" id="node48" href="$db/df9/objpool_8h.html" title=" " alt="" coords="5064,80,5181,107"/>
+<area shape="rect" id="node49" href="$d3/d01/em__init_8h.html" title=" " alt="" coords="5707,80,5789,107"/>
+<area shape="rect" id="node50" href="$d5/d94/em__atomic_8h_source.html" title=" " alt="" coords="5813,80,5920,107"/>
+<area shape="rect" id="node51" href="$de/d67/em__chaining__types_8h.html" title=" " alt="" coords="5944,80,6104,107"/>
+<area shape="rect" id="node52" href="$d4/d8c/em__core__types_8h.html" title=" " alt="" coords="6128,80,6261,107"/>
+<area shape="rect" id="node53" href="$d1/d46/em__error__types_8h.html" title=" " alt="" coords="6285,80,6421,107"/>
+<area shape="rect" id="node54" href="$dc/d2b/em__pool__types_8h.html" title=" " alt="" coords="6445,80,6579,107"/>
+<area shape="rect" id="node55" href="$d3/d7d/em__eo__types_8h.html" title=" " alt="" coords="6603,80,6725,107"/>
+<area shape="rect" id="node56" href="$d1/d63/em__event__group__types_8h.html" title=" " alt="" coords="6749,80,6936,107"/>
+<area shape="rect" id="node57" href="$dd/da8/em__queue__types_8h.html" title=" " alt="" coords="6961,80,7106,107"/>
+<area shape="rect" id="node58" href="$de/db1/em__event__types_8h.html" title=" " alt="" coords="7130,80,7273,107"/>
+<area shape="rect" id="node59" href="$d9/daa/em__queue__group__types_8h.html" title=" " alt="" coords="7297,80,7487,107"/>
+<area shape="rect" id="node60" href="$d2/dea/em__atomic__group__types_8h.html" title=" " alt="" coords="7511,80,7705,107"/>
+<area shape="rect" id="node61" href="$df/d2e/em__internal__event__types_8h.html" title=" " alt="" coords="7730,80,7929,107"/>
+<area shape="rect" id="node62" href="$d1/d3e/em__dispatcher__types_8h.html" title=" " alt="" coords="7953,80,8127,107"/>
+<area shape="rect" id="node63" href="$de/d8e/em__sync__api__types_8h.html" title=" " alt="" coords="8151,80,8313,107"/>
+<area shape="rect" id="node64" href="$d5/d32/em__hook__types_8h.html" title=" " alt="" coords="8338,80,8475,107"/>
+<area shape="rect" id="node65" href="$da/d87/em__libconfig__types_8h_source.html" title=" " alt="" coords="8500,80,8660,107"/>
+<area shape="rect" id="node66" href="$d5/d2f/em__timer__types_8h_source.html" title=" " alt="" coords="4695,169,4835,196"/>
+<area shape="rect" id="node69" href="$df/d00/em__cli__types_8h.html" title=" " alt="" coords="8684,80,8804,107"/>
+<area shape="rect" id="node70" href="$d7/d61/em__mem_8h.html" title=" " alt="" coords="8828,80,8924,107"/>
+<area shape="rect" id="node72" href="$de/d85/em__error_8h.html" title=" " alt="" coords="8949,80,9041,107"/>
+<area shape="rect" id="node73" href="$de/db0/em__event__state_8h.html" title=" " alt="" coords="9065,80,9204,107"/>
+<area shape="rect" id="node74" href="$d2/d24/em__event__inline_8h.html" title=" " alt="" coords="9229,80,9371,107"/>
+<area shape="rect" id="node75" href="$d9/dbe/em__queue__inline_8h.html" title=" " alt="" coords="4519,169,4665,196"/>
+<area shape="rect" id="node76" href="$d7/d32/em__core_8h.html" title=" " alt="" coords="9396,80,9487,107"/>
+<area shape="rect" id="node77" href="$d7/d31/em__eo_8h.html" title=" " alt="" coords="9511,80,9590,107"/>
+<area shape="rect" id="node78" href="$db/d47/em__internal__event_8h.html" title=" " alt="" coords="9614,80,9770,107"/>
+<area shape="rect" id="node79" href="$dd/d69/em__info_8h.html" title=" " alt="" coords="9794,80,9881,107"/>
+<area shape="rect" id="node80" href="$d2/d8d/em__pool_8h.html" title=" " alt="" coords="9905,80,9996,107"/>
+<area shape="rect" id="node81" href="$d6/d7a/em__event_8h.html" title=" " alt="" coords="10020,80,10119,107"/>
+<area shape="rect" id="node82" href="$d7/d55/em__queue_8h.html" title=" " alt="" coords="4381,169,4483,196"/>
+<area shape="rect" id="node83" href="$d0/dc3/em__queue__group_8h.html" title=" " alt="" coords="10143,80,10289,107"/>
+<area shape="rect" id="node84" href="$d4/db7/em__event__group_8h.html" title=" " alt="" coords="10314,80,10457,107"/>
+<area shape="rect" id="node85" href="$d4/db8/em__atomic__group_8h.html" title=" " alt="" coords="10481,80,10631,107"/>
+<area shape="rect" id="node86" href="$dd/d50/em__hooks_8h.html" title=" " alt="" coords="10656,80,10757,107"/>
+<area shape="rect" id="node87" href="$dd/d6c/em__dispatcher_8h.html" title=" " alt="" coords="10782,80,10911,107"/>
+<area shape="rect" id="node88" href="$d6/dbe/em__libconfig_8h_source.html" title=" " alt="" coords="10936,80,11053,107"/>
+<area shape="rect" id="node89" href="$d6/dd0/em__chaining_8h.html" title=" " alt="" coords="11077,80,11195,107"/>
+<area shape="rect" id="node90" href="$d7/dfa/em__cli_8h.html" title=" " alt="" coords="11219,80,11296,107"/>
+<area shape="rect" id="node91" href="$da/d91/em__timer_8h_source.html" title=" " alt="" coords="4720,80,4816,107"/>
+<area shape="rect" id="node7" href="$da/dde/event__machine__deprecated_8h.html" title=" " alt="" coords="2761,162,2948,203"/>
+<area shape="rect" id="node8" href="$d1/d24/event__machine__version_8h.html" title=" " alt="" coords="2972,162,3159,203"/>
+<area shape="rect" id="node9" href="$dd/dca/event__machine__config_8h.html" title=" " alt="" coords="3183,162,3367,203"/>
+<area shape="rect" id="node10" href="$d4/d11/event__machine__types_8h.html" title=" " alt="" coords="2028,348,2215,389"/>
+<area shape="rect" id="node14" href="$db/d6d/event__machine__hw__config_8h.html" title=" " alt="" coords="3391,162,3601,203"/>
+<area shape="rect" id="node15" href="$d0/d07/event__machine__hw__types_8h.html" title=" " alt="" coords="1597,259,1803,300"/>
+<area shape="rect" id="node17" href="$d8/d1e/event__machine__error_8h.html" title=" " alt="" coords="2449,259,2636,300"/>
+<area shape="rect" id="node18" href="$d1/d5e/event__machine__eo_8h.html" title=" " alt="" coords="2449,162,2636,203"/>
+<area shape="rect" id="node19" href="$dd/dd8/event__machine__queue_8h.html" title=" " alt="" coords="1183,162,1369,203"/>
+<area shape="rect" id="node20" href="$de/d50/event__machine__queue__group_8h.html" title=" " alt="" coords="1394,162,1582,203"/>
+<area shape="rect" id="node21" href="$db/d16/event__machine__core_8h.html" title=" " alt="" coords="3676,162,3863,203"/>
+<area shape="rect" id="node22" href="$d2/d2e/event__machine__event_8h.html" title=" " alt="" coords="1607,162,1793,203"/>
+<area shape="rect" id="node23" href="$d2/df2/event__machine__packet_8h.html" title=" " alt="" coords="1817,162,2004,203"/>
+<area shape="rect" id="node24" href="$db/d2f/event__machine__atomic__group_8h.html" title=" " alt="" coords="3153,259,3346,300"/>
+<area shape="rect" id="node25" href="$d0/d9e/event__machine__event__group_8h.html" title=" " alt="" coords="2028,162,2215,203"/>
+<area shape="rect" id="node26" href="$d1/da7/event__machine__scheduler_8h.html" title=" " alt="" coords="3887,162,4073,203"/>
+<area shape="rect" id="node27" href="$d0/de5/event__machine__dispatcher_8h.html" title=" " alt="" coords="2239,162,2425,203"/>
+<area shape="rect" id="node28" href="$d2/d8f/event__machine__pool_8h.html" title=" " alt="" coords="4098,162,4281,203"/>
+<area shape="rect" id="node29" href="$d8/deb/event__machine__hooks_8h.html" title=" " alt="" coords="304,162,488,203"/>
+<area shape="rect" id="node30" href="$dc/d78/event__machine__init_8h.html" title=" " alt="" coords="513,162,695,203"/>
+<area shape="rect" id="node31" href="$d3/d7b/event__machine__hw__specific_8h.html" title=" " alt="" coords="719,162,939,203"/>
+<area shape="rect" id="node32" href="$d7/d1f/event__machine__timer__hw__specific_8h.html" title=" " alt="" coords="964,155,1159,211"/>
+<area shape="rect" id="node33" href="$d2/df3/api_2event__machine__timer_8h.html" title=" " alt="" coords="3229,348,3416,389"/>
+<area shape="rect" id="node11" title=" " alt="" coords="2781,437,2867,464"/>
+<area shape="rect" id="node12" title=" " alt="" coords="2133,437,2208,464"/>
+<area shape="rect" id="node13" title=" " alt="" coords="2035,437,2109,464"/>
+<area shape="rect" id="node16" title=" " alt="" coords="1627,355,1773,382"/>
+<area shape="rect" id="node36" title=" " alt="" coords="4350,266,4421,293"/>
+<area shape="rect" id="node38" href="$d6/de7/env__macros_8h_source.html" title=" " alt="" coords="5453,259,5635,300"/>
+<area shape="rect" id="node39" href="$d0/df1/env__conf_8h_source.html" title=" " alt="" coords="5659,259,5842,300"/>
+<area shape="rect" id="node40" href="$dd/d11/env__atomic_8h_source.html" title=" " alt="" coords="5866,259,6049,300"/>
+<area shape="rect" id="node41" href="$dd/dbb/env__bitmask_8h.html" title=" " alt="" coords="6279,259,6462,300"/>
+<area shape="rect" id="node42" href="$d2/db0/env__barrier_8h_source.html" title=" " alt="" coords="6073,259,6255,300"/>
+<area shape="rect" id="node43" href="$d7/d77/env__sharedmem_8h_source.html" title=" " alt="" coords="4833,259,5015,300"/>
+<area shape="rect" id="node44" href="$d1/d04/env__spinlock_8h_source.html" title=" " alt="" coords="5039,259,5222,300"/>
+<area shape="rect" id="node45" href="$d2/db5/env__time_8h.html" title=" " alt="" coords="5246,259,5429,300"/>
+<area shape="rect" id="node67" title=" " alt="" coords="4600,266,4699,293"/>
+<area shape="rect" id="node68" href="$d2/dda/em__timer__conf_8h.html" title=" " alt="" coords="4445,266,4576,293"/>
+<area shape="rect" id="node71" href="$d5/d5d/event__machine__debug_8h.html" title=" " alt="" coords="8783,162,8969,203"/>
+</map>

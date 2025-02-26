@@ -1,0 +1,24 @@
+var searchData=
+[
+  ['cache_5falloc_5fops_1658',['cache_alloc_ops',['../d1/d6f/structem__pool__subpool__stats__t.html#afbe8bc4459e2150bff33f5b15873ebe6',1,'em_pool_subpool_stats_t::cache_alloc_ops()'],['../d8/d6f/structem__pool__subpool__stats__selected__t.html#a84a218373755e484e1ae7a378a7b9809',1,'em_pool_subpool_stats_selected_t::cache_alloc_ops()'],['../d7/daa/unionem__pool__stats__opt__t.html#a475bb0b3c200f443c5a2fba43eb28537',1,'em_pool_stats_opt_t::cache_alloc_ops()']]],
+  ['cache_5favailable_1659',['cache_available',['../d7/daa/unionem__pool__stats__opt__t.html#a89db4638059bea5bf864b77328d6455d',1,'em_pool_stats_opt_t::cache_available()'],['../d1/d6f/structem__pool__subpool__stats__t.html#a56da1d99fde16051d08ea4bc916f0f62',1,'em_pool_subpool_stats_t::cache_available()'],['../d8/d6f/structem__pool__subpool__stats__selected__t.html#aa4bca7de04a51f70b6970099a5a84951',1,'em_pool_subpool_stats_selected_t::cache_available()']]],
+  ['cache_5ffree_5fops_1660',['cache_free_ops',['../d7/daa/unionem__pool__stats__opt__t.html#a9c4deb3dc799c04a616062cd0e66c621',1,'em_pool_stats_opt_t::cache_free_ops()'],['../d1/d6f/structem__pool__subpool__stats__t.html#a3ec9237bafde7242ad6b90a96498e0f1',1,'em_pool_subpool_stats_t::cache_free_ops()'],['../d8/d6f/structem__pool__subpool__stats__selected__t.html#aadd20792598738e6565887f7f19796a2',1,'em_pool_subpool_stats_selected_t::cache_free_ops()']]],
+  ['cache_5fsize_1661',['cache_size',['../d2/db5/structem__pool__cfg__t.html#a783e3e9dafe05be89ccfe13b3949842d',1,'em_pool_cfg_t::cache_size()'],['../d4/d3e/structem__pool__info__t.html#aba60a82cb6b2d88054f51976afd9bd53',1,'em_pool_info_t::cache_size()']]],
+  ['cfg_5fdefault_1662',['cfg_default',['../db/d4e/structlibconfig.html#a22f86c91f2ef8c4680eab4043b73719b',1,'libconfig']]],
+  ['cfg_5fruntime_1663',['cfg_runtime',['../db/d4e/structlibconfig.html#aea459f5df191bc0a7f63c72590219b32',1,'libconfig']]],
+  ['clk_5fsrc_1664',['clk_src',['../d8/d93/structem__timer__res__param__t.html#a07ed3b3b2e89e83ca36fb2efbc731c45',1,'em_timer_res_param_t::clk_src()'],['../de/dcc/structem__timer__ring__param__t.html#af782096bfbf9916456befcf4f6006e5d',1,'em_timer_ring_param_t::clk_src()']]],
+  ['conf_1665',['conf',['../de/dc0/structem__eo__conf__t.html#ad7cea88601f1f1fd9ca99df1f1180670',1,'em_eo_conf_t::conf()'],['../d5/d76/structem__queue__conf__t.html#a12c60f727e2c718e3e8cd6671f274930',1,'em_queue_conf_t::conf()']]],
+  ['conf_5flen_1666',['conf_len',['../d5/d76/structem__queue__conf__t.html#a5616b0e8beeec2b9fff3be6602917a58',1,'em_queue_conf_t::conf_len()'],['../de/dc0/structem__eo__conf__t.html#a86330762d7504834b63499cfa80b946b',1,'em_eo_conf_t::conf_len()']]],
+  ['context_1667',['context',['../dc/d6f/structqueue__elem__t.html#a8eb57fad7039eb0c48245c0f01ff5a16',1,'queue_elem_t']]],
+  ['core_1668',['core',['../d8/d7d/structODP__PACKED.html#ab9c61a79d2e094e66c122fde17102fde',1,'ODP_PACKED::core()'],['../d8/ddc/structloc__func__retval__t.html#a3dea86974dfd4ea733ba428efb387ecf',1,'loc_func_retval_t::core()']]],
+  ['core_5fcache_5favailable_1669',['core_cache_available',['../d7/daa/unionem__pool__stats__opt__t.html#a90a386dcead2a8f93433938b7d5746e7',1,'em_pool_stats_opt_t']]],
+  ['core_5fcount_1670',['core_count',['../d6/de0/structem__conf__t.html#ad678461bc3be17aba6c71b9883639ea5',1,'em_conf_t']]],
+  ['core_5fid_1671',['core_id',['../d7/d4d/structem__locm__t.html#a9ddce824380b3390625248132af27960',1,'em_locm_t']]],
+  ['core_5fmask_1672',['core_mask',['../d8/d5f/structqueue__group__elem__t.html#aabd1de881215fc53925eee2f5ead3c63',1,'queue_group_elem_t']]],
+  ['core_5fodp_5fplain_5fqueue_1673',['core_odp_plain_queue',['../d7/d05/structsync__api__t.html#aaa0cc481f59b3be395168a83e9819295',1,'sync_api_t']]],
+  ['core_5funsched_5fqelem_1674',['core_unsched_qelem',['../d7/d05/structsync__api__t.html#aa1f0f30b8b838cb86d10a77e332c4874',1,'sync_api_t']]],
+  ['core_5funsched_5fqueue_1675',['core_unsched_queue',['../d7/d05/structsync__api__t.html#ab74bd7d8c05521bab5943e9f89b35d4e',1,'sync_api_t']]],
+  ['count_1676',['count',['../dd/d6c/structcore__map__t.html#a02633a6bc524b3d7bc5008c8b8c8009c',1,'core_map_t::count()'],['../d4/d28/unionegrp__counter__t.html#ad7af965e17443c699a347351bbaf1f34',1,'egrp_counter_t::count()']]],
+  ['current_1677',['current',['../d7/d4d/structem__locm__t.html#a0ad36580bb394aeb5d4b18c6ddca7daa',1,'em_locm_t']]],
+  ['current_5fcore_5fcount_1678',['current_core_count',['../dd/d6c/structcore__map__t.html#a6e00411f446a5f533c6cad546e77e965',1,'core_map_t']]]
+];
