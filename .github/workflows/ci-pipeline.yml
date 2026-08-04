@@ -11,6 +11,10 @@ jobs:
   # Perform lint check on shell scripts and YAML files
   Lint-Code-Base:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      statuses: write
     steps:
       - name: Checkout EM-ODP
         uses: actions/checkout@v5
@@ -18,12 +22,12 @@ jobs:
           # Full git history is needed to get a proper list of changed files
           # within `super-linter`
           fetch-depth: 0
+          persist-credentials: false
       - name: Lint check
-        uses: github/super-linter@v4
+        uses: super-linter/super-linter@v8
         env:
-          DEFAULT_BRANCH: master
           VALIDATE_YAML: true
-          VALIDATE_PYTHON: true
+          VALIDATE_PYTHON_PYLINT: true
           VALIDATE_MARKDOWN: true
           VALIDATE_ENV: true
           VALIDATE_DOCKERFILE_HADOLINT: true
