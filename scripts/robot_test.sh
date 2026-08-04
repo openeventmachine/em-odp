@@ -34,11 +34,7 @@ apps["timer_hello"]=programs/example/timer/timer_hello
 
 # Performance Apps
 apps["atomic_processing_end"]=programs/performance/atomic_processing_end
-apps["loop"]=programs/performance/loop
-apps["loop_multircv"]=programs/performance/loop_multircv
-apps["loop_refs"]=programs/performance/loop_refs
-apps["loop_vectors"]=programs/performance/loop_vectors
-apps["pairs"]=programs/performance/pairs
+apps["loop_united"]=programs/performance/loop_united
 apps["queue_groups"]=programs/performance/queue_groups
 apps["queues_local"]=programs/performance/queues_local
 apps["queues_output"]=programs/performance/queues_output
@@ -94,17 +90,46 @@ for app in "${!apps[@]}"; do
 
 	for ((i = 0; i < ${#core_masks[@]}; i++)); do
 		for ((j = 0; j < ${#modes[@]}; j++)); do
-			ODP_CONFIG_FILE="${odp_conf}" \
-				EM_CONFIG_FILE="${em_conf}" \
-				robot \
-				--variable APPLICATION:"${apps[${app}]}" \
-				--variable TASKSET_CORES:"0-1" \
-				--variable CORE_MASK:"${core_masks[$i]}" \
-				--variable APPLICATION_MODE:"${modes[$j]}" \
-				--log NONE \
-				--report NONE \
-				--output NONE \
-				"${robot_file_path}/${app}.robot"
+			robot_opts=(
+				--variable APPLICATION:"${apps[${app}]}"
+				--variable TASKSET_CORES:"0-1"
+				--variable CORE_MASK:"${core_masks[$i]}"
+				--variable APPLICATION_MODE:"${modes[$j]}"
+				--log NONE
+				--report NONE
+				--output NONE
+			)
+
+			if [[ "${app}" == "loop_united" ]]; then
+				# loop_united replaces the former loop, loop_vectors, loop_multircv,
+				# loop_refs and pairs programs, so it needs one run per loop type
+				# plus one for the atomic-group variant. PRINT_COUNT has no default
+				# in common.resource, so it must be given explicitly.
+				for loop_type in loop vectors multircv refs pairs; do
+					ODP_CONFIG_FILE="${odp_conf}" \
+						EM_CONFIG_FILE="${em_conf}" \
+						robot \
+						--variable LOOP_TYPE:"${loop_type}" \
+						--variable PRINT_COUNT:"0" \
+						--exclude atomic_group \
+						"${robot_opts[@]}" \
+						"${robot_file_path}/${app}.robot"
+				done
+
+				ODP_CONFIG_FILE="${odp_conf}" \
+					EM_CONFIG_FILE="${em_conf}" \
+					robot \
+					--variable PRINT_COUNT:"0" \
+					--include atomic_group \
+					"${robot_opts[@]}" \
+					"${robot_file_path}/${app}.robot"
+			else
+				ODP_CONFIG_FILE="${odp_conf}" \
+					EM_CONFIG_FILE="${em_conf}" \
+					robot \
+					"${robot_opts[@]}" \
+					"${robot_file_path}/${app}.robot"
+			fi
 		done
 	done
 done
