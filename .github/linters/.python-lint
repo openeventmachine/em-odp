@@ -1,0 +1,16 @@
+[MASTER]
+
+# Use multiple processes to speed up Pylint.
+jobs=0
+
+[MESSAGES CONTROL]
+
+# import-error: super-linter does not install project dependencies.
+# The rest are conventions this repository's helper scripts intentionally
+# do not follow.
+disable=import-error,
+        missing-module-docstring,
+        missing-function-docstring,
+        invalid-name,
+        global-statement,
+        redefined-outer-name
