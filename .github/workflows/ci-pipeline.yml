@@ -38,8 +38,8 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install asciidoctor mscgen graphviz doxygen
-        sudo apt-get install libconfig-dev
+        sudo apt-get install -y asciidoctor mscgen graphviz doxygen
+        sudo apt-get install -y libconfig-dev
     - name: Build
       run: ./scripts/build.sh -d
 
@@ -56,10 +56,10 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install libconfig-dev
+        sudo apt-get install -y libconfig-dev
         sudo pip3 install --break-system-packages robotframework
-        sudo apt-get install libcli-dev
-        sudo apt-get install telnet
+        sudo apt-get install -y libcli-dev
+        sudo apt-get install -y telnet
     - name: Checkout EM-ODP
       uses: actions/checkout@v4
     - name: Build EM-ODP
@@ -100,10 +100,10 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install libconfig-dev
+        sudo apt-get install -y libconfig-dev
         sudo pip3 install --break-system-packages robotframework
-        sudo apt-get install libcli-dev
-        sudo apt-get install telnet
+        sudo apt-get install -y libcli-dev
+        sudo apt-get install -y telnet
     - name: Checkout EM-ODP
       uses: actions/checkout@v4
     - name: Build EM-ODP
