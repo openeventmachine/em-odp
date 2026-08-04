@@ -84,7 +84,7 @@ jobs:
           --shm-size 8g
           -e CC="aarch64-linux-gnu-gcc"
           -e TARGET_ARCH=aarch64-linux-gnu
-          ghcr.io/opendataplane/odp-docker-images/odp-ci-ubuntu_18.04-arm64
+          ghcr.io/opendataplane/odp-docker-images/odp-ci-ubuntu_24.04-arm64
           /root/em-odp/scripts/build.sh
 
   # Build EM-ODP and run robot tests on github hosted ubuntu arm64 runner
