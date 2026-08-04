@@ -6,7 +6,7 @@
 # ./scripts/em_odp_check <path/filename>
 set -e
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # checkpatch ignores:
 IGNORE='NEW_TYPEDEFS,'
@@ -29,23 +29,23 @@ IGNORE+='STRNCPY',
 IGNORE+='TRACING_LOGGING'
 
 # Run cleanfile
-"$DIR"/cleanfile "$1" 2> /dev/null
+"$DIR"/cleanfile "$1" 2>/dev/null
 
 # Run checkpatch
 "$DIR"/checkpatch.pl --file --no-tree --ignore $IGNORE --mailback --strict --terse \
- --no-summary --show-types "$1" 2> /dev/null
+	--no-summary --show-types "$1" 2>/dev/null
 ret_checkpatch=$?
 
 # Run codespell (if installed) with default dictionary-file from installation
 ret_codespell=0
-if which codespell > /dev/null; then
+if which codespell >/dev/null; then
 	codespell "$1" --ignore-words-list=ptd,numer,stdio,endcode
 	ret_codespell=$?
 fi
 
 # Exit with 0 only if both commands were successful
 if [[ $ret_checkpatch -eq 0 && $ret_codespell -eq 0 ]]; then
-  exit 0
+	exit 0
 else
-  exit 1
+	exit 1
 fi
