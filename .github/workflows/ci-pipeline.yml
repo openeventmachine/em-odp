@@ -57,7 +57,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install libconfig-dev
-        sudo pip3 install robotframework
+        sudo pip3 install --break-system-packages robotframework
         sudo apt-get install libcli-dev
         sudo apt-get install telnet
     - name: Checkout EM-ODP
@@ -101,7 +101,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install libconfig-dev
-        sudo pip3 install robotframework
+        sudo pip3 install --break-system-packages robotframework
         sudo apt-get install libcli-dev
         sudo apt-get install telnet
     - name: Checkout EM-ODP
