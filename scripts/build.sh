@@ -5,17 +5,17 @@ set -o nounset # abort on undeclared variable
 
 make_doxygen=N
 while getopts ":d" opt; do
-  case "${opt}" in
-  d)
-    make_doxygen=Y
-    ;;
-  \?)
-    echo "Invalid option: -${OPTARG}" >&2
-    usage
-    exit 1
-    ;;
+	case "${opt}" in
+	d)
+		make_doxygen=Y
+		;;
+	\?)
+		echo "Invalid option: -${OPTARG}" >&2
+		usage
+		exit 1
+		;;
 
-  esac
+	esac
 done
 
 #|-- em-odp (repository)
@@ -32,10 +32,10 @@ cd odp
 ./bootstrap
 
 ./configure \
-  --prefix="${install_dir}/odp_install" \
-  --host="${TARGET_ARCH}" \
-  --without-examples \
-  --without-tests
+	--prefix="${install_dir}/odp_install" \
+	--host="${TARGET_ARCH}" \
+	--without-examples \
+	--without-tests
 
 make -j "$(nproc)"
 make install
@@ -46,16 +46,16 @@ cd ..
 ./bootstrap
 
 ./configure \
-  --prefix="${install_dir}/em-odp_install" \
-  --host="${TARGET_ARCH}" \
-  --with-odp-path="${install_dir}/odp_install" \
-  --enable-check-level=3 \
-  --enable-esv
+	--prefix="${install_dir}/em-odp_install" \
+	--host="${TARGET_ARCH}" \
+	--with-odp-path="${install_dir}/odp_install" \
+	--enable-check-level=3 \
+	--enable-esv
 
 # Make doxygen document
 if [[ "${make_doxygen}" = "Y" ]]; then
-  make doxygen-doc
+	make doxygen-doc
 else
-  make -j "$(nproc)"
-  make install
+	make -j "$(nproc)"
+	make install
 fi
