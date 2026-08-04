@@ -32,7 +32,7 @@ jobs:
 
   # Build doxygen documentation
   Build-Doxygen:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
     - name: Install dependencies
@@ -45,7 +45,7 @@ jobs:
 
   # Build EM-ODP and run robot tests on github hosted ubuntu runner
   Build-Run-on-Ubuntu-Runner:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -71,7 +71,7 @@ jobs:
         sudo /bin/bash ./scripts/robot_test.sh
 
   Cross-Compile-for-arm64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
     - name: Cross-compile EM-ODP for arm64
@@ -89,7 +89,7 @@ jobs:
 
   # Build EM-ODP and run robot tests on github hosted ubuntu arm64 runner
   Build-Run-on-Ubuntu-arm64-Runner:
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
