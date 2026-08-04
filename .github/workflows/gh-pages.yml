@@ -13,6 +13,9 @@ env:
 jobs:
   Documentation:
     runs-on: ubuntu-24.04
+    permissions:
+      # Needed to push the generated docs to the gh-pages branch
+      contents: write
     steps:
     - uses: actions/checkout@v5
     - name: Install dependencies
@@ -31,7 +34,7 @@ jobs:
     - name: Deploy
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      uses: crazy-max/ghaction-github-pages@v4
+      uses: crazy-max/ghaction-github-pages@v5
       with:
         allow_empty_commit: false
         build_dir: ./doc/gh-pages
