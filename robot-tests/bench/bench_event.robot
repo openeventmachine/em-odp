@@ -8,7 +8,7 @@ SPDX-License-Identifier: BSD-3-Clause
 Documentation    Run event benchmarks
 Resource    bench_common.resource
 Test Setup        Set Log Level    TRACE
-Test Teardown     Terminate All Processes    kill=true
+Test Teardown     Kill Any Hanging Applications
 
 
 *** Test Cases ***

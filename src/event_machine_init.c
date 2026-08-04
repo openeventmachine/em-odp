@@ -35,21 +35,102 @@
  *
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+#include <odp/helper/odph_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_atomic_group.h"
+#include "em_chaining.h"
+#include "em_chaining_types.h"
+#include "em_cli.h"
+#include "em_core.h"
+#include "em_core_types.h"
+#include "em_dispatcher.h"
+#include "em_eo.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_group.h"
+#include "em_event_state.h"
+#include "em_hooks.h"
+#include "em_info.h"
+#include "em_init.h"
+#include "em_internal_event.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_timer.h"
+
+/**
+ * Check that the runtime ODP API version is supported.
+ *
+ * Compare the EM required ODP API version (EM_REQ_ODP_API_{GENERATION,MAJOR,MINOR})
+ * against both the ODP API header version (ODP_VERSION_API_{GENERATION,MAJOR,MINOR})
+ * and the runtime libodp version from odp_version_api_str().
+ */
+static em_status_t check_odp_version(void)
+{
+	const char *ver_str = odp_version_api_str();
+	unsigned int odp_api_ver = ODP_VERSION_API_NUM(ODP_VERSION_API_GENERATION,
+						       ODP_VERSION_API_MAJOR,
+						       ODP_VERSION_API_MINOR);
+	unsigned int gen = 0;
+	unsigned int major = 0;
+	unsigned int minor = 0;
+
+	if (ver_str == NULL || sscanf(ver_str, "%u.%u.%u", &gen, &major, &minor) != 3) {
+		EM_LOG(EM_LOG_ERR,
+		       "Error: Unable to parse ODP runtime API version: \"%s\"\n",
+		       ver_str ? ver_str : "NULL");
+		return EM_ERR_NOT_SUPPORTED;
+	}
+
+	unsigned int odp_ver = ODP_VERSION_API_NUM(gen, major, minor);
+	unsigned int min_ver = ODP_VERSION_API_NUM(EM_REQ_ODP_API_GENERATION,
+						   EM_REQ_ODP_API_MAJOR,
+						   EM_REQ_ODP_API_MINOR);
+
+	if (odp_ver < min_ver || odp_api_ver < min_ver) {
+		EM_LOG(EM_LOG_ERR,
+		       "Error: Unsupported ODP API version:%s%s\n"
+		       "  EM required ODP API version (min): %u.%u.%u\n"
+		       "  ODP API version from headers:      %u.%u.%u\n"
+		       "  ODP API version from libodp:       %u.%u.%u\n",
+		       odp_api_ver < min_ver ? " headers too old" : "",
+		       odp_ver < min_ver ? " libodp too old" : "",
+		       EM_REQ_ODP_API_GENERATION,
+		       EM_REQ_ODP_API_MAJOR,
+		       EM_REQ_ODP_API_MINOR,
+		       ODP_VERSION_API_GENERATION,
+		       ODP_VERSION_API_MAJOR,
+		       ODP_VERSION_API_MINOR,
+		       gen, major, minor);
+		return EM_ERR_NOT_SUPPORTED;
+	}
+
+	return EM_OK;
+}
 
 /** EM shared memory */
 em_shm_t *em_shm;
 
-/** Core local variables */
-ENV_LOCAL em_locm_t em_locm ENV_CACHE_LINE_ALIGNED = {
-		.current.egrp = EM_EVENT_GROUP_UNDEF,
-		.current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE,
-		.local_queues.empty = 1,
-		.do_input_poll = false,
-		.do_output_drain = false,
-		.sync_api.in_progress = false
-		/* other members initialized to 0 or NULL as per C standard */
-};
+ENV_LOCAL em_locm_t em_locm ENV_CACHE_LINE_ALIGNED = EM_LOCM_INIT_VALUES;
 
 void em_conf_init(em_conf_t *conf)
 {
@@ -129,6 +210,11 @@ em_status_t em_init(const em_conf_t *conf)
 	log_init();
 	error_init();
 
+	/* Check that the ODP API version (headers) is supported */
+	stat = check_odp_version();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_NOT_SUPPORTED, EM_ESCOPE_INIT,
+			"ODP API version not supported!");
+
 	/* Initialize libconfig */
 	ret = em_libconfig_init_global(&em_shm->libconfig);
 	RETURN_ERROR_IF(ret != 0, EM_ERR_OPERATION_FAILED, EM_ESCOPE_INIT,
@@ -141,8 +227,7 @@ em_status_t em_init(const em_conf_t *conf)
 	 * the ODP thread id is assigned only when that thread is initialized.
 	 * Set this mapping in core_map_init_local()
 	 */
-	stat = core_map_init(&em_shm->core_map, conf->core_count,
-			     &conf->phys_mask);
+	stat = core_map_init(&em_shm->core_map);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"core_map_init() failed:%" PRI_STAT "", stat);
 
@@ -152,28 +237,11 @@ em_status_t em_init(const em_conf_t *conf)
 			"dispatch_init() failed:%" PRI_STAT "", stat);
 
 	/*
-	 * Check validity of core masks for input_poll_fn and output_drain_fn.
-	 *
-	 * Masks must be a subset of logical EM core mask. Zero mask means
-	 * that input_poll_fn and output_drain_fn are run on all EM cores.
-	 */
-	stat = input_poll_check(&em_shm->core_map.logic_mask, conf);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-			"input_poll_init() failed:%" PRI_STAT "", stat);
-	stat = output_drain_check(&em_shm->core_map.logic_mask, conf);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-			"output_drain_init() failed:%" PRI_STAT "", stat);
-
-	/*
 	 * Initialize Event State Verification (ESV), if enabled at compile time
 	 */
-	if (EM_ESV_ENABLE) {
-		stat = esv_init();
-		RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-				"esv_init() failed:%" PRI_STAT "", stat);
-	} else {
-		esv_disabled_warn_config();
-	}
+	stat = esv_init();
+	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
+			"esv_init() failed:%" PRI_STAT "", stat);
 
 	/* Initialize EM callbacks/hooks */
 	stat = hooks_init(&conf->api_hooks, &conf->idle_hooks);
@@ -200,7 +268,7 @@ em_status_t em_init(const em_conf_t *conf)
 			"event_group_init() failed:%" PRI_STAT "", stat);
 
 	stat = queue_init(&em_shm->queue_tbl, &em_shm->queue_pool,
-			  &em_shm->queue_pool_static);
+			  &em_shm->queue_pool_static, &em_shm->queue_pool_aggr);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"queue_init() failed:%" PRI_STAT "", stat);
 
@@ -218,9 +286,9 @@ em_status_t em_init(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
 			"eo_init() failed:%" PRI_STAT "", stat);
 
-	stat = create_ctrl_queues();
+	stat = create_shared_ctrl_queue();
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT,
-			"create_ctrl_queues() failed:%" PRI_STAT "", stat);
+			"create_shared_ctrl_queue() failed:%" PRI_STAT "", stat);
 
 	/* Initialize EM Timer */
 	if (conf->event_timer) {
@@ -246,120 +314,242 @@ em_status_t em_init(const em_conf_t *conf)
 	 */
 	print_version_info();
 
+	em_shm->is_init = true;
 	return EM_OK;
+}
+
+em_status_t em_conf_opts(em_conf_t *conf_opts)
+{
+	RETURN_ERROR_IF(!conf_opts, EM_ERR_BAD_POINTER, EM_ESCOPE_CONF_OPTS,
+			"Conf pointer NULL!");
+
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_ERR_BAD_STATE,
+			EM_ESCOPE_CONF_OPTS,
+			"EM not initialized - call em_init() first!");
+
+	*conf_opts = em_shm->conf;
+	return EM_OK;
+}
+
+void em_conf_opts_print(void)
+{
+	conf_opts_print();
+}
+
+void em_conf_local_init(em_conf_local_t *conf_local)
+{
+	if (unlikely(!conf_local)) {
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+			       EM_ESCOPE_CONF_LOCAL_INIT, "conf_local pointer NULL!");
+		return;
+	}
+	memset(conf_local, 0, sizeof(*conf_local));
+	conf_local->core_id = -1; /* let EM assign core-id */
+	conf_local->__internal_check = EM_CHECK_INIT_CALLED;
+}
+
+em_status_t em_init_local(const em_conf_local_t *conf_local)
+{
+	em_status_t status = EM_OK;
+	em_locm_t *const locm = &em_locm;
+	odp_thread_type_t thrtype_odp = odp_thread_type();
+
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_FATAL(EM_ERR_BAD_STATE),
+			EM_ESCOPE_INIT_LOCAL,
+			"Must call em_init() first before %s!", __func__);
+
+	RETURN_ERROR_IF(!conf_local, EM_FATAL(EM_ERR_BAD_ARG), EM_ESCOPE_INIT_LOCAL,
+			"conf_local pointer NULL!");
+
+	RETURN_ERROR_IF(conf_local->__internal_check != EM_CHECK_INIT_CALLED,
+			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_INIT_LOCAL,
+			"Not initialized: em_conf_local_init(conf_local) not called");
+
+	RETURN_ERROR_IF(conf_local->core_type <= EM_CORE_TYPE_UNDEF ||
+			conf_local->core_type >= EM_CORE_TYPE_LAST,
+			EM_ERR_BAD_TYPE, EM_ESCOPE_INIT_LOCAL,
+			"Unsupported core_type=%d", conf_local->core_type);
+
+	RETURN_ERROR_IF(conf_local->core_id < -1, EM_ERR_BAD_ARG, EM_ESCOPE_INIT_LOCAL,
+			"Invalid core id: %d!", conf_local->core_id);
+
+	RETURN_ERROR_IF(is_core_initialized(), EM_ERR_BAD_STATE, EM_ESCOPE_INIT_LOCAL,
+			"Core already initialized! core_id:%d", locm->core_id);
+
+	switch (conf_local->core_type) {
+	case EM_CORE_TYPE_WORKER:
+		RETURN_ERROR_IF(thrtype_odp != ODP_THREAD_WORKER,
+				EM_ERR_BAD_TYPE, EM_ESCOPE_INIT_LOCAL,
+				"ODP thread-type:%d not 'worker' for EM worker core!",
+				thrtype_odp);
+		status = init_local(conf_local, EM_ESCOPE_INIT_LOCAL);
+		break;
+
+	case EM_CORE_TYPE_CONTROL:
+		RETURN_ERROR_IF(thrtype_odp != ODP_THREAD_CONTROL,
+				EM_ERR_BAD_TYPE, EM_ESCOPE_INIT_LOCAL,
+				"ODP thread-type:%d not 'control' for EM control core!",
+				thrtype_odp);
+		status = init_local(conf_local, EM_ESCOPE_INIT_LOCAL);
+		break;
+
+	case EM_CORE_TYPE_EXTERNAL:
+		RETURN_ERROR_IF(thrtype_odp != ODP_THREAD_CONTROL,
+				EM_ERR_BAD_TYPE, EM_ESCOPE_INIT_LOCAL,
+				"ODP thread-type:%d not 'control' for EM external thread!",
+				thrtype_odp);
+		status = init_extthr(conf_local, EM_ESCOPE_INIT_LOCAL);
+		break;
+
+	default:
+		return INTERNAL_ERROR(EM_ERR_BAD_TYPE, EM_ESCOPE_INIT_LOCAL,
+				      "Unsupported core_type=%d", conf_local->core_type);
+	}
+
+	if (status == EM_OK)
+		locm->is_core_local_inited = true;
+
+	return status;
+}
+
+em_status_t em_conf_local_opts(em_conf_local_t *conf_local_opts)
+{
+	const em_locm_t *const locm = &em_locm;
+
+	RETURN_ERROR_IF(!conf_local_opts, EM_ERR_BAD_POINTER,
+			EM_ESCOPE_CONF_LOCAL_OPTS, "Conf pointer NULL!");
+
+	RETURN_ERROR_IF(!is_core_initialized(), EM_ERR_BAD_STATE, EM_ESCOPE_CONF_LOCAL_OPTS,
+			"Not initialized locally: call em_init_local() or em_init_core() first!");
+
+	*conf_local_opts = locm->conf_local;
+
+	return EM_OK;
+}
+
+void em_conf_local_opts_print(void)
+{
+	if (!is_core_initialized()) {
+		INTERNAL_ERROR(EM_ERR_BAD_STATE, EM_ESCOPE_CONF_LOCAL_OPTS,
+			       "Not initialized locally, call em_init_local/core() first!");
+		return;
+	}
+
+	conf_local_opts_print();
 }
 
 em_status_t em_init_core(void)
 {
+	em_conf_local_t conf_local;
+	em_status_t status = EM_OK;
 	em_locm_t *const locm = &em_locm;
-	odp_shm_t shm;
-	em_shm_t *shm_addr;
-	em_status_t stat;
+	odp_thread_type_t thrtype_odp = odp_thread_type();
 
-	/* Lookup the EM shared memory on each EM-core */
-	shm = odp_shm_lookup("em_shm");
-	RETURN_ERROR_IF(shm == ODP_SHM_INVALID,
-			EM_ERR_NOT_FOUND, EM_ESCOPE_INIT_CORE,
-			"Shared memory lookup failed!");
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_FATAL(EM_ERR_BAD_STATE),
+			EM_ESCOPE_INIT_CORE,
+			"Must call em_init() first before %s!", __func__);
 
-	shm_addr = odp_shm_addr(shm);
-	RETURN_ERROR_IF(shm_addr == NULL, EM_ERR_BAD_POINTER, EM_ESCOPE_INIT_CORE,
-			"Shared memory ptr NULL");
+	RETURN_ERROR_IF(is_core_initialized(), EM_ERR_BAD_STATE, EM_ESCOPE_INIT_CORE,
+			"Core already initialized! core_id:%d", locm->core_id);
 
-	if (shm_addr->conf.process_per_core && em_shm == NULL)
-		em_shm = shm_addr;
+	RETURN_ERROR_IF(thrtype_odp != ODP_THREAD_WORKER,
+			EM_ERR_BAD_TYPE, EM_ESCOPE_INIT_CORE,
+			"ODP thread-type:%d not 'worker' for EM worker core!",
+			thrtype_odp);
 
-	RETURN_ERROR_IF(shm_addr != em_shm, EM_ERR_BAD_POINTER, EM_ESCOPE_INIT_CORE,
-			"Shared memory init fails: em_shm:%p != shm_addr:%p",
-			em_shm, shm_addr);
+	em_conf_local_init(&conf_local);
+	conf_local.core_type = EM_CORE_TYPE_WORKER;
 
-	/* Initialize core mappings not known yet in core_map_init() */
-	stat = core_map_init_local(&em_shm->core_map);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"core_map_init_local() failed:%" PRI_STAT "", stat);
+	status = init_local(&conf_local, EM_ESCOPE_INIT_CORE);
+	if (status == EM_OK)
+		locm->is_core_local_inited = true;
 
-	stat = queue_group_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"queue_group_init_local() failed:%" PRI_STAT "", stat);
-
-	stat = dispatch_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"dispatch_init_local() failed:%" PRI_STAT "", stat);
-
-	/* Check if input_poll_fn should be executed on this core */
-	stat = input_poll_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"input_poll_init_local() failed:%" PRI_STAT "", stat);
-
-	/* Check if output_drain_fn should be executed on this core */
-	stat = output_drain_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"output_drain_init_local() failed:%" PRI_STAT "", stat);
-
-	stat = queue_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, stat, EM_ESCOPE_INIT_CORE,
-			"queue_init_local() failed:%" PRI_STAT "", stat);
-
-	/*
-	 * Initialize EM timer. If global init was not done (config),
-	 * this is just a NOP
-	 */
-	stat = timer_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"timer_init_local() failed:%" PRI_STAT "", stat);
-
-	stat = sync_api_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"sync_api_init_local() failed:%" PRI_STAT "", stat);
-
-	/* Init the EM CLI locally on this core (only if enabled) */
-	stat = emcli_init_local();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_INIT_CORE,
-			"emcli_init_local() failed:%" PRI_STAT "", stat);
-
-	/* This is an EM-core that will participate in EM event dispatching */
-	locm->is_external_thr = false;
-
-	/* Initialize debug timestamps to 1 if enabled to differentiate from disabled */
-	if (EM_DEBUG_TIMESTAMP_ENABLE)
-		for (int i = 0; i < EM_DEBUG_TSP_LAST; i++)
-			locm->debug_ts[i] = 1;
-
-	/* Now OK to call EM APIs */
-
-	env_sync_mem();
-
-	return EM_OK;
+	return status;
 }
 
-static void flush_scheduler_events(void)
+void em_term_local_init(em_term_local_t *term_local)
 {
-	odp_event_t odp_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	event_hdr_t *ev_hdr_tbl[EM_SCHED_MULTI_MAX_BURST];
-	em_event_t em_ev_tbl[EM_SCHED_MULTI_MAX_BURST];
-	int num_events;
-
-	do {
-		num_events = odp_schedule_multi_no_wait(NULL, odp_ev_tbl, EM_SCHED_MULTI_MAX_BURST);
-		/* the check 'num_events > EM_SCHED_MULTI_MAX_BURST' avoids a gcc warning */
-		if (num_events <= 0 || num_events > EM_SCHED_MULTI_MAX_BURST)
-			break;
-		/*
-		 * Events might originate from outside of EM and need init.
-		 */
-		event_init_odp_multi(odp_ev_tbl, em_ev_tbl/*out*/, ev_hdr_tbl/*out*/,
-				     num_events, true/*is_extev*/);
-		em_free_multi(em_ev_tbl, num_events);
-	} while (num_events > 0);
+	if (unlikely(!term_local)) {
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+			       EM_ESCOPE_TERM_LOCAL_INIT,
+			       "term_local pointer NULL!");
+		return;
+	}
+	memset(term_local, 0, sizeof(*term_local));
+	term_local->__internal_check = EM_CHECK_INIT_CALLED;
 }
 
-em_status_t em_term(const em_conf_t *conf)
+em_status_t em_term_local(const em_term_local_t *term_local)
+{
+	em_locm_t *const locm = &em_locm;
+	const em_conf_local_t *conf_local = &locm->conf_local;
+	em_status_t status = EM_OK;
+
+	RETURN_ERROR_IF(!term_local, EM_FATAL(EM_ERR_BAD_ARG),
+			EM_ESCOPE_TERM_LOCAL, "term_local pointer NULL!");
+
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_ERR_BAD_STATE,
+			EM_ESCOPE_TERM_LOCAL,
+			"EM not initialized - call em_init() first!");
+
+	RETURN_ERROR_IF(!is_core_initialized(), EM_ERR_BAD_STATE, EM_ESCOPE_TERM_LOCAL,
+			"Not initialized: em_init_local() or em_init_core() not called");
+
+	RETURN_ERROR_IF(term_local->__internal_check != EM_CHECK_INIT_CALLED,
+			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_TERM_LOCAL,
+			"Not initialized: em_term_local_init() not called");
+
+	switch (conf_local->core_type) {
+	case EM_CORE_TYPE_WORKER: /* fallthrough */
+	case EM_CORE_TYPE_CONTROL:
+		status = term_core(EM_ESCOPE_TERM_LOCAL);
+		break;
+
+	case EM_CORE_TYPE_EXTERNAL:
+		status = term_extthr(EM_ESCOPE_TERM_LOCAL);
+		break;
+
+	default:
+		return INTERNAL_ERROR(EM_ERR_BAD_TYPE, EM_ESCOPE_TERM_LOCAL,
+				      "Unsupported core_type=%d", conf_local->core_type);
+	}
+
+	*locm = locm_init_values;
+
+	return status;
+}
+
+em_status_t em_term_core(void)
+{
+	em_status_t status = EM_OK;
+	em_locm_t *const locm = &em_locm;
+	odp_thread_type_t thrtype_odp = odp_thread_type();
+
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_ERR_BAD_STATE,
+			EM_ESCOPE_TERM_CORE,
+			"EM not initialized - call em_init() first!");
+
+	RETURN_ERROR_IF(!is_core_initialized(), EM_ERR_BAD_STATE, EM_ESCOPE_TERM_CORE,
+			"Not initialized: em_init_local() or em_init_core() not called");
+
+	RETURN_ERROR_IF(thrtype_odp != ODP_THREAD_WORKER,
+			EM_ERR_BAD_TYPE, EM_ESCOPE_TERM_CORE,
+			"ODP thread-type:%d not 'worker' for EM worker core!",
+			thrtype_odp);
+
+	status = term_core(EM_ESCOPE_TERM_CORE);
+	*locm = locm_init_values;
+	return status;
+}
+
+em_status_t em_term(void)
 {
 	em_locm_t *const locm = &em_locm;
 	em_status_t stat;
 	int ret;
 
-	(void)conf;
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_ERR_BAD_STATE,
+			EM_ESCOPE_TERM, "EM not initialized or already terminated!");
 
 	/*
 	 * Join all queue groups to be able to flush all events
@@ -389,8 +579,11 @@ em_status_t em_term(const em_conf_t *conf)
 		timer_term(&em_shm->timers);
 
 	stat = emcli_term();
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
-			"emcli_term() failed:%" PRI_STAT "", stat);
+	if (unlikely(stat != EM_OK)) {
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			       "emcli_term() failed:%" PRI_STAT "", stat);
+		/* Continue teardown after CLI error */
+	}
 
 	stat = chaining_term(&em_shm->event_chaining);
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
@@ -410,6 +603,14 @@ em_status_t em_term(const em_conf_t *conf)
 	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
 			"event_group_term() failed.");
 
+	/* Destroy all ODP schedule groups before freeing shared memory */
+	stat = queue_group_term();
+	if (unlikely(stat != EM_OK)) {
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_TERM,
+			       "queue_group_term() failed:" PRI_STAT "", stat);
+		/* Continue teardown even if queue group term fails */
+	}
+
 	/*
 	 * Free the EM shared memory
 	 */
@@ -422,59 +623,25 @@ em_status_t em_term(const em_conf_t *conf)
 	return EM_OK;
 }
 
-em_status_t em_term_core(void)
-{
-	em_status_t stat = EM_OK;
-	em_status_t ret_stat = EM_OK;
-	em_locm_t *const locm = &em_locm;
-
-	/*
-	 * Poll internal unscheduled ctrl queues to complete ctrl actions
-	 * and flush them.
-	 */
-	poll_unsched_ctrl_queue();
-
-	/*
-	 * Flush the scheduler from locally stashed events.
-	 */
-	if (!locm->is_sched_paused) {
-		locm->is_sched_paused = true;
-		odp_schedule_pause();
-	}
-	flush_scheduler_events();
-
-	/* Stop EM Timer. Just a NOP if timer was not enabled (config) */
-	stat = timer_term_local();
-	if (stat != EM_OK) {
-		ret_stat = stat;
-		INTERNAL_ERROR(stat, EM_ESCOPE_TERM_CORE,
-			       "timer_term_local() fails: %" PRI_STAT "", stat);
-	}
-
-	/* Term the EM CLI locally (if enabled) */
-	stat = emcli_term_local();
-	if (stat != EM_OK) {
-		ret_stat = stat;
-		INTERNAL_ERROR(stat, EM_ESCOPE_TERM_CORE,
-			       "emcli_term_local() fails: %" PRI_STAT "", stat);
-	}
-
-	/* Delete the local queues */
-	stat = queue_term_local();
-	if (stat != EM_OK) {
-		ret_stat = stat;
-		INTERNAL_ERROR(stat, EM_ESCOPE_TERM_CORE,
-			       "queue_term_local() fails: %" PRI_STAT "", stat);
-	}
-
-	stat = core_map_term_local(&em_shm->core_map);
-	RETURN_ERROR_IF(stat != EM_OK, EM_ERR_LIB_FAILED, EM_ESCOPE_TERM_CORE,
-			"core_map_term_local() failed:%" PRI_STAT "", stat);
-
-	return ret_stat == EM_OK ? EM_OK : EM_ERR;
-}
-
 uint16_t em_device_id(void)
 {
 	return em_shm->conf.device_id;
+}
+
+em_status_t em_cfgfile_opts(em_cfgfile_opts_t *cfgfile_opts)
+{
+	RETURN_ERROR_IF(!cfgfile_opts, EM_ERR_BAD_ARG, EM_ESCOPE_CFGFILE_OPTS,
+			"cfgfile_opts pointer cannot be NULL!");
+
+	RETURN_ERROR_IF(!em_shm || !em_shm->is_init, EM_ERR_BAD_STATE,
+			EM_ESCOPE_CFGFILE_OPTS,
+			"EM not initialized - call em_init() first!");
+
+	*cfgfile_opts = em_shm->opt;
+	return EM_OK;
+}
+
+void em_cfgfile_opts_print(void)
+{
+	cfgfile_opts_print();
 }

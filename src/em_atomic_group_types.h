@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2014, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,11 +37,37 @@
 #ifndef EM_ATOMIC_GROUP_TYPES_H_
 #define EM_ATOMIC_GROUP_TYPES_H_
 
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "misc/list.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define EVENT_CACHE_FLUSH 32
+#define WRAP_PROTECT 0x0FFF
+
+typedef union {
+	/** Combined lock and event count for 64-bit atomic updates */
+	uint64_t lock_and_evcnt; /* accessed atomically with __atomic_...() */
+	struct {
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+		uint32_t evcnt;
+		uint16_t wrap;
+		uint16_t lock;
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+		uint16_t lock;
+		uint16_t wrap;
+		uint32_t evcnt;
+#endif
+	} parts;
+} atomic_group_dispatch_lock_t;
 
 typedef struct {
 	/** The atomic group ID (handle) */
@@ -58,10 +84,17 @@ typedef struct {
 		odp_stash_t lo_prio;
 	} stashes;
 
+	/** Number of EM_QUEUE_PRIO_HIGHEST queues in this atomic group */
+	odp_atomic_u32_t num_hi_prio_queues;
+
 	/** Atomic group element lock */
-	env_spinlock_t lock ENV_CACHE_LINE_ALIGNED;
+	odp_ticketlock_t lock ENV_CACHE_LINE_ALIGNED;
+
+	/** Atomic group dispatch lock and event count */
+	atomic_group_dispatch_lock_t dispatch_lock ENV_CACHE_LINE_ALIGNED;
+
 	/** Number of queues that belong to this atomic group */
-	env_atomic32_t num_queues;
+	odp_atomic_u32_t num_queues;
 
 	/** List of queues (q_elems) that belong to this atomic group */
 	list_node_t qlist_head;

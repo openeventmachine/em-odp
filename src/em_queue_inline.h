@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -36,14 +36,25 @@
 #ifndef EM_QUEUE_INLINE_H_
 #define EM_QUEUE_INLINE_H_
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_mem.h"
+#include "em_queue_types.h"
+#include "misc/list.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdlib.h>
-
-#define DIFF_ABS(a, b) ((a) > (b) ? (a) - (b) : (b) - (a))
-#define SMALLEST_NBR(a, b) ((a) > (b) ? (b) : (a))
 
 /** Is the queue allocated? */
 static inline int
@@ -81,6 +92,13 @@ static inline int
 queue_id2idx(uint16_t queue_id)
 {
 	return (int)queue_id - EM_QUEUE_RANGE_OFFSET;
+}
+
+/** Convert queue index to queue ID (internal_queue_t:queue_id) */
+static inline uint16_t
+queue_idx2id(int queue_idx)
+{
+	return (uint16_t)queue_idx + EM_QUEUE_RANGE_OFFSET;
 }
 
 /** Convert queue ID (internal_queue_t:queue_id) handle to EM queue handle */
@@ -124,7 +142,7 @@ queue_elem_get(const em_queue_t queue)
 	queue_idx = queue_id2idx(iq.queue_id);
 
 	if (unlikely(iq.device_id != em_shm->conf.device_id ||
-		     (unsigned int)queue_idx > em_shm->opt.queue.max_num - 1))
+		     (uint16_t)queue_idx > em_shm->queue_tbl.max_queue_num - 1))
 		return NULL;
 
 	queue_elem = &em_shm->queue_tbl.queue_elem[queue_idx];
@@ -143,11 +161,18 @@ queue_current(void)
 	return (em_queue_t)(uintptr_t)q_elem->queue;
 }
 
+/**
+ * Convert an EO queue list node to its containing queue element.
+ *
+ * @param list_node  Pointer to the 'eo_queue_node' member of a queue_elem_t
+ *
+ * @return Pointer to the queue element, or NULL if list_node is NULL
+ */
 static inline queue_elem_t *
-list_node_to_queue_elem(const list_node_t *const list_node)
+eo_queue_node_to_queue_elem(const list_node_t *const list_node)
 {
 	queue_elem_t *const q_elem = (queue_elem_t *)((uintptr_t)list_node
-				     - offsetof(queue_elem_t, queue_node));
+				     - offsetof(queue_elem_t, eo_queue_node));
 
 	return likely(list_node != NULL) ? q_elem : NULL;
 }
@@ -173,7 +198,7 @@ scheduled_queue_type_em2odp(em_queue_type_t em_queue_type,
 	case EM_QUEUE_TYPE_PARALLEL:
 		*odp_schedule_sync = ODP_SCHED_SYNC_PARALLEL;
 		return 0;
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+	case EM_QUEUE_TYPE_ORDERED:
 		*odp_schedule_sync = ODP_SCHED_SYNC_ORDERED;
 		return 0;
 	default:
@@ -193,7 +218,7 @@ scheduled_queue_type_odp2em(odp_schedule_sync_t odp_schedule_sync,
 		*em_queue_type = EM_QUEUE_TYPE_PARALLEL;
 		return 0;
 	case ODP_SCHED_SYNC_ORDERED:
-		*em_queue_type = EM_QUEUE_TYPE_PARALLEL_ORDERED;
+		*em_queue_type = EM_QUEUE_TYPE_ORDERED;
 		return 0;
 	default:
 		*em_queue_type = EM_QUEUE_TYPE_UNDEF;
@@ -206,22 +231,47 @@ queue_dequeue(const queue_elem_t *q_elem)
 {
 	odp_queue_t odp_queue;
 	odp_event_t odp_event;
-	em_event_t em_event;
+	em_event_t event;
 
 	odp_queue = q_elem->odp_queue;
 	odp_event = odp_queue_deq(odp_queue);
 	if (odp_event == ODP_EVENT_INVALID)
 		return EM_EVENT_UNDEF;
 
-	em_event = event_odp2em(odp_event);
+	event = event_odp2em(odp_event);
 
-	if (esv_enabled()) {
-		event_hdr_t *ev_hdr = event_to_hdr(em_event);
+	/*
+	 * Only aggregator parents (flags.has_aggr) can receive aggregation-
+	 * produced vectors, which need full vector-header init plus, with ESV,
+	 * the inner-event em2usr transition - event_init_odp() applies it. A
+	 * plain queue only ever yields scalars or user-built vectors, both of
+	 * which need at most the same em2usr as a scalar, so keep them on the
+	 * fast path below (no per-event odp_event_type() probe).
+	 */
+	if (unlikely(q_elem->flags.has_aggr &&
+		     odp_event_type(odp_event) == ODP_EVENT_VECTOR)) {
+		/*
+		 * .has_aggr implies the event-vector backend, so a vector here is
+		 * always an ODP event vector - init it directly instead of via
+		 * event_init_odp(). evhdr_init_evvec() inits the header and, with
+		 * ESV, scans the inner table; the per-inner aggr_sent/refs_used
+		 * flags pick aggregator-delivered slots needing em2usr and skip
+		 * user-built ones.
+		 */
+		odp_event_vector_t odp_evvec = odp_event_vector_from_event(odp_event);
+		event_hdr_t *ev_hdr = odp_event_vector_user_area(odp_evvec);
 
-		em_event = evstate_em2usr(em_event, ev_hdr, EVSTATE__DEQUEUE);
+		return evhdr_init_evvec(ev_hdr, event, odp_evvec,
+					true/*is_extev*/, q_elem);
 	}
 
-	return em_event;
+	if (esv_enabled()) {
+		event_hdr_t *ev_hdr = event_to_hdr(event);
+
+		event = evstate_em2usr(event, ev_hdr, EVSTATE__DEQUEUE);
+	}
+
+	return event;
 }
 
 static inline int
@@ -240,6 +290,40 @@ queue_dequeue_multi(const queue_elem_t *q_elem,
 		return ret;
 
 	/* now events[] = odp_events[], events[].evgen missing, set below: */
+
+	/*
+	 * Only aggregator parents (flags.has_aggr) can receive aggregation-
+	 * produced vectors that need full init + inner-event em2usr; handle
+	 * those per-event. A plain queue never yields such vectors, so use the
+	 * batched fast path below - and skip all per-event work when ESV is
+	 * disabled.
+	 */
+	if (unlikely(q_elem->flags.has_aggr)) {
+		/*
+		 * .has_aggr implies the event-vector backend - a vector here is
+		 * always an ODP event vector, init directly (see queue_dequeue()).
+		 */
+		for (int i = 0; i < ret; i++) {
+			if (odp_event_type(odp_events[i]) == ODP_EVENT_VECTOR) {
+				odp_event_vector_t evvec =
+					odp_event_vector_from_event(odp_events[i]);
+				event_hdr_t *ev_hdr =
+					odp_event_vector_user_area(evvec);
+
+				events[i] = evhdr_init_evvec(ev_hdr,
+							     event_odp2em(odp_events[i]),
+							     evvec, true/*is_extev*/,
+							     q_elem);
+			} else if (esv_enabled()) {
+				event_hdr_t *ev_hdr = event_to_hdr(events[i]);
+
+				events[i] = evstate_em2usr(events[i], ev_hdr,
+							   EVSTATE__DEQUEUE_MULTI);
+			}
+		}
+		return ret;
+	}
+
 	if (esv_enabled()) {
 		event_hdr_t *ev_hdrs[ret];
 

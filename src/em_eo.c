@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,42 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_atomic_group.h"
+#include "em_atomic_group_types.h"
+#include "em_eo.h"
+#include "em_eo_types.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_internal_event.h"
+#include "em_libconfig.h"
+#include "em_internal_event_types.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+#include "misc/list.h"
+#include "misc/objpool.h"
 
 /**
  * Params for eo_local_func_call_req().
@@ -42,13 +77,12 @@ typedef struct {
 	void (*f_done_callback)(void *arg_ptr);
 	int num_notif;
 	const em_notif_t *notif_tbl; /* notif_tbl[num_notif] */
-	int exclude_current_core;
 	bool sync_operation;
 } eo_local_func_call_param_t;
 
 static void
 eo_local_func_call_param_init(eo_local_func_call_param_t *param);
-static em_status_t
+static int
 eo_local_func_call_req(const eo_local_func_call_param_t *param);
 
 static em_status_t
@@ -85,6 +119,45 @@ eo_remove_queue_all_sync_local(const eo_elem_t *eo_elem, int delete_queues);
 static void
 eo_remove_queue_all_sync_done_callback(void *args);
 
+static int read_config_file(void)
+{
+	const char *conf_str;
+	bool val_bool = false;
+	int ret;
+
+	EM_PRINT("EM EO config:\n");
+
+	/*
+	 * Option: eo.start_local_fn_at_init
+	 */
+	conf_str = "eo.start_local_fn_at_init";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.eo.start_local_fn_at_init = val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
+
+	/*
+	 * Option: eo.stop_local_fn_at_term
+	 */
+	conf_str = "eo.stop_local_fn_at_term";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.eo.stop_local_fn_at_term = val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
+
+	return 0;
+}
+
 static inline eo_elem_t *
 eo_poolelem2eo(const objpool_elem_t *const eo_pool_elem)
 {
@@ -101,12 +174,15 @@ eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool)
 	memset(eo_tbl, 0, sizeof(eo_tbl_t));
 	memset(eo_pool, 0, sizeof(eo_pool_t));
 
+	if (read_config_file())
+		return EM_ERR_LIB_FAILED;
+
 	for (int i = 0; i < EM_MAX_EOS; i++) {
 		eo_elem_t *const eo_elem = &eo_tbl->eo_elem[i];
 		/* Store EO handle */
 		eo_elem->eo = eo_idx2hdl(i);
 		/* Initialize empty EO-queue list */
-		env_spinlock_init(&eo_elem->lock);
+		odp_ticketlock_init(&eo_elem->lock);
 		list_init(&eo_elem->queue_list);
 		eo_elem->stash = ODP_STASH_INVALID;
 	}
@@ -119,7 +195,7 @@ eo_init(eo_tbl_t eo_tbl[], eo_pool_t *eo_pool)
 		objpool_add(&eo_pool->objpool, i % objpool_subpools,
 			    &eo_tbl->eo_elem[i].eo_pool_elem);
 
-	env_atomic32_init(&em_shm->eo_count);
+	odp_atomic_init_u32(&em_shm->eo_count, 0);
 
 	return EM_OK;
 }
@@ -135,7 +211,7 @@ eo_alloc(void)
 		return EM_EO_UNDEF;
 
 	eo_elem = eo_poolelem2eo(eo_pool_elem);
-	env_atomic32_inc(&em_shm->eo_count);
+	odp_atomic_inc_u32(&em_shm->eo_count);
 
 	return eo_elem->eo;
 }
@@ -152,7 +228,7 @@ eo_free(em_eo_t eo)
 
 	objpool_add(&em_shm->eo_pool.objpool,
 		    eo_elem->eo_pool_elem.subpool_idx, &eo_elem->eo_pool_elem);
-	env_atomic32_dec(&em_shm->eo_count);
+	odp_atomic_dec_u32(&em_shm->eo_count);
 
 	return EM_OK;
 }
@@ -185,10 +261,10 @@ eo_add_queue(eo_elem_t *const eo_elem, queue_elem_t *const q_elem)
 	q_elem->state = new_state;
 
 	/* Link the new queue into the EO's queue-list */
-	env_spinlock_lock(&eo_elem->lock);
-	list_add(&eo_elem->queue_list, &q_elem->queue_node);
-	env_atomic32_inc(&eo_elem->num_queues);
-	env_spinlock_unlock(&eo_elem->lock);
+	odp_ticketlock_lock(&eo_elem->lock);
+	list_add(&eo_elem->queue_list, &q_elem->eo_queue_node);
+	odp_atomic_inc_u32(&eo_elem->num_queues);
+	odp_ticketlock_unlock(&eo_elem->lock);
 
 	return EM_OK;
 }
@@ -204,8 +280,8 @@ eo_rem_queue_locked(eo_elem_t *const eo_elem, queue_elem_t *const q_elem)
 	if (unlikely(err != EM_OK))
 		return err;
 
-	list_rem(&eo_elem->queue_list, &q_elem->queue_node);
-	env_atomic32_dec(&eo_elem->num_queues);
+	list_rem(&eo_elem->queue_list, &q_elem->eo_queue_node);
+	odp_atomic_dec_u32(&eo_elem->num_queues);
 
 	q_elem->state = new_state;
 	q_elem->eo = (uint16_t)(uintptr_t)EM_EO_UNDEF;
@@ -222,9 +298,9 @@ eo_rem_queue(eo_elem_t *const eo_elem, queue_elem_t *const q_elem)
 {
 	em_status_t err;
 
-	env_spinlock_lock(&eo_elem->lock);
+	odp_ticketlock_lock(&eo_elem->lock);
 	err = eo_rem_queue_locked(eo_elem, q_elem);
-	env_spinlock_unlock(&eo_elem->lock);
+	odp_ticketlock_unlock(&eo_elem->lock);
 
 	if (unlikely(err != EM_OK))
 		return err;
@@ -241,22 +317,20 @@ eo_rem_queue_all(eo_elem_t *const eo_elem)
 {
 	em_status_t err = EM_OK;
 	queue_elem_t *q_elem;
-
-	list_node_t *pos;
 	const list_node_t *list_node;
 
-	env_spinlock_lock(&eo_elem->lock);
+	odp_ticketlock_lock(&eo_elem->lock);
 
 	/* Loop through all queues associated with the EO */
-	list_for_each(&eo_elem->queue_list, pos, list_node) {
-		q_elem = list_node_to_queue_elem(list_node);
+	list_for_each(&eo_elem->queue_list, list_node) {
+		q_elem = eo_queue_node_to_queue_elem(list_node);
 		/* remove the queue from the EO */
 		err = eo_rem_queue_locked(eo_elem, q_elem);
 		if (unlikely(err != EM_OK))
 			break;
 	} /* end loop */
 
-	env_spinlock_unlock(&eo_elem->lock);
+	odp_ticketlock_unlock(&eo_elem->lock);
 
 	return err;
 }
@@ -270,33 +344,54 @@ eo_delete_queue_all(eo_elem_t *const eo_elem)
 {
 	em_status_t err = EM_OK;
 	queue_elem_t *q_elem;
-
-	list_node_t *pos;
 	const list_node_t *list_node;
+	const char *fail_op = "eo_rem_queue_locked()";
+	const char *err_str = "remove queue from EO failed";
 
-	env_spinlock_lock(&eo_elem->lock);
+	odp_ticketlock_lock(&eo_elem->lock);
 
 	/* Loop through all queues associated with the EO */
-	list_for_each(&eo_elem->queue_list, pos, list_node) {
-		q_elem = list_node_to_queue_elem(list_node);
+	list_for_each(&eo_elem->queue_list, list_node) {
+		q_elem = eo_queue_node_to_queue_elem(list_node);
 		/* remove the queue from the EO */
 		err = eo_rem_queue_locked(eo_elem, q_elem);
-		if (unlikely(err != EM_OK))
+		if (unlikely(err != EM_OK)) {
+			/* uses default fail_op and err_str */
 			break;
+		}
 		/* delete the queue */
-		err = queue_delete(q_elem);
-		if (unlikely(err != EM_OK))
+		err = queue_delete(q_elem, &err_str);
+		if (unlikely(err != EM_OK)) {
+			fail_op = "queue_delete()";
 			break;
+		}
 	} /* end loop */
 
-	env_spinlock_unlock(&eo_elem->lock);
+	odp_ticketlock_unlock(&eo_elem->lock);
+
+	if (unlikely(err != EM_OK))
+		EM_LOG(EM_LOG_ERR,
+		       "EO:%" PRI_EO " %s(): %s failed: %s (0x%08X(%s))\n",
+		       eo_elem->eo, __func__, fail_op, err_str, err, err_status_str(err));
 
 	return err;
 }
 
-em_status_t
-eo_start_local_req(eo_elem_t *const eo_elem,
-		   int num_notif, const em_notif_t notif_tbl[])
+/**
+ * Request all EM-cores (worker or control) to run an EO's local start function
+ * as triggered from em_eo_start()
+ *
+ * @param eo_elem  EO element pointer
+ * @param num_notif Number of notifications in notif_tbl
+ * @param notif_tbl Notification table, can be NULL if num_notif is 0
+ *
+ * @return the number of requests sent or a negative value on error
+ * @retval  0 if no requests were sent
+ * @retval >0 the number of requests sent
+ * @retval <0 on error
+ */
+int eo_start_local_req(eo_elem_t *const eo_elem,
+		       int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_local_func_call_param_t param;
 
@@ -308,7 +403,6 @@ eo_start_local_req(eo_elem_t *const eo_elem,
 	param.f_done_callback = eo_start_done_callback;
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
-	param.exclude_current_core = EM_FALSE; /* all cores */
 	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
@@ -345,8 +439,18 @@ eo_start_done_callback(void *args)
 	eo_start_send_buffered_events(eo_elem);
 }
 
-em_status_t
-eo_start_sync_local_req(eo_elem_t *const eo_elem)
+/**
+ * Request all EM-cores (worker or control) to run an EO's local start function
+ * as triggered from em_eo_start_sync()
+ *
+ * @param eo_elem  EO element pointer
+ *
+ * @return the number of requests sent or a negative value on error
+ * @retval  0 if no requests were sent
+ * @retval >0 the number of requests sent
+ * @retval <0 on error
+ */
+int eo_start_sync_local_req(eo_elem_t *const eo_elem)
 {
 	eo_local_func_call_param_t param;
 
@@ -358,7 +462,6 @@ eo_start_sync_local_req(eo_elem_t *const eo_elem)
 	param.f_done_callback = eo_start_sync_done_callback;
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
-	param.exclude_current_core = EM_TRUE; /* exclude this core */
 	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
@@ -419,11 +522,12 @@ int eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue)
 	if (unlikely(eo_elem == NULL))
 		return 0;
 
-	env_spinlock_lock(&eo_elem->lock);
+	odp_ticketlock_lock(&eo_elem->lock);
 
 	for (int i = 0; i < num; i++) {
-		entry_tbl[i].qidx = qidx;
-		entry_tbl[i].evptr = evhdl_tbl[i].evptr; /* ESV evgen dropped */
+		/* ESV evgen dropped */
+		entry_tbl[i] = (stash_entry_t){.qidx = qidx,
+					       .evptr = evhdl_tbl[i].evptr};
 	}
 
 	/* Enqueue events to internal queue */
@@ -432,7 +536,7 @@ int eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue)
 	if (unlikely(ret < 0))
 		ret = 0;
 
-	env_spinlock_unlock(&eo_elem->lock);
+	odp_ticketlock_unlock(&eo_elem->lock);
 
 	return ret;
 }
@@ -476,7 +580,7 @@ void eo_start_send_buffered_events(eo_elem_t *const eo_elem)
 	em_event_t ev_tbl[max_ev];
 	event_hdr_t *ev_hdr_tbl[max_ev];
 
-	env_spinlock_lock(&eo_elem->lock);
+	odp_ticketlock_lock(&eo_elem->lock);
 
 	/*
 	 * Send the buffered events in bursts into the destination queue.
@@ -534,7 +638,7 @@ buffered_send_exit:
 	err = odp_stash_destroy(eo_elem->stash);
 
 	eo_elem->stash = ODP_STASH_INVALID;
-	env_spinlock_unlock(&eo_elem->lock);
+	odp_ticketlock_unlock(&eo_elem->lock);
 
 	if (unlikely(err)) {
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_START,
@@ -542,9 +646,21 @@ buffered_send_exit:
 	}
 }
 
-em_status_t
-eo_stop_local_req(eo_elem_t *const eo_elem,
-		  int num_notif, const em_notif_t notif_tbl[])
+/**
+ * Request all EM-cores (worker or control) to run an EO's local stop function
+ * as triggered from em_eo_stop()
+ *
+ * @param eo_elem  EO element pointer
+ * @param num_notif  Number of notifications to send
+ * @param notif_tbl  Array of notifications to send
+ *
+ * @return the number of requests sent or a negative value on error
+ * @retval  0 if no requests were sent
+ * @retval >0 the number of requests sent
+ * @retval <0 on error
+ */
+int eo_stop_local_req(eo_elem_t *const eo_elem,
+		      int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_local_func_call_param_t param;
 
@@ -556,37 +672,24 @@ eo_stop_local_req(eo_elem_t *const eo_elem,
 	param.f_done_callback = eo_stop_done_callback;
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
-	param.exclude_current_core = EM_FALSE; /* all cores */
 	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
 }
 
 /**
- * Callback function run when all stop_local functions are finished,
- * triggered by calling eo_eo_stop().
+ * Helper to eo_stop_done_callback() and em_eo_stop()
+ *
+ * @return EO global stop function return value
  */
-static void
-eo_stop_done_callback(void *args)
+em_status_t eo_stop_done(eo_elem_t *const eo_elem)
 {
 	em_locm_t *const locm = &em_locm;
-	const loc_func_retval_t *loc_func_retvals = args;
-	eo_elem_t *const eo_elem = loc_func_retvals->eo_elem;
-	void *const eo_ctx = eo_elem->eo_ctx;
 	queue_elem_t *const save_q_elem = locm->current.q_elem;
 	queue_elem_t tmp_q_elem;
-	em_eo_t eo;
 	em_status_t ret;
-
-	if (unlikely(eo_elem == NULL)) {
-		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
-			       EM_ESCOPE_EO_STOP_DONE_CB,
-			       "eo_elem is NULL!");
-		return;
-	}
-
-	eo = eo_elem->eo;
-	(void)check_eo_local_status(loc_func_retvals);
+	em_eo_t eo = eo_elem->eo;
+	void *const eo_ctx = eo_elem->eo_ctx;
 
 	/* Change state here to allow em_eo_delete() from EO global stop */
 	eo_elem->state = EM_EO_STATE_CREATED; /* == EO_STATE_STOPPED */
@@ -609,21 +712,57 @@ eo_stop_done_callback(void *args)
 	/* Restore the original 'current q_elem' */
 	locm->current.q_elem = save_q_elem;
 
+	return ret;
+}
+
+/**
+ * Callback function run when all stop_local functions are finished,
+ * triggered by calling eo_eo_stop().
+ */
+static void
+eo_stop_done_callback(void *args)
+{
+	const loc_func_retval_t *loc_func_retvals = args;
+	eo_elem_t *const eo_elem = loc_func_retvals->eo_elem;
+
+	if (unlikely(eo_elem == NULL)) {
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_POINTER),
+			       EM_ESCOPE_EO_STOP_DONE_CB,
+			       "eo_elem is NULL!");
+		return;
+	}
+
+	em_eo_t eo = eo_elem->eo;
+
+	(void)check_eo_local_status(loc_func_retvals);
+
+	em_status_t ret = eo_stop_done(eo_elem);
+
 	/*
 	 * Note: the EO might not be available after this if the EO global stop
 	 * called em_eo_delete()!
 	 */
 
 	if (unlikely(ret != EM_OK))
-		INTERNAL_ERROR(ret, EM_ESCOPE_EO_STOP_DONE_CB,
-			       "EO:%" PRI_EO " stop-func failed", eo);
+		INTERNAL_ERROR(EM_ERR, EM_ESCOPE_EO_STOP_DONE_CB,
+			       "EO:%" PRI_EO " stop-func failed:%" PRIxSTAT "", eo, ret);
 
 	/* free the storage for local func return values */
 	em_free(loc_func_retvals->event);
 }
 
-em_status_t
-eo_stop_sync_local_req(eo_elem_t *const eo_elem)
+/**
+ * Request all EM-cores (worker or control) to run an EO's local stop function
+ * as triggered from em_eo_stop_sync()
+ *
+ * @param eo_elem  EO element pointer
+ *
+ * @return the number of requests sent or a negative value on error
+ * @retval  0 if no requests were sent
+ * @retval >0 the number of requests sent
+ * @retval <0 on error
+ */
+int eo_stop_sync_local_req(eo_elem_t *const eo_elem)
 {
 	eo_local_func_call_param_t param;
 
@@ -635,7 +774,6 @@ eo_stop_sync_local_req(eo_elem_t *const eo_elem)
 	param.f_done_callback = eo_stop_sync_done_callback;
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
-	param.exclude_current_core = EM_TRUE; /* exclude this core */
 	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
@@ -670,9 +808,8 @@ eo_stop_sync_done_callback(void *args)
 	locm->sync_api.in_progress = false;
 }
 
-em_status_t
-eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
-			  int num_notif, const em_notif_t notif_tbl[])
+int eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
+			      int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_local_func_call_param_t param;
 
@@ -684,7 +821,6 @@ eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
 	param.f_done_callback = eo_remove_queue_done_callback;
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
-	param.exclude_current_core = EM_FALSE; /* all cores */
 	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
@@ -728,9 +864,8 @@ eo_remove_queue_done_callback(void *args)
 	em_free(loc_func_retvals->event);
 }
 
-em_status_t
-eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
-			       queue_elem_t *const q_elem)
+int eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
+				   queue_elem_t *const q_elem)
 {
 	eo_local_func_call_param_t param;
 
@@ -742,7 +877,6 @@ eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
 	param.f_done_callback = eo_remove_queue_sync_done_callback;
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
-	param.exclude_current_core = EM_TRUE; /* exclude this core */
 	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
@@ -793,9 +927,8 @@ eo_remove_queue_sync_done_callback(void *args)
 	locm->sync_api.in_progress = false;
 }
 
-em_status_t
-eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
-			      int num_notif, const em_notif_t notif_tbl[])
+int eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
+				  int num_notif, const em_notif_t notif_tbl[])
 {
 	eo_local_func_call_param_t param;
 
@@ -807,7 +940,6 @@ eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
 	param.f_done_callback = eo_remove_queue_all_done_callback;
 	param.num_notif = num_notif;
 	param.notif_tbl = notif_tbl;
-	param.exclude_current_core = EM_FALSE; /* all cores */
 	param.sync_operation = false;
 
 	return eo_local_func_call_req(&param);
@@ -854,8 +986,7 @@ eo_remove_queue_all_done_callback(void *args)
 	em_free(loc_func_retvals->event);
 }
 
-em_status_t
-eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues)
+int eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues)
 {
 	eo_local_func_call_param_t param;
 
@@ -867,7 +998,6 @@ eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues)
 	param.f_done_callback = eo_remove_queue_all_sync_done_callback;
 	param.num_notif = 0;
 	param.notif_tbl = NULL;
-	param.exclude_current_core = EM_TRUE; /* exclude this core */
 	param.sync_operation = true;
 
 	return eo_local_func_call_req(&param);
@@ -924,36 +1054,48 @@ eo_remove_queue_all_sync_done_callback(void *args)
 static em_status_t
 check_eo_local_status(const loc_func_retval_t *loc_func_retvals)
 {
-	const int cores = em_core_count();
-	static const char core_err[] = "coreXX:0x12345678 ";
-	char errmsg[cores * sizeof(core_err)];
-	int n = 0;
-	int c = 0;
-	int local_fail = 0;
+	const em_core_mask_t *core_mask =  &loc_func_retvals->core_mask;
+	bool local_fail = false;
 	em_status_t err;
 
-	for (int i = 0; i < cores; i++) {
-		err = loc_func_retvals->core[i];
+	int idx = em_core_mask_first(core_mask);
+
+	while (idx >= 0) {
+		err = loc_func_retvals->core[idx];
 		if (err != EM_OK) {
-			local_fail = 1;
+			local_fail = true;
 			break;
 		}
+		idx = em_core_mask_next(core_mask, idx);
 	}
 
+	/* All OK - return */
 	if (!local_fail)
 		return EM_OK;
 
-	for (int i = 0; i < cores; i++) {
-		err = loc_func_retvals->core[i];
+	/*
+	 * Errors found - report them
+	 */
+	static const char core_err[] = "coreXX:0x12345678 ";
+	const int core_count = em_core_mask_count(core_mask);
+	const size_t err_sz = core_count * sizeof(core_err);
+	char errmsg[err_sz];
+	int c = 0;
+
+	idx = em_core_mask_first(core_mask);
+
+	while (idx >= 0) {
+		err = loc_func_retvals->core[idx];
 		if (err != EM_OK) {
-			n = snprintf(&errmsg[c], sizeof(core_err),
-				     "core%02d:0x%08X ", i, err);
+			int n = snprintf(&errmsg[c], sizeof(core_err),
+					 "core%02d:0x%08X ", idx, err);
 			if ((unsigned int)n >= sizeof(core_err))
 				break;
 			c += n;
 		}
+		idx = em_core_mask_next(core_mask, idx);
 	}
-	errmsg[cores * sizeof(core_err) - 1] = '\0';
+	errmsg[err_sz - 1] = '\0';
 
 	INTERNAL_ERROR(EM_ERR, EM_ESCOPE_EVENT_INTERNAL_LFUNC_CALL,
 		       "\nLocal start function failed on cores:\n"
@@ -968,109 +1110,135 @@ eo_local_func_call_param_init(eo_local_func_call_param_t *param)
 }
 
 /**
- * Request a function to be run on each core and call 'f_done_callback(arg_ptr)'
- * when all those functions have completed.
+ * Request a function to be run on each EM-core (worker or control) and call
+ * 'f_done_callback(arg_ptr)' when all those functions have completed.
+ *
+ * @param param  EO local function call parameters
+ *
+ * @return the number of requests sent or a negative value on error
+ * @retval  0 if no requests were sent
+ * @retval >0 the number of requests sent
+ * @retval <0 on error
  */
-static em_status_t
+static int
 eo_local_func_call_req(const eo_local_func_call_param_t *param)
 {
-	int err;
-	em_event_t event;
-	em_event_t tmp;
-	internal_event_t *i_event;
-	int core_count;
-	int free_count;
-	em_core_mask_t core_mask;
-	loc_func_retval_t *loc_func_retvals;
-	void *f_done_arg_ptr;
+	core_map_t *const core_map = &em_shm->core_map;
 
-	core_count = em_core_count();
-	em_core_mask_zero(&core_mask);
-	em_core_mask_set_count(core_count, &core_mask);
-	free_count = core_count + 1; /* all cores + 'done' event */
-	if (param->exclude_current_core) {
-		/* EM _sync API func: exclude the calling core */
-		em_core_mask_clr(em_core_id(), &core_mask);
-		free_count -= 1;
+	em_event_t event = em_alloc(sizeof(internal_event_t),
+				    EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
+	if (unlikely(event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
+			       "Internal event (%u) allocation failed", param->ev_id);
+		return -1;
 	}
 
-	event = em_alloc(sizeof(internal_event_t),
-			 EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
-	RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
-			EM_ERR_ALLOC_FAILED, EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
-			"Internal event (%u) allocation failed", param->ev_id);
-	i_event = em_event_pointer(event);
+	em_event_t tmp = em_alloc(sizeof(loc_func_retval_t),
+				  EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
+	if (unlikely(tmp == EM_EVENT_UNDEF)) {
+		em_free(event);
+		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
+			       "Internal loc_func_retval_t allocation failed");
+		return -1;
+	}
+
+	/*
+	 * Take the core_map rwlock for reading - can afford to keep it for a
+	 * "long" time since blocking write-access is only needed in core
+	 * add/rem scenarios (via em_init/term_local() and the older
+	 * em_init/term_core()). The core ctrl events should be sent before
+	 * releasing the lock to prevent add/rem-core actions while sending
+	 * these ctrl events.
+	 */
+	odp_rwlock_read_lock(&core_map->rwlock);
+
+	uint32_t core_count = odp_atomic_load_u32(&core_map->current_core_count);
+
+	if (core_count == 0) {
+		/* No EM-cores available, free resources and return */
+		odp_rwlock_read_unlock(&core_map->rwlock);
+		em_free(event);
+		em_free(tmp);
+		return 0;
+	}
+
+	uint32_t num_reqs = core_count;
+	uint32_t free_count = num_reqs + 1; /* all cores + 'done' event */
+	em_core_mask_t core_mask;
+	odp_thrmask_t thr_mask;
+
+	odp_thrmask_copy(&thr_mask, &core_map->rwlocked.thrmask_emcores);
+	em_core_mask_copy(&core_mask, &core_map->rwlocked.logic_mask);
+
+	if (unlikely(core_count != (uint32_t)em_core_mask_count(&core_mask) ||
+		     core_count != (uint32_t)odp_thrmask_count(&thr_mask))) {
+		odp_rwlock_read_unlock(&core_map->rwlock);
+		em_free(event);
+		em_free(tmp);
+		INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_STATE), EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
+			       "Core count mismatch: core_count=%" PRIu32 "\n"
+			       "                     count:core_mask=%" PRIu32 "\n"
+			       "                     count:thr_mask=%" PRIu32 "",
+			       core_count, em_core_mask_count(&core_mask),
+			       odp_thrmask_count(&thr_mask));
+		return -1;
+	}
+
+	internal_event_t *i_event = em_event_pointer(event);
+
 	i_event->id = param->ev_id;
 	i_event->loc_func.eo_elem = param->eo_elem;
 	i_event->loc_func.q_elem = param->q_elem;
 	i_event->loc_func.delete_queues = param->delete_queues;
 
-	tmp = em_alloc(sizeof(loc_func_retval_t),
-		       EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
-	RETURN_ERROR_IF(tmp == EM_EVENT_UNDEF,
-			EM_ERR_ALLOC_FAILED, EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
-			"Internal loc_func_retval_t allocation failed");
-	loc_func_retvals = em_event_pointer(tmp);
+	loc_func_retval_t *loc_func_retvals = em_event_pointer(tmp);
+
 	loc_func_retvals->eo_elem = param->eo_elem;
 	loc_func_retvals->q_elem = param->q_elem;
 	loc_func_retvals->delete_queues = param->delete_queues;
 	loc_func_retvals->event = tmp; /* store event handle for em_free() */
-	env_atomic32_init(&loc_func_retvals->free_at_zero);
-	env_atomic32_set(&loc_func_retvals->free_at_zero, free_count);
-	for (int i = 0; i < core_count; i++)
-		loc_func_retvals->core[i] = EM_OK;
+	odp_atomic_init_u32(&loc_func_retvals->free_at_zero, free_count);
+	em_core_mask_copy(&loc_func_retvals->core_mask, &core_mask);
+	memset(&loc_func_retvals->core[0], EM_OK, sizeof(loc_func_retvals->core));
 
 	/* ptr to retval storage so loc func calls can record retval there */
 	i_event->loc_func.retvals = loc_func_retvals;
 
 	/* Give ptr to retval storage also to 'done' function */
-	f_done_arg_ptr = loc_func_retvals;
+	void *f_done_arg_ptr = loc_func_retvals;
 
-	if (em_core_mask_iszero(&core_mask)) {
-		/*
-		 * Special handling when calling sync APIs with one core in use.
-		 * Need to call both local- and done-funcs here and return.
-		 */
-		env_atomic32_inc(&loc_func_retvals->free_at_zero);
-		i_event__eo_local_func_call_req(i_event);
-		em_free(event);
-		param->f_done_callback(f_done_arg_ptr);
+	int err = send_core_ctrl_events(&thr_mask, event,
+					param->f_done_callback, f_done_arg_ptr,
+					param->num_notif, param->notif_tbl,
+					param->sync_operation);
 
-		return EM_OK;
-	}
+	odp_rwlock_read_unlock(&core_map->rwlock);
 
-	err = send_core_ctrl_events(&core_mask, event,
-				    param->f_done_callback, f_done_arg_ptr,
-				    param->num_notif, param->notif_tbl,
-				    param->sync_operation);
 	if (unlikely(err)) {
-		char core_mask_str[EM_CORE_MASK_STRLEN];
+		char mask_str[ODP_THRMASK_STR_SIZE];
 		uint32_t unsent_cnt = err;
 		uint32_t cnt;
 
 		em_free(event);
-		cnt = env_atomic32_sub_return(&loc_func_retvals->free_at_zero,
-					      unsent_cnt + 1);
-		if (cnt == 0)
+		cnt = odp_atomic_fetch_sub_u32(&loc_func_retvals->free_at_zero,
+					       unsent_cnt + 1);
+		if (cnt == unsent_cnt + 1)
 			em_free(tmp);
 
-		em_core_mask_tostr(core_mask_str, EM_CORE_MASK_STRLEN,
-				   &core_mask);
-		return INTERNAL_ERROR(EM_ERR_LIB_FAILED,
-				      EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
-				      "send_core_ctrl_events(mask=%s) failed",
-				      core_mask_str);
+		odp_thrmask_to_str(&thr_mask, mask_str, ODP_THRMASK_STR_SIZE);
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_EO_LOCAL_FUNC_CALL_REQ,
+			       "send_core_ctrl_events(mask=%s) failed", mask_str);
+		return -1;
 	}
 
-	return EM_OK;
+	return num_reqs;
 }
 
 /**
  * EM internal event handler (see em_internal_event.c&h)
  * Handle the internal event requesting a local function call.
  */
-void
-i_event__eo_local_func_call_req(const internal_event_t *i_ev)
+void i_event__eo_local_func_call_req(const internal_event_t *i_ev)
 {
 	em_locm_t *const locm = &em_locm;
 	const uint64_t f_type = i_ev->loc_func.id;
@@ -1084,18 +1252,12 @@ i_event__eo_local_func_call_req(const internal_event_t *i_ev)
 
 	switch (f_type) {
 	case EO_START_SYNC_LOCAL_REQ:
-		if (em_core_count() == 1) {
-			/*
-			 * Special handling when calling sync API with only one
-			 * core in use: start-local() func already called by
-			 * em_eo_start_sync() and this func called directly from
-			 * within eo_local_func_call_req().
-			 */
-			status = EM_OK;
+	case EO_START_LOCAL_REQ:
+		if (!eo_elem->start_local_func) {
+			/* No local start func given */
+			status = EM_ERR_BAD_POINTER;
 			break;
 		}
-		/* fallthrough */
-	case EO_START_LOCAL_REQ:
 		/*
 		 * Use a tmp q_elem as the 'current q_elem' to enable calling
 		 * em_eo_current() from the EO start functions.
@@ -1115,19 +1277,8 @@ i_event__eo_local_func_call_req(const internal_event_t *i_ev)
 		break;
 
 	case EO_STOP_SYNC_LOCAL_REQ:
-		if (em_core_count() == 1) {
-			/*
-			 * Special handling when calling sync API with only one
-			 * core in use: stop-local() func already called by
-			 * em_eo_stop_sync() and this func called directly from
-			 * within eo_local_func_call_req().
-			 */
-			status = EM_OK;
-			break;
-		}
-		/* fallthrough */
 	case EO_STOP_LOCAL_REQ:
-		if (eo_elem->stop_local_func != NULL) {
+		if (eo_elem->stop_local_func) {
 			/*
 			 * Use a tmp q_elem as the 'current q_elem' to enable
 			 * calling em_eo_current() from the EO start functions.
@@ -1180,22 +1331,21 @@ i_event__eo_local_func_call_req(const internal_event_t *i_ev)
 	 * eo_start/stop_local__done_callback() function when the event group
 	 * completion notif is handled.
 	 */
-	const uint32_t cnt =
-		env_atomic32_sub_return(&loc_func_retvals->free_at_zero, 1);
-	if (unlikely(cnt == 0)) {
+	uint32_t cnt = odp_atomic_fetch_sub_u32(&loc_func_retvals->free_at_zero, 1);
+
+	if (unlikely(cnt == 1)) {
 		(void)check_eo_local_status(loc_func_retvals);
 		em_free(loc_func_retvals->event);
 	}
 }
 
-unsigned int
-eo_count(void)
+unsigned int eo_count(void)
 {
-	return env_atomic32_get(&em_shm->eo_count);
+	return odp_atomic_load_u32(&em_shm->eo_count);
 }
 
-size_t eo_get_name(const eo_elem_t *const eo_elem,
-		   char name[/*out*/], const size_t maxlen)
+size_t eo_name(const eo_elem_t *const eo_elem,
+	       char name[/*out*/], const size_t maxlen)
 {
 	size_t len;
 
@@ -1256,11 +1406,11 @@ void eo_info_print_all(void)
 	eo_elem_t *eo_elem;
 	int len = 0;
 	int n_print = 0;
-	em_eo_t eo = em_eo_get_first(&num_eo);
+	em_eo_t eo = em_eo_first(&num_eo);
 
 	/*
 	 * num_eo may not match the amount of EOs actually returned by iterating
-	 * using em_eo_get_next() if EOs are added or removed in parallel by
+	 * using em_eo_next() if EOs are added or removed in parallel by
 	 * another core. Thus space for 10 extra EOs is reserved. If more than 10
 	 * EOs are added by other cores in parallel, we only print information of
 	 * the (num_eo + 10) EOs.
@@ -1273,7 +1423,7 @@ void eo_info_print_all(void)
 	while (eo != EM_EO_UNDEF) {
 		eo_elem = eo_elem_get(eo);
 		if (unlikely(eo_elem == NULL || !eo_allocated(eo_elem))) {
-			eo = em_eo_get_next();
+			eo = em_eo_next();
 			continue;
 		}
 
@@ -1286,7 +1436,7 @@ void eo_info_print_all(void)
 				   eo_elem->use_multi_rcv ? 'Y' : 'N',
 				   eo_elem->max_events,
 				   eo_elem->error_handler_func ? 'Y' : 'N',
-				   env_atomic32_get(&eo_elem->num_queues),
+				   odp_atomic_load_u32(&eo_elem->num_queues),
 				   eo_elem->eo_ctx ? 'Y' : 'N');
 
 		/* Not enough space to hold more eo info */
@@ -1294,7 +1444,7 @@ void eo_info_print_all(void)
 			break;
 
 		len += n_print;
-		eo = em_eo_get_next();
+		eo = em_eo_next();
 	}
 
 	/* No EO */
@@ -1338,11 +1488,11 @@ void eo_queue_info_print(em_eo_t eo)
 		return;
 	}
 
-	q = em_eo_queue_get_first(&q_num, eo);
+	q = em_eo_queue_first(&q_num, eo);
 
 	/*
 	 * q_num may not match the amount of queues actually returned by iterating
-	 * using em_eo_queue_get_next() if queues are added or removed in parallel
+	 * using em_eo_queue_next() if queues are added or removed in parallel
 	 * by another core. Thus space for 10 extra queues is reserved. If more
 	 * than 10 queues are added to this EO by other cores, we only print info
 	 * of the (q_num + 10) queues.
@@ -1355,18 +1505,18 @@ void eo_queue_info_print(em_eo_t eo)
 	while (q != EM_QUEUE_UNDEF) {
 		q_elem = queue_elem_get(q);
 		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-			q = em_eo_queue_get_next();
+			q = em_eo_queue_next();
 			continue;
 		}
 
-		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
+		queue_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
 
 		n_print = snprintf(eo_q_info_str + len,
 				   eo_q_info_str_len - len,
 				   EO_Q_INFO_FMT,
 				   q, q_name, q_elem->priority,
-				   queue_get_type_str(q_elem->type),
-				   queue_get_state_str(q_elem->state),
+				   queue_type_str(q_elem->type),
+				   queue_state_str(q_elem->state),
 				   q_elem->queue_group,
 				   q_elem->context ? 'Y' : 'N');
 
@@ -1375,7 +1525,7 @@ void eo_queue_info_print(em_eo_t eo)
 			break;
 
 		len += n_print;
-		q = em_eo_queue_get_next();
+		q = em_eo_queue_next();
 	}
 
 	/* EO has no queue */
@@ -1435,4 +1585,105 @@ odp_stash_t eo_start_stash_create(void)
 		return ODP_STASH_INVALID;
 
 	return stash;
+}
+
+/**
+ * @brief Run EO local-start functions for all EOs on a new core (if configured)
+ *
+ * If the EM-core is added after initial startup and EO:s are already
+ * created and running: check all running EO's and call the local start
+ * functions (if available).
+ */
+void eo_start_local_fn_at_init(void)
+{
+	unsigned int num = 0;
+	em_eo_t eo = em_eo_first(&num);
+
+	if (num == 0)
+		return;
+
+	DBG_PRINT("%s():%d EOs available, EM-core:%02d\n", __func__, num, em_core_id());
+
+	while (eo != EM_EO_UNDEF) {
+		eo_elem_t *eo_elem = eo_elem_get(eo);
+
+		if (likely(eo_elem)) {
+			odp_ticketlock_lock(&eo_elem->lock);
+			bool is_locked = true;
+			bool cfg_file_opt = em_shm->opt.eo.start_local_fn_at_init;
+			em_eo_start_local_mode_t mode = eo_elem->start_local_mode;
+
+			bool has_local_fn = eo_elem->start_local_func &&
+					    eo_elem->state == EM_EO_STATE_RUNNING;
+			bool has_run_mode = mode == EM_EO_START_LOCAL_MODE_INIT_RUN ||
+					    (mode == EM_EO_START_LOCAL_MODE_CONFIG_FILE &&
+					     cfg_file_opt);
+
+			if (has_local_fn && has_run_mode) {
+				em_start_local_func_t loc_fn = eo_elem->start_local_func;
+				void *eo_ctx = eo_elem->eo_ctx;
+
+				odp_ticketlock_unlock(&eo_elem->lock);
+				is_locked = false;
+
+				/* Run the EO local start function (unlocked) */
+				loc_fn(eo_ctx, eo);
+			}
+
+			if (is_locked)
+				odp_ticketlock_unlock(&eo_elem->lock);
+		}
+		eo = em_eo_next();
+	}
+	DBG_PRINT("%s(): EO local starts done, EM-core:%02d\n", __func__, em_core_id());
+}
+
+/**
+ * @brief Run EO local-stop funcs for all EOs during term-core (if configured)
+ *
+ * If the EM-core is removed while EOs are running:
+ * check all running EO's and call the local stop function (if available).
+ */
+void eo_stop_local_fn_at_term(void)
+{
+	unsigned int num = 0;
+	em_eo_t eo = em_eo_first(&num);
+
+	if (num == 0)
+		return;
+
+	DBG_PRINT("%s():%d EOs available, EM-core:%02d\n", __func__, num, em_core_id());
+
+	while (eo != EM_EO_UNDEF) {
+		eo_elem_t *eo_elem = eo_elem_get(eo);
+
+		if (likely(eo_elem)) {
+			odp_ticketlock_lock(&eo_elem->lock);
+			bool is_locked = true;
+			bool cfg_file_opt = em_shm->opt.eo.stop_local_fn_at_term;
+			em_eo_stop_local_mode_t mode = eo_elem->stop_local_mode;
+
+			bool has_local_fn = eo_elem->stop_local_func &&
+					    eo_elem->state == EM_EO_STATE_RUNNING;
+			bool has_run_mode = mode == EM_EO_STOP_LOCAL_MODE_TERM_RUN ||
+					    (mode == EM_EO_STOP_LOCAL_MODE_CONFIG_FILE &&
+					     cfg_file_opt);
+
+			if (has_local_fn && has_run_mode) {
+				em_stop_local_func_t loc_fn = eo_elem->stop_local_func;
+				void *eo_ctx = eo_elem->eo_ctx;
+
+				odp_ticketlock_unlock(&eo_elem->lock);
+				is_locked = false;
+
+				/* Run the EO local stop function (unlocked) */
+				loc_fn(eo_ctx, eo);
+			}
+
+			if (is_locked)
+				odp_ticketlock_unlock(&eo_elem->lock);
+		}
+		eo = em_eo_next();
+	}
+	DBG_PRINT("%s(): EO local stops done, EM-core:%02d\n", __func__, em_core_id());
 }

@@ -7,6 +7,8 @@
 #ifndef EM_CLI_H_
 #define EM_CLI_H_
 
+#include <event_machine.h>
+
 #pragma GCC visibility push(default)
 
 /**

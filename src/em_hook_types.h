@@ -37,6 +37,11 @@
 #ifndef EM_HOOK_TYPES_H_
 #define EM_HOOK_TYPES_H_
 
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -90,7 +95,7 @@ typedef struct {
 	/** Storage for multiple hook function tables */
 	hook_tbl_t hook_tbl_storage[API_HOOKS_MAX_TBL_SIZE];
 	/** Callback table edit lock */
-	env_spinlock_t lock;
+	odp_ticketlock_t lock;
 	/** Index of the current active callback table */
 	int idx;
 	/* Pad size to a multiple of cache line size */

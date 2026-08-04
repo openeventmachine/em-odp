@@ -36,6 +36,20 @@
 #ifndef EM_CHAINING_H_
 #define EM_CHAINING_H_
 
+#include <stdint.h>
+
+#include <event_machine.h>
+
+#include "em_chaining_types.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_group.h"
+#include "em_event_group_types.h"
+#include "em_event_types.h"
+#include "em_mem.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -150,12 +164,11 @@ send_chaining_egrp(em_event_t event, event_hdr_t *const ev_hdr,
 	if (!egrp_elem)
 		return send_chaining(event, chaining_queue);
 
-	em_event_group_t save_egrp;
 	event_group_elem_t *save_egrp_elem;
-	int32_t save_egrp_gen;
+	uint32_t save_egrp_gen;
 
 	/* Send to another DEVICE with an event group */
-	save_current_evgrp(&save_egrp, &save_egrp_elem, &save_egrp_gen);
+	save_current_evgrp(&save_egrp_elem, &save_egrp_gen);
 	/*
 	 * "Simulate" a dispatch round from evgrp perspective,
 	 * send-device() instead of EO-receive()
@@ -163,9 +176,11 @@ send_chaining_egrp(em_event_t event, event_hdr_t *const ev_hdr,
 	event_group_set_local(ev_hdr->egrp, ev_hdr->egrp_gen, 1);
 
 	em_status_t stat = send_chaining(event, chaining_queue);
+	event_group_elem_t *const current_egrp_elem = em_locm.current.egrp_elem;
 
-	event_group_count_decrement(1);
-	restore_current_evgrp(save_egrp, save_egrp_elem, save_egrp_gen);
+	if (current_egrp_elem)
+		event_group_count_decrement(1, current_egrp_elem);
+	restore_current_evgrp(save_egrp_elem, save_egrp_gen);
 
 	return stat;
 }
@@ -183,12 +198,11 @@ send_chaining_egrp_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[]
 	if (!egrp_elem)
 		return send_chaining_multi(events, num, chaining_queue);
 
-	em_event_group_t save_egrp;
 	event_group_elem_t *save_egrp_elem;
-	int32_t save_egrp_gen;
+	uint32_t save_egrp_gen;
 
 	/* Send to another DEVICE with an event group */
-	save_current_evgrp(&save_egrp, &save_egrp_elem, &save_egrp_gen);
+	save_current_evgrp(&save_egrp_elem, &save_egrp_gen);
 	/*
 	 * "Simulate" dispatch rounds from evgrp perspective,
 	 * send-device() instead of EO-receive().
@@ -199,9 +213,11 @@ send_chaining_egrp_multi(const em_event_t events[], event_hdr_t *const ev_hdrs[]
 	event_group_set_local(ev_hdrs[0]->egrp, ev_hdrs[0]->egrp_gen, num);
 
 	int num_sent = send_chaining_multi(events, num, chaining_queue);
+	event_group_elem_t *const current_egrp_elem = em_locm.current.egrp_elem;
 
-	event_group_count_decrement(num);
-	restore_current_evgrp(save_egrp, save_egrp_elem, save_egrp_gen);
+	if (current_egrp_elem)
+		event_group_count_decrement(num, current_egrp_elem);
+	restore_current_evgrp(save_egrp_elem, save_egrp_gen);
 
 	return num_sent;
 }

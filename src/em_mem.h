@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,11 +38,43 @@
 #ifndef EM_MEM_H_
 #define EM_MEM_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+#include <sys/types.h> /* pid_t */
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/helper/event_machine_debug.h>
+#include <event_machine/platform/env/environment.h>
+
+/*
+ * Bring in every internal type referenced by em_shm_t / em_locm_t.
+ * Most are embedded by value; even the pointer-typed fields (e.g. hook_tbl_t*,
+ * event_group_elem_t*) require their containing type for sizeof in callers,
+ * so include the full definitions.
+ */
+#include "em_atomic_group_types.h"
+#include "em_chaining_types.h"
+#include "em_core_types.h"
+#include "em_dispatcher_types.h"
+#include "em_eo_types.h"
+#include "em_error_types.h"
+#include "em_event_group_types.h"
+#include "em_event_types.h"
+#include "em_hook_types.h"
+#include "em_init_types.h"
+#include "em_internal_event_types.h"
+#include "em_libconfig_types.h"
+#include "em_pool_types.h"
+#include "em_queue_group_types.h"
+#include "em_queue_types.h"
+#include "em_sync_api_types.h"
+#include "em_timer_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/helper/event_machine_debug.h>
 
 /**
  * EM shared memory data
@@ -58,9 +90,13 @@ typedef struct {
 	/** EM internal log function, overridable via em_conf, va_list */
 	em_vlog_func_t vlog_fn;
 	/** EM configuration as given to em_init() */
-	em_conf_t conf ENV_CACHE_LINE_ALIGNED;
+	em_conf_t conf;
+	/** Indicates if EM has been initialized successfully with em_init() */
+	bool is_init;
+	/** Cache EM config file options */
+	cfgfile_opt_cache_t opt_cache;
 	/** EM config file options */
-	opt_t opt ENV_CACHE_LINE_ALIGNED;
+	em_cfgfile_opts_t opt;
 	/** Mapping between physical core id <-> EM core id */
 	core_map_t core_map ENV_CACHE_LINE_ALIGNED;
 	/** Table of buffer/packet/event pools used by EM */
@@ -79,6 +115,8 @@ typedef struct {
 	queue_pool_t queue_pool ENV_CACHE_LINE_ALIGNED;
 	/** Queue pool of free/unused static queues */
 	queue_pool_t queue_pool_static ENV_CACHE_LINE_ALIGNED;
+	/** Queue pool of free/unused aggregator queues */
+	queue_pool_t queue_pool_aggr ENV_CACHE_LINE_ALIGNED;
 	/** Queue group table */
 	queue_group_tbl_t queue_group_tbl ENV_CACHE_LINE_ALIGNED;
 	/** Queue group pool of free/unused queue groups */
@@ -128,22 +166,24 @@ typedef struct {
 	/** While_idle hook functions storage, many sets of hook-tables */
 	hook_storage_t while_idle_hook_storage;
 
-	/** Current number of allocated EOs */
-	env_atomic32_t eo_count ENV_CACHE_LINE_ALIGNED;
 	/** Timer resources */
 	timer_storage_t timers ENV_CACHE_LINE_ALIGNED;
+
+	/** Current number of allocated EOs */
+	odp_atomic_u32_t eo_count ENV_CACHE_LINE_ALIGNED;
 	/** Current number of allocated queues */
-	env_atomic32_t queue_count ENV_CACHE_LINE_ALIGNED;
+	odp_atomic_u32_t queue_count;
 	/** Current number of allocated queue groups */
-	env_atomic32_t queue_group_count;
+	odp_atomic_u32_t queue_group_count;
 	/** Current number of allocated event groups */
-	env_atomic32_t event_group_count;
+	odp_atomic_u32_t event_group_count;
 	/** Current number of allocated atomic groups */
-	env_atomic32_t atomic_group_count;
+	odp_atomic_u32_t atomic_group_count;
 	/** Current number of allocated event pools */
-	env_atomic32_t pool_count;
+	odp_atomic_u32_t pool_count;
+
 	/** libconfig setting, default (compiled) and runtime (from file) */
-	libconfig_t libconfig;
+	libconfig_t libconfig ENV_CACHE_LINE_ALIGNED;
 	/** priority mapping */
 	struct {
 		/** mapping table */
@@ -174,12 +214,10 @@ typedef struct ODP_PACKED {
 	queue_elem_t *q_elem;
 	/** Current scheduled queue element that set the sched context*/
 	queue_elem_t *sched_q_elem;
-	/** Current event group */
-	em_event_group_t egrp;
-	/** Current event group element */
+	/** Current event group element (for the current event group) */
 	event_group_elem_t *egrp_elem;
-	/** Current event group generation count*/
-	int32_t egrp_gen;
+	/** Current event group generation count */
+	uint32_t egrp_gen;
 } em_locm_current_t;
 
 /**
@@ -191,35 +229,47 @@ typedef struct {
 
 	/** Idle state of the core, used when calling idle hooks */
 	idle_state_t idle_state;
-
-	/** EM core id for this core */
-	int core_id;
+	/** Number of dispatch rounds since previous polling of ctrl queues */
+	unsigned int dispatch_cnt;
+	/** Number of dispatch rounds since previous call of poll/drain functions */
+	unsigned int poll_drain_dispatch_cnt;
 	/** The number of events from the scheduler to dispatch */
 	int event_burst_cnt;
+	/** EM core id for this core */
+	int core_id;
+	/** Local queues, i.e. storage for events to local queues */
+	local_queues_t local_queues;
+	/** The number of local queue events dispatched during the em_dispatch...() call */
+	uint64_t local_event_cnt;
+	/** Dispatch callback: input_poll_fn() for this core */
+	em_input_poll_func_t input_poll_fn;
+	/** Dispatch callback: output_drain_fn() for this core */
+	em_output_drain_func_t output_drain_fn;
 
 	/** em_atomic_processing_end() called during event dispatch */
 	bool atomic_group_released;
-	/** Is input_poll_fn executed on this core */
-	bool do_input_poll;
-	/** Is output_drain_fn executed on this core */
-	bool do_output_drain;
-	/** Is thread external to EM (doesn't participate in event dispatching) */
-	bool is_external_thr;
 	/** Is the scheduler paused on this core (for odp_sched_pause/resume()) */
 	bool is_sched_paused;
+	/** Is this an EM worker or control core? Not an external EM thread */
+	bool is_em_core;
+	/** Is thread external to EM (doesn't participate in event dispatching) */
+	bool is_external_thread;
+	/** Is thread termination completed? */
+	bool is_term_thread_done;
+	/** Has core-local initialization completed on this core? */
+	bool is_core_local_inited;
 
-	/** Number of dispatch rounds since previous polling of ctrl queues */
-	unsigned int dispatch_cnt;
 	/** Time when polling of ctrl queues where last done */
 	odp_time_t dispatch_last_run;
-
-	/** Number of dispatch rounds since previous call of poll/drain functions */
-	unsigned int poll_drain_dispatch_cnt;
+	/** Ctrl queue poll interval as core-local time (converted per-core) */
+	odp_time_t poll_ctrl_interval_time;
 	/** Time when poll and drain functions were last called */
 	odp_time_t poll_drain_dispatch_last_run;
+	/** Poll/drain interval as core-local time (converted per-core) */
+	odp_time_t poll_drain_interval_time;
 
-	/** Local queues, i.e. storage for events to local queues */
-	local_queues_t local_queues;
+	/** PID when TLS was initialized (for detecting forked children) */
+	pid_t init_pid;
 
 	/** EO start-function ongoing, buffer all events and send after start */
 	eo_elem_t *start_eo_elem;
@@ -240,6 +290,20 @@ typedef struct {
 
 	/** Track output-queues used during this dispatch round (burst) */
 	output_queue_track_t output_queue_track;
+
+	/** EM local configuration as passed by em_init_local(conf_local) */
+	em_conf_local_t conf_local;
+
+	/**
+	 * Non-EM events don't have an event header of their own,
+	 * use a temporary core-local event header instead.
+	 * Initialized to all-zero with .event_type = EM_EVENT_TYPE_ODP to
+	 * avoid having ev_hdr == NULL in the code and checks for it.
+	 * Using a tmp event header, instead of NULL checks, speeds up the code.
+	 *
+	 * em_locm_t::evhdr_nonem.event_type = EM_EVENT_TYPE_ODP;
+	 */
+	event_hdr_t evhdr_nonem;
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;

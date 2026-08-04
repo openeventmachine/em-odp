@@ -1,11 +1,11 @@
 Add-ons
 -------
 
-This directory contains add-ons and optional APIs for OpenEM.
+This directory contains add-ons and optional APIs for the Event Machine.
 
-These are not considered part of OpenEM API definition but some may become such
+These are not considered part of EM API definition but some may become such
 in the future. The purpose of add-ons is to collect new features that
-potentially could be part on OpenEM API in some future release.
+potentially could be part on EM API in some future release.
 
 Add-ons typically have system specific implementation and may or may not be
 supported on a given platform.

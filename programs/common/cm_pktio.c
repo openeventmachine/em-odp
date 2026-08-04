@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2022, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -229,25 +229,76 @@ static void pktio_pool_create_odp(int if_count, const odp_pool_capability_t *poo
 	odp_pool_print(pktio_shm->pools.pktpool_odp);
 }
 
+/*
+ * Per-backend view of ODP pool capabilities relevant to a pktin vector pool.
+ *
+ * EM maps 'EM_EVENT_TYPE_VECTOR' to either ODP_POOL_EVENT_VECTOR (event
+ * backend) or ODP_POOL_VECTOR (packet backend). The corresponding capability
+ * sub-structs live in different fields of odp_pool_capability_t, so callers
+ * need a single per-backend view rather than open-coding the branch.
+ */
+typedef struct {
+	/** EM_VECTOR_BACKEND_EVENT or EM_VECTOR_BACKEND_PACKET */
+	int backend;
+	uint32_t max_pools;
+	uint32_t max_size;
+	uint32_t max_num;
+	uint32_t max_cache_size;
+} pktio_vec_caps_t;
+
+/*
+ * Look up the active EM vector backend and pick the matching ODP pool
+ * capability fields. Also validates that vectors are supported by the
+ * underlying ODP for the active backend.
+ */
+static void get_vec_caps(const odp_pool_capability_t *pool_capa,
+			 pktio_vec_caps_t *caps /*out*/)
+{
+	em_cfgfile_opts_t cfgfile_opts = {0};
+
+	if (em_cfgfile_opts(&cfgfile_opts /*out*/) != EM_OK)
+		APPL_EXIT_FAILURE("Failed to get EM config file options");
+
+	if (cfgfile_opts.vector.backend == EM_VECTOR_BACKEND_EVENT) {
+		caps->backend = EM_VECTOR_BACKEND_EVENT;
+		caps->max_pools = pool_capa->event_vector.max_pools;
+		caps->max_size = pool_capa->event_vector.max_size;
+		caps->max_num = pool_capa->event_vector.max_num;
+		caps->max_cache_size = pool_capa->event_vector.max_cache_size;
+	} else if (cfgfile_opts.vector.backend == EM_VECTOR_BACKEND_PACKET) {
+		caps->backend = EM_VECTOR_BACKEND_PACKET;
+		caps->max_pools = pool_capa->vector.max_pools;
+		caps->max_size = pool_capa->vector.max_size;
+		caps->max_num = pool_capa->vector.max_num;
+		caps->max_cache_size = pool_capa->vector.max_cache_size;
+	} else {
+		APPL_EXIT_FAILURE("Unsupported vector backend %d",
+				  cfgfile_opts.vector.backend);
+	}
+
+	if (unlikely(caps->max_pools == 0 || caps->max_size == 0))
+		APPL_EXIT_FAILURE("ODP pktin vectors not supported!");
+}
+
 static void pktio_vectorpool_create_em(int if_count, const odp_pool_capability_t *pool_capa)
 {
-	if (unlikely(pool_capa->vector.max_pools == 0 ||
-		     pool_capa->vector.max_size == 0))
-		APPL_EXIT_FAILURE("ODP pktin vectors not supported!");
+	pktio_vec_caps_t caps;
+
+	get_vec_caps(pool_capa, &caps /*out*/);
 
 	uint32_t vec_size = PKTIO_VEC_POOL_VEC_SIZE;
 	uint32_t num_pkt = PKTIO_PKT_POOL_NUM_BUFS * if_count;
 	uint32_t num_vec = num_pkt; /* worst case: 1 pkt per vector */
 
-	if (vec_size > pool_capa->vector.max_size) {
-		vec_size = pool_capa->vector.max_size;
+	if (vec_size > caps.max_size) {
+		vec_size = caps.max_size;
 		APPL_PRINT("\nWarning: pktin vector size reduced to %u\n\n",
 			   vec_size);
 	}
 
-	if (pool_capa->vector.max_num /* 0=limited only by pool memsize */ &&
-	    num_vec > pool_capa->vector.max_num) {
-		num_vec = pool_capa->vector.max_num;
+	if (caps.max_num /* 0=limited only by pool memsize */ &&
+	    num_vec > caps.max_num) {
+		num_vec = caps.max_num;
 		APPL_PRINT("\nWarning: pktin number of vectors reduced to %u\n\n",
 			   num_vec);
 	}
@@ -260,8 +311,8 @@ static void pktio_vectorpool_create_em(int if_count, const odp_pool_capability_t
 
 	pool_cfg.subpool[0].size = vec_size; /* nbr of events in vector */
 	pool_cfg.subpool[0].num = num_vec;
-	/* Use max thread-local pkt-cache size to speed up pktio allocs */
-	pool_cfg.subpool[0].cache_size = pool_capa->pkt.max_cache_size;
+	/* Use max thread-local vector-cache size to speed up pktio allocs */
+	pool_cfg.subpool[0].cache_size = caps.max_cache_size;
 
 	em_pool_t vector_pool = em_pool_create("vector-pool-em", EM_POOL_UNDEF, &pool_cfg);
 
@@ -284,36 +335,46 @@ static void pktio_vectorpool_create_em(int if_count, const odp_pool_capability_t
 
 static void pktio_vectorpool_create_odp(int if_count, const odp_pool_capability_t *pool_capa)
 {
-	odp_pool_param_t pool_params;
+	pktio_vec_caps_t caps;
 
-	odp_pool_param_init(&pool_params);
-
-	pool_params.type = ODP_POOL_VECTOR;
-
-	if (unlikely(pool_capa->vector.max_pools == 0 ||
-		     pool_capa->vector.max_size == 0))
-		APPL_EXIT_FAILURE("ODP pktin vectors not supported!");
+	get_vec_caps(pool_capa, &caps /*out*/);
 
 	uint32_t vec_size = PKTIO_VEC_POOL_VEC_SIZE;
 	uint32_t num_pkt = PKTIO_PKT_POOL_NUM_BUFS * if_count;
 	uint32_t num_vec = num_pkt; /* worst case: 1 pkt per vector */
 
-	if (vec_size > pool_capa->vector.max_size) {
-		vec_size = pool_capa->vector.max_size;
+	if (vec_size > caps.max_size) {
+		vec_size = caps.max_size;
 		APPL_PRINT("\nWarning: pktin vector size reduced to %u\n\n",
 			   vec_size);
 	}
 
-	if (pool_capa->vector.max_num /* 0=limited only by pool memsize */ &&
-	    num_vec > pool_capa->vector.max_num) {
-		num_vec = pool_capa->vector.max_num;
+	if (caps.max_num /* 0=limited only by pool memsize */ &&
+	    num_vec > caps.max_num) {
+		num_vec = caps.max_num;
 		APPL_PRINT("\nWarning: pktin number of vectors reduced to %u\n\n",
 			   num_vec);
 	}
 
-	pool_params.vector.num = num_vec;
-	pool_params.vector.max_size = vec_size;
-	pool_params.vector.uarea_size = em_odp_event_hdr_size();
+	odp_pool_param_t pool_params;
+
+	odp_pool_param_init(&pool_params);
+
+	if (caps.backend == EM_VECTOR_BACKEND_EVENT) {
+		pool_params.type = ODP_POOL_EVENT_VECTOR;
+		pool_params.event_vector.num = num_vec;
+		pool_params.event_vector.max_size = vec_size;
+		pool_params.event_vector.uarea_size = em_odp_event_hdr_size();
+		/* Use max thread-local vector-cache size to speed up pktio allocs */
+		pool_params.event_vector.cache_size = caps.max_cache_size;
+	} else { /* EM_VECTOR_BACKEND_PACKET */
+		pool_params.type = ODP_POOL_VECTOR;
+		pool_params.vector.num = num_vec;
+		pool_params.vector.max_size = vec_size;
+		pool_params.vector.uarea_size = em_odp_event_hdr_size();
+		/* Use max thread-local vector-cache size to speed up pktio allocs */
+		pool_params.vector.cache_size = caps.max_cache_size;
+	}
 
 	odp_pool_t vector_pool = odp_pool_create("vector-pool-odp", &pool_params);
 
@@ -466,6 +527,12 @@ void pktio_init(const appl_conf_t *appl_conf)
 					  stash_param.obj_size, stash_capa.max_obj_size);
 		}
 		stash_param.cache_size = 0; /* No core local caching */
+		/*
+		 * Fixed population: each created pktin queue is stored once and
+		 * thereafter only get/put-back, so the stash never exceeds
+		 * num_obj. Enable strict_size for a faster ODP ring.
+		 */
+		stash_param.strict_size = true;
 
 		stash = odp_stash_create("pktin.pktin_queue_stash", &stash_param);
 		if (stash == ODP_STASH_INVALID)
@@ -494,6 +561,12 @@ void pktio_init(const appl_conf_t *appl_conf)
 				  stash_param.obj_size);
 	}
 	stash_param.cache_size = 0; /* No core local caching */
+	/*
+	 * Fixed population: each tx-burst buffer is stored once and thereafter
+	 * only get/put-back, so the stash never exceeds num_obj. Enable
+	 * strict_size for a faster ODP ring.
+	 */
+	stash_param.strict_size = true;
 
 	stash = odp_stash_create("pktout.tx-burst-stash", &stash_param);
 	if (stash == ODP_STASH_INVALID)
@@ -545,7 +618,7 @@ static void pktio_tx_buffering_create(int if_num)
 		tx_burst = &pktio_shm->tx_burst[if_num][i];
 
 		odp_atomic_init_u64(&tx_burst->cnt, 0);
-		odp_spinlock_init(&tx_burst->lock);
+		odp_ticketlock_init(&tx_burst->lock);
 
 		odp_queue_param_init(&queue_param);
 		queue_param.type = ODP_QUEUE_TYPE_PLAIN;
@@ -585,6 +658,7 @@ static void pktio_tx_buffering_destroy(void)
 {
 	tx_burst_t *tx_burst;
 	int num;
+	int ret;
 
 	while ((tx_burst = tx_drain_burst_acquire()) != NULL) {
 		do {
@@ -598,7 +672,9 @@ static void pktio_tx_buffering_destroy(void)
 			odp_event_free_multi(pktio_locm.ev_burst, num);
 		} while (num > 0);
 
-		odp_queue_destroy(tx_burst->queue);
+		ret = odp_queue_destroy(tx_burst->queue);
+		if (unlikely(ret != 0))
+			APPL_ERROR("odp_queue_destroy():%d fails", ret);
 	}
 }
 
@@ -650,31 +726,99 @@ pktin_queue_queueing_destroy(void)
 }
 
 static void
-set_pktin_vector_params(odp_pktin_queue_param_t *pktin_queue_param,
-			odp_pool_t vec_pool,
-			const odp_pktio_capability_t *pktio_capa)
+set_pktin_evvec_params(odp_pktin_queue_param_t *pktin_queue_param,
+		       odp_event_aggr_config_t *aggr_cfg,
+		       odp_pool_t vec_pool)
 {
 	uint32_t vec_size = PKTIO_VEC_SIZE;
 	uint64_t vec_tmo_ns = PKTIO_VEC_TMO;
+	odp_schedule_capability_t sched_capa;
+	odp_event_aggr_capability_t *aggr_capa = &sched_capa.aggr;
+
+	int ret = odp_schedule_capability(&sched_capa);
+
+	if (ret != 0)
+		APPL_EXIT_FAILURE("odp_schedule_capability():%d failed", ret);
+
+	/*
+	 * Per ODP spec, a config max_tmo_ns of 0 means "no timeout" — vectors
+	 * are emitted only when they reach max_size. Some platforms (e.g. ODP
+	 * linux-generic) advertise capability max_tmo_ns = 0, i.e. the only
+	 * legal config value is 0. In that case force 0 silently instead of
+	 * issuing a misleading "decreased timeout" warning per interface.
+	 */
+	if (aggr_capa->max_tmo_ns == 0) {
+		vec_tmo_ns = 0;
+	} else if (vec_tmo_ns > aggr_capa->max_tmo_ns) {
+		vec_tmo_ns = aggr_capa->max_tmo_ns;
+		APPL_PRINT("\nWarning: Decreased aggregation timeout to %" PRIu64 "\n\n",
+			   vec_tmo_ns);
+	} else if (vec_tmo_ns < aggr_capa->min_tmo_ns) {
+		vec_tmo_ns = aggr_capa->min_tmo_ns;
+		APPL_PRINT("\nWarning: Increased aggregation timeout to %" PRIu64 "\n\n",
+			   vec_tmo_ns);
+	}
+
+	if (vec_size > aggr_capa->max_size) {
+		vec_size = aggr_capa->max_size;
+		APPL_PRINT("\nWarning: Decreased aggregation vector size to %u\n\n", vec_size);
+	} else if (vec_size < aggr_capa->min_size) {
+		vec_size = aggr_capa->min_size;
+		APPL_PRINT("\nWarning: Increased aggregation vector size to %u\n\n", vec_size);
+	}
+
+	memset(aggr_cfg, 0, sizeof(*aggr_cfg));
+	aggr_cfg->pool = vec_pool;
+	aggr_cfg->max_tmo_ns = vec_tmo_ns;
+	aggr_cfg->max_size = vec_size;
+	aggr_cfg->event_type = ODP_EVENT_PACKET;
+
+	pktin_queue_param->queue_param.num_aggr = 1;
+	pktin_queue_param->queue_param.aggr = aggr_cfg;
+
+	/* explicitly disable packet vectors when using event vectors */
+	pktin_queue_param->vector.enable = false;
+}
+
+static void
+set_pktin_pktvec_params(odp_pktin_queue_param_t *pktin_queue_param,
+			odp_pool_t vec_pool,
+			const odp_pktio_capability_t *pktio_capa)
+{
+	if (!pktio_capa->vector.supported)
+		APPL_EXIT_FAILURE("pktin: input vectors not supported");
+
+	uint32_t vec_size = PKTIO_VEC_SIZE;
+	uint64_t vec_tmo_ns = PKTIO_VEC_TMO;
+
+	/*
+	 * Match the event-aggregator path: when the platform's capability
+	 * max_tmo_ns is 0, the only legal config value is 0 — vectors are
+	 * emitted only when they reach max_size. Force 0 silently instead of
+	 * issuing a misleading "decreased timeout" warning per interface.
+	 */
+	if (pktio_capa->vector.max_tmo_ns == 0) {
+		vec_tmo_ns = 0;
+	} else if (vec_tmo_ns > pktio_capa->vector.max_tmo_ns) {
+		vec_tmo_ns = pktio_capa->vector.max_tmo_ns;
+		APPL_PRINT("\nWarning: Decreased vector timeout to %" PRIu64 "\n\n", vec_tmo_ns);
+	} else if (vec_tmo_ns < pktio_capa->vector.min_tmo_ns) {
+		vec_tmo_ns = pktio_capa->vector.min_tmo_ns;
+		APPL_PRINT("\nWarning: Increased vector timeout to %" PRIu64 "\n\n", vec_tmo_ns);
+	}
+
+	if (vec_size > pktio_capa->vector.max_size) {
+		vec_size = pktio_capa->vector.max_size;
+		APPL_PRINT("\nWarning: Decreased vector size to %u\n\n", vec_size);
+	} else if (vec_size < pktio_capa->vector.min_size) {
+		vec_size = pktio_capa->vector.min_size;
+		APPL_PRINT("\nWarning: Increased vector size to %u\n\n", vec_size);
+	}
 
 	pktin_queue_param->vector.enable = true;
 	pktin_queue_param->vector.pool = vec_pool;
-
-	if (vec_size > pktio_capa->vector.max_size ||
-	    vec_size < pktio_capa->vector.min_size) {
-		vec_size = (vec_size > pktio_capa->vector.max_size) ?
-			pktio_capa->vector.max_size : pktio_capa->vector.min_size;
-		APPL_PRINT("\nWarning: Modified vector size to %u\n\n", vec_size);
-	}
-	pktin_queue_param->vector.max_size = vec_size;
-
-	if (vec_tmo_ns > pktio_capa->vector.max_tmo_ns ||
-	    vec_tmo_ns < pktio_capa->vector.min_tmo_ns) {
-		vec_tmo_ns = (vec_tmo_ns > pktio_capa->vector.max_tmo_ns) ?
-			pktio_capa->vector.max_tmo_ns : pktio_capa->vector.min_tmo_ns;
-		APPL_PRINT("\nWarning: Modified vector timeout to %" PRIu64 "\n\n", vec_tmo_ns);
-	}
 	pktin_queue_param->vector.max_tmo_ns = vec_tmo_ns;
+	pktin_queue_param->vector.max_size = vec_size;
 }
 
 /** Helper to pktio_create() for packet input configuration */
@@ -684,6 +828,7 @@ static void pktin_config(const char *dev, int if_idx, odp_pktio_t pktio,
 			 bool pktin_vector)
 {
 	odp_pktin_queue_param_t pktin_queue_param;
+	odp_event_aggr_config_t aggr_cfg; /* only for event vector mode */
 	int num_rx, max;
 	int ret;
 
@@ -716,12 +861,23 @@ static void pktin_config(const char *dev, int if_idx, odp_pktio_t pktio,
 		pktin_queue_param.queue_param.sched.group = em_odp_qgrp2odp(EM_QUEUE_GROUP_DEFAULT);
 
 		if (pktin_vector) {
-			if (!pktio_capa->vector.supported)
-				APPL_EXIT_FAILURE("pktin, dev:'%s': input vectors not supported",
-						  dev);
-			set_pktin_vector_params(&pktin_queue_param,
-						pktio_shm->pools.vecpool_odp,
-						pktio_capa);
+			em_cfgfile_opts_t cfgfile_opts = {0};
+			em_status_t status = em_cfgfile_opts(&cfgfile_opts);
+
+			if (status != EM_OK)
+				APPL_EXIT_FAILURE("Failed to get EM config file options");
+
+			if (cfgfile_opts.vector.backend == EM_VECTOR_BACKEND_EVENT) {
+				set_pktin_evvec_params(&pktin_queue_param, &aggr_cfg,
+						       pktio_shm->pools.vecpool_odp);
+			} else if (cfgfile_opts.vector.backend == EM_VECTOR_BACKEND_PACKET) {
+				set_pktin_pktvec_params(&pktin_queue_param,
+							pktio_shm->pools.vecpool_odp,
+							pktio_capa);
+			} else {
+				APPL_EXIT_FAILURE("Unsupported vector backend %d",
+						  cfgfile_opts.vector.backend);
+			}
 		}
 	}
 
@@ -852,6 +1008,16 @@ pktio_create(const char *dev, pktin_mode_t in_mode, bool pktin_vector,
 	APPL_PRINT("\tcreated pktio:%" PRIu64 " idx:%d, dev:'%s', drv:%s\n",
 		   odp_pktio_to_u64(pktio), if_idx, dev, info.drv_name);
 
+	/* Log the NIC MAC address */
+	uint8_t mac[ODPH_ETHADDR_LEN];
+
+	ret = odp_pktio_mac_addr(pktio, mac, sizeof(mac));
+	if (ret != ODPH_ETHADDR_LEN)
+		APPL_EXIT_FAILURE("pktio mac-addr query failed: dev:'%s' (%d)",
+				  dev, ret);
+	APPL_PRINT("\tdev:'%s' MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
+		   dev, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
 	ret = odp_pktio_capability(pktio, &pktio_capa);
 	if (ret != 0)
 		APPL_EXIT_FAILURE("pktio capability query failed: dev:'%s' (%d)",
@@ -874,7 +1040,7 @@ pktio_create(const char *dev, pktin_mode_t in_mode, bool pktin_vector,
 	/* Pktout (Tx) config */
 	pktout_config(dev, if_idx, pktio, &pktio_capa, num_workers);
 
-	APPL_PRINT("\tcreated pktio dev:'%s' - input mode:%s, output mode:QUEUE",
+	APPL_PRINT("\tcreated pktio dev:'%s' - input mode:%s, output mode:QUEUE\n",
 		   dev, pktin_mode_str(in_mode));
 
 	pktio_shm->ifs.idx[pktio_shm->ifs.num_created] = if_idx;
@@ -1182,15 +1348,15 @@ pktin_poll_end:
 static inline int
 pktio_tx_burst(tx_burst_t *const tx_burst)
 {
-	if (odp_spinlock_is_locked(&tx_burst->lock) ||
-	    odp_spinlock_trylock(&tx_burst->lock) == 0)
+	if (odp_ticketlock_is_locked(&tx_burst->lock) ||
+	    odp_ticketlock_trylock(&tx_burst->lock) == 0)
 		return 0;
 
 	const int num = odp_queue_deq_multi(tx_burst->queue,
 					    pktio_locm.ev_burst,
 					    MAX_PKT_BURST_TX);
 	if (unlikely(num <= 0)) {
-		odp_spinlock_unlock(&tx_burst->lock);
+		odp_ticketlock_unlock(&tx_burst->lock);
 		return 0;
 	}
 
@@ -1200,7 +1366,7 @@ pktio_tx_burst(tx_burst_t *const tx_burst)
 	/* Enqueue a tx burst onto the pktio queue for transmission */
 	int ret = odp_queue_enq_multi(pktout_queue, pktio_locm.ev_burst, num);
 
-	odp_spinlock_unlock(&tx_burst->lock);
+	odp_ticketlock_unlock(&tx_burst->lock);
 
 	if (unlikely(ret != num)) {
 		if (ret < 0)
@@ -1234,8 +1400,11 @@ int pktio_tx(const em_event_t events[], const unsigned int num,
 	if (unlikely(num == 0 || !pktio_shm->pktio_started))
 		return 0;
 
-	/* Convert into ODP-events */
-	odp_event_t odp_events[num];
+	/*
+	 * Convert into ODP-events. 'num' is bounded by the pktio burst size
+	 * (<= MAX_PKT_BURST_TX), use a fixed-size (non-VLA) table.
+	 */
+	odp_event_t odp_events[MAX_PKT_BURST_TX];
 
 	em_odp_events2odp(events, odp_events, num);
 
@@ -1248,7 +1417,7 @@ int pktio_tx(const em_event_t events[], const unsigned int num,
 	/*
 	 * 'sched_ctx_type = em_sched_context_type_current(&src_sched_queue)'
 	 * could be used to determine the need for maintaining event order for
-	 * output. Also em_queue_get_type(src_sched_queue) could further be used
+	 * output. Also em_queue_type(src_sched_queue) could further be used
 	 * if not caring about a potentially ended sched-context caused by an
 	 * earlier call to em_atomic/ordered_processing_end().
 	 * Here, none of this is done, since every event will be buffered and
@@ -1345,7 +1514,7 @@ void pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst,
 		return;
 	}
 
-	if (unlikely(em_queue_get_type(queue) == EM_QUEUE_TYPE_UNDEF)) {
+	if (unlikely(em_queue_type(queue) == EM_QUEUE_TYPE_UNDEF)) {
 		odp_ticketlock_unlock(&pktio_shm->tbl_lookup.lock);
 		APPL_EXIT_FAILURE("Invalid queue:%" PRI_QUEUE "", queue);
 		return;
@@ -1366,7 +1535,7 @@ void pktio_add_queue(uint8_t proto, uint32_t ipv4_dst, uint16_t port_dst,
 
 int pktio_default_queue(em_queue_t queue)
 {
-	if (unlikely(em_queue_get_type(queue) == EM_QUEUE_TYPE_UNDEF)) {
+	if (unlikely(em_queue_type(queue) == EM_QUEUE_TYPE_UNDEF)) {
 		APPL_EXIT_FAILURE("Invalid queue:%" PRI_QUEUE "", queue);
 		return -1;
 	}

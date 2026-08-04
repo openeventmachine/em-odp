@@ -50,6 +50,8 @@
 #include <signal.h>
 #include <sys/wait.h>
 
+#include <odp_api.h>
+#include <odp/helper/odph_api.h>
 #include <event_machine.h>
 #include <event_machine/helper/event_machine_helper.h>
 
@@ -65,7 +67,8 @@
 #define USAGE_FMT \
 "\n"										\
 "Usage: %s APPL&EM-OPTIONS\n"							\
-"  E.g. %s -c 0xfe -p\n"							\
+"  E.g. %s -c 0xfe -t [-- APP options (if available)]\n"			\
+"  Try '%s -c 0xfe -t -- --help' for application specific information.\n"	\
 "\n"										\
 "Event Machine (EM) example application.\n"					\
 "\n"										\
@@ -131,8 +134,9 @@
 static void
 usage(char *progname)
 {
-	APPL_PRINT(USAGE_FMT, NO_PATH(progname), NO_PATH(progname),
-		   EM_SCHED_MULTI_MAX_BURST);
+	char *name = NO_PATH(progname);
+
+	APPL_PRINT(USAGE_FMT, name, name, name, EM_SCHED_MULTI_MAX_BURST);
 }
 
 /**
@@ -454,12 +458,12 @@ int cm_setup(int argc, char *argv[])
 	/*
 	 * Terminate EM
 	 *
-	 * All EM-cores have already run em_term_core()
+	 * All EM-cores have already run em_term_local()
 	 */
-	em_status_t stat = em_term(em_conf);
+	em_status_t stat = em_term();
 
 	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("em_term():%" PRI_STAT "", stat);
+		APPL_EXIT_FAILURE("em_term():%" PRIxSTAT "", stat);
 
 	/*
 	 * Free shared memory
@@ -554,8 +558,8 @@ init_sync(sync_t *const sync, int num_cpus)
 {
 	odp_barrier_init(&sync->start_barrier, num_cpus);
 	odp_barrier_init(&sync->exit_barrier, num_cpus);
-	env_atomic64_init(&sync->exit_count);
-	env_atomic64_init(&sync->enter_count);
+	odp_atomic_init_u64(&sync->exit_count, 0);
+	odp_atomic_init_u64(&sync->enter_count, 0);
 }
 
 static void
@@ -612,33 +616,55 @@ init_em(const parse_args_t *parsed, em_conf_t *em_conf /* out */)
 	em_conf->log.log_fn = NULL;
 	em_conf->log.vlog_fn = NULL;
 
+	/*
+	 * Initialize the Event Machine. Every worker EM core still needs to
+	 * call em_init_local() later.
+	 * Note: the EM default pool config MUST be included in em_conf!
+	 */
+	stat = em_init(em_conf);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("em_init(), EM error:%" PRIxSTAT "", stat);
+
+	em_conf_local_t conf_local;
+
+	em_conf_local_init(&conf_local);
+	conf_local.core_type = EM_CORE_TYPE_EXTERNAL;
+
+	stat = em_init_local(&conf_local);
+	if (stat != EM_OK)
+		APPL_EXIT_FAILURE("em_init_local(EXTERNAL), EM error:%" PRIxSTAT "", stat);
+}
+
+static void init_em_worker(const appl_conf_t *appl_conf)
+{
+	em_conf_local_t conf_local;
+
+	em_conf_local_init(&conf_local);
+	conf_local.core_type = EM_CORE_TYPE_WORKER;
+
 	/* Packet-I/O */
-	if (parsed->args_appl.pktio.if_count > 0) {
+	if (appl_conf->pktio.if_count > 0) {
 		/*
 		 * Request EM to poll input for pkts in the dispatch loop
 		 */
-		pktin_mode_t in_mode = parsed->args_appl.pktio.in_mode;
+		pktin_mode_t in_mode = appl_conf->pktio.in_mode;
 
 		if (in_mode == DIRECT_RECV)
-			em_conf->input.input_poll_fn = pktin_pollfn_direct;
+			conf_local.input_poll_fn = pktin_pollfn_direct;
 		else if (in_mode == PLAIN_QUEUE)
-			em_conf->input.input_poll_fn = pktin_pollfn_plainqueue;
+			conf_local.input_poll_fn = pktin_pollfn_plainqueue;
 		/* in_mode: SCHED_... use no input_poll function! */
 
 		/*
 		 * Request EM to drain buffered output in the dispatch loop
 		 */
-		em_conf->output.output_drain_fn = pktout_drainfn;
+		conf_local.output_drain_fn = pktout_drainfn;
 	}
 
-	/*
-	 * Initialize the Event Machine. Every EM core still needs to call
-	 * em_init_core() later.
-	 * Note: the EM default pool config MUST be included in em_conf!
-	 */
-	stat = em_init(em_conf);
+	em_status_t stat = em_init_local(&conf_local);
+
 	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("em_init(), EM error:%" PRI_STAT "", stat);
+		APPL_EXIT_FAILURE("em_init_local(WORKER), EM error:%" PRIxSTAT "", stat);
 }
 
 static void
@@ -846,13 +872,10 @@ static void startup_all_cores(sync_t *sync, const appl_conf_t *appl_conf,
 			      bool is_thread_per_core)
 {
 	/*
-	 * Initialize this thread of execution (proc, thread), i.e. EM-core
+	 * Initialize this thread of execution (proc, thread)
+	 * as a worker EM-core.
 	 */
-	em_status_t stat = em_init_core();
-
-	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("em_init_core():%" PRI_STAT ", EM-core:%02d",
-				  stat, em_core_id());
+	init_em_worker(appl_conf);
 
 	odp_barrier_wait(&sync->start_barrier);
 
@@ -933,12 +956,12 @@ static void startup_all_cores(sync_t *sync, const appl_conf_t *appl_conf,
 	start_duration.select = EM_DISPATCH_DURATION_ROUNDS;
 	start_duration.rounds = STARTUP_DISPATCH_ROUNDS;
 
-	env_atomic64_inc(&sync->enter_count);
+	odp_atomic_inc_u64(&sync->enter_count);
 	do {
 		em_dispatch_duration(&start_duration, &start_opt, NULL);
 		if (core_id == 0)
-			env_atomic64_inc(&sync->enter_count);
-	} while (env_atomic64_get(&sync->enter_count) <= cores);
+			odp_atomic_inc_u64(&sync->enter_count);
+	} while (odp_atomic_load_u64(&sync->enter_count) <= cores);
 }
 
 /**
@@ -952,17 +975,14 @@ static void startup_all_cores(sync_t *sync, const appl_conf_t *appl_conf,
 static void startup_one_core_first(sync_t *sync, const appl_conf_t *appl_conf,
 				   bool is_thread_per_core)
 {
-	em_status_t stat;
-	uint64_t enter_count = env_atomic64_return_add(&sync->enter_count, 1);
+	uint64_t enter_count = odp_atomic_fetch_inc_u64(&sync->enter_count);
 
 	if (enter_count == 0) {
 		/*
-		 * Initialize first EM-core
+		 * Initialize first worker EM-core
 		 */
-		stat = em_init_core();
-		if (stat != EM_OK)
-			APPL_EXIT_FAILURE("em_init_core():%" PRI_STAT ", EM-core:%02d",
-					  stat, em_core_id());
+		init_em_worker(appl_conf);
+
 		if (appl_conf->pktio.if_count > 0)
 			pktio_mem_lookup(is_thread_per_core);
 
@@ -1002,12 +1022,10 @@ static void startup_one_core_first(sync_t *sync, const appl_conf_t *appl_conf,
 		sleep(1);
 
 		/*
-		 * Initialize this thread of execution (proc, thread), i.e. EM-core
+		 * Initialize this thread of execution (proc, thread)
+		 * as a worker EM-core.
 		 */
-		stat = em_init_core();
-		if (stat != EM_OK)
-			APPL_EXIT_FAILURE("em_init_core():%" PRI_STAT ", EM-core:%02d",
-					  stat, em_core_id());
+		init_em_worker(appl_conf);
 
 		if (appl_conf->pktio.if_count > 0)
 			pktio_mem_lookup(is_thread_per_core);
@@ -1053,12 +1071,12 @@ static void startup_one_core_first(sync_t *sync, const appl_conf_t *appl_conf,
 	start_duration.select = EM_DISPATCH_DURATION_ROUNDS;
 	start_duration.rounds = STARTUP_DISPATCH_ROUNDS;
 
-	env_atomic64_inc(&sync->enter_count);
+	odp_atomic_inc_u64(&sync->enter_count);
 	do {
 		em_dispatch_duration(&start_duration, &start_opt, NULL);
 		if (core_id == 0)
-			env_atomic64_inc(&sync->enter_count);
-	} while (env_atomic64_get(&sync->enter_count) <= 2 * cores);
+			odp_atomic_inc_u64(&sync->enter_count);
+	} while (odp_atomic_load_u64(&sync->enter_count) <= 2 * cores);
 
 	if (core_id == 0)
 		em_info_print();
@@ -1125,7 +1143,7 @@ static void terminate_core(sync_t *sync, appl_conf_t *appl_conf)
 
 	em_dispatch_duration(&term_duration, &term_opt, NULL);
 
-	uint64_t exit_count = env_atomic64_return_add(&sync->exit_count, 1);
+	uint64_t exit_count = odp_atomic_fetch_inc_u64(&sync->exit_count);
 
 	/* First core to exit dispatch stops the application */
 	if (exit_count == 0) {
@@ -1155,9 +1173,9 @@ static void terminate_core(sync_t *sync, appl_conf_t *appl_conf)
 			 * this ensures that all other cores will stay in this
 			 * dispatch loop until the first core reaches the loop.
 			 */
-			env_atomic64_inc(&sync->exit_count);
+			odp_atomic_inc_u64(&sync->exit_count);
 		}
-		exit_count = env_atomic64_get(&sync->exit_count);
+		exit_count = odp_atomic_load_u64(&sync->exit_count);
 	} while (exit_count <= cores);
 
 	/*
@@ -1189,7 +1207,7 @@ static void terminate_core(sync_t *sync, appl_conf_t *appl_conf)
 
 	stat = em_term_core();
 	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("em_term_core(%d):%" PRI_STAT "",
+		APPL_EXIT_FAILURE("em_term_core(%d):%" PRIxSTAT "",
 				  core_id, stat);
 
 	odp_barrier_wait(&sync->exit_barrier);
@@ -1336,7 +1354,7 @@ static void run_core_dispatch_duration(const em_dispatch_duration_t *duration,
  * Core runner function - application entry on each EM-core
  *
  * Application setup and event dispatch loop run by each EM-core.
- * A call to em_init_core() MUST be made on each EM-core before using other
+ * A call to em_init_local() MUST be made on each EM-core before using other
  * EM API functions to create EOs, queues etc. or calling em_dispatch().
  *
  * @param arg  passed arg actually of type 'appl_shm_t *', i.e. appl shared mem
@@ -2027,16 +2045,16 @@ int appl_log(em_log_level_t level, const char *fmt, ...)
  */
 void delay_spin(const uint64_t spin_count)
 {
-	env_atomic64_t dummy; /* use atomic to avoid optimization */
+	odp_atomic_u64_t dummy; /* use atomic to avoid optimization */
 	uint64_t i;
 
-	env_atomic64_init(&dummy);
+	odp_atomic_init_u64(&dummy, 0);
 
 	if (likely(appl_shm)) {
 		for (i = 0; i < spin_count && !appl_shm->exit_flag; i++)
-			env_atomic64_inc(&dummy);
+			odp_atomic_inc_u64(&dummy);
 	} else {
 		for (i = 0; i < spin_count; i++)
-			env_atomic64_inc(&dummy);
+			odp_atomic_inc_u64(&dummy);
 	}
 }

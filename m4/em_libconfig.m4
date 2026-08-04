@@ -1,9 +1,9 @@
 ##########################################################################
 # Configuration file version
 ##########################################################################
-m4_define([_em_config_version_generation], [0])
-m4_define([_em_config_version_major], [0])
-m4_define([_em_config_version_minor], [20])
+m4_define([_em_config_version_generation], [1])
+m4_define([_em_config_version_major], [2])
+m4_define([_em_config_version_minor], [0])
 
 m4_define([_em_config_version],
 	  [_em_config_version_generation._em_config_version_major._em_config_version_minor])

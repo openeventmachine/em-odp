@@ -255,7 +255,7 @@ void test_start(const appl_conf_t *appl_conf)
 	msg->command = APP_CMD_TMO;
 	msg->tmo = eo_ctx->periodic_tmo;
 	msg->count = 0;
-	eo_ctx->hz = em_timer_get_freq(m_shm->tmr); /* save for later */
+	eo_ctx->hz = em_timer_freq(m_shm->tmr); /* save for later */
 	if (eo_ctx->hz < 1000) { /* sanity check */
 		APPL_ERROR("WARNING - timer hz very low!\n");
 	}
@@ -330,10 +330,10 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	APPL_PRINT("EO start\n");
 
 	/* print timer info */
-	num_timers = em_timer_get_all(&tmr, 1);
+	num_timers = em_timer_list(&tmr, 1);
 	APPL_PRINT("System has %d timer(s)\n", num_timers);
 
-	if (em_timer_get_attr(m_shm->tmr, &attr) != EM_OK) {
+	if (em_timer_attr(m_shm->tmr, &attr) != EM_OK) {
 		APPL_ERROR("Can't get timer info!\n");
 		return EM_ERR_BAD_ID;
 	}
@@ -345,7 +345,7 @@ static em_status_t app_eo_start(app_eo_ctx_t *eo_ctx, em_eo_t eo,
 	APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
 	APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 	APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
-		   em_timer_get_freq(m_shm->tmr));
+		   em_timer_freq(m_shm->tmr));
 
 	/* init local EO context */
 	eo_ctx->my_q = m_shm->eo_q;
@@ -389,7 +389,7 @@ static em_status_t app_eo_stop(app_eo_ctx_t *eo_ctx, em_eo_t eo)
 
 	/* cancel and delete ongoing timeouts */
 	if (eo_ctx->periodic_tmo != EM_TMO_UNDEF) {
-		if (em_tmo_get_state(eo_ctx->periodic_tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->periodic_tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->periodic_tmo, &event);
 
 		em_tmo_delete(eo_ctx->periodic_tmo);
@@ -398,7 +398,7 @@ static em_status_t app_eo_stop(app_eo_ctx_t *eo_ctx, em_eo_t eo)
 	}
 	if (eo_ctx->random_tmo != EM_TMO_UNDEF) {
 		event = EM_EVENT_UNDEF;
-		if (em_tmo_get_state(eo_ctx->random_tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->random_tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->random_tmo, &event);
 		em_tmo_delete(eo_ctx->random_tmo);
 		if (event != EM_EVENT_UNDEF)

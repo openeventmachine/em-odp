@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,9 @@ objpool_node2elem(list_node_t *const list_node);
 
 int objpool_init(objpool_t *const objpool, uint32_t nbr_subpools)
 {
+	if (unlikely(!objpool || nbr_subpools == 0))
+		return -1;
+
 	if (nbr_subpools > OBJSUBPOOLS_MAX)
 		nbr_subpools = OBJSUBPOOLS_MAX;
 
@@ -45,11 +48,16 @@ int objpool_init(objpool_t *const objpool, uint32_t nbr_subpools)
 	for (uint32_t i = 0; i < nbr_subpools; i++) {
 		objsubpool_t *const subpool = &objpool->subpool[i];
 
-		env_spinlock_init(&subpool->lock);
+		odp_ticketlock_init(&subpool->lock);
 		list_init(&subpool->list_head);
 	}
 
 	return 0;
+}
+
+uint32_t objpool_subpools(const objpool_t *const objpool)
+{
+	return objpool->nbr_subpools;
 }
 
 void objpool_add(objpool_t *const objpool, uint32_t subpool_idx,
@@ -60,10 +68,10 @@ void objpool_add(objpool_t *const objpool, uint32_t subpool_idx,
 
 	elem->subpool_idx = idx;
 
-	env_spinlock_lock(&subpool->lock);
+	odp_ticketlock_lock(&subpool->lock);
 	list_add(&subpool->list_head, &elem->list_node);
 	elem->in_pool = 1; /* true */
-	env_spinlock_unlock(&subpool->lock);
+	odp_ticketlock_unlock(&subpool->lock);
 }
 
 objpool_elem_t *
@@ -75,7 +83,7 @@ objpool_rem(objpool_t *const objpool, uint32_t subpool_idx)
 		const uint32_t idx = (subpool_idx + i) % objpool->nbr_subpools;
 		objsubpool_t *const subpool = &objpool->subpool[idx];
 
-		env_spinlock_lock(&subpool->lock);
+		odp_ticketlock_lock(&subpool->lock);
 
 		list_node_t *const node = list_rem_first(&subpool->list_head);
 
@@ -84,7 +92,7 @@ objpool_rem(objpool_t *const objpool, uint32_t subpool_idx)
 			elem->in_pool = 0; /* false */
 		}
 
-		env_spinlock_unlock(&subpool->lock);
+		odp_ticketlock_unlock(&subpool->lock);
 
 		if (node != NULL)
 			return elem;
@@ -99,19 +107,19 @@ int objpool_rem_elem(objpool_t *const objpool, objpool_elem_t *const elem)
 	objsubpool_t *const subpool = &objpool->subpool[idx];
 	int ret = -1;
 
-	env_spinlock_lock(&subpool->lock);
+	odp_ticketlock_lock(&subpool->lock);
 	if (elem->in_pool) {
 		list_rem(&subpool->list_head, &elem->list_node);
 		elem->in_pool = 0; /* false */
 		ret = 0;
 	}
-	env_spinlock_unlock(&subpool->lock);
+	odp_ticketlock_unlock(&subpool->lock);
 
 	return ret;
 }
 
 static inline objpool_elem_t *
-objpool_node2elem(list_node_t *const list_node)
+objpool_node2elem(list_node_t *const node)
 {
-	return (objpool_elem_t *)((uintptr_t)list_node - offsetof(objpool_elem_t, list_node));
+	return (objpool_elem_t *)((uintptr_t)node - offsetof(objpool_elem_t, list_node));
 }

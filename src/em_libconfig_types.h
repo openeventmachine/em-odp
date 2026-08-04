@@ -36,6 +36,10 @@
 #ifndef EM_LIBCONFIG_TYPES_H_
 #define EM_LIBCONFIG_TYPES_H_
 
+#include <stdbool.h>
+
+#include <libconfig.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif

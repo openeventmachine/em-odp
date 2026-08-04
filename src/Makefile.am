@@ -28,18 +28,24 @@ emincludedir = $(includedir)/event_machine/api
 eminclude_HEADERS = \
 $(top_srcdir)/include/event_machine/api/event_machine_atomic_group.h \
 $(top_srcdir)/include/event_machine/api/event_machine_core.h \
+$(top_srcdir)/include/event_machine/api/event_machine_core_mask.h \
 $(top_srcdir)/include/event_machine/api/event_machine_dispatcher.h \
 $(top_srcdir)/include/event_machine/api/event_machine_eo.h \
 $(top_srcdir)/include/event_machine/api/event_machine_error.h \
-$(top_srcdir)/include/event_machine/api/event_machine_event.h \
 $(top_srcdir)/include/event_machine/api/event_machine_event_group.h \
+$(top_srcdir)/include/event_machine/api/event_machine_event.h \
+$(top_srcdir)/include/event_machine/api/event_machine_hooks.h \
+$(top_srcdir)/include/event_machine/api/event_machine_init.h \
 $(top_srcdir)/include/event_machine/api/event_machine_packet.h \
-$(top_srcdir)/include/event_machine/api/event_machine_queue.h \
+$(top_srcdir)/include/event_machine/api/event_machine_pool.h \
 $(top_srcdir)/include/event_machine/api/event_machine_queue_group.h \
+$(top_srcdir)/include/event_machine/api/event_machine_queue.h \
 $(top_srcdir)/include/event_machine/api/event_machine_scheduler.h \
-$(top_srcdir)/include/event_machine/api/event_machine_types.h \
+$(top_srcdir)/include/event_machine/api/event_machine_timer_hw_specific.h \
 $(top_srcdir)/include/event_machine/api/event_machine_timer.h \
+$(top_srcdir)/include/event_machine/api/event_machine_types.h \
 $(top_builddir)/include/event_machine/api/event_machine_version.h \
+$(top_builddir)/include/event_machine/api/event_machine_config.h \
 $(top_builddir)/include/event_machine/api/event_machine_deprecated.h
 
 emhelperincludedir = $(includedir)/event_machine/helper
@@ -54,15 +60,7 @@ $(top_srcdir)/include/event_machine/add-ons/event_machine_add-on_error.h
 
 emincludeplatformdir = $(includedir)/event_machine/platform
 emincludeplatform_HEADERS = \
-$(top_srcdir)/include/event_machine/platform/event_machine_config.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_hw_config.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_hw_specific.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_hw_types.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_hooks.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_init.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_pool.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_odp_ext.h \
-$(top_srcdir)/include/event_machine/platform/event_machine_timer_hw_specific.h
+$(top_srcdir)/include/event_machine/platform/event_machine_odp_ext.h
 
 emaddonsincludeplatformdir = $(includedir)/event_machine/platform/add-ons
 emaddonsincludeplatform_HEADERS =
@@ -84,6 +82,7 @@ BUILT_SOURCES = $(top_builddir)/include/em_libconfig_config.h
 __LIB__libemodp_la_SOURCES = \
 event_machine_atomic_group.c \
 event_machine_core.c \
+event_machine_core_mask.c \
 event_machine_dispatcher.c \
 event_machine_eo.c \
 event_machine_error.c \
@@ -91,7 +90,6 @@ event_machine_event_group.c \
 event_machine_event.c \
 event_machine_helper.c \
 event_machine_hooks.c \
-event_machine_hw_specific.c \
 event_machine_init.c \
 event_machine_odp_ext.c \
 event_machine_packet.c \
@@ -103,8 +101,6 @@ event_machine_scheduler.c \
 em_atomic_group.c \
 em_atomic_group.h \
 em_atomic_group_types.h \
-	\
-em_atomic.h \
 	\
 em_chaining.c \
 em_chaining.h \
@@ -146,13 +142,12 @@ em_hooks.c \
 em_hooks.h \
 em_hook_types.h \
 	\
-em_include.h \
-	\
 em_info.c \
 em_info.h \
 	\
 em_init.c \
 em_init.h \
+em_init_types.h \
 	\
 em_internal_event.c \
 em_internal_event.h \
@@ -166,6 +161,7 @@ em_mem.h \
 	\
 em_pool.c \
 em_pool.h \
+em_pool_inline.h \
 em_pool_types.h \
 	\
 em_queue.c \
@@ -196,3 +192,16 @@ em_timer_types.h
 
 __LIB__libemodp_la_LIBADD = $(ODP_LIBS)
 __LIB__libemodp_la_LIBADD += $(LIBCONFIG_LIBS)
+__LIB__libemodp_la_LIBADD += $(LIB)/libchaining_default.la
+
+# The event-chaining output hooks event_send_device()/_multi() are weak
+# defaults that applications override at link time. GCC <= 13 mis-binds such an
+# override to the weak default under static + LTO (fixed in GCC 14): the LTO
+# plugin lets the in-IR weak definition prevail over the application's strong,
+# non-IR override. Build the weak defaults in their own translation unit
+# without LTO (kept out of the LTO IR) so the override resolves reliably
+# regardless of toolchain or link mode.
+noinst_LTLIBRARIES = $(LIB)/libchaining_default.la
+__LIB__libchaining_default_la_SOURCES = em_chaining_default.c
+__LIB__libchaining_default_la_CFLAGS = $(AM_CFLAGS) -fno-lto
+__LIB__libchaining_default_la_LDFLAGS =

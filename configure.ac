@@ -2,10 +2,10 @@ AC_PREREQ([2.69])
 ############################
 # Version
 ############################
-m4_define([em_version_api_major], [3])
-m4_define([em_version_api_minor], [8])
+m4_define([em_version_api_major], [4])
+m4_define([em_version_api_minor], [4])
 m4_define([em_version_implementation], [0])
-m4_define([em_version_fix], [1])
+m4_define([em_version_fix], [0])
 
 m4_define([em_version_api], [em_version_api_major.em_version_api_minor])
 m4_define([em_version], [m4_if(m4_eval(em_version_fix), [0],
@@ -170,6 +170,7 @@ EM_CHECK_CFLAG([-Wundef])
 EM_CHECK_CFLAG([-Wwrite-strings])
 EM_CHECK_CFLAG([-Wno-vla]) # Allow variable-length arrays (vla), for clang.
 EM_CHECK_CFLAG([-Wshadow=local])
+EM_CHECK_CFLAG([-Wflex-array-member-not-at-end])
 
 # GCC 10,11 sometimes gets confused about object sizes and gives bogus warnings.
 # Make the affected warnings generate only warnings, not errors.
@@ -191,6 +192,7 @@ AS_IF([test "$GCC" == yes],
 # Don't allow the compiler to assume the strictest aliasing rules.
 # Unless turned off, the -fstrict-aliasing option is enabled at
 # optimization levels -O2, -O3, -Os.
+# The implementation of em-odp may break under strict aliasing rules.
 EM_CHECK_CFLAG([-fno-strict-aliasing])
 EM_CHECK_CXXFLAG([-fno-strict-aliasing])
 
@@ -225,98 +227,195 @@ EM_CFLAGS="$EM_CFLAGS -DEM_BUILD_INFO=\"$build_info\""
 
 ##########################################################################
 # EM (em-odp) compile-time options
+#
+# EM options enabled/disabled via the configure script are made available
+# to the EM API via defines in the generated event_machine_config.h file.
+#
+# See file: include/event_machine/api/event_machine_config.h.in -->
+# <install>/include/event_machine/api/event_machine_config.h
+# for additional details.
 ##########################################################################
 
-# Override the EM-define value 'EM_CHECK_LEVEL' to 0...3 (yes=3)
+#
+# Set the EM-define value 'EM_CHECK_LEVEL' to 0...3 (yes=3)
 # --enable-check-level=0...3     Set 'EM_CHECK_LEVEL' to the given
 #                                value 0...3
 # --enable-check-level=yes (=3)  Set 'EM_CHECK_LEVEL' to 3
 # --enable-check-level           Set 'EM_CHECK_LEVEL' to 3
-# --disable-check-level or
-#   no option given              Use '#define EM_CHECK_LEVEL 0...3' from
-#                                source code
-check_level_info="no (EM_CHECK_LEVEL from source code)"
-EM_CHECK_LEVEL=""
+# --disable-check-level          Set 'EM_CHECK_LEVEL' to 1 (avoid 0=none)
+#   no option given              Use default value (EM_CHECK_LEVEL=1)
+#
+# See include/event_machine/api/event_machine_config.h/.in for details
+# on EM_CHECK_LEVEL values.
+#
+EM_CHECK_LEVEL=1 # default
 AC_ARG_ENABLE([check-level],
 	      [AS_HELP_STRING([--enable-check-level[[=VAL]]],
-			      [Override the 'EM_CHECK_LEVEL' define, valid
+			      [Set the 'EM_CHECK_LEVEL' define, valid
 			       values are 0...3, yes(=3) or no value(=3)
-			       [default=disabled, value from source code]])],
-	      [AS_IF([test "$enableval" -ge 0 -a "$enableval" -le 3 2>/dev/null],
-		     [check_level_info="yes:$enableval (EM_CHECK_LEVEL=$enableval)"
-		      EM_CHECK_LEVEL="-DEM_CHECK_LEVEL=$enableval"],
-
+			       [default=1 when no option given]])],
+	      [AS_IF(dnl --enable-check-level=0...3:
+		     [test "$enableval" -ge 0 -a "$enableval" -le 3 2>/dev/null],
+		     [EM_CHECK_LEVEL="$enableval"],
+		     dnl --enable-check-level[=yes]:
 		     [test "x$enableval" = "xyes"],
-		     [check_level_info="yes:3 (EM_CHECK_LEVEL=$enableval)"
-		      EM_CHECK_LEVEL="-DEM_CHECK_LEVEL=3"],
-
-		     [test "x$enableval" != "xno"],
+		     [EM_CHECK_LEVEL=3],
+		     dnl --disable-check-level OR --enable-check-level=no:
+		     [test "x$enableval" = "xno"],
+		     [EM_CHECK_LEVEL=1],
+		     dnl unsupported value given:
 		     [AC_MSG_ERROR([bad value ${enableval} for --enable-check-level])]
 		)
-		EM_CPPFLAGS="$EM_CPPFLAGS $EM_CHECK_LEVEL"
 	      ],[])
-# Substitute @EM_CHECK_LEVEL@ into the pkgconfig file libemodp.pc.in
+check_level_info="EM_CHECK_LEVEL=$EM_CHECK_LEVEL"
+# Substitute @EM_CHECK_LEVEL@ into event_machine_config.h.in
 AC_SUBST([EM_CHECK_LEVEL])
 
 #
-# Enable 'EM Event State Verification' (ESV)
+# Enable/disable 'EM Event State Verification' (ESV) - EM_ESV_ENABLE
 #
 # --enable-esv         Set 'EM_ESV_ENABLE=1' - i.e.  enable ESV
 # --disable-esv        Set 'EM_ESV_ENABLE=0' - i.e. disable ESV
-#   no option given    Use '#define EM_ESV_ENABLE 0|1' from source code
+#   no option given    Use default value (EM_ESV_ENABLE=1, enabled)
 #
-# Note: Using the option --enable-esv OR --disable-esv will _override_ the
-#       source code define value for '#define EM_ESV_ENABLE 0|1'
+# See include/event_machine/api/event_machine_config.h/.in for details
+# on EM_ESV_ENABLE.
 #
-esv_info="no (EM_ESV_ENABLE from source code)"
-EM_ESV_ENABLE=""
+EM_ESV_ENABLE=1 # default
 AC_ARG_ENABLE([esv],
 	      [AS_HELP_STRING([--enable-esv],
 			      [Enable Event State Verification (ESV)
-			       [default=value from source code '#define EM_ESV_ENABLE 0|1']])],
+			       [default=enabled(1) when no option given]])],
 	      [AS_IF(dnl --enable-esv[=yes]:
 		     [test "x$enableval" = "xyes"],
-		     [esv_info="$enableval (EM_ESV_ENABLE=1)"
-		      EM_ESV_ENABLE="-DEM_ESV_ENABLE=1"],
+		     [EM_ESV_ENABLE=1],
 		     dnl --disable-esv OR --enable-esv=no:
 		     [test "x$enableval" = "xno"],
-		     [esv_info="$enableval (EM_ESV_ENABLE=0)"
-		      EM_ESV_ENABLE="-DEM_ESV_ENABLE=0"],
+		     [EM_ESV_ENABLE=0],
 		     dnl unsupported value given:
 		     [AC_MSG_ERROR([bad value --enable-esv=${enableval}, use yes/no])]
 		)
-		EM_CPPFLAGS="$EM_CPPFLAGS $EM_ESV_ENABLE"
 	      ],[])
-# Substitute @EM_ESV_ENABLE@ into the pkgconfig file libemodp.pc.in
+esv_info="EM_ESV_ENABLE=$EM_ESV_ENABLE"
+# Substitute @EM_ESV_ENABLE@ into event_machine_config.h.in
 AC_SUBST([EM_ESV_ENABLE])
 
-##########################################################################
-# Enable/disable EM_DEBUG_PRINT
-##########################################################################
-debug_print_info="no (EM_DEBUG_PRINT from source code)"
-AC_ARG_ENABLE([debug-print],
-	      [AS_HELP_STRING([--enable-debug-print],
-			      [Display debugging information [default=disabled]])],
-	      [AS_IF(dnl --enable-debug-print[=yes]:
-		     [test "x$enableval" = "xyes"],
-		     [debug_print_info="$enableval (EM_DEBUG_PRINT=1)"
-		      EM_DEBUG_PRINT="-DEM_DEBUG_PRINT=1"],
-		     dnl --disable-debug OR --enable-debug-print=no:
-		     [test "x$enableval" = "xno"],
-		     [debug_print_info="$enableval (EM_DEBUG_PRINT=0)"
-		      EM_DEBUG_PRINT="-DEM_DEBUG_PRINT=0"],
-		     dnl unsupported value given:
-		     [AC_MSG_ERROR([bad value --enable-debug-print=${enableval}, use yes/no])]
-		)
-		EM_CPPFLAGS="$EM_CPPFLAGS $EM_DEBUG_PRINT"
-	      ],[])
-# Substitute @EM_DEBUG_PRINT@ into the pkgconfig file libemodp.pc.in
-AC_SUBST([EM_DEBUG_PRINT])
+#
+# Enable/disable EM debug printouts (EM_DEBUG_PRINT_...)
+#
+# Sets EM Debug Print flags on or off.
+#
+# --enable-debug-print-all (alias: --enable-debug-print)
+# --enable-debug-print-base
+# --enable-debug-print-timer
+#
+# See include/event_machine/api/event_machine_config.h/.in for details
+# on EM_DEBUG_PRINT_... defines.
+#
+# See m4/em_debug_print_options.m4
+#
+EM_DEBUG_PRINT_OPTIONS
 
-##########################################################################
-# Enable/disable deprecated API definitions
-##########################################################################
-EM_DEPRECATED_API=0
+#
+# Enable/disable EM debug timestamps
+#
+# --enable-debug-timestamps=0...2  Set 'EM_DEBUG_TIMESTAMP_ENABLE' to the given
+#                                  value (1=low overhead, 2=strict time)
+# --enable-debug-timestamps[=yes]  Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
+# --disable-debug-timestamps       Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 0
+#   no option given                Use default value (EM_DEBUG_TIMESTAMP_ENABLE=0, disabled)
+#
+EM_DEBUG_TIMESTAMP_ENABLE=0 # default:disabled
+AC_ARG_ENABLE([debug-timestamps],
+	      [AS_HELP_STRING([--enable-debug-timestamps[[=VAL]]],
+			      [Enable EM debug timestamps, valid
+			       values are 0...2, yes(=1) or no value(=0), 2=strict time
+			       [default=disabled, value from source code]])],
+	      [AS_IF(dnl --enable-debug-timestamps=0...2:
+		     [test "$enableval" -ge 0 -a "$enableval" -le 2 2>/dev/null],
+		     [EM_DEBUG_TIMESTAMP_ENABLE="$enableval"],
+		     dnl --enable-debug-timestamps[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [EM_DEBUG_TIMESTAMP_ENABLE=1],
+		     dnl --disable-debug-timestamps OR --enable-debug-timestamps=no:
+		     [test "x$enableval" = "xno"],
+		     [EM_DEBUG_TIMESTAMP_ENABLE=0],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value ${enableval} for --enable-debug-timestamps])]
+		)
+	      ],[])
+debug_timestamps_info="EM_DEBUG_TIMESTAMP_ENABLE=$EM_DEBUG_TIMESTAMP_ENABLE"
+# Substitute @EM_DEBUG_TIMESTAMP_ENABLE@ into event_machine_config.h.in
+AC_SUBST([EM_DEBUG_TIMESTAMP_ENABLE])
+
+#
+# Enable/disable EM idle hooks
+#
+# --enable-idle-hooks   Set 'EM_IDLE_HOOKS_ENABLE=1'
+# --disable-idle-hooks  Set 'EM_IDLE_HOOKS_ENABLE=0'
+#   no option given     Use default value (EM_IDLE_HOOKS_ENABLE=1, enabled)
+#
+EM_IDLE_HOOKS_ENABLE=1 # default:enabled
+AC_ARG_ENABLE([idle-hooks],
+	      [AS_HELP_STRING([--enable-idle-hooks],
+			      [Enable Idle Hooks
+			       [default=enabled(1) when no option given]])],
+	      [AS_IF(dnl --enable-idle-hooks[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [EM_IDLE_HOOKS_ENABLE=1],
+		     dnl --disable-idle-hooks OR --enable-idle-hooks=no:
+		     [test "x$enableval" = "xno"],
+		     [EM_IDLE_HOOKS_ENABLE=0],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value --enable-idle-hooks=${enableval}, use yes/no])]
+		)
+	      ],[])
+idle_hooks_info="EM_IDLE_HOOKS_ENABLE=$EM_IDLE_HOOKS_ENABLE"
+# Substitute @EM_IDLE_HOOKS_ENABLE@ into event_machine_config.h.in
+AC_SUBST([EM_IDLE_HOOKS_ENABLE])
+
+#
+# Enable/disable EM schedule-wait (scheduler wait for event) functionality.
+#
+# Enable the EM dispatcher/scheduler to set the time (in ns) the scheduler
+# should wait for events before returning (when no events are immediately
+# available). Waiting for events, rather than busy-waiting, might save power.
+#
+# --enable-sched-wait    EM calls odp_schedule_multi(..., sched_wait_ns, ...),
+#                        where 'sched_wait_ns' is taken from the
+#                        'dispatch.sched_wait_ns = value' in the EM config file
+#                        (config/em-odp.conf).
+#                        Set 'EM_SCHED_WAIT_ENABLE=1'
+# --disable--sched-wait  EM calls odp_schedule_multi_no_wait().
+#                        Set 'EM_SCHED_WAIT_ENABLE=0'
+#   no option given      Use default value (EM_SCHED_WAIT_ENABLE=1, enabled)
+#
+EM_SCHED_WAIT_ENABLE=1 # default:enabled
+AC_ARG_ENABLE([sched-wait],
+	      [AS_HELP_STRING([--enable-sched-wait],
+			      [Enable scheduler wait-for-event functionality instead of no-wait
+			       [default=enabled(1) when no option given]])],
+	      [AS_IF(dnl --enable-sched-wait[=yes]:
+		     [test "x$enableval" = "xyes"],
+		     [EM_SCHED_WAIT_ENABLE=1],
+		     dnl --disable-sched-wait OR --enable-sched-wait=no:
+		     [test "x$enableval" = "xno"],
+		     [EM_SCHED_WAIT_ENABLE=0],
+		     dnl unsupported value given:
+		     [AC_MSG_ERROR([bad value --enable-sched-wait=${enableval}, use yes/no])]
+		)
+	      ],[])
+sched_wait_info="EM_SCHED_WAIT_ENABLE=$EM_SCHED_WAIT_ENABLE"
+# Substitute @EM_SCHED_WAIT_ENABLE@ into event_machine_config.h.in
+AC_SUBST([EM_SCHED_WAIT_ENABLE])
+
+#
+# Enable/disable deprecated EM API definitions
+#
+# See include/event_machine/api/event_machine_deprecated.h/.in for details
+# on deprecated EM API usage.
+#
+EM_DEPRECATED_API=0 # default: disabled
 deprecated=no
 AC_ARG_ENABLE([deprecated],
     [AS_HELP_STRING([--enable-deprecated],
@@ -326,38 +425,6 @@ AC_ARG_ENABLE([deprecated],
 	deprecated=yes
     fi])
 AC_SUBST(EM_DEPRECATED_API)
-
-#########################################################################
-# Override EM-define value 'EM_DEBUG_TIMESTAMP_ENABLE' to 0...2
-# --enable-debug-timestamps=0...2   Set 'EM_DEBUG_TIMESTAMP_ENABLE' to the given
-#                                   value (1=low overhead, 2=strict time)
-# --enable-debug-timestamps<=yes (=1)  Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
-# --enable-debug-timestamps           Set 'EM_DEBUG_TIMESTAMP_ENABLE' to 1
-# --disable-debug-timestamps or
-#   no option given              Use '#define EM_DEBUG_TIMESTAMP_ENABLE 0...2' from
-#                                source code (default 0)
-debug_timestamps_info="no (EM_DEBUG_TIMESTAMP_ENABLE from source code)"
-EM_DEBUG_TIMESTAMP_ENABLE=""
-AC_ARG_ENABLE([debug-timestamps],
-	      [AS_HELP_STRING([--enable-debug-timestamps[[=VAL]]],
-			      [Override the 'EM_DEBUG_TIMESTAMP_ENABLE' define, valid
-			       values are 0...2, yes(=1) or no value(=0), 2=strict time
-			       [default=disabled, value from source code]])],
-	      [AS_IF([test "$enableval" -ge 0 -a "$enableval" -le 2 2>/dev/null],
-		     [debug_timestamps_info="yes:$enableval (EM_DEBUG_TIMESTAMP_ENABLE=$enableval)"
-		      EM_DEBUG_TIMESTAMP_ENABLE="-DEM_DEBUG_TIMESTAMP_ENABLE=$enableval"],
-
-		     [test "x$enableval" = "xyes"],
-		     [debug_timestamps_info="yes:1 (EM_DEBUG_TIMESTAMP_ENABLE=$enableval)"
-		      EM_DEBUG_TIMESTAMP_ENABLE="-DEM_DEBUG_TIMESTAMP_ENABLE=1"],
-
-		     [test "x$enableval" != "xno"],
-		     [AC_MSG_ERROR([bad value ${enableval} for --enable-debug-timestamps])]
-		)
-		EM_CPPFLAGS="$EM_CPPFLAGS $EM_DEBUG_TIMESTAMP_ENABLE"
-	      ],[])
-# Substitute @EM_DEBUG_TIMESTAMP_ENABLE@ into the pkgconfig file libemodp.pc.in
-AC_SUBST([EM_DEBUG_TIMESTAMP_ENABLE])
 
 ##########################################################################
 # Set optional libcli path
@@ -377,101 +444,28 @@ OLD_LIBS=$LIBS
 CPPFLAGS="$LIBCLI_CPPFLAGS $CPPFLAGS"
 LIBS="$LIBCLI_LIBS $LIBS"
 
-#########################################################################
-# If libcli is available, enable EM_CLI
-#########################################################################
-em_cli=no
-EM_CLI="-DEM_CLI=0"
+#
+# Enable EM_CLI if libcli is available
+#
+EM_CLI=0
 libodphelper_name=""
 AC_CHECK_HEADER(libcli.h,
     [AC_CHECK_LIB(cli, cli_init,
-    	[em_cli=yes EM_CLI="-DEM_CLI=1" libodphelper_name="libodphelper"],
-	[], [-lcrypt])],
+		  [EM_CLI=1 libodphelper_name="libodphelper"],
+		  [], [-lcrypt])],
     [AS_IF([test "x$libcli_path_given" = "xyes"],
-        [AC_MSG_ERROR([libcli not found at the given path (--with-libcli-path)])])])
-
+	   [AC_MSG_ERROR([libcli not found at the given path (--with-libcli-path)])])]
+)
+em_cli_info="EM_CLI=$EM_CLI"
 # Substitute @EM_CLI@ and @libodphelper_name@ into the pkgconfig file libemodp.pc.in
 AC_SUBST([EM_CLI])
 AC_SUBST([libodphelper_name])
 
-EM_CPPFLAGS="$EM_CPPFLAGS $EM_CLI"
+EM_CPPFLAGS="$EM_CPPFLAGS -DEM_CLI=$EM_CLI"
 
 # Restore old saved variables
 LIBS=$OLD_LIBS
 CPPFLAGS=$OLD_CPPFLAGS
-
-#########################################################################
-# Enable EM idle hooks
-#########################################################################
-# --enable-idle-hooks		Set 'EM_IDLE_HOOKS_ENABLE=1'
-# --disable-idle-hooks		Set 'EM_IDLE_HOOKS_ENABLE=0'
-#   no option given    		Use '#define EM_IDLE_HOOKS_ENABLE 0|1' from source code
-#
-# Note: Using the option --enable-idle-hooks OR --disable-idle-hooks will _override_
-#	the source code define value for '#define EM_IDLE_HOOKS_ENABLE 0|1'
-#
-idle_hooks_info="no (EM_IDLE_HOOKS_ENABLE from source code)"
-EM_IDLE_HOOKS_ENABLE=""
-AC_ARG_ENABLE([idle-hooks],
-	      [AS_HELP_STRING([--enable-idle-hooks],
-			      [Enable Idle Hooks
-			       [default=value from source code '#define EM_IDLE_HOOKS_ENABLE 0|1']])],
-	      [AS_IF(dnl --enable-idle-hooks[=yes]:
-		     [test "x$enableval" = "xyes"],
-		     [idle_hooks_info="$enableval (EM_IDLE_HOOKS_ENABLE=1)"
-		      EM_IDLE_HOOKS_ENABLE="-DEM_IDLE_HOOKS_ENABLE=1"],
-		     dnl --disable-idle-hooks OR --enable-idle-hooks=no:
-		     [test "x$enableval" = "xno"],
-		     [idle_hooks_info="$enableval (EM_IDLE_HOOKS_ENABLE=0)"
-		      EM_IDLE_HOOKS_ENABLE="-DEM_IDLE_HOOKS_ENABLE=0"],
-		     dnl unsupported value given:
-		     [AC_MSG_ERROR([bad value --enable-idle-hooks=${enableval}, use yes/no])]
-		)
-		EM_CPPFLAGS="$EM_CPPFLAGS $EM_IDLE_HOOKS_ENABLE"
-	      ],[])
-# Substitute @EM_IDLE_HOOKS_ENABLE@ into the pkgconfig file libemodp.pc.in
-AC_SUBST([EM_IDLE_HOOKS_ENABLE])
-
-#########################################################################
-# Enable EM schedule-wait (scheduler wait for event) functionality.
-#
-# Enable the EM dispatcher/scheduler to start waiting for events if none are
-# immediately available. Waiting for events, rather than busy-waiting, might
-# save power.
-#########################################################################
-# --enable-sched-wait		EM calls odp_schedule_multi(..., sched_wait_ns, ...),
-#				where 'sched_wait_ns' is taken from
-#				'dispatch.sched_wait_ns = value' in the
-#				EM config file (config/em-odp.conf).
-#				Set 'EM_SCHED_WAIT_ENABLE=1'
-# --disable--sched-wait		EM calls odp_schedule_multi_no_wait().
-#				Set 'EM_SCHED_WAIT_ENABLE=0'
-#   no option given    		Use '#define EM_SCHED_WAIT_ENABLE 0|1' from source code
-#
-# Note: Using the option --enable-sched-wait OR --disable-sched-wait will _override_
-#	the source code define value for '#define EM_SCHED_WAIT_ENABLE 0|1'
-#
-sched_wait_info="no (EM_SCHED_WAIT_ENABLE from source code)"
-EM_SCHED_WAIT_ENABLE=""
-AC_ARG_ENABLE([sched-wait],
-	      [AS_HELP_STRING([--enable-sched-wait],
-			      [Enable scheduler wait-for-event functionality instead of no-wait
-			       [default=value from source code '#define EM_SCHED_WAIT_ENABLE 0|1']])],
-	      [AS_IF(dnl --enable-sched-wait[=yes]:
-		     [test "x$enableval" = "xyes"],
-		     [sched_wait_info="$enableval (EM_SCHED_WAIT_ENABLE=1)"
-		      EM_SCHED_WAIT_ENABLE="-DEM_SCHED_WAIT_ENABLE=1"],
-		     dnl --disable-sched-wait OR --enable-sched-wait=no:
-		     [test "x$enableval" = "xno"],
-		     [sched_wait_info="$enableval (EM_SCHED_WAIT_ENABLE=0)"
-		      EM_SCHED_WAIT_ENABLE="-DEM_SCHED_WAIT_ENABLE=0"],
-		     dnl unsupported value given:
-		     [AC_MSG_ERROR([bad value --enable-sched-wait=${enableval}, use yes/no])]
-		)
-		EM_CPPFLAGS="$EM_CPPFLAGS $EM_SCHED_WAIT_ENABLE"
-	      ],[])
-# Substitute @EM_SCHED_WAIT_ENABLE@ into the pkgconfig file libemodp.pc.in
-AC_SUBST([EM_SCHED_WAIT_ENABLE])
 
 ##########################################################################
 # Default include setup
@@ -488,21 +482,25 @@ AC_CONFIG_FILES([
 	programs/common/Makefile
 	programs/example/Makefile
 	programs/example/hello/Makefile
+	programs/example/event_types/Makefile
 	programs/example/timer/Makefile
 	programs/example/api-hooks/Makefile
 	programs/example/dispatcher/Makefile
 	programs/example/error/Makefile
 	programs/example/event_group/Makefile
 	programs/example/fractal/Makefile
+	programs/example/dyn_cores/Makefile
 	programs/example/queue_group/Makefile
 	programs/example/queue/Makefile
 	programs/example/test/Makefile
+	programs/example/cli_top/Makefile
 	programs/packet_io/Makefile
 	programs/performance/Makefile
 	])
 
 AC_CONFIG_FILES([
 	include/event_machine/api/event_machine_version.h
+	include/event_machine/api/event_machine_config.h
 	include/event_machine/api/event_machine_deprecated.h
 	])
 
@@ -613,7 +611,7 @@ AC_SUBST([with_odp_path])
 # Optional configure parameter for setting the ODP library name
 # (actually the name of the corresponing .pc file).
 # Defaults to "libodp-linux" if nothing else given.
-libodp_name="libodp-linux"
+libodp_name="libodp-linux" # default
 AC_ARG_WITH([odp-lib],
 	    [AS_HELP_STRING([--with-odp-lib=odp-library-name],
 			    [name of the odp library (and .pc file)]
@@ -633,23 +631,10 @@ AC_CHECK_PROGS([PKGCONFIG], [pkg-config])
 AS_IF([test -z "$PKGCONFIG"],
       [AC_MSG_ERROR([Please install pkg-config])])
 
-PKG_CHECK_MODULES([ODP], [$libodp_name])
-AC_SUBST([ODP_CFLAGS])
-AC_SUBST([ODP_LIBS])
-
-PKG_CHECK_MODULES([ODPHELPER], [libodphelper])
-AC_SUBST([ODPHELPER_CFLAGS])
-AC_SUBST([ODPHELPER_LIBS])
-
-PKG_CHECK_MODULES_STATIC([ODP_STATIC], [$libodp_name])
-AC_SUBST([ODP_STATIC_CFLAGS])
-AC_SUBST([ODP_STATIC_LIBS])
-
-PKG_CHECK_MODULES_STATIC([ODPHELPER_STATIC], [libodphelper])
-AC_SUBST([ODPHELPER_STATIC_CFLAGS])
-AC_SUBST([ODPHELPER_STATIC_LIBS])
-
-ODP_VERSION=$(pkg-config --modversion $libodp_name)
+##########################################################################
+# Check ODP API version and configure ODP pkg-config modules
+##########################################################################
+EM_CHECK_ODP([$libodp_name])
 
 ##########################################################################
 # Pkg-config configuration for libemodp.pc
@@ -696,7 +681,7 @@ AC_MSG_RESULT([
 	=================
 	EM API version:		${EM_VERSION_API}
 	EM (em-odp) version:	${EM_VERSION}
-	Library version:	${EM_VERSION_LIBSO}
+	EM library:		libemodp ${EM_VERSION_PKGCONFIG}
 
 	host:			${host}
 	ARCH_ABI		${ARCH_ABI}
@@ -705,8 +690,9 @@ AC_MSG_RESULT([
 	libdir:			${libdir}
 	includedir:		${includedir}
 
-	odp-library:		${libodp_name}
-	odp-version:		${ODP_VERSION}
+	ODP library:		${libodp_name}
+	ODP version:		${ODP_VERSION}
+	ODP API supported:	${EM_REQ_ODP_MIN_VERSION} (and newer)
 
 	odp-cflags:		${ODP_CFLAGS}
 	odp-libs:		${ODP_LIBS}
@@ -744,9 +730,11 @@ AC_MSG_RESULT([
 	=======================
 	EM check level:		${check_level_info}
 	EM ESV:			${esv_info}
-	EM debug print:		${debug_print_info}
+	EM debug print all:	${debug_print_all_info}
+	EM debug print base:	${debug_print_base_info}
+	EM debug print timer:	${debug_print_timer_info}
 	EM debug timestamps:	${debug_timestamps_info}
-	EM CLI:			${em_cli}
 	EM idle hooks:		${idle_hooks_info}
 	EM scheduler wait:	${sched_wait_info}
+	EM CLI:			${em_cli_info}
 	])

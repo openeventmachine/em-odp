@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2014, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,18 @@
 #ifndef EM_ATOMIC_GROUP_H_
 #define EM_ATOMIC_GROUP_H_
 
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_atomic_group_types.h"
+#include "em_mem.h"
+#include "em_queue_types.h"
+#include "misc/list.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,7 +69,7 @@ atomic_group_free(em_atomic_group_t atomic_group);
 void atomic_group_remove_queue(queue_elem_t *const q_elem);
 
 void atomic_group_dispatch(odp_event_t odp_evtbl[], const int num_events,
-			   const queue_elem_t *q_elem);
+			   queue_elem_t *q_elem);
 
 static inline int
 atomic_group_allocated(const atomic_group_elem_t *agrp_elem)
@@ -95,35 +107,29 @@ static inline void
 atomic_group_add_queue_list(atomic_group_elem_t *const ag_elem,
 			    queue_elem_t *const q_elem)
 {
-	env_spinlock_lock(&ag_elem->lock);
+	odp_ticketlock_lock(&ag_elem->lock);
 	list_add(&ag_elem->qlist_head, &q_elem->agrp.agrp_node);
-	env_atomic32_inc(&ag_elem->num_queues);
-	env_spinlock_unlock(&ag_elem->lock);
+	odp_atomic_inc_u32(&ag_elem->num_queues);
+	if (q_elem->priority == EM_QUEUE_PRIO_HIGHEST)
+		odp_atomic_inc_u32(&ag_elem->num_hi_prio_queues);
+	odp_ticketlock_unlock(&ag_elem->lock);
 }
 
 static inline void
 atomic_group_rem_queue_list(atomic_group_elem_t *const ag_elem,
 			    queue_elem_t *const q_elem)
 {
-	env_spinlock_lock(&ag_elem->lock);
+	odp_ticketlock_lock(&ag_elem->lock);
 	if (!list_is_empty(&ag_elem->qlist_head)) {
 		list_rem(&ag_elem->qlist_head, &q_elem->agrp.agrp_node);
-		env_atomic32_dec(&ag_elem->num_queues);
+		odp_atomic_dec_u32(&ag_elem->num_queues);
+		if (q_elem->priority == EM_QUEUE_PRIO_HIGHEST)
+			odp_atomic_dec_u32(&ag_elem->num_hi_prio_queues);
 	}
-	env_spinlock_unlock(&ag_elem->lock);
+	odp_ticketlock_unlock(&ag_elem->lock);
 }
 
-static inline void
-atomic_group_release(void)
-{
-	em_locm_t *const locm = &em_locm;
-	const queue_elem_t *q_elem = locm->current.sched_q_elem;
-	em_atomic_group_t atomic_group = q_elem->agrp.atomic_group;
-	atomic_group_elem_t *const agrp_elem = atomic_group_elem_get(atomic_group);
-
-	locm->atomic_group_released = true;
-	env_spinlock_unlock(&agrp_elem->lock);
-}
+void atomic_group_release(void);
 
 unsigned int
 atomic_group_count(void);

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2016, Nokia Solutions and Networks
+ *   Copyright (c) 2016-2025, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -46,7 +46,7 @@
  *
  * Counters track received valid and non-valid event group events and
  * statistics on event group API calls. Events that don't belong to a valid
- * group are removed from the loop and freed.  Once all event groups are
+ * group are removed from the loop and freed. Once all event groups are
  * aborted, or notification events are received, a starting event is sent that
  * begins the next round.
  *
@@ -63,7 +63,7 @@
  * of sync.
  *
  * To abort an event group first the notification events are requested with
- * em_event_group_get_notif() and then the group is aborted with
+ * em_event_group_notif() and then the group is aborted with
  * em_event_group_abort(). If the abort call succeeds, then the notifications
  * events can be freed and the group is ready for reuse. If the abort call
  * fails, then the notification events are already sent and not to be touched.
@@ -107,7 +107,7 @@ typedef struct {
 typedef struct {
 	em_event_group_t grp;
 	uint64_t gen;
-	env_spinlock_t lock;
+	odp_ticketlock_t lock;
 } egrp_data_tbl;
 
 /**
@@ -119,18 +119,18 @@ typedef struct {
 	/* Table of event groups used in the test */
 	egrp_data_tbl egrp_tbl[EVENT_GROUPS];
 	/* Counters used to track groups and events */
-	env_atomic64_t rcvd_group_events;
-	env_atomic64_t rcvd_expired_events;
-	env_atomic64_t rcvd_notif_events;
-	env_atomic64_t increments;
-	env_atomic64_t failed_increments;
-	env_atomic64_t aborted_egrps;
-	env_atomic64_t failed_aborts;
-	env_atomic64_t assigns;
-	env_atomic64_t failed_assigns;
-	env_atomic64_t del_notifs;
-	env_atomic64_t groups_left;
-	env_atomic64_t group_counter[EVENT_GROUPS];
+	odp_atomic_u64_t rcvd_group_events;
+	odp_atomic_u64_t rcvd_expired_events;
+	odp_atomic_u64_t rcvd_notif_events;
+	odp_atomic_u64_t increments;
+	odp_atomic_u64_t failed_increments;
+	odp_atomic_u64_t aborted_egrps;
+	odp_atomic_u64_t failed_aborts;
+	odp_atomic_u64_t assigns;
+	odp_atomic_u64_t failed_assigns;
+	odp_atomic_u64_t del_notifs;
+	odp_atomic_u64_t groups_left;
+	odp_atomic_u64_t group_counter[EVENT_GROUPS];
 } eo_context_t;
 
 /**
@@ -155,39 +155,17 @@ typedef struct {
 
 static ENV_LOCAL egrp_shm_t *egrp_shm;
 
-/*
- * Local function prototypes
- */
-static em_status_t
-egroup_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
-
-static em_status_t
-egroup_stop(void *eo_context, em_eo_t eo);
-
-static void
-egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
-	       em_queue_t queue, void *q_ctx);
-
-static void
-send_start_event(void);
-
-static void
-abort_event_group(em_event_group_t event_group);
-
-static void
-print_round_start_info(void);
-
-static void
-print_round_end_info(void);
-
-static void
-send_test_events(void);
-
-static void
-init_counters(void);
-
-static void
-update_group_count(void);
+static em_status_t egroup_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
+static em_status_t egroup_stop(void *eo_context, em_eo_t eo);
+static void egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
+			   em_queue_t queue, void *q_ctx);
+static void send_start_event(void);
+static void abort_event_group(em_event_group_t event_group);
+static void print_round_start_info(void);
+static void print_round_end_info(void);
+static void send_test_events(void);
+static void init_counters(void);
+static void update_group_count(void);
 
 /**
  * Main function
@@ -208,22 +186,21 @@ int main(int argc, char *argv[])
  * Suppress expected errors
  */
 static em_status_t
-error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
-	      va_list args)
+error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 {
 	switch (escope) {
-	case EM_ESCOPE_EVENT_GROUP_UPDATE:
+	case EM_ESCOPE_EVENT_GROUP_UPDATE_PRECNT:
 		break;
-
+	case EM_ESCOPE_EVENT_GROUP_UPDATE_POSTCNT:
+		if (EM_EVENT_GROUP_SAFE_MODE)
+			error = test_error_handler(eo, error, escope, args);
+		break;
 	case EM_ESCOPE_EVENT_GROUP_ABORT:
 		break;
-
 	case EM_ESCOPE_EVENT_GROUP_ASSIGN:
 		break;
-
 	case EM_ESCOPE_EVENT_GROUP_INCREMENT:
 		break;
-
 	default:
 		error = test_error_handler(eo, error, escope, args);
 	};
@@ -231,8 +208,7 @@ error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 	return error;
 }
 
-void
-send_test_events(void)
+static void send_test_events(void)
 {
 	em_status_t ret;
 	em_notif_t notif_tbl[1];
@@ -245,10 +221,8 @@ send_test_events(void)
 	for (i = 0; i < EVENT_GROUPS; i++) {
 		egrp_elem = &egrp_shm->test_eo_ctx.egrp_tbl[i];
 
-		test_event = em_alloc(sizeof(egrp_test_t), EM_EVENT_TYPE_SW,
-				      egrp_shm->pool);
-		test_fatal_if(test_event == EM_EVENT_UNDEF,
-			      "Event allocation failed!");
+		test_event = em_alloc(sizeof(egrp_test_t), EM_EVENT_TYPE_SW, egrp_shm->pool);
+		test_fatal_if(test_event == EM_EVENT_UNDEF, "Event allocation failed!");
 		egrp_event = em_event_pointer(test_event);
 		egrp_event->msg = MSG_NOTIF;
 		egrp_event->egrp_id = i;
@@ -262,59 +236,53 @@ send_test_events(void)
 		 * generation count is incremented to make sure that these
 		 * two are always in sync.
 		 */
-		env_spinlock_lock(&egrp_elem->lock);
+		odp_ticketlock_lock(&egrp_elem->lock);
 
-		ret = em_event_group_apply(egrp_elem->grp,
-					   egrp_shm->target_count, 1,
-					   notif_tbl);
+		ret = em_event_group_apply(egrp_elem->grp, egrp_shm->target_count, 1, notif_tbl);
 		test_fatal_if(ret != EM_OK,
 			      "em_event_group_apply():%" PRI_STAT "", ret);
 
 		egrp_elem->gen++;
-		env_atomic64_init(&egrp_shm->test_eo_ctx.group_counter[i]);
+		odp_atomic_init_u64(&egrp_shm->test_eo_ctx.group_counter[i], 0);
 
-		env_spinlock_unlock(&egrp_elem->lock);
+		odp_ticketlock_unlock(&egrp_elem->lock);
 
 		/* Create data events */
 		for (j = 0; j < EVENTS_PER_GROUP; j++) {
 			test_event = em_alloc(sizeof(egrp_test_t),
 					      EM_EVENT_TYPE_SW, egrp_shm->pool);
-			test_fatal_if(test_event == EM_EVENT_UNDEF,
-				      "Event allocation failed!");
+			test_fatal_if(test_event == EM_EVENT_UNDEF, "Event allocation failed!");
 
 			egrp_event = em_event_pointer(test_event);
 			egrp_event->msg = MSG_DATA;
 			egrp_event->egrp_id = i;
 			egrp_event->egrp_gen = egrp_elem->gen;
 
-			ret = em_send_group(test_event, paral_queue,
-					    egrp_elem->grp);
+			ret = em_send_group(test_event, paral_queue, egrp_elem->grp);
 			if (likely(ret == EM_OK))
 				continue;
 			/* error: */
 			em_free(test_event);
 			test_fatal_if(!appl_shm->exit_flag,
-				      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "",
-				      ret, paral_queue);
+				      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "", ret, paral_queue);
 			return; /* appl_shm->exit_flag set */
 		}
 	}
 }
 
-void
-init_counters(void)
+static void init_counters(void)
 {
-	env_atomic64_init(&egrp_shm->test_eo_ctx.rcvd_group_events);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.rcvd_expired_events);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.rcvd_notif_events);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.increments);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.failed_increments);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.failed_aborts);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.assigns);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.failed_assigns);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.aborted_egrps);
-	env_atomic64_init(&egrp_shm->test_eo_ctx.del_notifs);
-	env_atomic64_set(&egrp_shm->test_eo_ctx.groups_left, EVENT_GROUPS);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.rcvd_group_events, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.rcvd_expired_events, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.rcvd_notif_events, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.increments, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.failed_increments, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.failed_aborts, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.assigns, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.failed_assigns, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.aborted_egrps, 0);
+	odp_atomic_init_u64(&egrp_shm->test_eo_ctx.del_notifs, 0);
+	odp_atomic_store_u64(&egrp_shm->test_eo_ctx.groups_left, EVENT_GROUPS);
 
 	/* Set random group count to be applied */
 	egrp_shm->target_count = RANDOM_COUNT;
@@ -335,8 +303,7 @@ void test_init(const appl_conf_t *appl_conf)
 	int core = em_core_id();
 
 	if (core == 0) {
-		egrp_shm = env_shared_reserve("EGrpSharedMem",
-					      sizeof(egrp_shm_t));
+		egrp_shm = env_shared_reserve("EGrpSharedMem", sizeof(egrp_shm_t));
 		em_register_error_handler(test_error_handler);
 	} else {
 		egrp_shm = env_shared_lookup("EGrpSharedMem");
@@ -344,8 +311,7 @@ void test_init(const appl_conf_t *appl_conf)
 
 	if (egrp_shm == NULL) {
 		test_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead,
-			   "EventGroup test init failed on EM-core: %u\n",
-			   em_core_id());
+			   "EventGroup test init failed on EM-core: %u\n", core);
 	} else if (core == 0) {
 		memset(egrp_shm, 0, sizeof(egrp_shm_t));
 	}
@@ -406,10 +372,14 @@ void test_start(const appl_conf_t *appl_conf)
 	eo_ctx->eo = eo;
 
 	/* Create parallel queue for data */
-	queue = em_queue_create("group test parallelQ",
-				EM_QUEUE_TYPE_PARALLEL,
-				EM_QUEUE_PRIO_NORMAL,
-				EM_QUEUE_GROUP_DEFAULT, NULL);
+	em_queue_conf_t q_conf = {
+		.flags = EM_QUEUE_FLAG_DEFAULT,
+		.min_events = (EVENTS_PER_GROUP * EVENT_GROUPS + EVENT_GROUPS) * 2,
+		.conf_len = 0,
+		.conf = NULL
+	};
+	queue = em_queue_create("Evgrp-abort-test-parallelQ", EM_QUEUE_TYPE_PARALLEL,
+				EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT, &q_conf);
 
 	ret = em_eo_add_queue_sync(eo, queue);
 	test_fatal_if(ret != EM_OK, "EO add queue failed:%" PRI_STAT "\n"
@@ -420,16 +390,15 @@ void test_start(const appl_conf_t *appl_conf)
 	/* Specify EO error handler */
 	em_eo_register_error_handler(eo, error_handler);
 
-	int i;
 	/* Alloc event groups used in the test */
-	for (i = 0; i < EVENT_GROUPS; i++) {
+	for (int i = 0; i < EVENT_GROUPS; i++) {
 		em_event_group_t egrp = em_event_group_create();
 
 		test_fatal_if(egrp == EM_EVENT_GROUP_UNDEF,
 			      "Event group creation failed!");
 		eo_ctx->egrp_tbl[i].grp = egrp;
 		/* Init group specific lock and gen */
-		env_spinlock_init(&eo_ctx->egrp_tbl[i].lock);
+		odp_ticketlock_init(&eo_ctx->egrp_tbl[i].lock);
 		eo_ctx->egrp_tbl[i].gen = 0;
 	}
 
@@ -444,8 +413,7 @@ void test_start(const appl_conf_t *appl_conf)
 		      eo, ret, eo_start_ret);
 }
 
-void
-send_start_event(void)
+static void send_start_event(void)
 {
 	em_status_t ret;
 	em_event_t start_event;
@@ -470,8 +438,7 @@ send_start_event(void)
 	}
 }
 
-void
-print_round_start_info(void)
+static void print_round_start_info(void)
 {
 	APPL_PRINT("-----------------------------------------\n");
 	APPL_PRINT("\n--- Round %" PRIu64 "\n", egrp_shm->round);
@@ -481,62 +448,57 @@ print_round_start_info(void)
 		   egrp_shm->stop_count);
 }
 
-void
-print_round_end_info(void)
+static void print_round_end_info(void)
 {
 	APPL_PRINT("Evgrp events:\t\tValid:%" PRIu64 "\tExpired:%" PRIu64 "\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.rcvd_group_events),
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.rcvd_expired_events)
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.rcvd_group_events),
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.rcvd_expired_events)
 		   );
 
 	APPL_PRINT("Evgrp increments:\tValid:%" PRIu64 "\tFailed:%" PRIu64 "\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.increments),
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.failed_increments));
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.increments),
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.failed_increments));
 
 	APPL_PRINT("Evgrp assigns:\t\tValid:%" PRIu64 "\tFailed:%" PRIu64 "\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.assigns),
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.failed_assigns));
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.assigns),
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.failed_assigns));
 
 	APPL_PRINT("Aborted %" PRIu64 " event groups\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.aborted_egrps));
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.aborted_egrps));
 
 	APPL_PRINT("Failed to abort %" PRIu64 " times\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.failed_aborts));
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.failed_aborts));
 
 	APPL_PRINT("Received %" PRIu64 " notification events\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.rcvd_notif_events));
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.rcvd_notif_events));
 
 	APPL_PRINT("Freed %" PRIu64 " notification events\n",
-		   env_atomic64_get(&egrp_shm->test_eo_ctx.del_notifs));
+		   odp_atomic_load_u64(&egrp_shm->test_eo_ctx.del_notifs));
 }
 
 /**
  * Requests notif events, tries to abort the group and updates counters
  */
-void
-abort_event_group(em_event_group_t event_group)
+static void abort_event_group(em_event_group_t event_group)
 {
 	em_status_t ret;
-	int returned_notifs, ready, i;
+	int returned_notifs, ready;
 	em_notif_t notif_tbl[1] = { {.event = EM_EVENT_UNDEF} };
 
 	/* Get notification events */
-	returned_notifs = em_event_group_get_notif(event_group, 1, notif_tbl);
+	returned_notifs = em_event_group_notif(event_group, 1, notif_tbl);
 
 	/* Try to abort event group */
 	ret = em_event_group_abort(event_group);
 
 	if (ret == EM_OK) {
 		/* Delete notif events */
-		for (i = 0; i < returned_notifs; i++) {
+		for (int i = 0; i < returned_notifs; i++) {
 			em_free(notif_tbl[i].event);
-			env_atomic64_inc(&egrp_shm->test_eo_ctx.del_notifs);
+			odp_atomic_inc_u64(&egrp_shm->test_eo_ctx.del_notifs);
 		}
 		/* Inc aborted counter */
-		env_atomic64_inc(&egrp_shm->test_eo_ctx.aborted_egrps);
-
-		/* Keeps track of aborted groups in a round */
-		update_group_count();
+		odp_atomic_inc_u64(&egrp_shm->test_eo_ctx.aborted_egrps);
 
 		ready = em_event_group_is_ready(event_group);
 		if (ready != EM_TRUE) {
@@ -545,17 +507,18 @@ abort_event_group(em_event_group_t event_group)
 			exit(EXIT_FAILURE);
 		}
 
+		/* Keeps track of aborted groups in a round */
+		update_group_count();
 	} else {
-		env_atomic64_inc(&egrp_shm->test_eo_ctx.failed_aborts);
+		odp_atomic_inc_u64(&egrp_shm->test_eo_ctx.failed_aborts);
 	}
 }
 
 /* Update current group count and start new round when last group is done */
-void update_group_count(void)
+static void update_group_count(void)
 {
 	/* Check if this is the last group and hence the end of the round */
-	int groups_left =
-	env_atomic64_sub_return(&egrp_shm->test_eo_ctx.groups_left, 1);
+	int groups_left = odp_atomic_fetch_dec_u64(&egrp_shm->test_eo_ctx.groups_left) - 1;
 
 	if (groups_left == 0) {
 		print_round_end_info();
@@ -584,11 +547,9 @@ void test_stop(const appl_conf_t *appl_conf)
 	eo = egrp_shm->test_eo_ctx.eo;
 
 	ret = em_eo_stop_sync(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
+	test_fatal_if(ret != EM_OK, "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
 	ret = em_eo_delete(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
+	test_fatal_if(ret != EM_OK, "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
 }
 
 void test_term(const appl_conf_t *appl_conf)
@@ -640,25 +601,21 @@ egroup_stop(void *eo_context, em_eo_t eo)
 
 	/* remove and delete all of the EO's queues */
 	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
-	test_fatal_if(ret != EM_OK,
-		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "",
-		      ret, eo);
+	test_fatal_if(ret != EM_OK, "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "", ret, eo);
 
 	/* No more dispatching of the EO's events, egrps can be freed */
 
 	for (int i = 0; i < EVENT_GROUPS; i++) {
 		egrp = eo_ctx->egrp_tbl[i].grp;
 		if (!em_event_group_is_ready(egrp)) {
-			num_notifs = em_event_group_get_notif(egrp, 1,
-							      notif_tbl);
+			num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 			ret = em_event_group_abort(egrp);
 			if (ret == EM_OK && num_notifs == 1)
 				em_free(notif_tbl[0].event);
 		}
 		ret = em_event_group_delete(egrp);
 		test_fatal_if(ret != EM_OK,
-			      "egrp:%" PRI_EGRP "\n"
-			      "delete:%" PRI_STAT " EO:%" PRI_EO "",
+			      "egrp:%" PRI_EGRP " delete:%" PRI_STAT " EO:%" PRI_EO "",
 			      egrp, ret, eo);
 	}
 
@@ -670,14 +627,13 @@ egroup_stop(void *eo_context, em_eo_t eo)
  *
  * EO receive function.
  *
-	1. Start test round by changing round type, setting up event groups and
-	   sending events to parallel queue for looping.
-	2. Keep sending events until defined count is reached and the group is
-	   aborted. Discard events that don't belong to a valid group. If
-	   notification event is sent, then that tries to abort the group, just
-	   to decrement the counters to see when all groups are done.
-	3. Go to step 1
- *
+ * 1. Start test round by changing round type, setting up event groups and
+ *    sending events to parallel queue for looping.
+ * 2. Keep sending events until defined count is reached and the group is
+ *    aborted. Discard events that don't belong to a valid group. If
+ *    notification event is sent, then that tries to abort the group, just
+ *    to decrement the counters to see when all groups are done.
+ * 3. Go to step 1
  */
 static void
 egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
@@ -687,9 +643,11 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 	eo_context_t *eo_ctx = eo_context;
 	egrp_test_t *rcvd_event = em_event_pointer(event);
 	em_event_group_t current_egrp;
+	em_event_group_t egrp;
 	egrp_data_tbl *egrp_data;
 	uint64_t egrp_id;
 	uint64_t current_count;
+	uint64_t gen;
 
 	(void)type;
 	(void)q_ctx;
@@ -714,49 +672,51 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 
 		/* Alloc and send all event group events  */
 		send_test_events();
-
 		break;
 
 	case MSG_DATA:
 		egrp_id = rcvd_event->egrp_id;
 		egrp_data = &eo_ctx->egrp_tbl[egrp_id];
 
-		/* Acquire lock when checking event validity. */
-		env_spinlock_lock(&egrp_data->lock);
-
 		current_egrp = em_event_group_current();
 		/* Undef group events are from expired groups and discarded */
 		if (current_egrp == EM_EVENT_GROUP_UNDEF) {
-			env_spinlock_unlock(&egrp_data->lock);
-			env_atomic64_inc(&eo_ctx->rcvd_expired_events);
+			odp_atomic_inc_u64(&eo_ctx->rcvd_expired_events);
 			em_free(event);
 			return;
 		}
 
+		/* Acquire lock when checking event validity. */
+		odp_ticketlock_lock(&egrp_data->lock);
+		gen = egrp_data->gen;
+		egrp = egrp_data->grp;
+		odp_ticketlock_unlock(&egrp_data->lock);
+
 		/*
 		 * If TRUE, then the event is from a valid event group but from
-		 * a previous round, which should not be possible.
+		 * a previous round, which should not be possible (in EM_EVENT_GROUP_SAFE_MODE)
 		 */
-		test_fatal_if(rcvd_event->egrp_gen != egrp_data->gen,
-			      "Current gen: %" PRIu64 ", received gen\t"
-			      "%" PRIu64 " event: %p. Event group:\t"
-			      "%" PRI_EGRP "\n", egrp_data->gen,
-			      rcvd_event->egrp_gen, (void *)rcvd_event,
-			      egrp_data->grp);
-
-		env_spinlock_unlock(&egrp_data->lock);
+		if (unlikely(rcvd_event->egrp_gen != gen)) {
+			test_fatal_if(EM_EVENT_GROUP_SAFE_MODE,
+				      "Egrp:%" PRI_EGRP " gen: curr:%" PRIu64 " rcvd:%" PRIu64 "\n",
+				      egrp, gen, rcvd_event->egrp_gen);
+			odp_atomic_inc_u64(&eo_ctx->rcvd_expired_events);
+			em_free(event);
+			return;
+		}
 
 		/* Total received valid group events */
-		env_atomic64_inc(&eo_ctx->rcvd_group_events);
+		odp_atomic_inc_u64(&eo_ctx->rcvd_group_events);
 
 		/* Random Event group operations */
 		if (rand() % 2) {
 			ret = em_event_group_increment(1);
 			if (ret == EM_OK)
-				env_atomic64_inc(&eo_ctx->increments);
+				odp_atomic_inc_u64(&eo_ctx->increments);
 			else
-				env_atomic64_inc(&eo_ctx->failed_increments);
+				odp_atomic_inc_u64(&eo_ctx->failed_increments);
 		}
+
 		/*
 		 * Randomly select event group from the list and assign it.
 		 * Assign may fail if the group is waiting to be applied again
@@ -765,18 +725,19 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 		if (rand() % 2) {
 			em_event_group_processing_end();
 
-			em_event_group_t rand_egrp =
-				eo_ctx->egrp_tbl[rand()	% EVENT_GROUPS].grp;
-			ret = em_event_group_assign(rand_egrp);
-			if (ret == EM_OK)
-				env_atomic64_inc(&eo_ctx->assigns);
-			else
-				env_atomic64_inc(&eo_ctx->failed_assigns);
+			em_event_group_t rand_egrp = eo_ctx->egrp_tbl[rand() % EVENT_GROUPS].grp;
+
+			if (!em_event_group_is_ready(rand_egrp)) {
+				ret = em_event_group_assign(rand_egrp);
+				if (ret == EM_OK)
+					odp_atomic_inc_u64(&eo_ctx->assigns);
+				else
+					odp_atomic_inc_u64(&eo_ctx->failed_assigns);
+			}
 		}
 
 		/* Increment the original event group received event counter */
-		current_count =
-		env_atomic64_add_return(&eo_ctx->group_counter[egrp_id], 1);
+		current_count = odp_atomic_fetch_inc_u64(&eo_ctx->group_counter[egrp_id]) + 1;
 
 		/* Events loop until stop count */
 		if (current_count != egrp_shm->stop_count) {
@@ -785,29 +746,26 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			 * another core. Same lock is used to change the group
 			 * generation count when new round begins.
 			 */
-			env_spinlock_lock(&egrp_data->lock);
+			odp_ticketlock_lock(&egrp_data->lock);
+			gen = egrp_data->gen;
+			odp_ticketlock_unlock(&egrp_data->lock);
 
 			/* Don't send old events forward */
-			if (rcvd_event->egrp_gen != egrp_data->gen) {
+			if (rcvd_event->egrp_gen != gen) {
 				em_free(event);
 			} else {
-				ret = em_send_group(event, eo_ctx->paral_queue,
-						    current_egrp);
+				ret = em_send_group(event, eo_ctx->paral_queue, current_egrp);
 				if (unlikely(ret != EM_OK)) {
 					em_free(event);
 					test_fatal_if(!appl_shm->exit_flag,
-						      "Send:%" PRI_STAT "\t"
-						      "Q:%" PRI_QUEUE "",
+						      "Send:%" PRI_STAT " Q:%" PRI_QUEUE "",
 						      ret, eo_ctx->paral_queue);
 				}
 			}
-
-			env_spinlock_unlock(&egrp_data->lock);
 		} else {
 			em_free(event);
 			abort_event_group(current_egrp);
 		}
-
 		break;
 
 	case MSG_NOTIF:
@@ -819,14 +777,13 @@ egroup_receive(void *eo_context, em_event_t event, em_event_type_t type,
 			exit(EXIT_FAILURE);
 		}
 
-		env_atomic64_inc(&eo_ctx->rcvd_notif_events);
+		odp_atomic_inc_u64(&eo_ctx->rcvd_notif_events);
 		update_group_count();
 		em_free(event);
 		break;
 
 	default:
-		test_fatal_if(EM_TRUE, "Bad msg (%" PRIu64 ")!",
-			      rcvd_event->msg);
+		test_fatal_if(EM_TRUE, "Bad msg (%" PRIu64 ")!", rcvd_event->msg);
 		break;
 	}
 }

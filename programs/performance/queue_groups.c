@@ -105,8 +105,8 @@ typedef union {
 		double mhz;
 		uint64_t cpu_hz;
 		uint64_t print_count;
-		env_atomic64_t ready_count;
-		env_atomic64_t freed_count;
+		odp_atomic_u64_t ready_count;
+		odp_atomic_u64_t freed_count;
 	};
 } test_status_t;
 
@@ -391,8 +391,8 @@ void test_start(const appl_conf_t *appl_conf)
 	perf_shm->test_status.num_cores = appl_conf->core_count;
 	perf_shm->test_status.num_qgrp = 0;
 
-	env_atomic64_init(&perf_shm->test_status.ready_count);
-	env_atomic64_init(&perf_shm->test_status.freed_count);
+	odp_atomic_init_u64(&perf_shm->test_status.ready_count, 0);
+	odp_atomic_init_u64(&perf_shm->test_status.freed_count, 0);
 
 	/* Create EO */
 	eo_ctx = &perf_shm->eo_context;
@@ -686,7 +686,7 @@ static void receive_notif_queue_group_created(perf_event_t *perf, em_event_t eve
 	test_fatal_if(queue_group == EM_QUEUE_GROUP_UNDEF,
 		      "QGrp:%s not found!", perf->qgrp_name);
 
-	em_queue_group_get_name(queue_group, name, sizeof(name));
+	em_queue_group_name(queue_group, name, sizeof(name));
 	cmp = strncmp(perf->qgrp_name, name, sizeof(name));
 	test_fatal_if(cmp != 0, "Qgrp name check fails! %s != %s",
 		      perf->qgrp_name, name);
@@ -745,11 +745,11 @@ static void receive_perf_event(env_time_t recv_time, em_event_t event,
 			em_free(event);
 
 			freed_count =
-			env_atomic64_add_return(&tstat->freed_count, 1);
+			odp_atomic_fetch_inc_u64(&tstat->freed_count) + 1;
 
 			/* Last event. Only one core goes here. */
 			if (freed_count == NUM_EVENTS) {
-				env_atomic64_init(&tstat->freed_count);
+				odp_atomic_init_u64(&tstat->freed_count, 0);
 				tstat->reset_flag = 0;
 				tstat->free_flag = 0;
 				init_queue_groups(QUEUE_GROUP_STEP_SIZE);
@@ -762,11 +762,11 @@ static void receive_perf_event(env_time_t recv_time, em_event_t event,
 			cstat->begin_time = ENV_TIME_NULL;
 
 			ready_count =
-			env_atomic64_add_return(&tstat->ready_count, 1);
+			odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 			/* Only one core goes here. */
 			if ((int)ready_count == tstat->num_cores) {
-				env_atomic64_init(&tstat->ready_count);
+				odp_atomic_init_u64(&tstat->ready_count, 0);
 				if (tstat->samples == 0)
 					tstat->free_flag = 1;
 				else
@@ -792,7 +792,7 @@ static void receive_perf_event(env_time_t recv_time, em_event_t event,
 		 */
 		update_latency(recv_time, q_ctx, perf, cstat);
 
-		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
+		ready_count = odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 		/*
 		 * Check whether all cores are done with the step, and if done
@@ -854,7 +854,7 @@ static void print_sample_statistics(test_status_t *const tstat)
 	const uint64_t total_events = (uint64_t)tstat->num_cores * EVENTS_PER_SAMPLE;
 
 	/* No real need for atomicity, only ran on last core */
-	env_atomic64_init(&tstat->ready_count);
+	odp_atomic_init_u64(&tstat->ready_count, 0);
 
 	if (MEASURE_LATENCY) {
 		latency_hi = ENV_TIME_NULL;

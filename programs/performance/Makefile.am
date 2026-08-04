@@ -1,11 +1,6 @@
 include $(top_srcdir)/programs/Makefile.inc
 
 noinst_PROGRAMS = atomic_processing_end \
-		  pairs \
-		  loop \
-		  loop_multircv \
-		  loop_refs \
-		  loop_vectors \
 		  loop_united \
 		  queue_groups \
 		  queues \
@@ -21,21 +16,6 @@ noinst_PROGRAMS = atomic_processing_end \
 
 atomic_processing_end_LDFLAGS = $(AM_LDFLAGS)
 atomic_processing_end_CFLAGS = $(AM_CFLAGS)
-
-pairs_LDFLAGS = $(AM_LDFLAGS)
-pairs_CFLAGS = $(AM_CFLAGS)
-
-loop_LDFLAGS = $(AM_LDFLAGS)
-loop_CFLAGS = $(AM_CFLAGS)
-
-loop_multircv_LDFLAGS = $(AM_LDFLAGS)
-loop_multircv_CFLAGS = $(AM_CFLAGS)
-
-loop_refs_LDFLAGS = $(AM_LDFLAGS)
-loop_refs_CFLAGS = $(AM_CFLAGS)
-
-loop_vectors_LDFLAGS = $(AM_LDFLAGS)
-loop_vectors_CFLAGS = $(AM_CFLAGS)
 
 loop_united_LDFLAGS = $(AM_LDFLAGS)
 loop_united_CFLAGS = $(AM_CFLAGS)
@@ -74,11 +54,6 @@ pool_perf_LDFLAGS = $(AM_LDFLAGS) -lm
 pool_perf_CFLAGS = $(AM_CFLAGS)
 
 dist_atomic_processing_end_SOURCES = atomic_processing_end.c
-dist_pairs_SOURCES = pairs.c
-dist_loop_SOURCES = loop.c
-dist_loop_multircv_SOURCES = loop_multircv.c
-dist_loop_refs_SOURCES = loop_refs.c
-dist_loop_vectors_SOURCES = loop_vectors.c
 dist_loop_united_SOURCES = loop_united.c
 dist_queue_groups_SOURCES = queue_groups.c
 dist_queues_SOURCES = queues.c

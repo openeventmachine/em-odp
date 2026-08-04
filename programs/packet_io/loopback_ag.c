@@ -423,7 +423,7 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Store the EO name in the EO-context data */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	APPL_PRINT("EO %" PRI_EO ":'%s' global start, if-count:%d\n",
 		   eo, eo_ctx->name, eo_ctx->if_count);

@@ -36,6 +36,13 @@
 #ifndef EM_LIBCONFIG_H_
 #define EM_LIBCONFIG_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <libconfig.h>
+
+#include "em_libconfig_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -179,7 +186,7 @@ libconfig_group_t *em_libconfig_list_lookup_group(const libconfig_list_t *list,
  * @param list		Pointer to list where integer is read
  * @param index		Index to list element
  * @param path		Path to integer value
- * @param value[out]	Pointer where read value will be stored
+ * @param[out] value	Pointer where read value will be stored
  * @return int		1 on success, 0 wrong type, -1 not found
  */
 int em_libconfig_list_lookup_int(const libconfig_list_t *list, int index,
@@ -191,7 +198,7 @@ int em_libconfig_list_lookup_int(const libconfig_list_t *list, int index,
  * @param list		Pointer to list
  * @param index		Index to list element
  * @param path		Path to boolean value
- * @param value[out]	Pointer where read value will be stored
+ * @param[out] value	Pointer where read value will be stored
  * @return int		1 on success, 0 wrong type, -1 not found
  */
 int em_libconfig_list_lookup_bool(const libconfig_list_t *list, int index,
@@ -203,7 +210,7 @@ int em_libconfig_list_lookup_bool(const libconfig_list_t *list, int index,
  * @param list		Pointer to list
  * @param index		Index to list element
  * @param path		Path to string value
- * @param value[out]	Pointer where read value will be stored
+ * @param[out] value	Pointer where read value will be stored
  * @return int		1 on success, 0 wrong type, -1 not found
  */
 int em_libconfig_list_lookup_string(const libconfig_list_t *list, int index,
@@ -234,7 +241,7 @@ libconfig_list_t
  *
  * @param group		Pointer to group
  * @param name		Name of integer value
- * @param value[out]	Pointer where read value will be stored
+ * @param[out] value	Pointer where read value will be stored
  * @return int		1 on success, 0 otherwise
  */
 int em_libconfig_group_lookup_int(const libconfig_group_t *group,
@@ -245,7 +252,7 @@ int em_libconfig_group_lookup_int(const libconfig_group_t *group,
  *
  * @param group		Pointer to group
  * @param name		Name of boolean value
- * @param value[out]	Pointer where read value will be stored
+ * @param[out] value	Pointer where read value will be stored
  * @return int		1 on success, 0 otherwise
  */
 int em_libconfig_group_lookup_bool(const libconfig_group_t *group,
@@ -256,7 +263,7 @@ int em_libconfig_group_lookup_bool(const libconfig_group_t *group,
  *
  * @param group		Pointer to group
  * @param name		Name of the string to be fetched
- * @param value[out]	Pointer where read value will be stored
+ * @param[out] value	Pointer where read value will be stored
  * @return int		1 on success, 0 otherwise
  */
 int em_libconfig_group_lookup_string(const libconfig_group_t *group,

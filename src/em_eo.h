@@ -37,6 +37,19 @@
  *
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_eo_types.h"
+#include "em_internal_event_types.h"
+#include "em_mem.h"
+#include "em_queue_types.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -64,39 +77,33 @@ eo_rem_queue_all(eo_elem_t *const eo_elem);
 em_status_t
 eo_delete_queue_all(eo_elem_t *const eo_elem);
 
-em_status_t
-eo_start_local_req(eo_elem_t *const eo_elem,
-		   int num_notif, const em_notif_t notif_tbl[]);
-em_status_t
-eo_start_sync_local_req(eo_elem_t *const eo_elem);
+int eo_start_local_req(eo_elem_t *const eo_elem,
+		       int num_notif, const em_notif_t notif_tbl[]);
+int eo_start_sync_local_req(eo_elem_t *const eo_elem);
 
 int eo_start_buffer_events(const em_event_t events[], int num, em_queue_t queue);
 
 void eo_start_send_buffered_events(eo_elem_t *const eo_elem);
 
-em_status_t
-eo_stop_local_req(eo_elem_t *const eo_elem,
-		  int num_notif, const em_notif_t notif_tbl[]);
-em_status_t
-eo_stop_sync_local_req(eo_elem_t *const eo_elem);
+int eo_stop_local_req(eo_elem_t *const eo_elem,
+		      int num_notif, const em_notif_t notif_tbl[]);
+int eo_stop_sync_local_req(eo_elem_t *const eo_elem);
 
-em_status_t
-eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
-			  int num_notif, const em_notif_t notif_tbl[]);
-em_status_t
-eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
-			       queue_elem_t *const q_elem);
-em_status_t
-eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
+em_status_t eo_stop_done(eo_elem_t *const eo_elem);
+
+int eo_remove_queue_local_req(eo_elem_t *const eo_elem, queue_elem_t *const q_elem,
 			      int num_notif, const em_notif_t notif_tbl[]);
-em_status_t
-eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues);
+int eo_remove_queue_sync_local_req(eo_elem_t *const eo_elem,
+				   queue_elem_t *const q_elem);
+int eo_remove_queue_all_local_req(eo_elem_t *const eo_elem, int delete_queues,
+				  int num_notif, const em_notif_t notif_tbl[]);
+int eo_remove_queue_all_sync_local_req(eo_elem_t *const eo_elem, int delete_queues);
 
 unsigned int
 eo_count(void);
 
-size_t eo_get_name(const eo_elem_t *const eo_elem,
-		   char name[/*out*/], const size_t maxlen);
+size_t eo_name(const eo_elem_t *const eo_elem,
+	       char name[/*out*/], const size_t maxlen);
 
 odp_stash_t eo_start_stash_create(void);
 
@@ -170,6 +177,9 @@ void eo_info_print_all(void);
 
 /** Print information about all queues of the given eo */
 void eo_queue_info_print(em_eo_t eo);
+
+void eo_start_local_fn_at_init(void);
+void eo_stop_local_fn_at_term(void);
 
 #ifdef __cplusplus
 }

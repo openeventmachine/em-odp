@@ -37,6 +37,16 @@
 #ifndef EM_EVENT_TYPES_H_
 #define EM_EVENT_TYPES_H_
 
+#include <stddef.h> /* offsetof */
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "misc/list.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -223,9 +233,21 @@ typedef struct event_hdr {
 			 * See em_tmo_type_t. Initially 0 = EM_TMO_TYPE_NONE
 			 */
 			uint8_t tmo_type : 2;
-
+			/**
+			 * Indicate that the .vector_type field is set
+			 * by EM and contains a valid value.
+			 */
+			uint8_t vectype_set : 1;
+			/**
+			 * Indicate that the event is enqueued by the user to an
+			 * EM_QUEUE_TYPE_AGGR queue. Allows dispatch to apply
+			 * the missing em2usr ESV transition for inner events of
+			 * aggregation-produced vectors when received as vector.
+			 * Cleared after the transition.
+			 */
+			uint8_t aggr_sent : 1;
 			/** currently unused bits */
-			uint8_t unused : 5;
+			uint8_t unused : 3;
 		};
 	} flags;
 
@@ -257,7 +279,7 @@ typedef struct event_hdr {
 	/**
 	 * Event group generation
 	 */
-	int32_t egrp_gen;
+	uint32_t egrp_gen;
 
 	/**
 	 * Event Group handle (cannot be used by event references)
@@ -275,6 +297,16 @@ typedef struct event_hdr {
 	 * Event User Area metadata
 	 */
 	ev_hdr_user_area_t user_area;
+
+	/**
+	 * Event type of the events in the vector.
+	 * Used by events of (major) type EM_EVENT_TYPE_VECTOR and specifies the
+	 * type of all events in the vector's event table (em_event_t ev_tbl[]).
+	 * Only valid if flags.vectype_set = 1, otherwise the vector type is
+	 * considered not set by EM yet.
+	 * Can also be EM_EVENT_TYPE_ANY, see em_event_type_t.
+	 */
+	em_event_type_t vector_type;
 
 	/**
 	 * End of event header data,

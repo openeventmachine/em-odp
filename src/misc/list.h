@@ -32,6 +32,8 @@
 #ifndef MISC_LIST_H_
 #define MISC_LIST_H_
 
+#include <stddef.h> /* NULL */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -136,12 +138,11 @@ list_rem_last(const list_node_t *const head)
  * Macro for accessing each node in a queue list
  *
  * @param head  Points to the head node of the list
- * @param pos   Internal pointer for tracking position, don't use in loop!
  * @param cur   Points to the current node, access this inside loop
  */
-#define list_for_each(head, pos, cur) \
-	for ((pos) = (head)->next; \
-	     (cur) = (void *)(pos), (pos) = (pos)->next, \
+#define list_for_each(head, cur) \
+	for (list_node_t *_pos_ = (head)->next; \
+	     (cur) = (void *)(_pos_), _pos_ = (_pos_)->next, \
 	     (cur) != (head);)
 
 #ifdef __cplusplus

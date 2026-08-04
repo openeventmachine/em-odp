@@ -1,4 +1,18 @@
+#ifndef TIMER_TEST_PERIODIC_H
+#define TIMER_TEST_PERIODIC_H
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* for struct random_data */
+#endif
+
 #include <getopt.h>
+#include <inttypes.h>
+#include <stddef.h>
+#include <stdlib.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
 
 #define APP_EO_NAME	"testEO"
 #define DEF_TMO_DATA	100 /* per core, MAX_TMO_DATA * sizeof(tmo_data) */
@@ -241,3 +255,5 @@ typedef struct tmo_setup {
 	uint64_t ack_late;
 	int	 tidx;
 } tmo_setup;
+
+#endif /* TIMER_TEST_PERIODIC_H */

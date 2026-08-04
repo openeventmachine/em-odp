@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2014, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -53,11 +53,13 @@
  * using _ag - functions, but can be deleted normally using em_queue_delete().
  */
 
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+#include <event_machine/api/event_machine_queue.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/api/event_machine_types.h>
 
 /**
  * Create a new atomic group
@@ -89,8 +91,7 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group);
  *
  * @see em_atomic_group_create()
  */
-em_status_t
-em_atomic_group_delete(em_atomic_group_t atomic_group);
+em_status_t em_atomic_group_delete(em_atomic_group_t atomic_group);
 
 /**
  * Create a new queue with a dynamic queue handle belonging to an atomic group.
@@ -122,11 +123,17 @@ em_queue_create_ag(const char *name, em_queue_prio_t prio,
  *
  * Otherwise equivalent to em_queue_create_ag().
  *
- * Note, that the system may have a limited amount of static handles available,
- * so prefer the use of dynamic queues, unless static handles are really needed.
- * The range of static identifiers/handles is system dependent, but macros
- * EM_QUEUE_STATIC_MIN and EM_QUEUE_STATIC_MAX can be used to abstract actual
- * values, e.g. use EM_QUEUE_STATIC_MIN+x for the application.
+ * Note that the number of static queues is provided by the user through
+ * 'queue.num_static' in em-odp.conf at runtime. A valid static queue handle
+ * can be derived as follows:
+ * @code
+ *	em_status_t status;
+ *	em_queue_t static_queue = em_queue_static_handle(x);
+ *	status = em_queue_create_static_ag(NULL, EM_QUEUE_PRIO_NORMAL,
+ *					   atomic_group, static_queue, conf);
+ * @endcode
+ *
+ * The 'x' in above pseudocode must be in range 0 to 'queue.num_static' - 1.
  *
  * @param name          Queue name (optional, NULL ok)
  * @param prio          Queue priority
@@ -142,21 +149,6 @@ em_status_t
 em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 			  em_atomic_group_t atomic_group, em_queue_t queue,
 			  const em_queue_conf_t *conf);
-
-/**
- * Get the associated atomic group of the given queue.
- *
- * Returns the atomic group of the given queue.
- *
- * @param queue         Queue for the query
- *
- * @return Queue specific atomic group or EM_ATOMIC_GROUP_UNDEF if
- * the given queue is not valid or belong to an atomic group.
- *
- * @see em_atomic_group_create()
- */
-em_atomic_group_t
-em_atomic_group_get(em_queue_t queue);
 
 /**
  * Get the name of an atomic group.
@@ -175,9 +167,10 @@ em_atomic_group_get(em_queue_t queue);
  *
  * @return Number of characters written (excludes the terminating '0').
  */
-size_t
-em_atomic_group_get_name(em_atomic_group_t atomic_group,
-			 char *name, size_t maxlen);
+size_t em_atomic_group_name(em_atomic_group_t atomic_group,
+			    char *name, size_t maxlen);
+/* Backwards compatible naming ("get") */
+#define em_atomic_group_get_name em_atomic_group_name
 
 /**
  * Find atomic group by name.
@@ -190,29 +183,28 @@ em_atomic_group_get_name(em_atomic_group_t atomic_group,
  *
  * @return atomic group or EM_ATOMIC_GROUP_UNDEF if not found.
  */
-em_atomic_group_t
-em_atomic_group_find(const char *name);
+em_atomic_group_t em_atomic_group_find(const char *name);
 
 /**
  * Initialize atomic group iteration and return the first atomic group handle.
  *
  * Can be used to initialize the iteration to retrieve all created atomic groups
- * for debugging or management purposes. Use em_atomic_group_get_next() after
+ * for debugging or management purposes. Use em_atomic_group_next() after
  * this call until it returns EM_ATOMIC_GROUP_UNDEF.
- * A new call to em_atomic_group_get_first() resets the iteration, which is
+ * A new call to em_atomic_group_first() resets the iteration, which is
  * maintained per core (thread). The operation should be completed in one go
  * before returning from the EO's event receive function (or start/stop).
  *
  * The number of atomic groups (output arg 'num') may not match the amount of
- * atomic groups actually returned by iterating using em_atomic_group_get_next()
+ * atomic groups actually returned by iterating using em_atomic_group_next()
  * if atomic groups are added or removed in parallel by another core. The order
  * of the returned atomic group handles is undefined.
  *
  * @code
  *	unsigned int num;
- *	em_atomic_group_t ag = em_atomic_group_get_first(&num);
+ *	em_atomic_group_t ag = em_atomic_group_first(&num);
  *	while (ag != EM_ATOMIC_GROUP_UNDEF) {
- *		ag = em_atomic_group_get_next();
+ *		ag = em_atomic_group_next();
  *	}
  * @endcode
  *
@@ -220,24 +212,28 @@ em_atomic_group_find(const char *name);
  *                   atomic groups into
  * @return The first atomic group handle or EM_ATOMIC_GROUP_UNDEF if none exist
  *
- * @see em_atomic_group_get_next()
+ * @see em_atomic_group_next()
  */
-em_atomic_group_t
-em_atomic_group_get_first(unsigned int *num);
+em_atomic_group_t em_atomic_group_first(unsigned int *num);
+
+/* Backwards compatible naming ("get") */
+#define em_atomic_group_get_first em_atomic_group_first
 
 /**
  * Return the next atomic group handle.
  *
- * Continues the atomic group iteration started by em_atomic_group_get_first()
+ * Continues the atomic group iteration started by em_atomic_group_first()
  * and returns the next atomic group handle.
  *
  * @return The next atomic group handle or EM_ATOMIC_GROUP_UNDEF if the atomic
  *         group iteration is completed (i.e. no more atomic groups available).
  *
- * @see em_atomic_group_get_first()
+ * @see em_atomic_group_first()
  */
-em_atomic_group_t
-em_atomic_group_get_next(void);
+em_atomic_group_t em_atomic_group_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_atomic_group_get_next em_atomic_group_next
 
 /**
  * Initialize iteration of an atomic group's queues and return the first
@@ -245,24 +241,24 @@ em_atomic_group_get_next(void);
  *
  * Can be used to initialize the iteration to retrieve all queues associated
  * with the given atomic group for debugging or management purposes.
- * Use em_atomic_group_queue_get_next() after this call until it returns
+ * Use em_atomic_group_queue_next() after this call until it returns
  * EM_QUEUE_UNDEF.
- * A new call to em_atomic_group_queue_get_first() resets the iteration, which
+ * A new call to em_atomic_group_queue_first() resets the iteration, which
  * is maintained per core (thread). The operation should be started and
  * completed in one go before returning from the EO's event receive function (or
  * start/stop).
  *
  * The number of queues in the atomic group (output arg 'num') may not match the
  * amount of queues actually returned by iterating using
- * em_atomic_group_queue_get_next() if queues are added or removed in parallel
+ * em_atomic_group_queue_next() if queues are added or removed in parallel
  * by another core. The order of the returned queue handles is undefined.
  *
  * Simplified example:
  * @code
  *	unsigned int num;
- *	em_queue_t q = em_atomic_group_queue_get_first(&num, atomic_group);
+ *	em_queue_t q = em_atomic_group_queue_first(&num, atomic_group);
  *	while (q != EM_QUEUE_UNDEF) {
- *		q = em_atomic_group_queue_get_next();
+ *		q = em_atomic_group_queue_next();
  *	}
  * @endcode
  *
@@ -273,25 +269,29 @@ em_atomic_group_get_next(void);
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist or the
  *         atomic group is invalid.
  *
- * @see em_atomic_group_queue_get_next()
+ * @see em_atomic_group_queue_next()
  */
-em_queue_t
-em_atomic_group_queue_get_first(unsigned int *num,
-				em_atomic_group_t atomic_group);
+em_queue_t em_atomic_group_queue_first(unsigned int *num,
+				       em_atomic_group_t atomic_group);
+
+/* Backwards compatible naming ("get") */
+#define em_atomic_group_queue_get_first em_atomic_group_queue_first
 
 /**
  * Return the atomic group's next queue handle.
  *
- * Continues the queue iteration started by em_atomic_group_queue_get_first()
+ * Continues the queue iteration started by em_atomic_group_queue_first()
  * and returns the next queue handle in the atomic group.
  *
  * @return The next queue handle or EM_QUEUE_UNDEF if the queue iteration is
  *         completed (i.e. no more queues available for this atomic group).
  *
- * @see em_atomic_group_queue_get_first()
+ * @see em_atomic_group_queue_first()
  */
-em_queue_t
-em_atomic_group_queue_get_next(void);
+em_queue_t em_atomic_group_queue_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_atomic_group_queue_get_next em_atomic_group_queue_next
 
 /**
  * Convert an atomic group handle to an unsigned integer

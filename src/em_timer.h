@@ -30,10 +30,18 @@
 #ifndef EM_TIMER_H_
 #define EM_TIMER_H_
 
+#include <odp_api.h>
+
+#include <event_machine.h>
+
 #include "em_timer_types.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define TMR_DBG_PRINT(fmt, ...) \
-	EM_DBG("TMRDBG: %s(): " fmt, __func__, ## __VA_ARGS__)
+	EM_DBG(EM_DEBUG_PRINT_TIMER, "TMRDBG: %s(): " fmt, __func__, ## __VA_ARGS__)
 
 em_status_t timer_init(timer_storage_t *const tmrs);
 em_status_t timer_init_local(void);
@@ -97,5 +105,9 @@ timer_clksrc_odp2em(odp_timer_clk_src_t clksrc_odp,
 	}
 	return 0;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EM_TIMER_H_ */

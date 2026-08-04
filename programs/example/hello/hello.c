@@ -186,7 +186,7 @@ void test_start(const appl_conf_t *appl_conf)
 	else
 		hello_shm->pool = EM_POOL_DEFAULT;
 
-	em_pool_get_name(hello_shm->pool, pool_name, sizeof(pool_name));
+	em_pool_name(hello_shm->pool, pool_name, sizeof(pool_name));
 
 	APPL_PRINT("\n"
 		   "***********************************************************\n"
@@ -297,7 +297,7 @@ hello_start(my_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Copy EO name */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	if (eo_ctx->is_a) {
 		queue_name = "queue A";

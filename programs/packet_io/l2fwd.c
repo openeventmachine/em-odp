@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2022, Nokia Solutions and Networks
+ *   Copyright (c) 2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -48,6 +48,30 @@
 #include "cm_error_handler.h"
 #include "cm_pktio.h"
 
+#define USAGE_FMT \
+"\n"										\
+"Usage: %s EM-ODP options -- APP SPECIFIC OPTIONS\n"				\
+"  E.g. %s -c 0xfe -t -- -c 1\n"						\
+"\n"										\
+" Event Machine l2fwd test application that receives ETH frames"		\
+" and sends them back.\n"							\
+"\n"										\
+"Note to get EM-ODP options:\n"							\
+"  -h, --help	 before/without -- option.\n"					\
+"\n"										\
+"APP specific options (optional)\n"						\
+"  -c MODE, --concat=MODE\n"							\
+"        Use em_packet_concat() in receive function.\n"				\
+"	 This cannot be used with vectors.\n"					\
+"	 0: If several packets are received in a burst, application\n"		\
+"	    concatenates every second packet to the previous one.\n"		\
+"	 1: Packets are always received one by one. Packet is concatenated\n"	\
+"	    with previously received packet from the same packet input queue.\n"\
+"	    Works only with pktin scheduler mode with atomic queues.\n"		\
+"  -h, --help\n"								\
+"        Display help and exit\n"						\
+"\n"
+
 /*
  * Test configuration
  */
@@ -82,7 +106,16 @@ typedef struct {
 	em_queue_t pktout_queue[MAX_IF_ID + 1];
 	/** queue handle */
 	em_queue_t queue;
+
+	em_event_t prev_pkt;
 } queue_context_t;
+
+/* Command line arguments specific to this application */
+static struct {
+	/* Use em_packet_concat() in receive function */
+	bool use_concat;
+	int concat_type;
+} perf_args;
 
 /**
  * Packet L2fwd shared memory
@@ -108,6 +141,8 @@ typedef struct {
 /** EM-core local pointer to shared memory */
 static ENV_LOCAL l2fwd_shm_t *l2fwd_shm;
 
+static void set_default_opts(void);
+
 static em_status_t
 start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
 
@@ -117,6 +152,16 @@ set_pktout_queues(em_queue_t queue, eo_context_t *const eo_ctx,
 
 static em_status_t
 start_eo_local(void *eo_context, em_eo_t eo);
+
+static void
+receive_eo_event_multi_concat_0(void *eo_ctx,
+				em_event_t events[], int num,
+				em_queue_t queue, void *q_ctx);
+
+static void
+receive_eo_event_multi_concat_1(void *eo_ctx,
+				em_event_t events[], int num,
+				em_queue_t queue, void *q_ctx);
 
 static void
 receive_eo_event_multi(void *eo_ctx,
@@ -135,6 +180,99 @@ receive_packet_multi(em_event_t events[], int num,
 static em_status_t
 stop_eo(void *eo_context, em_eo_t eo);
 
+static void usage(char *progname)
+{
+	APPL_PRINT(USAGE_FMT, NO_PATH(progname), NO_PATH(progname));
+}
+
+static void parse_app_specific_args(int argc, char *argv[])
+{
+	int pca_argv_idx = 0;
+
+	/* Find the index of -- where getopt_long at cm_setup.c would stop */
+	for (int i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "--")) {
+			pca_argv_idx = i;
+			break;
+		}
+	}
+
+	set_default_opts();
+
+	/* No app specific argument is given, skip parsing */
+	if (!pca_argv_idx)
+		return;
+
+	optind = pca_argv_idx + 1; /* start from '--' + 1 */
+
+	static const struct option longopts[] = {
+		{"concat",		required_argument,	NULL, 'c'},
+		{"help",		no_argument,		NULL, 'h'},
+		{NULL, 0, NULL, 0}
+	};
+	static const char *shortopts = ":c:h";
+
+	while (1) {
+		int opt;
+		int long_idx;
+
+		opt = getopt_long(argc, argv, shortopts, longopts, &long_idx);
+
+		if (opt == -1)
+			break;  /* No more options */
+
+		switch (opt) {
+		case 'c': {
+			perf_args.use_concat = true;
+			/* Sanity check */
+			if (*optarg == '0') {
+				perf_args.concat_type = 0;
+			} else if (*optarg == '1') {
+				perf_args.concat_type = 1;
+			} else {
+				APPL_EXIT_FAILURE("Invalid concat mode: %s,\n"
+						  "concat mode must be 0 or 1",
+						  optarg);
+			}
+		}
+		break;
+
+		/* Note: must specify -h after -- to print usage info
+		 * specific to this app. Otherwise, general EM-ODP usage
+		 * will be displayed.
+		 */
+		case 'h':
+			usage(argv[0]);
+			exit(EXIT_SUCCESS);
+			break;
+
+		case ':':
+			usage(argv[0]);
+			APPL_EXIT_FAILURE("Missing argument for '-%c'!", optopt);
+			break;
+
+		case '?':
+			usage(argv[0]);
+			APPL_EXIT_FAILURE("Unknown option: '-%c'(%d)!\n", optopt, optopt);
+			break;
+
+		default:
+			usage(argv[0]);
+			APPL_EXIT_FAILURE("Unknown getopt retval: '%c'(%d)!\n", opt, opt);
+			break;
+		}
+	}
+
+	/* Reset 'extern optind' to restart scanning in cm_setup() */
+	optind = 1;
+}
+
+static void set_default_opts(void)
+{
+	/* Set default values */
+	perf_args.use_concat = false;
+}
+
 /**
  * Main function
  *
@@ -146,6 +284,9 @@ stop_eo(void *eo_context, em_eo_t eo);
  */
 int main(int argc, char *argv[])
 {
+	/* Parse arguments specific to this app */
+	parse_app_specific_args(argc, argv);
+
 	return cm_setup(argc, argv);
 }
 
@@ -175,6 +316,10 @@ void test_init(const appl_conf_t *appl_conf)
 			   em_core_id());
 	else if (core == 0) {
 		memset(l2fwd_shm, 0, sizeof(l2fwd_shm_t));
+
+		test_fatal_if(appl_conf->pktio.if_count <= 0,
+			      "Invalid number of interfaces given:%d - need 1-%d(MAX)",
+			      appl_conf->pktio.if_count, MAX_NUM_IF);
 
 		odp_shm_t shm = odp_shm_lookup("pktio_shm");
 		void *shm_addr = odp_shm_addr(shm);
@@ -245,8 +390,33 @@ void test_start(const appl_conf_t *appl_conf)
 	eo_param.start = start_eo;
 	eo_param.local_start = start_eo_local;
 	eo_param.stop = stop_eo;
-	eo_param.receive_multi = receive_eo_event_multi;
 	eo_param.max_events = 0; /* use default */
+
+	if (perf_args.use_concat) {
+		test_fatal_if(appl_conf->pktio.pktin_vector,
+			      "Invalid pktin-mode: vector-mode\n"
+			      "vectors can not be used with --concat -mode");
+		if (perf_args.concat_type == 0) {
+			eo_param.receive_multi = receive_eo_event_multi_concat_0;
+		} else {
+			/* Concat mode 1 works only with atomic queues */
+			test_fatal_if(pktin_mode != SCHED_ATOMIC,
+				      "Invalid pktin-mode: %s(%i).\n"
+				      "--concat 1 only works with pktin-mode: %s(%i)",
+				      pktin_mode_str(pktin_mode), pktin_mode,
+				      pktin_mode_str(SCHED_ATOMIC), SCHED_ATOMIC);
+			eo_param.receive_multi = receive_eo_event_multi_concat_1;
+			/* Only 1 event is passed to receive function with concat mode 1*/
+			eo_param.max_events = 1;
+		}
+	} else {
+		eo_param.receive_multi = receive_eo_event_multi;
+	}
+
+	if (perf_args.use_concat)
+		APPL_PRINT("Using em_packet_concat() mode: %d for received packets.\n",
+			   perf_args.concat_type);
+
 	eo_param.eo_ctx = eo_ctx;
 
 	eo = em_eo_create_multircv(appl_conf->name, &eo_param);
@@ -327,7 +497,7 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Store the EO name in the EO-context data */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	APPL_PRINT("EO %" PRI_EO ":'%s' global start, if-count:%d\n",
 		   eo, eo_ctx->name, eo_ctx->if_count);
@@ -489,6 +659,84 @@ stop_eo(void *eo_context, em_eo_t eo)
 	return EM_OK;
 }
 
+static inline int
+packet_concat_0(em_event_t events[], int num, em_event_t events_out[])
+{
+	int k = 0;
+	int i = 0;
+	int ret = 0;
+
+	for (i = 0; i < (num - 1); i = i + 2) {
+		ret = em_packet_concat(&events[i], events[i + 1]);
+		events_out[k] = events[i];
+		k++;
+		if (unlikely(ret < 0)) {
+			events_out[k] = events[i + 1];
+			k++;
+		}
+	}
+
+	if ((num % 2) != 0) {
+		events_out[k] = events[num - 1];
+		k++;
+	}
+	return k;
+}
+
+static inline void
+receive_packet_concat_multi_0(em_event_t events[], int num,
+			      const queue_context_t *q_ctx)
+{
+	/* num <= EM_SCHED_MULTI_MAX_BURST (EO receive burst), use fixed-size table */
+	em_event_t events_out[EM_SCHED_MULTI_MAX_BURST];
+
+	int port = pktio_input_port(events[0]); /* same port for all from same queue */
+	em_queue_t pktout_queue = q_ctx->pktout_queue[port];
+
+	int num_out = packet_concat_0(events, num, events_out);
+	/* Touch packet. Swap MAC addresses: scr<->dst */
+	for (int i = 0; i < num_out; i++)
+		pktio_swap_eth_addrs(events_out[i]);
+
+	int sent = em_send_multi(events_out, num_out, pktout_queue);
+
+	if (unlikely(sent < num_out))
+		em_free_multi(&events_out[sent], num - sent);
+}
+
+static inline void
+receive_packet_concat_multi_1(em_event_t event, queue_context_t *q_ctx)
+{
+	em_event_t events_out[2];
+	int num_out;
+	int port = pktio_input_port(event); /* same port for all from same queue */
+	em_queue_t pktout_queue = q_ctx->pktout_queue[port];
+
+	if (q_ctx->prev_pkt == EM_EVENT_UNDEF) {
+		q_ctx->prev_pkt = event;
+		return;
+	}
+	int ret = em_packet_concat(&event, q_ctx->prev_pkt);
+
+	if (ret < 0) {
+		events_out[0] = event;
+		events_out[1] = q_ctx->prev_pkt;
+		q_ctx->prev_pkt = EM_EVENT_UNDEF;
+		num_out = 2;
+	} else {
+		events_out[0] = event;
+		q_ctx->prev_pkt = EM_EVENT_UNDEF;
+		num_out = 1;
+	}
+	for (int i = 0; i < num_out; i++)
+		pktio_swap_eth_addrs(events_out[i]);
+
+	int sent = em_send_multi(events_out, num_out, pktout_queue);
+
+	if (unlikely(sent < num_out))
+		em_free_multi(&events_out[sent], num_out - sent);
+}
+
 static inline void
 receive_packet_multi(em_event_t events[], int num,
 		     const queue_context_t *q_ctx)
@@ -529,6 +777,68 @@ receive_vector_multi(em_event_t vectors[], int num,
 {
 	for (int i = 0; i < num; i++)
 		receive_vector(vectors[i], q_ctx);
+}
+
+/**
+ * EO's event receive-multi function for option --concat=0
+ */
+static void
+receive_eo_event_multi_concat_0(void *eo_ctx,
+				em_event_t events[], int num,
+				em_queue_t queue, void *queue_context)
+{
+	const queue_context_t *q_ctx = queue_context;
+
+	(void)eo_ctx;
+	(void)queue;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free_multi(events, num);
+		return;
+	}
+
+	em_event_type_t same_type = EM_EVENT_TYPE_UNDEF;
+	int num_same;
+
+	for (int i = 0; i < num &&
+	     (num_same = em_event_same_type_multi(&events[i], num - i, &same_type)) > 0;
+	     i += num_same) {
+		em_event_type_t major_type = em_event_type_major(same_type);
+
+		if (likely(major_type == EM_EVENT_TYPE_PACKET))
+			receive_packet_concat_multi_0(&events[i], num_same, q_ctx);
+		else if (unlikely(major_type == EM_EVENT_TYPE_VECTOR))
+			receive_vector_multi(&events[i], num_same, q_ctx);
+		else
+			em_free_multi(&events[i], num_same);
+	}
+}
+
+/**
+ * EO's event receive-multi function for option --concat=1
+ */
+static void
+receive_eo_event_multi_concat_1(void *eo_ctx,
+				em_event_t events[], int num,
+				em_queue_t queue, void *queue_context)
+{
+	queue_context_t *q_ctx = queue_context;
+
+	(void)eo_ctx;
+	(void)queue;
+
+	if (unlikely(appl_shm->exit_flag)) {
+		em_free_multi(events, num);
+		return;
+	}
+
+	if (likely(num == 1 &&
+		   em_event_type_major(em_event_type(events[0])) == EM_EVENT_TYPE_PACKET)) {
+		receive_packet_concat_multi_1(events[0], q_ctx);
+
+	} else {
+		em_free_multi(events, num);
+	}
 }
 
 /**

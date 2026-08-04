@@ -167,9 +167,9 @@ typedef struct {
 	/* Array of core specific data accessed by using its core index */
 	perf_stat_t core_stat[MAX_NBR_OF_CORES] ENV_CACHE_LINE_ALIGNED;
 	/* Track the number of cores ready with the current measurement rounds*/
-	env_atomic64_t ready_count ENV_CACHE_LINE_ALIGNED;
+	odp_atomic_u64_t ready_count ENV_CACHE_LINE_ALIGNED;
 	/* Track the number of cores that have seen that all others are ready */
-	env_atomic64_t seen_all_ready;
+	odp_atomic_u64_t seen_all_ready;
 	/* Pad to size to a multiple of cache lines */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } perf_shm_t;
@@ -249,8 +249,8 @@ void test_init(const appl_conf_t *appl_conf)
 			   "Perf init failed on EM-core:%u\n", em_core_id());
 	} else if (core == 0) {
 		memset(perf_shm, 0, sizeof(perf_shm_t));
-		env_atomic64_init(&perf_shm->ready_count);
-		env_atomic64_init(&perf_shm->seen_all_ready);
+		odp_atomic_init_u64(&perf_shm->ready_count, 0);
+		odp_atomic_init_u64(&perf_shm->seen_all_ready, 0);
 	}
 }
 
@@ -440,7 +440,7 @@ perf_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 
 	(void)conf;
 
-	em_eo_get_name(eo, eo_name, sizeof(eo_name));
+	em_eo_name(eo, eo_name, sizeof(eo_name));
 	APPL_PRINT("%s (id:%" PRI_EO ") starting.\n", eo_name, eo);
 
 	eo_ctx->id = eo;
@@ -461,7 +461,7 @@ perf_stop(void *eo_context, em_eo_t eo)
 
 	(void)eo_context;
 
-	em_eo_get_name(eo, eo_name, sizeof(eo_name));
+	em_eo_name(eo, eo_name, sizeof(eo_name));
 	APPL_PRINT("%s (id:%" PRI_EO ") stopping.\n", eo_name, eo);
 
 	return EM_OK;
@@ -572,7 +572,7 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 			/* Mark that the core is ready with all rounds */
 			ready = 1;
 			perf_shm->core_stat[core].ready = 1;
-			env_atomic64_inc(&perf_shm->ready_count);
+			odp_atomic_inc_u64(&perf_shm->ready_count);
 		}
 	}
 
@@ -600,7 +600,7 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 
 	if (unlikely(ready)) {
 		/* core ready with rounds, check if other cores are also ready*/
-		ready_count = env_atomic64_get(&perf_shm->ready_count);
+		ready_count = odp_atomic_load_u64(&perf_shm->ready_count);
 
 		if (ready_count == perf_shm->core_count) {
 			/* Change mode after last round */
@@ -612,12 +612,12 @@ perf_receive_a(void *eo_context, em_event_t event, em_event_type_t type,
 
 			/* Track that all cores have seen that all are ready */
 			uint64_t seen_all_ready =
-			env_atomic64_add_return(&perf_shm->seen_all_ready, 1);
+			odp_atomic_fetch_inc_u64(&perf_shm->seen_all_ready) + 1;
 
 			/* Last core to see 'all ready' resets the counters */
 			if (seen_all_ready == perf_shm->core_count) {
-				env_atomic64_set(&perf_shm->ready_count, 0);
-				env_atomic64_set(&perf_shm->seen_all_ready, 0);
+				odp_atomic_store_u64(&perf_shm->ready_count, 0);
+				odp_atomic_store_u64(&perf_shm->seen_all_ready, 0);
 			}
 		}
 	}
@@ -711,8 +711,8 @@ check_seq_per_event(eo_context_t *const eo_ctx, perf_event_t *const perf,
 		char eo_name[EM_EO_NAME_LEN];
 		char queue_name[EM_QUEUE_NAME_LEN];
 
-		em_eo_get_name(eo_ctx->id, eo_name, sizeof(eo_name));
-		em_queue_get_name(queue, queue_name, sizeof(queue_name));
+		em_eo_name(eo_ctx->id, eo_name, sizeof(eo_name));
+		em_queue_name(queue, queue_name, sizeof(queue_name));
 
 		APPL_PRINT("Bad sequence number. %s(id:%" PRI_EO "),\t"
 			   "%s(id:%" PRI_QUEUE ") expected seq %i, event seq %i\n",

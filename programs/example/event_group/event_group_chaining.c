@@ -287,13 +287,13 @@ void test_start(const appl_conf_t *appl_conf)
 	unsigned int num, i = 1;
 	em_event_group_t event_group;
 
-	event_group = em_event_group_get_first(&num);
+	event_group = em_event_group_first(&num);
 	if (event_group != EM_EVENT_GROUP_UNDEF)
 		APPL_PRINT("%s is using %u event groups:\n",
 			   appl_conf->name, num);
 	while (event_group != EM_EVENT_GROUP_UNDEF) {
 		APPL_PRINT("  evgrp-%d:%" PRI_EGRP "\n", i++, event_group);
-		event_group = em_event_group_get_next();
+		event_group = em_event_group_next();
 	}
 
 	event = em_alloc(sizeof(event_group_test_t), EM_EVENT_TYPE_SW,
@@ -417,8 +417,7 @@ egroup_stop(void *eo_context, em_eo_t eo)
 	/* First event group */
 	egrp = eo_ctx->event_group;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, NOTIF_EVENTS,
-						      notif_tbl);
+		num_notifs = em_event_group_notif(egrp, NOTIF_EVENTS, notif_tbl);
 		ret = em_event_group_abort(egrp);
 		if (ret == EM_OK && num_notifs > 0)
 			for (int i = 0; i < num_notifs; i++)
@@ -432,7 +431,7 @@ egroup_stop(void *eo_context, em_eo_t eo)
 	/* Chained event group */
 	egrp = eo_ctx->chained_event_group;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 		ret = em_event_group_abort(egrp);
 		if (ret == EM_OK && num_notifs == 1)
 			em_free(notif_tbl[0].event);

@@ -34,9 +34,9 @@
  * Event Machine Queue Types test example with included atomic groups.
  *
  * The test creates several EO-pairs and sends events between the queues in
- * the pair. Each EO has an input queue (of type atomic, parallel or
- * parallel-ordered) or, in the case of atomic groups, three(3) input atomic
- * queues that belong to the same atomic group but have different priority.
+ * the pair. Each EO has an input queue (of type atomic, parallel or ordered)
+ * or, in the case of atomic groups, three(3) input atomic queues that belong
+ * to the same atomic group but have different priority.
  * The events sent between the queues of the EO-pair are counted and
  * statistics for each pair type is printed. If the queues in the EO-pair
  * retain order also this is verified.
@@ -96,9 +96,9 @@
 /* Return 'TRUE' if the queue pair retains event order */
 #define ORDERED_PAIR(q_type_a, q_type_b)  (				\
 		    (((q_type_a) == EM_QUEUE_TYPE_ATOMIC) ||		\
-		    ((q_type_a) == EM_QUEUE_TYPE_PARALLEL_ORDERED)) &&  \
+		    ((q_type_a) == EM_QUEUE_TYPE_ORDERED)) &&  \
 		    (((q_type_b) == EM_QUEUE_TYPE_ATOMIC) ||		\
-		     ((q_type_b) == EM_QUEUE_TYPE_PARALLEL_ORDERED)))
+		     ((q_type_b) == EM_QUEUE_TYPE_ORDERED)))
 
 #define ABS(nbr1, nbr2)  (((nbr1) > (nbr2)) ? ((nbr1) - (nbr2)) : \
 			  ((nbr2) - (nbr1)))
@@ -125,13 +125,13 @@ queue_type_pair_t  queue_type_pairs[QUEUE_TYPE_PAIRS] = {
 	{ {EM_QUEUE_TYPE_ATOMIC, EM_QUEUE_TYPE_ATOMIC}, {NO_AG, NO_AG} },
 	{ {EM_QUEUE_TYPE_PARALLEL, EM_QUEUE_TYPE_PARALLEL}, {NO_AG, NO_AG} },
 	/* Ordered Pair */
-	{ {EM_QUEUE_TYPE_PARALLEL_ORDERED, EM_QUEUE_TYPE_PARALLEL_ORDERED},
+	{ {EM_QUEUE_TYPE_ORDERED, EM_QUEUE_TYPE_ORDERED},
 	  {NO_AG, NO_AG} },
 	{ {EM_QUEUE_TYPE_PARALLEL, EM_QUEUE_TYPE_ATOMIC}, {NO_AG, NO_AG} },
 	/* Ordered Pair */
-	{ {EM_QUEUE_TYPE_PARALLEL_ORDERED, EM_QUEUE_TYPE_ATOMIC},
+	{ {EM_QUEUE_TYPE_ORDERED, EM_QUEUE_TYPE_ATOMIC},
 	  {NO_AG, NO_AG} },
-	{ {EM_QUEUE_TYPE_PARALLEL_ORDERED, EM_QUEUE_TYPE_PARALLEL},
+	{ {EM_QUEUE_TYPE_ORDERED, EM_QUEUE_TYPE_PARALLEL},
 	  {NO_AG, NO_AG} },
 	/* With Atomic Groups for atomic queues: */
 	/* Ordered Pair */
@@ -140,7 +140,7 @@ queue_type_pair_t  queue_type_pairs[QUEUE_TYPE_PAIRS] = {
 	{ {EM_QUEUE_TYPE_ATOMIC, EM_QUEUE_TYPE_ATOMIC}, {IN_AG, NO_AG} },
 	{ {EM_QUEUE_TYPE_ATOMIC, EM_QUEUE_TYPE_PARALLEL}, {IN_AG, NO_AG} },
 	/* Ordered Pair */
-	{ {EM_QUEUE_TYPE_ATOMIC, EM_QUEUE_TYPE_PARALLEL_ORDERED},
+	{ {EM_QUEUE_TYPE_ATOMIC, EM_QUEUE_TYPE_ORDERED},
 	  {IN_AG, NO_AG} },
 };
 
@@ -151,15 +151,15 @@ COMPILE_TIME_ASSERT(sizeof(queue_type_pairs) ==
 typedef enum {
 	PT_ATOMIC_ATOMIC = 0,
 	PT_PARALLEL_PARALLEL = 1,
-	PT_PARALORD_PARALORD = 2,
+	PT_ORDERED_ORDERED = 2,
 	PT_PARALLEL_ATOMIC = 3,
-	PT_PARALORD_ATOMIC = 4,
-	PT_PARALORD_PARALLEL = 5,
+	PT_ORDERED_ATOMIC = 4,
+	PT_ORDERED_PARALLEL = 5,
 	/* With Atomic Groups (AG) for atomic queues: */
 	PT_AG_AG = 6,
 	PT_AG_ATOMIC = 7,
 	PT_AG_PARALLEL = 8,
-	PT_AG_PARALORD = 9,
+	PT_AG_ORDERED = 9,
 	PT_UNDEFINED
 } pair_type_t;
 
@@ -198,7 +198,7 @@ typedef struct {
 	int peer_owns_ag_queues;
 	/* Atomic group is also set as queue type atomic */
 	em_queue_type_t q_type;
-	env_spinlock_t verify_atomic_access;
+	odp_ticketlock_t verify_atomic_access;
 
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } eo_context_t;
@@ -711,7 +711,7 @@ void test_start(const appl_conf_t *appl_conf)
 		size_t uarea_size;
 		test_event_uarea_t *test_uarea;
 
-		test_uarea = em_event_uarea_get(event, &uarea_size);
+		test_uarea = em_event_uarea(event, &uarea_size);
 		test_fatal_if(!test_uarea && uarea_size < sizeof(test_event_uarea_t),
 			      "Event User Area error: ptr:%p sz:%zu < %zu",
 			      test_uarea, uarea_size, sizeof(test_event_uarea_t));
@@ -832,14 +832,14 @@ start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	eo_ctx->eo_hdl = eo;
 
 	if (VERIFY_ATOMIC_ACCESS)
-		env_spinlock_init(&eo_ctx->verify_atomic_access);
+		odp_ticketlock_init(&eo_ctx->verify_atomic_access);
 
 	/*
 	 * Test: Verify that EO & queue _current() and
-	 *       _get_context() APIs work as expected.
+	 *       _context() APIs work as expected.
 	 */
 	test_fatal_if(em_eo_current() != eo, "Invalid current EO");
-	test_fatal_if(em_eo_get_context(eo) != eo_context,
+	test_fatal_if(em_eo_context(eo) != eo_context,
 		      "Invalid current EO context");
 	test_fatal_if(em_queue_current() != EM_QUEUE_UNDEF,
 		      "Invalid current queue");
@@ -911,8 +911,7 @@ initialize_events(const start_event_uarea_t *start)
 
 			test_event_t *test_event = em_event_pointer(event);
 			size_t uarea_size = 0;
-			test_event_uarea_t *test_uarea =
-				em_event_uarea_get(event, &uarea_size);
+			test_event_uarea_t *test_uarea = em_event_uarea(event, &uarea_size);
 
 			test_fatal_if(!test_event || !test_uarea ||
 				      uarea_size != sizeof(test_event_uarea_t),
@@ -1219,11 +1218,11 @@ get_pair_type(queue_type_pair_t *queue_type_pair)
 			else
 				return PT_PARALLEL_ATOMIC;
 
-		case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+		case EM_QUEUE_TYPE_ORDERED:
 			if (in_ag1)
-				return PT_AG_PARALORD;
+				return PT_AG_ORDERED;
 			else
-				return PT_PARALORD_ATOMIC;
+				return PT_ORDERED_ATOMIC;
 		}
 		break;
 
@@ -1238,24 +1237,24 @@ get_pair_type(queue_type_pair_t *queue_type_pair)
 		case EM_QUEUE_TYPE_PARALLEL:
 			return PT_PARALLEL_PARALLEL;
 
-		case EM_QUEUE_TYPE_PARALLEL_ORDERED:
-			return PT_PARALORD_PARALLEL;
+		case EM_QUEUE_TYPE_ORDERED:
+			return PT_ORDERED_PARALLEL;
 		}
 		break;
 
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+	case EM_QUEUE_TYPE_ORDERED:
 		switch (qt2) {
 		case EM_QUEUE_TYPE_ATOMIC:
 			if (in_ag2)
-				return PT_AG_PARALORD;
+				return PT_AG_ORDERED;
 			else
-				return PT_PARALORD_ATOMIC;
+				return PT_ORDERED_ATOMIC;
 
 		case EM_QUEUE_TYPE_PARALLEL:
-			return PT_PARALORD_PARALLEL;
+			return PT_ORDERED_PARALLEL;
 
-		case EM_QUEUE_TYPE_PARALLEL_ORDERED:
-			return PT_PARALORD_PARALORD;
+		case EM_QUEUE_TYPE_ORDERED:
+			return PT_ORDERED_ORDERED;
 		}
 		break;
 	}
@@ -1333,7 +1332,7 @@ verify_all_queues_get_events(void)
 			case EM_QUEUE_TYPE_PARALLEL:
 				q_type_str = "P ";
 				break;
-			case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+			case EM_QUEUE_TYPE_ORDERED:
 				q_type_str = "PO";
 				break;
 
@@ -1354,7 +1353,7 @@ verify_all_queues_get_events(void)
 }
 
 /**
- * Try to take a spinlock and if it fails we know that another core is
+ * Try to take a lock and if it fails we know that another core is
  * processing an event from the same atomic queue or atomic group, which
  * should never happen => fatal error! The lock is for verification only,
  * no sync purpose whatsoever.
@@ -1363,7 +1362,7 @@ static inline void
 verify_atomic_access__begin(eo_context_t *const eo_ctx)
 {
 	if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC &&
-	    unlikely(!env_spinlock_trylock(&eo_ctx->verify_atomic_access)))
+	    unlikely(!odp_ticketlock_trylock(&eo_ctx->verify_atomic_access)))
 		test_error(EM_ERROR_SET_FATAL(__LINE__), 0xdead,
 			   "EO Atomic context lost!");
 }
@@ -1375,7 +1374,7 @@ static inline void
 verify_atomic_access__end(eo_context_t *const eo_ctx)
 {
 	if (eo_ctx->q_type == EM_QUEUE_TYPE_ATOMIC)
-		env_spinlock_unlock(&eo_ctx->verify_atomic_access);
+		odp_ticketlock_unlock(&eo_ctx->verify_atomic_access);
 }
 
 /**
@@ -1394,11 +1393,11 @@ verify_processing_context(eo_context_t *const eo_ctx, em_queue_t queue)
 	 *       _get_context() APIs work as expected.
 	 */
 	test_fatal_if(em_eo_current() != eo, "Invalid current EO");
-	test_fatal_if(em_eo_get_context(eo) != eo_ctx,
+	test_fatal_if(em_eo_context(eo) != eo_ctx,
 		      "Invalid current EO context");
 	test_fatal_if(em_queue_current() != queue, "Invalid current queue");
 
-	queue_type = em_queue_get_type(queue);
+	queue_type = em_queue_type(queue);
 	sched_type = em_sched_context_type_current(&tmp_queue);
 	test_fatal_if(tmp_queue != queue, "Invalid queue");
 	test_fatal_if(queue_type != eo_ctx->q_type, "Q-type mismatch");
@@ -1406,7 +1405,7 @@ verify_processing_context(eo_context_t *const eo_ctx, em_queue_t queue)
 	if (queue_type == EM_QUEUE_TYPE_ATOMIC) {
 		test_fatal_if(sched_type != EM_SCHED_CONTEXT_TYPE_ATOMIC,
 			      "Invalid sched context type");
-	} else if (queue_type == EM_QUEUE_TYPE_PARALLEL_ORDERED) {
+	} else if (queue_type == EM_QUEUE_TYPE_ORDERED) {
 		test_fatal_if(sched_type != EM_SCHED_CONTEXT_TYPE_ORDERED,
 			      "Invalid sched context type");
 	} else if (queue_type == EM_QUEUE_TYPE_PARALLEL) {
@@ -1454,7 +1453,7 @@ print_test_info(void)
 	unsigned int num;
 
 	/* Print the EO list */
-	em_eo_t eo = em_eo_get_first(&num);
+	em_eo_t eo = em_eo_first(&num);
 
 	APPL_PRINT("%d EOs:\n", num);
 	while (eo != EM_EO_UNDEF) {
@@ -1463,7 +1462,7 @@ print_test_info(void)
 		char buf[EM_EO_NAME_LEN];
 		em_queue_t q;
 
-		state = em_eo_get_state(eo);
+		state = em_eo_state(eo);
 		switch (state) {
 		case EM_EO_STATE_UNDEF:
 			state_str = "UNDEF";
@@ -1487,21 +1486,21 @@ print_test_info(void)
 			state_str = "UNKNOWN";
 			break;
 		}
-		em_eo_get_name(eo, buf, EM_EO_NAME_LEN - 1);
+		em_eo_name(eo, buf, EM_EO_NAME_LEN - 1);
 		APPL_PRINT("  EO:%" PRI_EO ":'%s' state:%s\n",
 			   eo, buf, state_str);
 
-		q = em_eo_queue_get_first(&num, eo);
+		q = em_eo_queue_first(&num, eo);
 		while (q != EM_QUEUE_UNDEF) {
 			APPL_PRINT("    - Q:%" PRI_QUEUE "\n", q);
-			q = em_eo_queue_get_next();
+			q = em_eo_queue_next();
 		}
-		eo = em_eo_get_next();
+		eo = em_eo_next();
 	}
 	APPL_PRINT("\n");
 
 	/* Print the queue list */
-	em_queue_t q = em_queue_get_first(&num);
+	em_queue_t q = em_queue_first(&num);
 
 	APPL_PRINT("%d queues:\n", num);
 	while (q != EM_QUEUE_UNDEF) {
@@ -1510,9 +1509,9 @@ print_test_info(void)
 		em_queue_t q_check;
 		char buf[EM_QUEUE_NAME_LEN];
 
-		em_queue_get_name(q, buf, EM_QUEUE_NAME_LEN - 1);
+		em_queue_name(q, buf, EM_QUEUE_NAME_LEN - 1);
 
-		type = em_queue_get_type(q);
+		type = em_queue_type(q);
 		switch (type) {
 		case EM_QUEUE_TYPE_UNDEF:
 			type_str = "UNDEF";
@@ -1523,7 +1522,7 @@ print_test_info(void)
 		case EM_QUEUE_TYPE_PARALLEL:
 			type_str = "PARALLEL";
 			break;
-		case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+		case EM_QUEUE_TYPE_ORDERED:
 			type_str = "ORDERED";
 			break;
 		case EM_QUEUE_TYPE_UNSCHEDULED:
@@ -1546,12 +1545,12 @@ print_test_info(void)
 		test_fatal_if(q_check != q, "Queue mismatch:\n"
 			      "%" PRI_QUEUE " != %" PRI_QUEUE "",
 			      q_check, q);
-		q = em_queue_get_next();
+		q = em_queue_next();
 	}
 	APPL_PRINT("\n");
 
 	/* Print the atomic group list */
-	em_atomic_group_t ag = em_atomic_group_get_first(&num);
+	em_atomic_group_t ag = em_atomic_group_first(&num);
 	char ag_name[EM_ATOMIC_GROUP_NAME_LEN];
 
 	APPL_PRINT("%d Atomic-Groups:\n", num);
@@ -1561,7 +1560,7 @@ print_test_info(void)
 			em_queue_t ag_queue;
 			em_atomic_group_t ag_check;
 
-			em_atomic_group_get_name(ag, ag_name, sizeof(ag_name));
+			em_atomic_group_name(ag, ag_name, sizeof(ag_name));
 			APPL_PRINT("  AG:%" PRI_AGRP ":'%s'\n", ag, ag_name);
 
 			ag_check = em_atomic_group_find(ag_name);
@@ -1569,14 +1568,14 @@ print_test_info(void)
 				      "%" PRI_AGRP " != %" PRI_AGRP "",
 				      ag_check, ag);
 
-			ag_queue = em_atomic_group_queue_get_first(&num, ag);
+			ag_queue = em_atomic_group_queue_first(&num, ag);
 			while (ag_queue != EM_QUEUE_UNDEF) {
 				APPL_PRINT("    - Q:%" PRI_QUEUE "\n",
 					   ag_queue);
-				ag_queue = em_atomic_group_queue_get_next();
+				ag_queue = em_atomic_group_queue_next();
 			}
 		}
-		ag = em_atomic_group_get_next();
+		ag = em_atomic_group_next();
 	}
 	APPL_PRINT("\n");
 }

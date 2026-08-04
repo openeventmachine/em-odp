@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2014, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,52 +37,93 @@
 /**
  * @file
  *
- * Event Machine basic types
+ * Event Machine basic types and defines
  */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdbool.h>
 
-/** EM boolean values. */
-#define EM_TRUE   1 /**< True */
-#define EM_FALSE  0 /**< False */
+#include <odp/api/cpumask.h>
+
+#include <event_machine/api/event_machine_config.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** EM boolean value: True */
+#define EM_TRUE   1
+/** EM boolean value: False */
+#define EM_FALSE  0
+
+/** EM undefined u64 */
+#define EM_UNDEF_U64  0
+/** EM undefined u32 */
+#define EM_UNDEF_U32  0
+/** EM undefined u16 */
+#define EM_UNDEF_U16  0
+/** EM undefined u8 */
+#define EM_UNDEF_U8   0
+/** EM undefined uintptr */
+#define EM_UNDEF_UINTPTR  EM_STATIC_CAST(uintptr_t, NULL)
+/** EM undefined pointer */
+#ifndef __cplusplus
+#define EM_UNDEF_PTR  NULL
+#else
+#define EM_UNDEF_PTR  nullptr
+#endif
+
+/**
+ * @def EM_HANDLE_T
+ * Define 'type_t' as a struct ptr to improve type safety
+ */
+#define EM_HANDLE_T(type_t) \
+	typedef struct _##type_t { \
+		void *unused; \
+	} *(type_t)
+
+/**
+ * @def EM_HDL_UNDEF
+ * Undefined EM-handle
+ */
+#ifndef __cplusplus
+#define EM_HDL_UNDEF NULL
+#else
+#define EM_HDL_UNDEF nullptr
+#endif
+
+/**
+ * @def PRI_HDL
+ * EM-handle printf format
+ */
+#define PRI_HDL "p"
 
 /**
  * @typedef em_event_t
  * Event handle
  */
 EM_HANDLE_T(em_event_t);
+
 /** Undefined event */
 #define EM_EVENT_UNDEF  EM_STATIC_CAST(em_event_t, EM_HDL_UNDEF)
 /** em_event_t printf format */
 #define PRI_EVENT  PRI_HDL
 
 /**
- * @typedef em_event_type_t
- * Event type
+ * @typedef em_pool_t
+ * Memory/Event Pool handle.
  *
- * The event type is given to the EO-receive function for each received event
- * and is also needed for event allocation. This type is an integer that is
- * split into major and minor parts:
- *   1) the major-field categorizes the event and
- *   2) the minor is a more detailed system specific description.
- * The major-part will not change by HW, but the minor-part can be
- * HW/SW platform specific and thus could be split into more sub-fields as
- * needed. The application should use the access functions for reading major
- * and minor parts.
- *
- * The only event type with defined content is EM_EVENT_TYPE_SW with
- * minor type 0, which needs to be portable (direct pointer to data).
- *
- * @see em_event_type_major(), em_event_type_minor(), em_receive_func_t()
+ * Defines the memory pool e.g. used in em_alloc() and
+ * created by em_pool_create().
+ * The default pool is defined by EM_POOL_DEFAULT.
  */
-typedef uint32_t em_event_type_t;
+EM_HANDLE_T(em_pool_t);
+/** Undefined EM pool */
+#define EM_POOL_UNDEF  EM_STATIC_CAST(em_pool_t, EM_HDL_UNDEF)
+/** em_pool_t printf format */
+#define PRI_POOL  PRI_HDL
 
 /**
  * @typedef em_eo_t
@@ -118,7 +159,7 @@ EM_HANDLE_T(em_queue_t);
  *
  * Queue groups need to be created as needed. One default queue group, i.e.
  * EM_QUEUE_GROUP_DEFAULT, always exists, and that allows scheduling to all the
- * EM cores running this execution binary instance.
+ * EM cores running on the EM instance.
  *
  * @see em_queue_group_create()
  */
@@ -132,7 +173,7 @@ EM_HANDLE_T(em_queue_group_t);
  * @typedef em_event_group_t
  * Event Group handle
  *
- * This is used for fork-join event handling.
+ * Event groups are used for fork-join event handling.
  *
  * @see em_event_group_create()
  */
@@ -146,8 +187,8 @@ EM_HANDLE_T(em_event_group_t);
  * @typedef em_atomic_group_t
  * Atomic Group handle
  *
- * This is used to combine multiple atomic queues into one
- * atomically scheduled group.
+ * Atomic groups combine multiple atomic queues into one atomically
+ * scheduled group.
  *
  * @see em_atomic_group_create()
  */
@@ -158,93 +199,26 @@ EM_HANDLE_T(em_atomic_group_t);
 #define PRI_AGRP  PRI_HDL
 
 /**
- * @typedef em_queue_type_t
- * Queue type.
+ * @typedef em_event_type_t
+ * Event type
  *
- * Affects the scheduling principle
+ * The event type is given to the EO-receive function for each received event
+ * and is also needed for event allocation. This type is an unsigned integer
+ * split into major and minor parts:
+ *   1) the major-field categorizes the event and
+ *   2) the minor is a more detailed system specific description.
+ * The major-part will not change by HW, but the minor-part can be
+ * HW/SW platform specific and thus could be split into more sub-fields as
+ * needed. The application should use the access functions for reading major
+ * and minor parts.
  *
- * @see em_queue_create(), event_machine_hw_config.h
+ * The only event type with defined content is EM_EVENT_TYPE_SW with
+ * minor type 0, which needs to be portable (direct pointer to data).
+ *
+ * @see em_event_type_major_e, em_event_type_sw_minor_e for named type constants
+ * @see em_event_type_major(), em_event_type_minor(), em_receive_func_t()
  */
-typedef uint32_t em_queue_type_t;
-#define PRI_QTYPE  PRIu32
-
-/**
- * @typedef em_queue_prio_t
- * Queue priority
- *
- * Queue priority defines implementation specific QoS class for event
- * scheduling. Priority is an integer in range 0 (lowest) to num priorities - 1.
- * Note, that the exact scheduling rules are not defined by EM and all available
- * priorities may not be relative to the adjacent one (e.g. using dynamic
- * priority, rate limiting or other more complex scheduling discipline).
- * There are 5 generic predefined values (em_queue_prio_e) mapped to available
- * runtime priorities for portability.
- *
- * @see em_queue_create(), em_queue_get_num_prio(), event_machine_hw_config.h,
- *      em_queue_prio_e
- */
-typedef uint32_t em_queue_prio_t;
-#define PRI_QPRIO  PRIu32
-
-/**
- * Type for queue flags.
- *
- * This is an unsigned integer with defined flags, that can be combined by
- * bitwise 'OR' only. EM_QUEUE_FLAG_DEFAULT can be used in most cases.
- * Unused bits must be set to zero. The actual values are system specific, but
- * the implementation need to define at least: EM_QUEUE_FLAG_DEFAULT,
- * EM_QUEUE_FLAG_BLOCKING, EM_QUEUE_FLAG_NONBLOCKING_LF and
- * EM_QUEUE_FLAG_NONBLOCKING_WF even if those would not be supported.
- **/
-typedef uint32_t em_queue_flag_t;
-/**
- * @def EM_QUEUE_FLAG_MASK
- * The low 16 bits are reserved for EM, the upper bits are free
- * for system-specific use.
- */
-#define EM_QUEUE_FLAG_MASK 0x0000FFFF
-
-/**
- * Queue configuration data for queue-create APIs. The use of this conf is
- * optional, but provides a standard way to pass extra parameters or specify
- * extra requirements.
- **/
-typedef struct {
-	/**
-	 * Extra flags. See em_queue_flag_t for choices.
-	 * EM_QUEUE_FLAG_DEFAULT is defined by all systems and indicates a
-	 * default multithread-safe queue without any special guarantees.
-	 **/
-	em_queue_flag_t flags;
-	/**
-	 * Request for a minimum amount of events the queue can hold or use
-	 * 0 for EM default value. Queue creation will fail, if the system
-	 * cannot support the requested amount.
-	 **/
-	unsigned int min_events;
-	/**
-	 * Size of the data passed via 'conf'. 'conf' is ignored,
-	 * if 'conf_len' is 0.
-	 **/
-	size_t conf_len;
-	/**
-	 * Extra queue configuration data. This can also work
-	 * as a placeholder for directly attached extra data.
-	 **/
-	void *conf;
-} em_queue_conf_t;
-
-/**
- * EO configuration data via em_eo_start. The use of this is
- * optional, but provides a standard way to pass data to EO start.
- * EM does not dereference any of the fields here.
- **/
-typedef struct {
-	/** Size of the data passed via conf pointer */
-	size_t conf_len;
-	/** Application specific configuration data */
-	void *conf;
-} em_eo_conf_t;
+typedef uint32_t em_event_type_t;
 
 /**
  * Notification
@@ -270,326 +244,6 @@ typedef struct {
 	em_queue_t queue;  /**< Destination queue */
 	em_event_group_t egroup; /**< Event group for this event */
 } em_notif_t;
-
-/**
- * Scheduling context types
- */
-typedef enum {
-	/**
-	 * Parallel or released context
-	 */
-	EM_SCHED_CONTEXT_TYPE_NONE = 0,
-	/**
-	 * Atomic context
-	 */
-	EM_SCHED_CONTEXT_TYPE_ATOMIC = 1,
-	/**
-	 * Ordered context
-	 */
-	EM_SCHED_CONTEXT_TYPE_ORDERED = 2
-} em_sched_context_type_t;
-
-/**
- * EO running state. Event dispatching is only enabled in running state.
- **/
-typedef enum {
-	/** Undefined */
-	EM_EO_STATE_UNDEF = 0,
-	/** Initial state after creation */
-	EM_EO_STATE_CREATED = 1,
-	/** start called, not completed */
-	EM_EO_STATE_STARTING = 2,
-	/** running, event dispatching enabled */
-	EM_EO_STATE_RUNNING = 3,
-	/** stop called, not completed. Next state EM_EO_STATE_CREATED */
-	EM_EO_STATE_STOPPING = 4,
-	/** exceptional state, only delete allowed */
-	EM_EO_STATE_ERROR = 5
-} em_eo_state_t;
-
-/**
- * @typedef em_status_t
- * Error/Status code.
- *
- * EM_OK (0) is the general code for success, other values
- * describe failed operation.
- * There is a generic error code EM_ERROR, but application should
- * normally test for not equal to EM_OK.
- *
- * @see event_machine_hw_config.h, em_error_handler_t(), em_error()
- */
-typedef uint32_t em_status_t;
-#define PRI_STAT  PRIu32
-#define PRIxSTAT  PRIx32
-
-/**
- * @def EM_OK
- * Operation successful
- */
-#define EM_OK    0
-
-/**
- * @def EM_ERROR
- * Operation not successful.
- *
- * Generic error code, other error codes are system specific.
- */
-#define EM_ERROR 0xffffffff
-
-/**
- * @typedef em_escope_t
- * Error scope.
- *
- * Identifies the error scope for interpreting error codes and variable
- * arguments.
- *
- * @see em_error_handler_t(), em_error()
- */
-typedef uint32_t em_escope_t;
-#define PRI_ESCOPE  PRIu32
-#define PRIxESCOPE  PRIx32
-
-/**
- * @def EM_ESCOPE_BIT
- * All EM internal error scopes should have bit 31 set
- *
- * NOTE: High bit is RESERVED for EM internal escopes and should not be
- * used by the application.
- */
-#define EM_ESCOPE_BIT         (0x80000000u)
-
-/**
- * @def EM_ESCOPE
- * Test if the error scope identifies an EM function (API or other internal)
- */
-#define EM_ESCOPE(escope)     (EM_ESCOPE_BIT & (escope))
-
-/**
- * @def EM_ESCOPE_MASK
- * Mask selects the high byte of the 32-bit escope
- */
-#define EM_ESCOPE_MASK        (0xFF000000)
-
-/**
- * @def EM_ESCOPE_API_TYPE
- * EM API functions error scope
- */
-#define EM_ESCOPE_API_TYPE    (0xFFu)
-
-/**
- * @def EM_ESCOPE_API_MASK
- * EM API functions error mask
- */
-#define EM_ESCOPE_API_MASK    (EM_ESCOPE_BIT | (EM_ESCOPE_API_TYPE << 24))
-
-/**
- * @def EM_ESCOPE_API
- * Test if the error scope identifies an EM API function
- */
-#define EM_ESCOPE_API(escope) (((escope) & EM_ESCOPE_MASK) == \
-				EM_ESCOPE_API_MASK)
-
-/*
- * EM API functions error scopes:
- */
-
-/* EM API escopes: Atomic Group */
-#define EM_ESCOPE_ATOMIC_GROUP_CREATE             (EM_ESCOPE_API_MASK | 0x0001)
-#define EM_ESCOPE_ATOMIC_GROUP_DELETE             (EM_ESCOPE_API_MASK | 0x0002)
-#define EM_ESCOPE_QUEUE_CREATE_AG                 (EM_ESCOPE_API_MASK | 0x0003)
-#define EM_ESCOPE_QUEUE_CREATE_STATIC_AG          (EM_ESCOPE_API_MASK | 0x0004)
-#define EM_ESCOPE_ATOMIC_GROUP_GET                (EM_ESCOPE_API_MASK | 0x0005)
-#define EM_ESCOPE_ATOMIC_GROUP_GET_NAME           (EM_ESCOPE_API_MASK | 0x0006)
-#define EM_ESCOPE_ATOMIC_GROUP_FIND               (EM_ESCOPE_API_MASK | 0x0007)
-#define EM_ESCOPE_ATOMIC_GROUP_GET_FIRST          (EM_ESCOPE_API_MASK | 0x0008)
-#define EM_ESCOPE_ATOMIC_GROUP_GET_NEXT           (EM_ESCOPE_API_MASK | 0x0009)
-#define EM_ESCOPE_ATOMIC_GROUP_QUEUE_GET_FIRST    (EM_ESCOPE_API_MASK | 0x000A)
-#define EM_ESCOPE_ATOMIC_GROUP_QUEUE_GET_NEXT     (EM_ESCOPE_API_MASK | 0x000B)
-
-/* EM API escopes: Core */
-#define EM_ESCOPE_CORE_ID                         (EM_ESCOPE_API_MASK | 0x0101)
-#define EM_ESCOPE_CORE_COUNT                      (EM_ESCOPE_API_MASK | 0x0102)
-
-/* EM API escopes: Dispatcher */
-#define EM_ESCOPE_DISPATCH                        (EM_ESCOPE_API_MASK | 0x0201)
-#define EM_ESCOPE_DISPATCH_OPT_INIT               (EM_ESCOPE_API_MASK | 0x0202)
-#define EM_ESCOPE_DISPATCH_DURATION               (EM_ESCOPE_API_MASK | 0x0203)
-#define EM_ESCOPE_DISPATCH_NS                     (EM_ESCOPE_API_MASK | 0x0204)
-#define EM_ESCOPE_DISPATCH_EVENTS                 (EM_ESCOPE_API_MASK | 0x0205)
-#define EM_ESCOPE_DISPATCH_ROUNDS                 (EM_ESCOPE_API_MASK | 0x0206)
-#define EM_ESCOPE_DISPATCH_REGISTER_ENTER_CB      (EM_ESCOPE_API_MASK | 0x0207)
-#define EM_ESCOPE_DISPATCH_UNREGISTER_ENTER_CB    (EM_ESCOPE_API_MASK | 0x0208)
-#define EM_ESCOPE_DISPATCH_REGISTER_EXIT_CB       (EM_ESCOPE_API_MASK | 0x0209)
-#define EM_ESCOPE_DISPATCH_UNREGISTER_EXIT_CB     (EM_ESCOPE_API_MASK | 0x020A)
-
-/* EM API escopes: EO */
-#define EM_ESCOPE_EO_CREATE                       (EM_ESCOPE_API_MASK | 0x0301)
-#define EM_ESCOPE_EO_CREATE_MULTIRCV              (EM_ESCOPE_API_MASK | 0x0302)
-#define EM_ESCOPE_EO_MULTIRCV_PARAM_INIT          (EM_ESCOPE_API_MASK | 0x0303)
-#define EM_ESCOPE_EO_DELETE                       (EM_ESCOPE_API_MASK | 0x0304)
-#define EM_ESCOPE_EO_GET_NAME                     (EM_ESCOPE_API_MASK | 0x0305)
-#define EM_ESCOPE_EO_FIND                         (EM_ESCOPE_API_MASK | 0x0306)
-#define EM_ESCOPE_EO_ADD_QUEUE                    (EM_ESCOPE_API_MASK | 0x0307)
-#define EM_ESCOPE_EO_ADD_QUEUE_SYNC               (EM_ESCOPE_API_MASK | 0x0308)
-#define EM_ESCOPE_EO_REMOVE_QUEUE                 (EM_ESCOPE_API_MASK | 0x0309)
-#define EM_ESCOPE_EO_REMOVE_QUEUE_SYNC            (EM_ESCOPE_API_MASK | 0x030A)
-#define EM_ESCOPE_EO_REMOVE_QUEUE_ALL             (EM_ESCOPE_API_MASK | 0x030B)
-#define EM_ESCOPE_EO_REMOVE_QUEUE_ALL_SYNC        (EM_ESCOPE_API_MASK | 0x030C)
-#define EM_ESCOPE_EO_REGISTER_ERROR_HANDLER       (EM_ESCOPE_API_MASK | 0x030D)
-#define EM_ESCOPE_EO_UNREGISTER_ERROR_HANDLER     (EM_ESCOPE_API_MASK | 0x030E)
-#define EM_ESCOPE_EO_START                        (EM_ESCOPE_API_MASK | 0x030F)
-#define EM_ESCOPE_EO_START_SYNC                   (EM_ESCOPE_API_MASK | 0x0310)
-#define EM_ESCOPE_EO_STOP                         (EM_ESCOPE_API_MASK | 0x0311)
-#define EM_ESCOPE_EO_STOP_SYNC                    (EM_ESCOPE_API_MASK | 0x0312)
-#define EM_ESCOPE_EO_CURRENT                      (EM_ESCOPE_API_MASK | 0x0313)
-#define EM_ESCOPE_EO_GET_CONTEXT                  (EM_ESCOPE_API_MASK | 0x0314)
-#define EM_ESCOPE_EO_GET_FIRST                    (EM_ESCOPE_API_MASK | 0x0315)
-#define EM_ESCOPE_EO_GET_NEXT                     (EM_ESCOPE_API_MASK | 0x0316)
-#define EM_ESCOPE_EO_GET_STATE                    (EM_ESCOPE_API_MASK | 0x0317)
-#define EM_ESCOPE_EO_QUEUE_GET_FIRST              (EM_ESCOPE_API_MASK | 0x0318)
-#define EM_ESCOPE_EO_QUEUE_GET_NEXT               (EM_ESCOPE_API_MASK | 0x0319)
-
-/* EM API escopes: Error */
-#define EM_ESCOPE_REGISTER_ERROR_HANDLER          (EM_ESCOPE_API_MASK | 0x0401)
-#define EM_ESCOPE_UNREGISTER_ERROR_HANDLER        (EM_ESCOPE_API_MASK | 0x0402)
-#define EM_ESCOPE_ERROR                           (EM_ESCOPE_API_MASK | 0x0403)
-
-/* EM API escopes: Event Group */
-#define EM_ESCOPE_EVENT_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0501)
-#define EM_ESCOPE_EVENT_GROUP_DELETE              (EM_ESCOPE_API_MASK | 0x0502)
-#define EM_ESCOPE_EVENT_GROUP_APPLY               (EM_ESCOPE_API_MASK | 0x0503)
-#define EM_ESCOPE_EVENT_GROUP_INCREMENT           (EM_ESCOPE_API_MASK | 0x0504)
-#define EM_ESCOPE_EVENT_GROUP_CURRENT             (EM_ESCOPE_API_MASK | 0x0505)
-#define EM_ESCOPE_EVENT_GROUP_IS_READY            (EM_ESCOPE_API_MASK | 0x0506)
-#define EM_ESCOPE_SEND_GROUP                      (EM_ESCOPE_API_MASK | 0x0507)
-#define EM_ESCOPE_SEND_GROUP_MULTI                (EM_ESCOPE_API_MASK | 0x0508)
-#define EM_ESCOPE_EVENT_GROUP_PROCESSING_END      (EM_ESCOPE_API_MASK | 0x0509)
-#define EM_ESCOPE_EVENT_GROUP_ASSIGN              (EM_ESCOPE_API_MASK | 0x050A)
-#define EM_ESCOPE_EVENT_GROUP_ABORT               (EM_ESCOPE_API_MASK | 0x050B)
-#define EM_ESCOPE_EVENT_GROUP_GET_NOTIF           (EM_ESCOPE_API_MASK | 0x050C)
-#define EM_ESCOPE_EVENT_GROUP_GET_FIRST           (EM_ESCOPE_API_MASK | 0x050D)
-#define EM_ESCOPE_EVENT_GROUP_GET_NEXT            (EM_ESCOPE_API_MASK | 0x050E)
-
-/* EM API escopes: Event */
-#define EM_ESCOPE_ALLOC                           (EM_ESCOPE_API_MASK | 0x0601)
-#define EM_ESCOPE_ALLOC_MULTI                     (EM_ESCOPE_API_MASK | 0x0602)
-#define EM_ESCOPE_FREE                            (EM_ESCOPE_API_MASK | 0x0603)
-#define EM_ESCOPE_FREE_MULTI                      (EM_ESCOPE_API_MASK | 0x0604)
-#define EM_ESCOPE_SEND                            (EM_ESCOPE_API_MASK | 0x0605)
-#define EM_ESCOPE_SEND_MULTI                      (EM_ESCOPE_API_MASK | 0x0606)
-#define EM_ESCOPE_EVENT_POINTER                   (EM_ESCOPE_API_MASK | 0x0607)
-#define EM_ESCOPE_EVENT_POINTER_AND_SIZE          (EM_ESCOPE_API_MASK | 0x0608)
-#define EM_ESCOPE_EVENT_GET_SIZE                  (EM_ESCOPE_API_MASK | 0x0609)
-#define EM_ESCOPE_EVENT_GET_POOL                  (EM_ESCOPE_API_MASK | 0x060A)
-#define EM_ESCOPE_EVENT_GET_POOL_SUBPOOL          (EM_ESCOPE_API_MASK | 0x060B)
-#define EM_ESCOPE_EVENT_SET_TYPE                  (EM_ESCOPE_API_MASK | 0x060C)
-#define EM_ESCOPE_EVENT_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x060D)
-#define EM_ESCOPE_EVENT_GET_TYPE_MULTI            (EM_ESCOPE_API_MASK | 0x060E)
-#define EM_ESCOPE_EVENT_SAME_TYPE_MULTI           (EM_ESCOPE_API_MASK | 0x060F)
-#define EM_ESCOPE_EVENT_MARK_SEND                 (EM_ESCOPE_API_MASK | 0x0610)
-#define EM_ESCOPE_EVENT_UNMARK_SEND               (EM_ESCOPE_API_MASK | 0x0611)
-#define EM_ESCOPE_EVENT_MARK_FREE                 (EM_ESCOPE_API_MASK | 0x0612)
-#define EM_ESCOPE_EVENT_UNMARK_FREE               (EM_ESCOPE_API_MASK | 0x0613)
-#define EM_ESCOPE_EVENT_MARK_FREE_MULTI           (EM_ESCOPE_API_MASK | 0x0614)
-#define EM_ESCOPE_EVENT_UNMARK_FREE_MULTI         (EM_ESCOPE_API_MASK | 0x0615)
-#define EM_ESCOPE_EVENT_CLONE                     (EM_ESCOPE_API_MASK | 0x0616)
-#define EM_ESCOPE_EVENT_CLONE_PART                (EM_ESCOPE_API_MASK | 0x0617)
-#define EM_ESCOPE_EVENT_UAREA_GET                 (EM_ESCOPE_API_MASK | 0x0618)
-#define EM_ESCOPE_EVENT_UAREA_ID_GET              (EM_ESCOPE_API_MASK | 0x0619)
-#define EM_ESCOPE_EVENT_UAREA_ID_SET              (EM_ESCOPE_API_MASK | 0x061A)
-#define EM_ESCOPE_EVENT_UAREA_INFO                (EM_ESCOPE_API_MASK | 0x061B)
-#define EM_ESCOPE_EVENT_REF                       (EM_ESCOPE_API_MASK | 0x061C)
-#define EM_ESCOPE_EVENT_HAS_REF                   (EM_ESCOPE_API_MASK | 0x061D)
-#define EM_ESCOPE_EVENT_VECTOR_FREE               (EM_ESCOPE_API_MASK | 0x061E)
-#define EM_ESCOPE_EVENT_VECTOR_TBL                (EM_ESCOPE_API_MASK | 0x061F)
-#define EM_ESCOPE_EVENT_VECTOR_SIZE               (EM_ESCOPE_API_MASK | 0x0620)
-#define EM_ESCOPE_EVENT_VECTOR_SIZE_SET           (EM_ESCOPE_API_MASK | 0x0621)
-#define EM_ESCOPE_EVENT_VECTOR_MAX_SIZE           (EM_ESCOPE_API_MASK | 0x0622)
-#define EM_ESCOPE_EVENT_VECTOR_INFO               (EM_ESCOPE_API_MASK | 0x0623)
-
-/* EM API escopes: Event Packet */
-#define EM_ESCOPE_PACKET_POINTER                  (EM_ESCOPE_API_MASK | 0x0701)
-#define EM_ESCOPE_PACKET_SIZE                     (EM_ESCOPE_API_MASK | 0x0702)
-#define EM_ESCOPE_PACKET_POINTER_AND_SIZE         (EM_ESCOPE_API_MASK | 0x0703)
-#define EM_ESCOPE_PACKET_RESIZE                   (EM_ESCOPE_API_MASK | 0x0704)
-#define EM_ESCOPE_PACKET_HEADROOM                 (EM_ESCOPE_API_MASK | 0x0705)
-#define EM_ESCOPE_PACKET_TAILROOM                 (EM_ESCOPE_API_MASK | 0x0706)
-#define EM_ESCOPE_PACKET_PUSH_HEAD                (EM_ESCOPE_API_MASK | 0x0707)
-#define EM_ESCOPE_PACKET_PULL_HEAD                (EM_ESCOPE_API_MASK | 0x0708)
-#define EM_ESCOPE_PACKET_PUSH_TAIL                (EM_ESCOPE_API_MASK | 0x0709)
-#define EM_ESCOPE_PACKET_PULL_TAIL                (EM_ESCOPE_API_MASK | 0x070A)
-#define EM_ESCOPE_PACKET_RESET                    (EM_ESCOPE_API_MASK | 0x070B)
-
-/* EM API escopes: Queue Group */
-#define EM_ESCOPE_QUEUE_GROUP_CREATE              (EM_ESCOPE_API_MASK | 0x0801)
-#define EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC         (EM_ESCOPE_API_MASK | 0x0802)
-#define EM_ESCOPE_QUEUE_GROUP_DELETE              (EM_ESCOPE_API_MASK | 0x0803)
-#define EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC         (EM_ESCOPE_API_MASK | 0x0804)
-#define EM_ESCOPE_QUEUE_GROUP_MODIFY              (EM_ESCOPE_API_MASK | 0x0805)
-#define EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC         (EM_ESCOPE_API_MASK | 0x0806)
-#define EM_ESCOPE_QUEUE_GROUP_FIND                (EM_ESCOPE_API_MASK | 0x0807)
-#define EM_ESCOPE_QUEUE_GROUP_MASK                (EM_ESCOPE_API_MASK | 0x0808)
-#define EM_ESCOPE_QUEUE_GROUP_GET_NAME            (EM_ESCOPE_API_MASK | 0x0809)
-#define EM_ESCOPE_QUEUE_GROUP_GET_FIRST           (EM_ESCOPE_API_MASK | 0x080A)
-#define EM_ESCOPE_QUEUE_GROUP_GET_NEXT            (EM_ESCOPE_API_MASK | 0x080B)
-#define EM_ESCOPE_QUEUE_GROUP_QUEUE_GET_FIRST     (EM_ESCOPE_API_MASK | 0x080C)
-#define EM_ESCOPE_QUEUE_GROUP_QUEUE_GET_NEXT      (EM_ESCOPE_API_MASK | 0x080D)
-
-/* EM API escopes: Queue */
-#define EM_ESCOPE_QUEUE_CREATE                    (EM_ESCOPE_API_MASK | 0x0901)
-#define EM_ESCOPE_QUEUE_CREATE_STATIC             (EM_ESCOPE_API_MASK | 0x0902)
-#define EM_ESCOPE_QUEUE_DELETE                    (EM_ESCOPE_API_MASK | 0x0903)
-#define EM_ESCOPE_QUEUE_SET_CONTEXT               (EM_ESCOPE_API_MASK | 0x0904)
-#define EM_ESCOPE_QUEUE_GET_CONTEXT               (EM_ESCOPE_API_MASK | 0x0905)
-#define EM_ESCOPE_QUEUE_GET_NAME                  (EM_ESCOPE_API_MASK | 0x0906)
-#define EM_ESCOPE_QUEUE_GET_PRIORITY              (EM_ESCOPE_API_MASK | 0x0907)
-#define EM_ESCOPE_QUEUE_GET_TYPE                  (EM_ESCOPE_API_MASK | 0x0908)
-#define EM_ESCOPE_QUEUE_GET_GROUP                 (EM_ESCOPE_API_MASK | 0x0909)
-#define EM_ESCOPE_QUEUE_FIND                      (EM_ESCOPE_API_MASK | 0x090A)
-#define EM_ESCOPE_QUEUE_DEQUEUE                   (EM_ESCOPE_API_MASK | 0x090B)
-#define EM_ESCOPE_QUEUE_DEQUEUE_MULTI             (EM_ESCOPE_API_MASK | 0x090C)
-#define EM_ESCOPE_QUEUE_CURRENT                   (EM_ESCOPE_API_MASK | 0x090D)
-#define EM_ESCOPE_QUEUE_GET_FIRST                 (EM_ESCOPE_API_MASK | 0x090E)
-#define EM_ESCOPE_QUEUE_GET_NEXT                  (EM_ESCOPE_API_MASK | 0x090F)
-#define EM_ESCOPE_QUEUE_GET_INDEX                 (EM_ESCOPE_API_MASK | 0x0910)
-#define EM_ESCOPE_QUEUE_GET_NUM_PRIO		  (EM_ESCOPE_API_MASK | 0x0911)
-
-/* EM API escopes: Scheduler */
-#define EM_ESCOPE_ATOMIC_PROCESSING_END           (EM_ESCOPE_API_MASK | 0x0A01)
-#define EM_ESCOPE_ORDERED_PROCESSING_END          (EM_ESCOPE_API_MASK | 0x0A02)
-#define EM_ESCOPE_PRESCHEDULE                     (EM_ESCOPE_API_MASK | 0x0A03)
-#define EM_ESCOPE_SCHED_CONTEXT_TYPE_CURRENT      (EM_ESCOPE_API_MASK | 0x0A04)
-
-/* EM API escopes: Timer */
-#define EM_ESCOPE_TIMER_CREATE                    (EM_ESCOPE_API_MASK | 0x0B00)
-#define EM_ESCOPE_TIMER_DELETE                    (EM_ESCOPE_API_MASK | 0x0B01)
-#define EM_ESCOPE_TIMER_CUR_TICK                  (EM_ESCOPE_API_MASK | 0x0B02)
-#define EM_ESCOPE_TIMER_GET_ALL                   (EM_ESCOPE_API_MASK | 0x0B03)
-#define EM_ESCOPE_TIMER_GET_ATTR                  (EM_ESCOPE_API_MASK | 0x0B04)
-#define EM_ESCOPE_TIMER_GET_FREQ                  (EM_ESCOPE_API_MASK | 0x0B05)
-#define EM_ESCOPE_TMO_CREATE                      (EM_ESCOPE_API_MASK | 0x0B06)
-#define EM_ESCOPE_TMO_DELETE                      (EM_ESCOPE_API_MASK | 0x0B07)
-#define EM_ESCOPE_TMO_SET_ABS                     (EM_ESCOPE_API_MASK | 0x0B08)
-#define EM_ESCOPE_TMO_SET_REL                     (EM_ESCOPE_API_MASK | 0x0B09)
-#define EM_ESCOPE_TMO_CANCEL                      (EM_ESCOPE_API_MASK | 0x0B0A)
-#define EM_ESCOPE_TMO_ACK                         (EM_ESCOPE_API_MASK | 0x0B0B)
-#define EM_ESCOPE_TMO_GET_STATE                   (EM_ESCOPE_API_MASK | 0x0B0C)
-#define EM_ESCOPE_TMO_SET_PERIODIC                (EM_ESCOPE_API_MASK | 0x0B0D)
-#define EM_ESCOPE_TMO_GET_STATS                   (EM_ESCOPE_API_MASK | 0x0B0E)
-#define EM_ESCOPE_TIMER_ATTR_INIT                 (EM_ESCOPE_API_MASK | 0x0B0F)
-#define EM_ESCOPE_TIMER_CAPABILITY                (EM_ESCOPE_API_MASK | 0x0B10)
-#define EM_ESCOPE_TIMER_RES_CAPABILITY            (EM_ESCOPE_API_MASK | 0x0B11)
-#define EM_ESCOPE_TIMER_NS_TO_TICK                (EM_ESCOPE_API_MASK | 0x0B12)
-#define EM_ESCOPE_TIMER_TICK_TO_NS                (EM_ESCOPE_API_MASK | 0x0B13)
-#define EM_ESCOPE_TMO_GET_TYPE                    (EM_ESCOPE_API_MASK | 0x0B14)
-#define EM_ESCOPE_TIMER_RING_CREATE               (EM_ESCOPE_API_MASK | 0x0B15)
-#define EM_ESCOPE_TMO_SET_PERIODIC_RING           (EM_ESCOPE_API_MASK | 0x0B16)
-#define EM_ESCOPE_TMO_GET_USERPTR                 (EM_ESCOPE_API_MASK | 0x0B17)
-#define EM_ESCOPE_TMO_CREATE_ARG                  (EM_ESCOPE_API_MASK | 0x0B18)
-#define EM_ESCOPE_TMO_GET_TIMER                   (EM_ESCOPE_API_MASK | 0x0B19)
-
-/* add-on APIs have a separate escope file but define a base here */
-#define EM_ESCOPE_ADD_ON_API_BASE                 (EM_ESCOPE_API_MASK | 0x1000)
 
 #ifdef __cplusplus
 }

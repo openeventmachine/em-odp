@@ -25,7 +25,7 @@ if HAVE_DOXYGEN
 
 endif
 
-EXTRA_DIST = bootstrap CHANGE_NOTES README
+EXTRA_DIST = bootstrap CHANGELOG.md README.md
 EXTRA_DIST += $(top_srcdir)/config/em-odp.conf
 
 configdir = $(sysconfdir)/

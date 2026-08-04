@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -44,12 +44,13 @@
  * @{
  */
 
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+#include <event_machine/api/event_machine_core_mask.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
 
 /**
  * Create a new queue group to control queue to core mapping,
@@ -65,14 +66,14 @@ extern "C" {
  * the operation has completed. Note that using a queue group before the
  * creation has completed may result in undefined behaviour.
  *
- * The core mask is visible through em_queue_group_get_mask() only after the
+ * The core mask is visible through em_queue_group_mask() only after the
  * create operation has completed.
  *
  * Note, that the operation can also happen one core at a time, so an
  * intermediate mask may be active momentarily.
  *
  * Only manipulate the core mask with the access macros defined in
- * event_machine_hw_specific.h as the implementation underneath may change.
+ * event_machine_core_mask.h as the implementation underneath may change.
  *
  * The given name is copied up to the maximum length of EM_QUEUE_GROUP_NAME_LEN.
  * Duplicate names are allowed, but find will then only return the first match.
@@ -185,14 +186,14 @@ em_queue_group_delete_sync(em_queue_group_t queue_group);
  * needs to know about the actual completion. EM will send notifications when
  * the operation has completed.
  *
- * The new core mask is visible through em_queue_group_get_mask() only after
+ * The new core mask is visible through em_queue_group_mask() only after
  * the modify operation has completed.
  *
  * Note, that depending on the system, the change can also happen one core at
  * a time, so an intermediate mask may be active momentarily.
  *
  * Only manipulate core mask with the access macros defined in
- * event_machine_hw_specific.h as the implementation underneath may change.
+ * event_machine_core_mask.h as the implementation underneath may change.
  *
  * @param queue_group  Queue group to modify
  * @param new_mask     New core mask
@@ -202,7 +203,7 @@ em_queue_group_delete_sync(em_queue_group_t queue_group);
  * @return EM_OK if successful.
  *
  * @see em_queue_group_create(), em_queue_group_find(), em_queue_group_delete()
- *      em_queue_group_get_mask(), em_queue_group_modify_sync()
+ *      em_queue_group_mask(), em_queue_group_modify_sync()
  */
 em_status_t
 em_queue_group_modify(em_queue_group_t queue_group,
@@ -249,8 +250,7 @@ em_queue_group_modify_sync(em_queue_group_t queue_group,
  *
  * @see em_queue_group_create()
  */
-em_queue_group_t
-em_queue_group_find(const char *name);
+em_queue_group_t em_queue_group_find(const char *name);
 
 /**
  * Get the current core mask for a queue group.
@@ -266,8 +266,11 @@ em_queue_group_find(const char *name);
  *
  * @see em_queue_group_create(), em_queue_group_modify()
  */
-em_status_t
-em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask);
+em_status_t em_queue_group_mask(em_queue_group_t queue_group,
+				em_core_mask_t *mask);
+
+/* Backwards compatible naming ("get") */
+#define em_queue_group_get_mask em_queue_group_mask
 
 /**
  * Get the name of a queue group.
@@ -285,30 +288,32 @@ em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask);
  *
  * @return Number of characters written (excludes the terminating '\0').
  */
-size_t
-em_queue_group_get_name(em_queue_group_t queue_group,
-			char *name, size_t maxlen);
+size_t em_queue_group_name(em_queue_group_t queue_group,
+			   char *name, size_t maxlen);
+
+/* Backwards compatible naming ("get") */
+#define em_queue_group_get_name em_queue_group_name
 
 /**
  * Initialize queue group iteration and return the first queue group handle.
  *
  * Can be used to initialize the iteration to retrieve all created queue groups
- * for debugging or management purposes. Use em_queue_group_get_next() after
+ * for debugging or management purposes. Use em_queue_group_next() after
  * this call until it returns EM_QUEUE_GROUP_UNDEF.
- * A new call to em_queue_group_get_first() resets the iteration, which is
+ * A new call to em_queue_group_first() resets the iteration, which is
  * maintained per core (thread). The operation should be completed in one go
  * before returning from the EO's event receive function (or start/stop).
  *
  * The number of queue groups (output arg 'num') may not match the amount of
- * queue groups actually returned by iterating using em_event_group_get_next()
+ * queue groups actually returned by iterating using em_event_group_next()
  * if queue groups are added or removed in parallel by another core. The order
  * of the returned queue group handles is undefined.
  *
  * @code
  *	unsigned int num;
- *	em_queue_group_t qg = em_queue_group_get_first(&num);
+ *	em_queue_group_t qg = em_queue_group_first(&num);
  *	while (qg != EM_QUEUE_GROUP_UNDEF) {
- *		qg = em_queue_group_get_next();
+ *		qg = em_queue_group_next();
  *	}
  * @endcode
  *
@@ -316,22 +321,26 @@ em_queue_group_get_name(em_queue_group_t queue_group,
  *                   queue groups into
  * @return The first queue group handle or EM_QUEUE_GROUP_UNDEF if none exist
  *
- * @see em_queue_group_get_next()
+ * @see em_queue_group_next()
  **/
-em_queue_group_t
-em_queue_group_get_first(unsigned int *num);
+em_queue_group_t em_queue_group_first(unsigned int *num);
+
+/* Backwards compatible naming ("get") */
+#define em_queue_group_get_first em_queue_group_first
 
 /**
- * Continues the queue group iteration started by em_queue_group_get_first() and
+ * Continues the queue group iteration started by em_queue_group_first() and
  * returns the next queue group handle.
  *
  * @return The next queue group handle or EM_QUEUE_GROUP_UNDEF if the queue
  *         group iteration is completed (i.e. no more queue groups available).
  *
- * @see em_queue_group_get_first()
+ * @see em_queue_group_first()
  **/
-em_queue_group_t
-em_queue_group_get_next(void);
+em_queue_group_t em_queue_group_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_queue_group_get_next em_queue_group_next
 
 /**
  * Initialize iteration of a queue group's queues and return the first
@@ -339,24 +348,24 @@ em_queue_group_get_next(void);
  *
  * Can be used to initialize the iteration to retrieve all queues associated
  * with the given queue group for debugging or management purposes.
- * Use em_queue_group_queue_get_next() after this call until it returns
+ * Use em_queue_group_queue_next() after this call until it returns
  * EM_QUEUE_UNDEF.
- * A new call to em_queue_group_queue_get_first() resets the iteration, which is
+ * A new call to em_queue_group_queue_first() resets the iteration, which is
  * maintained per core (thread). The operation should be started and completed
  * in one go before returning from the EO's event receive function (or
  * start/stop).
  *
  * The number of queues in the queue group (output arg 'num') may not match the
  * amount of queues actually returned by iterating using
- * em_queue_group_queue_get_next() if queues are added or removed in parallel by
+ * em_queue_group_queue_next() if queues are added or removed in parallel by
  * another core. The order of the returned queue handles is undefined.
  *
  * Simplified example:
  * @code
  *	unsigned int num;
- *	em_queue_t q = em_queue_group_queue_get_first(&num, queue_group);
+ *	em_queue_t q = em_queue_group_queue_first(&num, queue_group);
  *	while (q != EM_QUEUE_UNDEF) {
- *		q = em_queue_group_queue_get_next();
+ *		q = em_queue_group_queue_next();
  *	}
  * @endcode
  *
@@ -367,24 +376,29 @@ em_queue_group_get_next(void);
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist or the
  *         queue group is invalid.
  *
- * @see em_queue_group_queue_get_next()
+ * @see em_queue_group_queue_next()
  **/
-em_queue_t
-em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group);
+em_queue_t em_queue_group_queue_first(unsigned int *num,
+				      em_queue_group_t queue_group);
+
+/* Backwards compatible naming ("get") */
+#define em_queue_group_queue_get_first em_queue_group_queue_first
 
 /**
  * Return the queue group's next queue handle.
  *
- * Continues the queue iteration started by em_queue_group_queue_get_first() and
+ * Continues the queue iteration started by em_queue_group_queue_first() and
  * returns the next queue handle in the queue group.
  *
  * @return The next queue handle or EM_QUEUE_UNDEF if the queue iteration is
  *         completed (i.e. no more queues available for this queue group).
  *
- * @see em_queue_group_queue_get_first()
+ * @see em_queue_group_queue_first()
  **/
-em_queue_t
-em_queue_group_queue_get_next(void);
+em_queue_t em_queue_group_queue_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_queue_group_queue_get_next em_queue_group_queue_next
 
 /**
  * Convert a queue_group handle to an unsigned integer

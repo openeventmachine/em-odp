@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2015-2024, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,15 +37,15 @@
 /**
  * @file
  * Event Machine helper functions and macros
- *
  */
+
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+#include <event_machine/api/event_machine_core_mask.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
 
 /**
  * Format error string
@@ -61,7 +61,7 @@ extern "C" {
  * @param      escope  Error scope (EM internal)
  * @param      args    Variable arguments as passed to the error handler
  *
- * @return Output string length.
+ * @return Output string length (including final '\0'), or 0 on invalid input
  */
 int em_error_format_string(char *str /*out*/, size_t size, em_eo_t eo,
 			   em_status_t error, em_escope_t escope, va_list args);
@@ -96,24 +96,32 @@ void em_info_print(void);
 /**
  * Converts a logical core id to a physical core id
  *
- * Mainly needed when interfacing HW specific APIs.
+ * @note
+ * This may be a very slow operation and MUST NOT be used in the fast path!
  *
  * @param core          Logical (Event Machine) core id
  *
  * @return Physical core id or -1 on error.
  */
-int em_core_id_get_physical(int core);
+int em_core_id_physical(int core);
+
+/* Backwards compatible naming ("get") */
+#define em_core_id_get_physical em_core_id_physical
 
 /**
  * Converts a logical core mask to a physical core mask
  *
- * Mainly needed when interfacing HW specific APIs.
+ * @note
+ * This may be a very slow operation and MUST NOT be used in the fast path!
  *
  * @param[out] phys   Core mask of physical core ids
  * @param      logic  Core mask of logical (Event Machine) core ids
  */
-void em_core_mask_get_physical(em_core_mask_t *phys /*out*/,
-			       const em_core_mask_t *logic);
+void em_core_mask_physical(em_core_mask_t *phys /*out*/,
+			   const em_core_mask_t *logic);
+
+/* Backwards compatible naming ("get") */
+#define em_core_mask_get_physical em_core_mask_physical
 
 #ifdef __cplusplus
 }

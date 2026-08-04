@@ -36,6 +36,8 @@
 #ifndef EM_CHAINING_TYPES_H_
 #define EM_CHAINING_TYPES_H_
 
+#include <event_machine.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif

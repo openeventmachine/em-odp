@@ -37,6 +37,15 @@
 #ifndef EM_POOL_TYPES_H_
 #define EM_POOL_TYPES_H_
 
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

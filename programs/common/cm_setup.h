@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -31,19 +31,24 @@
 #ifndef CM_SETUP_H
 #define CM_SETUP_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <signal.h>
+
+#include <odp_api.h>
 #include <odp/helper/odph_api.h>
+
+#include <event_machine.h>
 #include <event_machine/platform/env/environment.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define APPL_NAME_LEN  (64)
 
@@ -66,22 +71,17 @@ extern "C" {
 #define APPL_PRINT(...)              APPL_LOG(EM_LOG_PRINT, ## __VA_ARGS__)
 
 /** Simple appl error handling: log & exit */
-#define APPL_EXIT_FAILURE(...)  do {			 \
-	appl_log(EM_LOG_ERR,				 \
-		 "Appl Error: %s:%i, %s() - ",		 \
-		 NO_PATH(__FILE__), __LINE__, __func__); \
-	appl_log(EM_LOG_ERR, ## __VA_ARGS__);		 \
-	appl_log(EM_LOG_ERR, "\n\n");			 \
-	exit(EXIT_FAILURE);				 \
+#define APPL_EXIT_FAILURE(fmt, ...)  do {				\
+	appl_log(EM_LOG_ERR,						\
+		 "Appl Error: %s:%i, %s() - " fmt "\n\n",		\
+		 NO_PATH(__FILE__), __LINE__, __func__, ##__VA_ARGS__);	\
+	exit(EXIT_FAILURE);						\
 } while (0)
 
-#define APPL_ERROR(...)		do {			 \
-	appl_log(EM_LOG_ERR,				 \
-		 "Appl Error: %s:%i, %s() - ",		 \
-		 NO_PATH(__FILE__), __LINE__, __func__); \
-	appl_log(EM_LOG_ERR, ## __VA_ARGS__);		 \
-	appl_log(EM_LOG_ERR, "\n\n");			 \
-} while (0)
+#define APPL_ERROR(fmt, ...)						\
+	appl_log(EM_LOG_ERR,						\
+		 "Appl Error: %s:%i, %s() - " fmt "\n\n",		\
+		 NO_PATH(__FILE__), __LINE__, __func__, ##__VA_ARGS__)
 
 /**
  * Application synchronization
@@ -92,9 +92,9 @@ typedef struct {
 	/** Exit / termination synchronization barrier */
 	odp_barrier_t exit_barrier;
 	/** Enter counter for tracking core / odp-thread startup */
-	env_atomic64_t enter_count;
+	odp_atomic_u64_t enter_count;
 	/** Exit counter for tracking core / odp-thread exit */
-	env_atomic64_t exit_count;
+	odp_atomic_u64_t exit_count;
 } sync_t;
 
 /**
@@ -106,14 +106,14 @@ typedef enum startup_mode {
 	/**
 	 * Start up & initialize all EM cores before setting up the
 	 * application using EM APIs. The em_init() function has been run and
-	 * all EM-cores have run em_init_core() before application setup.
+	 * all EM-cores have run em_init_local() before application setup.
 	 * Option: -s, --startup-mode = 0 (All EM-cores before application)
 	 */
 	STARTUP_ALL_CORES = 0,
 	/**
 	 * Start up & initialize only one EM core before setting up the
 	 * application using EM APIs. The em_init() function has been run and
-	 * only one EM-core has run em_init_core() before application setup.
+	 * only one EM-core has run em_init_local() before application setup.
 	 * Option: -s, --startup-mode = 1 (One EM-core before application...))
 	 */
 	STARTUP_ONE_CORE_FIRST

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2014-2023, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,11 +28,39 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE  /* for strnlen() */
+#endif
 
-/* per core (thread) state for em_atomic_group_get_next() */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_atomic_group.h"
+#include "em_atomic_group_types.h"
+#include "em_error.h"
+#include "em_internal_event.h"
+#include "em_internal_event_types.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+#include "misc/objpool.h"
+
+/* per core (thread) state for em_atomic_group_next() */
 static ENV_LOCAL unsigned int _agrp_tbl_iter_idx;
-/* Per core (thread) state of em_atomic_group_queue_get_next() */
+/* Per core (thread) state of em_atomic_group_queue_next() */
 static ENV_LOCAL unsigned int _agrp_q_iter_idx;
 static ENV_LOCAL em_atomic_group_t _agrp_q_iter_agrp;
 
@@ -69,13 +97,17 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 		goto error;
 	}
 
-	env_atomic32_init(&ag_elem->num_queues);
+	odp_ticketlock_init(&ag_elem->lock);
+	ag_elem->dispatch_lock.lock_and_evcnt = 0;
+	ag_elem->dispatch_lock.parts.wrap = WRAP_PROTECT;
+	odp_atomic_init_u32(&ag_elem->num_queues, 0);
+	odp_atomic_init_u32(&ag_elem->num_hi_prio_queues, 0);
 
 	/* Store the related queue group */
 	ag_elem->queue_group = queue_group;
 
 	if (name != NULL) {
-		strncpy(ag_elem->name, name, sizeof(ag_elem->name));
+		strncpy(ag_elem->name, name, sizeof(ag_elem->name) - 1);
 		ag_elem->name[sizeof(ag_elem->name) - 1] = '\0';
 	} else {
 		ag_elem->name[0] = '\0';
@@ -99,7 +131,7 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 
 	stash_param.type = ODP_STASH_TYPE_FIFO;
 	stash_param.put_mode = ODP_STASH_OP_MT;
-	/* 'get' protected by ag_elem->lock */
+	/* 'get' protected by ag_elem->dispatch_lock */
 	stash_param.get_mode = ODP_STASH_OP_ST;
 
 	/* Stash size: use EM default queue size value from config file: */
@@ -128,6 +160,7 @@ em_atomic_group_create(const char *name, em_queue_group_t queue_group)
 		goto error;
 	}
 
+	__atomic_thread_fence(__ATOMIC_RELEASE);
 	return atomic_group;
 
 error:
@@ -189,14 +222,14 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 			EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_DELETE,
 			"Invalid atomic group - cannot delete!");
 
-	env_spinlock_lock(&ag_elem->lock);
+	odp_ticketlock_lock(&ag_elem->lock);
 
 	/* Error checks */
 	err  = !list_is_empty(&ag_elem->qlist_head);
 	err |= !atomic_group_allocated(ag_elem);
 
 	if (unlikely(err)) {
-		env_spinlock_unlock(&ag_elem->lock);
+		odp_ticketlock_unlock(&ag_elem->lock);
 		return INTERNAL_ERROR(EM_ERR_BAD_STATE,
 				      EM_ESCOPE_ATOMIC_GROUP_DELETE,
 				      "Atomic group in bad state - cannot delete!");
@@ -209,7 +242,7 @@ em_atomic_group_delete(em_atomic_group_t atomic_group)
 	ag_elem->queue_group = EM_QUEUE_GROUP_UNDEF;
 	ag_elem->name[0] = '\0';
 
-	env_spinlock_unlock(&ag_elem->lock);
+	odp_ticketlock_unlock(&ag_elem->lock);
 
 	/* Free the atomic group (elem) back into the AG-pool */
 	error = atomic_group_free(atomic_group);
@@ -227,6 +260,7 @@ em_queue_create_ag(const char *name, em_queue_prio_t prio,
 	em_queue_t queue;
 	queue_elem_t *q_elem;
 	em_queue_group_t queue_group;
+	em_queue_param_t param;
 	atomic_group_elem_t *const ag_elem =
 		atomic_group_elem_get(atomic_group);
 	const char *err_str = "";
@@ -240,8 +274,14 @@ em_queue_create_ag(const char *name, em_queue_prio_t prio,
 
 	queue_group = ag_elem->queue_group;
 
-	queue = queue_create(name, EM_QUEUE_TYPE_ATOMIC, prio, queue_group,
-			     EM_QUEUE_UNDEF, atomic_group, conf, &err_str);
+	em_queue_param_init(&param);
+	param.type = EM_QUEUE_TYPE_ATOMIC;
+	param.prio = prio;
+	param.queue_group = queue_group;
+	param.atomic_group = atomic_group;
+	queue_param_apply_conf(&param, conf);
+
+	queue = queue_create_param(name, &param, &err_str);
 
 	if (unlikely(queue == EM_QUEUE_UNDEF)) {
 		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_CREATE_AG,
@@ -272,6 +312,7 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 {
 	em_queue_t queue_static;
 	em_queue_group_t queue_group;
+	em_queue_param_t param;
 	atomic_group_elem_t *const ag_elem =
 		atomic_group_elem_get(atomic_group);
 	const char *err_str = "";
@@ -282,9 +323,15 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 
 	queue_group = ag_elem->queue_group;
 
-	queue_static = queue_create(name, EM_QUEUE_TYPE_ATOMIC, prio,
-				    queue_group, queue, atomic_group, conf,
-				    &err_str);
+	em_queue_param_init(&param);
+	param.queue = queue;
+	param.type = EM_QUEUE_TYPE_ATOMIC;
+	param.prio = prio;
+	param.queue_group = queue_group;
+	param.atomic_group = atomic_group;
+	queue_param_apply_conf(&param, conf);
+
+	queue_static = queue_create_param(name, &param, &err_str);
 
 	RETURN_ERROR_IF(queue_static == EM_QUEUE_UNDEF,
 			EM_ERR_NOT_FREE, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
@@ -300,10 +347,12 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 			queue, queue_static);
 
 	if (unlikely(queue_static != queue)) {
-		queue_delete(q_elem);
+		const char *qdel_err = "queue cleanup ok";
+
+		(void)queue_delete(q_elem, &qdel_err);
 		return INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_QUEUE_CREATE_STATIC_AG,
-				      "Queue error - req:%" PRI_QUEUE " vs. %" PRI_QUEUE "",
-				      queue, queue_static);
+				      "Queue req:%" PRI_QUEUE " vs. %" PRI_QUEUE " (deleted:%s)",
+				      queue, queue_static, qdel_err);
 	}
 
 	/* Add queue to atomic group list */
@@ -312,41 +361,22 @@ em_queue_create_static_ag(const char *name, em_queue_prio_t prio,
 	return EM_OK;
 }
 
-em_atomic_group_t
-em_atomic_group_get(em_queue_t queue)
-{
-	const queue_elem_t *q_elem = queue_elem_get(queue);
-	em_atomic_group_t atomic_group = EM_ATOMIC_GROUP_UNDEF;
-
-	if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_GET,
-			       "Invalid queue:%" PRI_QUEUE "", queue);
-		return EM_ATOMIC_GROUP_UNDEF;
-	}
-
-	if (q_elem->flags.in_atomic_group)
-		atomic_group = q_elem->agrp.atomic_group;
-
-	return atomic_group;
-}
-
-size_t
-em_atomic_group_get_name(em_atomic_group_t atomic_group,
-			 char *name, size_t maxlen)
+size_t em_atomic_group_name(em_atomic_group_t atomic_group,
+			    char *name, size_t maxlen)
 {
 	const atomic_group_elem_t *ag_elem =
 		atomic_group_elem_get(atomic_group);
 	size_t len = 0;
 
 	if (unlikely(name == NULL || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_NAME,
 			       "Invalid args: name=0x%" PRIx64 ", maxlen=%zu",
 			       name, maxlen);
 		return 0;
 	}
 
 	if (unlikely(ag_elem == NULL || !atomic_group_allocated(ag_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ATOMIC_GROUP_NAME,
 			       "Invalid Atomic Group:%" PRI_AGRP "",
 			       atomic_group);
 		name[0] = '\0';
@@ -380,8 +410,7 @@ em_atomic_group_find(const char *name)
 	return EM_ATOMIC_GROUP_UNDEF;
 }
 
-em_atomic_group_t
-em_atomic_group_get_first(unsigned int *num)
+em_atomic_group_t em_atomic_group_first(unsigned int *num)
 {
 	const atomic_group_elem_t *const agrp_elem_tbl =
 		em_shm->atomic_group_tbl.ag_elem;
@@ -394,7 +423,7 @@ em_atomic_group_get_first(unsigned int *num)
 		*num = agrp_count;
 
 	if (agrp_count == 0) {
-		_agrp_tbl_iter_idx = EM_MAX_ATOMIC_GROUPS; /*UNDEF=_get_next()*/
+		_agrp_tbl_iter_idx = EM_MAX_ATOMIC_GROUPS; /*UNDEF=_next()*/
 		return EM_ATOMIC_GROUP_UNDEF;
 	}
 
@@ -409,8 +438,7 @@ em_atomic_group_get_first(unsigned int *num)
 	return agrp_idx2hdl(_agrp_tbl_iter_idx);
 }
 
-em_atomic_group_t
-em_atomic_group_get_next(void)
+em_atomic_group_t em_atomic_group_next(void)
 {
 	if (_agrp_tbl_iter_idx >= EM_MAX_ATOMIC_GROUPS - 1)
 		return EM_ATOMIC_GROUP_UNDEF;
@@ -432,18 +460,16 @@ em_atomic_group_get_next(void)
 	return agrp_idx2hdl(_agrp_tbl_iter_idx);
 }
 
-em_queue_t
-em_atomic_group_queue_get_first(unsigned int *num,
-				em_atomic_group_t atomic_group)
+em_queue_t em_atomic_group_queue_first(unsigned int *num,
+				       em_atomic_group_t atomic_group)
 {
-	const atomic_group_elem_t *const agrp_elem =
-		atomic_group_elem_get(atomic_group);
+	atomic_group_elem_t *const agrp_elem = atomic_group_elem_get(atomic_group);
 
-	const unsigned int max_queues = em_shm->opt.queue.max_num;
+	const unsigned int max_queues = em_shm->queue_tbl.max_queue_num;
 
 	if (unlikely(agrp_elem == NULL || !atomic_group_allocated(agrp_elem))) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG,
-			       EM_ESCOPE_ATOMIC_GROUP_QUEUE_GET_FIRST,
+			       EM_ESCOPE_ATOMIC_GROUP_QUEUE_FIRST,
 			       "Invalid atomic group:%" PRI_AGRP "",
 			       atomic_group);
 		if (num)
@@ -452,13 +478,13 @@ em_atomic_group_queue_get_first(unsigned int *num,
 	}
 
 	const unsigned int num_queues =
-		env_atomic32_get(&agrp_elem->num_queues);
+		odp_atomic_load_u32(&agrp_elem->num_queues);
 
 	if (num)
 		*num = num_queues;
 
 	if (num_queues == 0) {
-		_agrp_q_iter_idx = max_queues; /* UNDEF = _get_next() */
+		_agrp_q_iter_idx = max_queues; /* UNDEF = _next() */
 		return EM_QUEUE_UNDEF;
 	}
 
@@ -488,10 +514,9 @@ em_atomic_group_queue_get_first(unsigned int *num,
 	return queue_idx2hdl(_agrp_q_iter_idx);
 }
 
-em_queue_t
-em_atomic_group_queue_get_next(void)
+em_queue_t em_atomic_group_queue_next(void)
 {
-	const unsigned int max_queues = em_shm->opt.queue.max_num;
+	const unsigned int max_queues = em_shm->queue_tbl.max_queue_num;
 
 	if (_agrp_q_iter_idx >= max_queues - 1)
 		return EM_QUEUE_UNDEF;

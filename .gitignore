@@ -50,7 +50,11 @@ perf.data*
 tags
 test-driver
 build*/
+# Re-include skill directories under .agents/skills/ that would otherwise be
+# ignored by the build*/ pattern above (e.g. building-em, building-odp, ...).
+!.agents/skills/*/
 debug*/
 doc/html/
 .vscode
 *.code-workspace
+.venv

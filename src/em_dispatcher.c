@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,27 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_dispatcher.h"
+#include "em_dispatcher_inline.h"
+#include "em_dispatcher_types.h"
+#include "em_error.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
 
 static int read_config_file(void)
 {
@@ -37,6 +57,8 @@ static int read_config_file(void)
 	int64_t val64 = 0;
 	bool val_bool = false;
 	int ret;
+
+	EM_PRINT("EM dispatch config:\n");
 
 	/*
 	 * Option: dispatch.poll_ctrl_interval
@@ -78,9 +100,6 @@ static int read_config_file(void)
 
 	EM_PRINT("  %s: %" PRId64 "ns (%Lfs)\n", conf_str, val64, sec);
 
-	/* Store ns value as odp_time_t */
-	em_shm->opt.dispatch.poll_ctrl_interval_time = odp_time_global_from_ns(val64);
-
 	/*
 	 * Option: dispatch.poll_drain_interval
 	 */
@@ -121,14 +140,11 @@ static int read_config_file(void)
 
 	EM_PRINT("  %s: %" PRId64 "ns (%Lfs)\n", conf_str, val64, sec);
 
-	/* Store ns value as odp_time_t */
-	em_shm->opt.dispatch.poll_drain_interval_time = odp_time_global_from_ns(val64);
-
 	/*
 	 * Option: dispatch.sched_wait_ns
 	 */
+	conf_str = "dispatch.sched_wait_ns";
 	if (EM_SCHED_WAIT_ENABLE) {
-		conf_str = "dispatch.sched_wait_ns";
 		ret = em_libconfig_lookup_int64(&em_shm->libconfig, conf_str, &val64);
 		if (unlikely(!ret)) {
 			EM_LOG(EM_LOG_ERR, "Config option '%s' not found.\n", conf_str);
@@ -146,19 +162,20 @@ static int read_config_file(void)
 
 		/* Store ns value as odp sched-wait-time */
 		if (val64 == 0) {
-			em_shm->opt.dispatch.sched_wait = ODP_SCHED_NO_WAIT;
+			em_shm->opt_cache.dispatch.sched_wait = ODP_SCHED_NO_WAIT;
 			EM_PRINT("  %s: no-wait (0 ns)\n", conf_str);
 		} else if (val64 == -1) {
-			em_shm->opt.dispatch.sched_wait = ODP_SCHED_WAIT;
+			em_shm->opt_cache.dispatch.sched_wait = ODP_SCHED_WAIT;
 			EM_PRINT("  %s: wait indefinitely (inf. ns)\n", conf_str);
 		} else {
-			em_shm->opt.dispatch.sched_wait = odp_schedule_wait_time(val64);
+			em_shm->opt_cache.dispatch.sched_wait = odp_schedule_wait_time(val64);
 			sec = (long double)val64 / 1000000000.0;
 			EM_PRINT("  %s: wait %" PRId64 "ns (%Lfs)\n", conf_str, val64, sec);
 		}
 	} else {
 		em_shm->opt.dispatch.sched_wait_ns = 0;
-		em_shm->opt.dispatch.sched_wait = ODP_SCHED_NO_WAIT;
+		em_shm->opt_cache.dispatch.sched_wait = ODP_SCHED_NO_WAIT;
+		EM_PRINT("  %s: DISABLED (build time), using no-wait (0 ns)\n", conf_str);
 	}
 
 	/*
@@ -189,8 +206,23 @@ em_status_t dispatch_init(void)
 em_status_t dispatch_init_local(void)
 {
 	em_locm_t *const locm = &em_locm;
-	odp_time_t poll_period = em_shm->opt.dispatch.poll_ctrl_interval_time;
-	odp_time_t now = odp_time_global();
+
+	/*
+	 * Convert the poll intervals from ns to odp_time_t here, on this core,
+	 * using the CPU-local time source. Per the ODP time spec, local time is
+	 * specific to the calling thread/CPU and values from different cores
+	 * must not be mixed; the conversion rate (odp_time_local_res()) is not
+	 * guaranteed identical across cores. Each core therefore does its own
+	 * conversion into core-local memory so the interval shares the same
+	 * local time source as the odp_time_local() stamps compared against it.
+	 */
+	locm->poll_ctrl_interval_time =
+		odp_time_local_from_ns(em_shm->opt.dispatch.poll_ctrl_interval_ns);
+	locm->poll_drain_interval_time =
+		odp_time_local_from_ns(em_shm->opt.dispatch.poll_drain_interval_ns);
+
+	odp_time_t poll_period = locm->poll_ctrl_interval_time;
+	odp_time_t now = odp_time_local();
 
 	/*
 	 * Initialize values so that the _first_ call to em_dispatch() on each

@@ -33,103 +33,49 @@
 
 /**
  * @file
- * EM internal initialization types & definitions
- *
+ * EM internal initialization
  */
+
+#include <stdbool.h>
+
+#include <event_machine.h>
+
+#include "em_mem.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * Pool configuration
+ * Init values for the em_locm_t struct.
+ *
+ * Set only non-zero init values, other members initialized to '0'
+ * as per C standard when used to initialize a global struct.
+ *
+ * .core_id: 0 to EM_MAX_CORES-1 for EM_CORE_TYPE_WORKER or EM_CORE_TYPE_CONTROL
+ *          -1 for EM_CORE_TYPE_EXTERNAL
+ *           Undefined for threads/processes not initialized as EM-cores
+ *           Set here to -2 to distinguish from EM_CORE_TYPE_EXTERNAL when not
+ *           yet initialized via em_init_local()/em_init_core().
  */
-typedef struct {
-	em_pool_t pool;
-	char name[EM_POOL_NAME_LEN];
-	em_pool_cfg_t cfg;
-} startup_pool_conf_t;
+#define EM_LOCM_INIT_VALUES {.core_id = -2, .local_queues.empty = 1 /* rest '0' */}
 
 /**
- * EM config options read from the config file.
+ * Check whether the current thread/process has already completed EM core-local
+ * initialization.
  *
- * See the config/em-odp.conf file for description of the options.
+ * Works uniformly for both thread-per-core and process-per-core modes:
+ * - If locm->init_pid != getpid(), TLS is stale (first use or post-fork child)
+ *   and the core is treated as not initialized.
+ * - Otherwise returns locm->is_core_local_inited, which is set true by
+ *   em_init_local()/em_init_core() after successful core-local initialization.
+ *
+ * This is a pure check with no side effects. init_thr_mem() sets init_pid and
+ * em_init_local()/em_init_core() set is_core_local_inited.
  */
-typedef struct {
-	struct {
-		em_pool_stats_opt_t statistics;
-		unsigned int align_offset; /* bytes */
-		unsigned int pkt_headroom; /* bytes */
-		size_t user_area_size; /* bytes */
-	} pool;
+bool is_core_initialized(void);
 
-	struct {
-		bool create_core_queue_groups;
-	} queue_group;
-
-	struct {
-		unsigned int max_num;
-		unsigned int min_events_default; /* default min nbr of events */
-		struct {
-			int map_mode;
-			int custom_map[EM_QUEUE_PRIO_NUM];
-		} priority;
-	} queue;
-
-	struct {
-		bool order_keep;
-		unsigned int num_order_queues;
-	} event_chaining;
-
-	struct {
-		int enable;
-		int store_state;
-		int store_first_u32;
-		int prealloc_pools;
-	} esv;
-
-	struct {
-		int enable;
-		const char *ip_addr;
-		int port;
-	} cli;
-
-	struct {
-		unsigned int poll_ctrl_interval;
-		uint64_t poll_ctrl_interval_ns;
-		/** convert option 'poll_ctrl_interval_ns' to odp_time_t */
-		odp_time_t poll_ctrl_interval_time;
-
-		unsigned int poll_drain_interval;
-		uint64_t poll_drain_interval_ns;
-		odp_time_t poll_drain_interval_time;
-
-		uint64_t sched_wait_ns;
-		uint64_t sched_wait; /* odp_schedule_wait_time(sched_wait_ns) */
-		bool sched_pause;
-	} dispatch;
-
-	struct {
-		bool shared_tmo_pool_enable;
-		uint32_t shared_tmo_pool_size;
-		uint32_t tmo_pool_cache;
-		struct {
-			uint32_t timer_event_pool_size;
-			uint32_t timer_event_pool_cache;
-		} ring;
-	} timer;
-
-	struct {
-		uint32_t num;
-		startup_pool_conf_t conf[EM_CONFIG_POOLS];
-	} startup_pools;
-} opt_t;
-
-em_status_t input_poll_check(const em_core_mask_t *logic_mask, const em_conf_t *conf);
-em_status_t output_drain_check(const em_core_mask_t *logic_mask, const em_conf_t *conf);
-
-em_status_t input_poll_init_local(void);
-em_status_t output_drain_init_local(void);
+extern const em_locm_t locm_init_values; /* = EM_LOCM_INIT_VALUES */
 
 /**
  * Set EM core local log function.
@@ -150,7 +96,7 @@ void core_log_fn_set(em_log_func_t func);
 void core_vlog_fn_set(em_vlog_func_t func);
 
 /**
- * Initialize a thread external to EM.
+ * Initialize an external thread for the EM CLI.
  *
  * This function makes sure that EM shared memory has been setup properly before
  * an EM external thread is created.
@@ -160,9 +106,21 @@ void core_vlog_fn_set(em_vlog_func_t func);
  *
  * @return EM_OK if successful.
  */
-em_status_t init_ext_thread(void);
+em_status_t init_cli_thread(void);
 
 em_status_t sync_api_init_local(void);
+
+em_status_t init_local(const em_conf_local_t *conf_local, em_escope_t escope);
+em_status_t init_extthr(const em_conf_local_t *conf_local, em_escope_t escope);
+
+void flush_scheduler_events(void);
+
+em_status_t term_core(em_escope_t escope);
+em_status_t term_extthr(em_escope_t escope);
+
+void cfgfile_opts_print(void);
+void conf_opts_print(void);
+void conf_local_opts_print(void);
 
 #ifdef __cplusplus
 }

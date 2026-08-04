@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2023, Nokia Solutions and Networks
+ *   Copyright (c) 2023-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -70,13 +70,13 @@ struct {
 	unsigned int	looptime;
 	bool		recreate;
 	bool		reuse_tmo;
-	bool		reuse_ev;
 	bool		profile;
 	unsigned int	num_tmo;
 	int64_t		delay_us;
 	em_timer_clksrc_t clksrc;
 	unsigned int	tracelen;
 	char		tracefile[MAX_FILENAME];
+	bool		freq_mode;
 
 } g_options = {
 	.loops =	1,
@@ -89,13 +89,13 @@ struct {
 	.looptime =	30,
 	.recreate =	false,
 	.reuse_tmo =	false,
-	.reuse_ev =	false,
 	.profile =	false,
 	.num_tmo =	1,
 	.delay_us =	0,
 	.clksrc =	0,
 	.tracelen =	0,
-	.tracefile =	"stdout"
+	.tracefile =	"stdout",
+	.freq_mode =	false
 };
 
 static timer_app_shm_t *m_shm;
@@ -182,7 +182,7 @@ static void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 
 static void exit_cb(em_eo_t eo)
 {
-	app_eo_ctx_t *const my_eo_ctx = em_eo_get_context(eo);
+	app_eo_ctx_t *const my_eo_ctx = em_eo_context(eo);
 	int core = em_core_id();
 
 	if (unlikely(!my_eo_ctx))
@@ -300,10 +300,10 @@ static void dump_trace(app_eo_ctx_t *eo_ctx)
 	if (title) {
 		fprintf(df, "#BEGIN RING TRACE FORMAT 1\n");
 		/* dump setup */
-		fprintf(df, "cores,loops,num_timer,num_tmo,recreate_tmr,reuse_tmo,reuse_ev,delay_us,tracelen,ver\n");
-		fprintf(df, "%u,%u,%u,%u,%u,%u,%u,%ld,%u,%s\n", m_shm->core_count,
+		fprintf(df, "cores,loops,num_timer,num_tmo,recreate_tmr,reuse_tmo,delay_us,tracelen,ver\n");
+		fprintf(df, "%u,%u,%u,%u,%u,%u,%ld,%u,%s\n", m_shm->core_count,
 			g_options.loops, g_options.num_timers, g_options.num_tmo,
-			g_options.recreate, g_options.reuse_tmo, g_options.reuse_ev,
+			g_options.recreate, g_options.reuse_tmo,
 			g_options.delay_us, g_options.tracelen, VERSION);
 		/* dump timeouts */
 		fprintf(df, "#TMO:\ntmr,tmo,tick_hz,res_ns,base_hz,mul,startrel\n");
@@ -352,14 +352,19 @@ static void print_timers(void)
 	em_timer_attr_t attr;
 	em_timer_t tmr[PRINT_MAX_TMRS];
 
-	int num_timers = em_timer_get_all(tmr, PRINT_MAX_TMRS);
+	int num_timers = em_timer_list(tmr, PRINT_MAX_TMRS);
 
 	for (int i = 0; i < (num_timers > PRINT_MAX_TMRS ? PRINT_MAX_TMRS : num_timers); i++) {
-		test_fatal_if(em_timer_get_attr(tmr[i], &attr) != EM_OK, "Can't get timer info\n");
+		test_fatal_if(em_timer_attr(tmr[i], &attr) != EM_OK, "Can't get timer info\n");
 
 		APPL_PRINT("Timer \"%s\" info:\n", attr.name);
 		APPL_PRINT("  -is ring: ");
-		if (attr.flags & EM_TIMER_FLAG_RING) {
+		if (attr.flags & EM_TIMER_FLAG_RING_FREQ) {
+			APPL_PRINT(" yes (freq-mode, %u frequencies)\n",
+				   attr.freqparam.num);
+			APPL_PRINT("  -resolution: %" PRIu64 " ns\n", attr.freqparam.res_ns);
+			APPL_PRINT("  -clk_src: %d\n", attr.freqparam.clk_src);
+		} else if (attr.flags & EM_TIMER_FLAG_RING) {
 			double hz = frac2float(attr.ringparam.base_hz);
 
 			APPL_PRINT(" yes (base_hz %.3f, max_mul %lu)\n",
@@ -373,7 +378,7 @@ static void print_timers(void)
 			APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 		}
 		APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
-		APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n", em_timer_get_freq(tmr[i]));
+		APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n", em_timer_freq(tmr[i]));
 	}
 }
 
@@ -574,8 +579,8 @@ static int parse_my_args(int first, int argc, char *argv[])
 			g_options.reuse_tmo = true;
 		break;
 
-		case 'E':
-			g_options.reuse_ev = true;
+		case 'F':
+			g_options.freq_mode = true;
 		break;
 
 		case 'h':
@@ -599,25 +604,40 @@ void print_setup(void)
 	APPL_PRINT(" - tmo per timer:  %d\n", g_options.num_tmo);
 	APPL_PRINT(" - recreate timer: %s\n", g_options.recreate ? "yes" : "no");
 	APPL_PRINT(" - reuse tmo:      %s\n", g_options.reuse_tmo ? "yes" : "no");
-	APPL_PRINT(" - reuse event:    %s\n", g_options.reuse_ev ? "yes" : "no");
 	if (g_options.tracelen) {
 		APPL_PRINT(" - tracebuf:       %u\n", g_options.tracelen);
 		APPL_PRINT(" - tracefile:      %s\n", g_options.tracefile);
 	}
 	APPL_PRINT(" - profile APIs:   %s\n", g_options.profile ? "yes" : "no");
+	APPL_PRINT(" - freq-mode:      %s\n", g_options.freq_mode ? "yes" : "no");
 	APPL_PRINT(" - extra delay:    %ld us %s\n", labs(g_options.delay_us),
 		   g_options.delay_us < 0 ? "(rnd)" : "");
 
-	APPL_PRINT("\nTimer tmo  basehz          max_mul   res_ns         startrel     mul    ->hz\n");
+	if (g_options.freq_mode) {
+		APPL_PRINT("\nTimer tmo  freq_hz         res_ns         startrel\n");
 
-	for (unsigned int i = 0; i < g_options.num_timers; i++) {
-		double hz = frac2float(g_options.basehz[i]);
+		for (unsigned int i = 0; i < g_options.num_timers; i++) {
+			double hz = frac2float(g_options.basehz[i]);
 
-		for (unsigned int t = 0; t < g_options.num_tmo; t++) {
-			APPL_PRINT("%-5u %-4u %-15.3f %-9lu %-14lu %-12lu %-8lu %.3f\n",
-				   i, t, hz, g_options.max_mul[i],
-				   g_options.res_ns[i], g_options.start_offset[t],
-				   g_options.multiplier[t], hz * (double)g_options.multiplier[t]);
+			for (unsigned int t = 0; t < g_options.num_tmo; t++) {
+				APPL_PRINT("%-5u %-4u %-15.3f %-14lu %" PRIu64 "\n",
+					   i, t, hz,
+					   g_options.res_ns[i], g_options.start_offset[t]);
+			}
+		}
+	} else {
+		APPL_PRINT("\nTimer tmo  basehz          max_mul   res_ns         startrel     mul    ->hz\n");
+
+		for (unsigned int i = 0; i < g_options.num_timers; i++) {
+			double hz = frac2float(g_options.basehz[i]);
+
+			for (unsigned int t = 0; t < g_options.num_tmo; t++) {
+				APPL_PRINT("%-5u %-4u %-15.3f %-9lu %-14lu %-12lu %-8lu %.3f\n",
+					   i, t, hz, g_options.max_mul[i],
+					   g_options.res_ns[i], g_options.start_offset[t],
+					   g_options.multiplier[t], hz *
+					   (double)g_options.multiplier[t]);
+			}
 		}
 	}
 	APPL_PRINT("\n");
@@ -642,14 +662,84 @@ static void create_test_timer(app_eo_ctx_t *eo_ctx)
 {
 	em_timer_attr_t rattr;
 
+	if (g_options.freq_mode) {
+		/* Frequency-based ring timer: use basehz[] as the freq_hz array */
+		em_fract_u64_t freq_hz[g_options.num_timers];
+
+		for (unsigned int i = 0; i < g_options.num_timers; i++)
+			freq_hz[i] = g_options.basehz[i];
+
+		em_status_t stat = em_timer_ring_freq_attr_init(&rattr,
+							       g_options.clksrc,
+							       freq_hz,
+							       g_options.num_timers,
+							       g_options.res_ns[0]);
+		if (stat == EM_ERR_NOT_IMPLEMENTED) {
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
+				   "Ring freq timers not supported by EM implementation!");
+		} else if (stat != EM_OK) {
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
+				   "Ring freq parameters not supported, ret %u!", stat);
+		}
+
+		if (EXTRA_PRINTS) {
+			APPL_PRINT("\nInitialized ring freq attr:\n");
+			APPL_PRINT(" -clksrc:    %u\n", g_options.clksrc);
+			APPL_PRINT(" -num_tmo:   %u\n", rattr.num_tmo);
+			APPL_PRINT(" -num_freqs: %u\n", rattr.freqparam.num);
+			for (unsigned int i = 0; i < rattr.freqparam.num; i++) {
+				APPL_PRINT(" -freq_hz[%u]: %" PRIu64 " %" PRIu64 "/%" PRIu64 "\n",
+					   i, rattr.freqparam.freq_hz[i].integer,
+					   rattr.freqparam.freq_hz[i].numer,
+					   rattr.freqparam.freq_hz[i].denom);
+			}
+			APPL_PRINT(" -res_ns:    %lu\n", rattr.freqparam.res_ns);
+		}
+
+		strncpy(rattr.name, "RingFreq", EM_TIMER_NAME_LEN);
+		em_timer_t rtmr = em_timer_ring_freq_create(&rattr);
+
+		trace_add(TEST_TIME_FN(), TRACE_OP_TMR_CREATE, em_core_id(), 0, -1, NULL, rtmr);
+		test_fatal_if(rtmr == EM_TIMER_UNDEF, "Ring freq timer create fail!");
+		/* Single shared ring-freq timer: only slot 0 owns the handle, others stay UNDEF */
+		eo_ctx->test_tmr[0] = rtmr;
+		eo_ctx->tick_hz[0] = em_timer_freq(rtmr);
+		for (unsigned int i = 1; i < g_options.num_timers; i++) {
+			eo_ctx->test_tmr[i] = EM_TIMER_UNDEF;
+			eo_ctx->tick_hz[i] = eo_ctx->tick_hz[0];
+		}
+		if (EXTRA_PRINTS)
+			APPL_PRINT("Created freq ring timer: %p\n", rtmr);
+		return;
+	}
+
+	/* Original base_mul ring timer path */
 	for (unsigned int i = 0; i < g_options.num_timers; i++) {
+		uint64_t basehz_integer = g_options.basehz[i].integer;
+		const bool has_fraction = g_options.basehz[i].numer > 0;
+
+		if (basehz_integer == 0 && !has_fraction) {
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
+				   "Invalid ring base_hz for timer[%u]: 0 Hz", i);
+		}
+
+		if (has_fraction && g_options.basehz[i].denom == 0) {
+			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF,
+				   "Invalid ring base_hz denominator for timer[%u]: 0", i);
+		}
+
+		/* Allow under-1Hz setup: init with 1Hz, then override n/d below. */
+		if (basehz_integer == 0 && has_fraction)
+			basehz_integer = 1;
+
 		em_status_t stat = em_timer_ring_attr_init(&rattr,
 							   g_options.clksrc,
-							   g_options.basehz[i].integer,
+							   basehz_integer,
 							   g_options.max_mul[i],
 							   g_options.res_ns[i]);
 
 		if (g_options.basehz[i].numer) {
+			rattr.ringparam.base_hz.integer = g_options.basehz[i].integer;
 			rattr.ringparam.base_hz.numer = g_options.basehz[i].numer;
 			rattr.ringparam.base_hz.denom = g_options.basehz[i].denom;
 		}
@@ -692,7 +782,7 @@ static void create_test_timer(app_eo_ctx_t *eo_ctx)
 		trace_add(TEST_TIME_FN(), TRACE_OP_TMR_CREATE, em_core_id(), i, -1, NULL, rtmr);
 		test_fatal_if(rtmr == EM_TIMER_UNDEF, "Ring timer create fail!");
 		eo_ctx->test_tmr[i] = rtmr;
-		eo_ctx->tick_hz[i] = em_timer_get_freq(rtmr);
+		eo_ctx->tick_hz[i] = em_timer_freq(rtmr);
 		if (EXTRA_PRINTS)
 			APPL_PRINT("Created test timer[%d]: %p\n", i, rtmr);
 	} /* next timer */
@@ -702,43 +792,51 @@ static void create_test_timeouts(app_eo_ctx_t *eo_ctx)
 {
 	/* create test timeout(s) */
 	for (unsigned int t = 0; t < g_options.num_timers; t++) {
+		/* In freq mode all tmos share the single timer at slot 0 */
+		unsigned int slot = g_options.freq_mode ? 0 : t;
+
 		for (unsigned int to = 0; to < g_options.num_tmo; to++) {
 			em_tmo_args_t args = { .userptr = tmo2ptr(t, to) };
 
 			if (eo_ctx->test_tmo[t][to] == EM_TMO_UNDEF) {
 				uint64_t t1 = TEST_TIME_FN();
 
-				eo_ctx->test_tmo[t][to] = em_tmo_create_arg(eo_ctx->test_tmr[t],
+				eo_ctx->test_tmo[t][to] = em_tmo_create_arg(eo_ctx->test_tmr[slot],
 									    EM_TMO_FLAG_PERIODIC,
 									    eo_ctx->test_q,
 									    &args);
 				profile_add(t1, TEST_TIME_FN(), PROF_TMO_CREATE,
 					    eo_ctx, em_core_id());
 				trace_add(t1, TRACE_OP_TMO_CREATE, em_core_id(),
-					  t, to, eo_ctx->test_tmr[t], eo_ctx->test_tmo[t][to]);
+					  t, to, eo_ctx->test_tmr[slot], eo_ctx->test_tmo[t][to]);
 				test_fatal_if(eo_ctx->test_tmo[t][to] == EM_TMO_UNDEF,
 					      "Can't allocate test_tmo!\n");
 			}
 
-			uint64_t tick_now = em_timer_current_tick(eo_ctx->test_tmr[t]);
+			uint64_t tick_now = em_timer_current_tick(eo_ctx->test_tmr[slot]);
 			uint64_t t1 = TEST_TIME_FN();
 			uint64_t startabs = 0;
 
 			if (g_options.start_offset[to])
 				startabs = tick_now + g_options.start_offset[to];
 			trace_add(t1, TRACE_OP_TMO_SET, em_core_id(),
-				  t, to, (void *)tick_now, eo_ctx->test_ev[t][to]);
+				  t, to, (void *)tick_now, NULL);
 			t1 = TEST_TIME_FN();
-			em_status_t stat = em_tmo_set_periodic_ring(eo_ctx->test_tmo[t][to],
-								    startabs,
-								    g_options.multiplier[to],
-								    eo_ctx->test_ev[t][to]);
+			em_status_t stat;
+
+			if (g_options.freq_mode)
+				stat = em_tmo_set_periodic_ring_freq(eo_ctx->test_tmo[t][to],
+								     startabs,
+								     g_options.basehz[t]);
+			else
+				stat = em_tmo_set_periodic_ring(eo_ctx->test_tmo[t][to],
+								startabs,
+								g_options.multiplier[to]);
 
 			profile_add(t1, TEST_TIME_FN(), PROF_TMO_SET, eo_ctx, em_core_id());
 			test_fatal_if(stat != EM_OK, "Can't activate test tmo[%d][%d], ret %u!\n",
 				      t, to, stat);
 			eo_ctx->first_time[t][to] = t1;
-			eo_ctx->test_ev[t][to] = EM_EVENT_UNDEF; /* now given to timer */
 		}
 	}
 }
@@ -754,7 +852,7 @@ static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 			if (eo_ctx->test_tmo[ti][tmoi] == EM_TMO_UNDEF)
 				continue;
 
-			em_tmo_state_t s = em_tmo_get_state(eo_ctx->test_tmo[ti][tmoi]);
+			em_tmo_state_t s = em_tmo_state(eo_ctx->test_tmo[ti][tmoi]);
 
 			test_fatal_if(s == EM_TMO_STATE_ACTIVE,
 				      "Unexpected tmo state ACTIVE after cancel\n");
@@ -768,7 +866,7 @@ static void delete_test_timeouts(app_eo_ctx_t *eo_ctx, bool force)
 
 				em_tmo_state_t tmo_state;
 
-				tmo_state = em_tmo_get_state(eo_ctx->test_tmo[ti][tmoi]);
+				tmo_state = em_tmo_state(eo_ctx->test_tmo[ti][tmoi]);
 				if (tmo_state == EM_TMO_STATE_ACTIVE)
 					em_tmo_cancel(eo_ctx->test_tmo[ti][tmoi], &ev);
 
@@ -793,7 +891,7 @@ static void delete_test_events(app_eo_ctx_t *eo_ctx, bool force)
 		for (unsigned int tmoi = 0; tmoi < g_options.num_tmo; tmoi++) {
 			if (eo_ctx->test_ev[ti][tmoi] == EM_EVENT_UNDEF)
 				continue;
-			if (!g_options.reuse_ev || force) {
+			if (force) {
 				trace_add(TEST_TIME_FN(), TRACE_OP_TMO_EV_FREE,
 					  core, ti, tmoi, eo_ctx->test_tmo[ti][tmoi],
 					  eo_ctx->test_ev[ti][tmoi]);
@@ -945,10 +1043,10 @@ static bool handle_tmo(app_eo_ctx_t *eo_ctx, em_event_t event, uint64_t now)
 	unsigned int tmri, tmoi;
 	int core = em_core_id();
 
-	test_fatal_if(em_tmo_get_type(event, &tmo, false) != EM_TMO_TYPE_PERIODIC, "not a TMO?!");
+	test_fatal_if(em_tmo_type(event, &tmo, false) != EM_TMO_TYPE_PERIODIC, "not a TMO?!");
 
 	/* event has no user specific content, userptr holds encoded indexes */
-	ptr2tmo(em_tmo_get_userptr(event, NULL), &tmri, &tmoi);
+	ptr2tmo(em_tmo_userptr(event, NULL), &tmri, &tmoi);
 	test_fatal_if(tmri >= MAX_TEST_TIMERS || tmoi >= MAX_TEST_TMO,
 		      "Too large index, event corrupted?");
 	test_fatal_if(tmo != eo_ctx->test_tmo[tmri][tmoi],
@@ -956,7 +1054,8 @@ static bool handle_tmo(app_eo_ctx_t *eo_ctx, em_event_t event, uint64_t now)
 		      tmri, tmoi, eo_ctx->test_tmo[tmri][tmoi], tmo);
 
 	/* use passed rx timestamp for better accuracy. Could still improve by debug timestamps */
-	uint64_t tick = em_timer_current_tick(eo_ctx->test_tmr[tmri]);
+	unsigned int slot = g_options.freq_mode ? 0 : tmri;
+	uint64_t tick = em_timer_current_tick(eo_ctx->test_tmr[slot]);
 
 	trace_add(now, TRACE_OP_TMO_RX, core, tmri, tmoi, (void *)tick, event);
 	eo_ctx->cdat[core].count[tmri][tmoi]++;
@@ -965,18 +1064,15 @@ static bool handle_tmo(app_eo_ctx_t *eo_ctx, em_event_t event, uint64_t now)
 	em_status_t stat;
 	uint64_t t1 = TEST_TIME_FN();
 
-	stat = em_tmo_ack(tmo, event);
+	stat = em_tmo_ring_ack(tmo, event);
 	profile_add(t1, TEST_TIME_FN(), PROF_TMO_ACK, eo_ctx, core);
 	if (stat == EM_ERR_CANCELED) { /* last event */
 		trace_add(TEST_TIME_FN(), TRACE_OP_TMO_ACK_LAST, core, tmri, tmoi, tmo, event);
 		eo_ctx->last_time[tmri][tmoi] = now;
 		if (EXTRA_PRINTS)
 			APPL_PRINT("last timeout[%u][%u]\n", tmri, tmoi);
-		if (g_options.reuse_ev) {
-			eo_ctx->test_ev[tmri][tmoi] = event; /* event for tmo re-start */
-			return true; /* don't free in receive */
-		}
-		return false; /* now allowed to free */
+		/* Ring timer event is managed by ODP, must not be freed */
+		return true;
 	}
 
 	test_fatal_if(stat != EM_OK, "Test tmo[%u][%u] ack returned %u!\n", tmri, tmoi, stat);
@@ -1310,7 +1406,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	msg->count = 0;
 	msg->type = MSGTYPE_HB;
 	msg->tmo = eo_ctx->heartbeat_tmo;
-	uint64_t hb_hz = em_timer_get_freq(m_shm->hb_tmr);
+	uint64_t hb_hz = em_timer_freq(m_shm->hb_tmr);
 
 	if (hb_hz < 10)
 		APPL_ERROR("WARNING: HB timer hz very low!?\n");
@@ -1362,9 +1458,10 @@ static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo)
 	test_fatal_if(core >= MAX_CORES, "Too many cores!");
 
 	memset(&eo_ctx->cdat[core].rnd, 0, sizeof(rnd_state_t));
-	initstate_r(time(NULL), eo_ctx->cdat[core].rnd.rndstate, RND_STATE_BUF,
-		    &eo_ctx->cdat[core].rnd.rdata);
-	srandom(time(NULL));
+	/* use time(NULL) as seed, don't care about time_t truncation */
+	initstate_r((unsigned int)time(NULL), eo_ctx->cdat[core].rnd.rndstate,
+		    RND_STATE_BUF, &eo_ctx->cdat[core].rnd.rdata);
+	srandom((unsigned int)time(NULL));
 	m_tracecount = 0;
 	trace_add(TEST_TIME_FN(), TRACE_OP_START, core, -1, -1, NULL, NULL);
 	return EM_OK;
@@ -1386,7 +1483,7 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 		APPL_PRINT("EO stop\n");
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
-		if (em_tmo_get_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->heartbeat_tmo, &event);
 
 		em_tmo_delete(eo_ctx->heartbeat_tmo);
@@ -1458,7 +1555,7 @@ static void app_eo_receive(void *eo_context, em_event_t event,
 		if (type == EM_EVENT_TYPE_TIMER_IND) { /* extra trace */
 			unsigned int tmri, tmoi;
 
-			ptr2tmo(em_tmo_get_userptr(event, NULL), &tmri, &tmoi);
+			ptr2tmo(em_tmo_userptr(event, NULL), &tmri, &tmoi);
 			trace_add(TEST_TIME_FN(), TRACE_OP_TMO_EV_FREE, em_core_id(),
 				  tmri, tmoi, eo_ctx->test_tmo[tmri][tmoi], event);
 			eo_ctx->test_ev[tmri][tmoi] = EM_EVENT_UNDEF;

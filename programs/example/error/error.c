@@ -636,7 +636,7 @@ error_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 
 	(void)conf;
 
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	APPL_PRINT("Error test start (%s, eo id %" PRI_EO ")\n",
 		   eo_ctx->name, eo);

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -46,9 +46,29 @@
  * do it for you.
  */
 
+#include <event_machine/api/event_machine_types.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * Scheduling context types
+ */
+typedef enum {
+	/**
+	 * Parallel or released context
+	 */
+	EM_SCHED_CONTEXT_TYPE_NONE = 0,
+	/**
+	 * Atomic context
+	 */
+	EM_SCHED_CONTEXT_TYPE_ATOMIC = 1,
+	/**
+	 * Ordered context
+	 */
+	EM_SCHED_CONTEXT_TYPE_ORDERED = 2
+} em_sched_context_type_t;
 
 /**
  * A hint to release an atomic processing context.

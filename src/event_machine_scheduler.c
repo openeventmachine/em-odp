@@ -28,7 +28,23 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_atomic_group.h"
+#include "em_mem.h"
+#include "em_queue_types.h"
 
 void
 em_atomic_processing_end(void)
@@ -67,7 +83,7 @@ em_ordered_processing_end(void)
 
 	const queue_elem_t *q_elem = locm->current.sched_q_elem;
 
-	if (unlikely(!q_elem || q_elem->type != EM_QUEUE_TYPE_PARALLEL_ORDERED))
+	if (unlikely(!q_elem || q_elem->type != EM_QUEUE_TYPE_ORDERED))
 		return;
 
 	odp_schedule_release_ordered();

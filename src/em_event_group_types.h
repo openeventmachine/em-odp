@@ -37,66 +37,85 @@
  *
  */
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define EGRP_CNT_BITS 24
+#define EGRP_GEN_BITS (64 - 2 * EGRP_CNT_BITS - 1)
+
 /**
- * Event Group counter
+ * Max value that can be represented by the event group counter,
+ * i.e., the maximum number of events that can be set via _apply() or
+ * _increment()
+ */
+#define EGRP_CNT_MAX  ((1ULL << EGRP_CNT_BITS) - 1)
+
+/**
+ * Event Group counters
+ * These event group counts determine the number of events to process
+ * until completion. Events are counted before and after the receive
+ * function in the dispatcher.
  */
 typedef union {
 	struct {
-		/** Counter value */
-		int32_t count;
+		/** Counter value: pre-receive (before the EO receive fn) */
+		uint64_t pre_cnt  : EGRP_CNT_BITS;
+		/** Counter value: post-receive (after the EO receive fn) */
+		uint64_t post_cnt : EGRP_CNT_BITS;
+		/** Event group has been _apply()'d: 0=false, 1=true */
+		uint64_t applied  : 1;
 		/** Current event group generation */
-		int32_t gen;
+		uint64_t gen      : EGRP_GEN_BITS;
 	};
-	uint64_t all;
-	env_atomic64_t atomic;
+	uint64_t all_u64; /**< All counter values combined (non-atomic) */
+	uint64_t atomic_u64; /**< Accessed atomically with __atomic_...() */
 } egrp_counter_t;
 
 COMPILE_TIME_ASSERT(sizeof(egrp_counter_t) == sizeof(uint64_t),
 		    EGRP_COUNTER_SIZE_ERROR);
+COMPILE_TIME_ASSERT(sizeof(egrp_counter_t) * 8 == 2 * EGRP_CNT_BITS + EGRP_GEN_BITS + 1,
+		    EGRP_COUNTER_BITS_ERROR);
 
 /**
  * EM Event Group element
  */
-typedef struct {
-	/**
-	 * Contains the notification events to send when
-	 * the event group count reaches zero.
-	 */
-	em_notif_t notif_tbl[EM_EVENT_GROUP_MAX_NOTIF] ENV_CACHE_LINE_ALIGNED;
-
+typedef struct event_group_elem_t {
 	/**
 	 * These event group counts determine the number of events to process
 	 * until completion. Events are counted before and after the receive
 	 * function in the dispatcher.
 	 */
-	egrp_counter_t pre ENV_CACHE_LINE_ALIGNED;
+	egrp_counter_t counts;
 
-	egrp_counter_t post ENV_CACHE_LINE_ALIGNED;
-
-	union {
-		struct {
-			/** The number of notif events stored in notif_tbl[] */
-			int num_notif;
-			/** true/false, event group is ready for apply */
-			bool ready;
-		};
-		/** clear all options at once */
-		uint64_t all;
-	};
-
-	/** The event group handle associated with this element */
-	em_event_group_t event_group;
+	/**
+	 * The event group handle associated with this element.
+	 * Constant after init.
+	 */
+	em_event_group_t event_group ENV_CACHE_LINE_ALIGNED;
 
 	/** true/false, event group is in stash(free/unused) */
 	bool in_stash;
+
+	/** Number of notification events in .notif_tbl[] */
+	int num_notif;
+	/**
+	 * Contains the notification events to send when
+	 * the event group count reaches zero.
+	 */
+	em_notif_t notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
+
+	/** for alignment/padding purposes only */
+	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } event_group_elem_t ENV_CACHE_LINE_ALIGNED;
 
-COMPILE_TIME_ASSERT(offsetof(event_group_elem_t, all) + sizeof(uint64_t)
-		    >= offsetof(event_group_elem_t, ready) + sizeof(bool),
+COMPILE_TIME_ASSERT(sizeof(event_group_elem_t) % ENV_CACHE_LINE_SIZE == 0,
 		    EVENT_GROUP_ELEM_T__SIZE_ERROR);
 /**
  * Event group table

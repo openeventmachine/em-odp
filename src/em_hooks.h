@@ -36,6 +36,13 @@
  * EM internal API callback hook functions
  */
 
+#include <stdint.h>
+
+#include <event_machine.h>
+
+#include "em_hook_types.h"
+#include "em_mem.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif

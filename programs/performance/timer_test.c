@@ -92,7 +92,7 @@
 #if APP_VISUAL_DEBUG
 #define VISUAL_DBG(x)		APPL_PRINT(x)
 #else
-#define VISUAL_DBG(x)		do {} while (0)
+#define VISUAL_DBG(x)		/* empty macro */
 #endif
 
 #define APP_EO_NAME		"Test EO"
@@ -417,7 +417,7 @@ void test_start(const appl_conf_t *appl_conf)
 
 	msg = em_event_pointer(event);
 	msg->command = APP_CMD_HEARTBEAT;
-	eo_ctx->hz = em_timer_get_freq(m_shm->tmr);
+	eo_ctx->hz = em_timer_freq(m_shm->tmr);
 	if (eo_ctx->hz < 100)
 		APPL_ERROR("WARNING - timer hz very low!\n");
 
@@ -498,7 +498,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 	APPL_PRINT("timer_test %s\n", TEST_VERSION);
 	APPL_PRINT("EO start\n");
 
-	num_timers = em_timer_get_all(&tmr, 1);
+	num_timers = em_timer_list(&tmr, 1);
 	APPL_PRINT("System has %d timer(s)\n", num_timers);
 
 	if (APP_EXTRA_PRINTS) {
@@ -508,7 +508,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 			APPL_PRINT("64b atomics may use locks\n");
 	}
 
-	if (em_timer_get_attr(m_shm->tmr, &attr) != EM_OK) {
+	if (em_timer_attr(m_shm->tmr, &attr) != EM_OK) {
 		APPL_ERROR("Can't get timer info\n");
 		return EM_ERR_BAD_ID;
 	}
@@ -518,7 +518,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo,
 	APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
 	APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 	APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
-		   em_timer_get_freq(m_shm->tmr));
+		   em_timer_freq(m_shm->tmr));
 
 	eo_ctx->res_ns = attr.resparam.res_ns;
 
@@ -568,7 +568,7 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 	APPL_PRINT("EO stop\n");
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
-		if (em_tmo_get_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->heartbeat_tmo, &event);
 
 		em_tmo_delete(eo_ctx->heartbeat_tmo);
@@ -1001,7 +1001,7 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 		if (eo_ctx->oneshot.tmo[i].tmo == EM_TMO_UNDEF)
 			continue;
 
-		if (em_tmo_get_state(eo_ctx->oneshot.tmo[i].tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->oneshot.tmo[i].tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->oneshot.tmo[i].tmo, &evt);
 
 		if (em_tmo_delete(eo_ctx->oneshot.tmo[i].tmo) != EM_OK)
@@ -1031,7 +1031,7 @@ void cleanup_test(app_eo_ctx_t *eo_ctx)
 		if (eo_ctx->periodic.tmo[i].tmo == EM_TMO_UNDEF)
 			continue;
 
-		if (em_tmo_get_state(eo_ctx->periodic.tmo[i].tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->periodic.tmo[i].tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->periodic.tmo[i].tmo, &evt);
 
 		if (em_tmo_delete(eo_ctx->periodic.tmo[i].tmo) != EM_OK)

@@ -36,6 +36,8 @@
 #ifndef EM_DISPATCHER_H_
 #define EM_DISPATCHER_H_
 
+#include <event_machine.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif

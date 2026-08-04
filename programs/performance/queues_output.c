@@ -166,10 +166,10 @@ typedef struct {
 	double cpu_mhz;
 	uint64_t cpu_hz;
 	uint64_t print_count;
-	env_atomic64_t ready_count;
+	odp_atomic_u64_t ready_count;
 	/*  if using CONST_NUM_EVENTS:*/
 	int free_flag;
-	env_atomic64_t freed_count;
+	odp_atomic_u64_t freed_count;
 } test_status_t;
 
 /**
@@ -265,7 +265,7 @@ typedef struct {
 
 	em_queue_t output_queues[EM_MAX_OUTPUT_QUEUES] ENV_CACHE_LINE_ALIGNED;
 
-	env_atomic32_t nbr_output_queues ENV_CACHE_LINE_ALIGNED;
+	odp_atomic_u32_t nbr_output_queues ENV_CACHE_LINE_ALIGNED;
 	/* EO ID's */
 	em_eo_t eo[NUM_EOS] ENV_CACHE_LINE_ALIGNED;
 } perf_shm_t;
@@ -475,9 +475,9 @@ void test_start(const appl_conf_t *appl_conf)
 	perf_shm->test_status.num_cores = appl_conf->core_count;
 	perf_shm->test_status.free_flag = 0;
 
-	env_atomic64_init(&perf_shm->test_status.ready_count);
-	env_atomic64_init(&perf_shm->test_status.freed_count);
-	env_atomic32_init(&perf_shm->nbr_output_queues);
+	odp_atomic_init_u64(&perf_shm->test_status.ready_count, 0);
+	odp_atomic_init_u64(&perf_shm->test_status.freed_count, 0);
+	odp_atomic_init_u32(&perf_shm->nbr_output_queues, 0);
 
 	/* Create EOs */
 	for (i = 0; i < NUM_EOS; i++) {
@@ -549,7 +549,7 @@ void test_stop(const appl_conf_t *appl_conf)
 			      eo, ret);
 	}
 
-	int nrb_queues = env_atomic32_get(&perf_shm->nbr_output_queues);
+	int nrb_queues = odp_atomic_load_u32(&perf_shm->nbr_output_queues);
 
 	for (i = 0; i <  nrb_queues; i++) {
 		queue = perf_shm->output_queues[i];
@@ -791,11 +791,11 @@ update_test_state(em_event_t event)
 			if (unlikely(tstat->free_flag)) {
 				em_free(event);
 				freed_count =
-				env_atomic64_add_return(&tstat->freed_count, 1);
+					odp_atomic_fetch_inc_u64(&tstat->freed_count) + 1;
+
 				if (freed_count == CONST_NUM_EVENTS) {
 					/* Last event */
-					env_atomic64_set(&tstat->freed_count,
-							 0);
+					odp_atomic_store_u64(&tstat->freed_count, 0);
 					tstat->reset_flag = 0;
 					tstat->free_flag = 0;
 					queue_step();
@@ -809,11 +809,10 @@ update_test_state(em_event_t event)
 			core_state = CORE_STATE_IDLE;
 			cstat->begin_time = ENV_TIME_NULL;
 
-			ready_count =
-			env_atomic64_add_return(&tstat->ready_count, 1);
+			ready_count = odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 			if (ready_count == (uint64_t)tstat->num_cores) {
-				env_atomic64_set(&tstat->ready_count, 0);
+				odp_atomic_store_u64(&tstat->ready_count, 0);
 
 				if (CONST_NUM_EVENTS) {
 					int sample = tstat->samples;
@@ -850,7 +849,7 @@ update_test_state(em_event_t event)
 		begin_time = cstat->begin_time;
 		cstat->diff_time = env_time_diff(end_time, begin_time);
 
-		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
+		ready_count = odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 		/*
 		 * Check whether all cores are done with the step,
@@ -858,7 +857,7 @@ update_test_state(em_event_t event)
 		 */
 		if (unlikely((int)ready_count == tstat->num_cores)) {
 			/* No real need for atomicity here, ran on last core*/
-			env_atomic64_set(&tstat->ready_count, 0);
+			odp_atomic_store_u64(&tstat->ready_count, 0);
 
 			tstat->reset_flag = 1;
 			tstat->samples++;
@@ -917,7 +916,7 @@ create_and_link_queues(int start_queue, int num_queues)
 	em_queue_conf_t queue_conf;
 	em_output_queue_conf_t output_conf;
 	uint32_t output_tot_cnt = 0;
-	env_atomic32_t *output_counter;
+	odp_atomic_u32_t *output_counter;
 	const int num_output_queues = num_queues / NUM_SCHED_TO_OUTPUT_QUEUE;
 	char queue_name_sched[EM_QUEUE_NAME_LEN];
 	char queue_name_output[EM_QUEUE_NAME_LEN];
@@ -984,7 +983,8 @@ create_and_link_queues(int start_queue, int num_queues)
 		output_func_args_t args;
 
 		output_counter = &perf_shm->nbr_output_queues;
-		output_tot_cnt = env_atomic32_get(output_counter);
+		output_tot_cnt = odp_atomic_load_u32(output_counter);
+
 		snprintf(queue_name_output, sizeof(queue_name_output),
 			 "Q-output-%" PRIu8 "", output_tot_cnt);
 		queue_name_output[sizeof(queue_name_output) - 1] = '\0';
@@ -1006,7 +1006,7 @@ create_and_link_queues(int start_queue, int num_queues)
 					&queue_conf);
 
 		if (queue != EM_QUEUE_UNDEF) {
-			env_atomic32_inc(output_counter);
+			odp_atomic_inc_u32(output_counter);
 			perf_shm->output_queues[output_tot_cnt] = queue;
 		}
 
@@ -1128,7 +1128,7 @@ alloc_free_per_event(em_event_t event)
 	int seq = perf_event->seq;
 	em_queue_t sched_queue = perf_event->sched_queue;
 	em_queue_t output_queue = perf_event->output_queue;
-	uint32_t event_size = em_event_get_size(event);
+	uint32_t event_size = em_event_size(event);
 
 	em_free(event);
 

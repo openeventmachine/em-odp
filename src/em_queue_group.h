@@ -38,6 +38,19 @@
 #ifndef EM_QUEUE_GROUP_H_
 #define EM_QUEUE_GROUP_H_
 
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include <event_machine.h>
+
+#include "em_internal_event_types.h"
+#include "em_mem.h"
+#include "em_queue_group_types.h"
+#include "em_queue_types.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,7 +61,9 @@ extern "C" {
 em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 			     queue_group_pool_t *const queue_group_pool);
 em_status_t queue_group_init_local(void);
+em_status_t queue_group_term(void);
 void queue_group_join_all(void);
+void queue_group_leave_all(bool flush_orphan_qgrps);
 
 em_queue_group_t
 queue_group_create(const char *name, const em_core_mask_t *mask,
@@ -157,7 +172,7 @@ static inline void
 core_queue_grp_name(int core, char qgrp_name[/*out:len*/], size_t len)
 {
 	const size_t maxlen = len < EM_QUEUE_GROUP_NAME_LEN ?
-				len : EM_QUEUE_GROUP_NAME_LEN;
+			      len : EM_QUEUE_GROUP_NAME_LEN;
 
 	if (unlikely(maxlen == 0))
 		return;

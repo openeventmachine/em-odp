@@ -1,6 +1,16 @@
+#ifndef SCHEDULING_LATENCY_H
+#define SCHEDULING_LATENCY_H
+
 #include <getopt.h>
 #include <inttypes.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+
 #include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "cm_setup.h"
 
 #define VERSION "v0.1 WIP"
 #define START_EVENTS	100000	/* ignore first events for startup prints to finish */
@@ -119,3 +129,5 @@ const char *instructions =
 "max_do[ns]	maximum dispatcher overhead (odp sched -> EO). 0 means debug is disabled\n"
 "max_eo[ns]	maximum EO receive. 0 means disabled\n"
 "\n";
+
+#endif /* SCHEDULING_LATENCY_H */

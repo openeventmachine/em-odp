@@ -28,7 +28,41 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_chaining.h"
+#include "em_eo.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_group.h"
+#include "em_event_group_types.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_hooks.h"
+#include "em_internal_event.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_inline.h"
+#include "em_pool_types.h"
+#include "em_queue.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
 
 em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool)
 {
@@ -36,7 +70,8 @@ em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool)
 	em_event_type_t major_type = em_event_type_major(type);
 
 	if (EM_CHECK_LEVEL > 0 &&
-	    unlikely(size == 0 || !pool_elem || major_type == EM_EVENT_TYPE_TIMER_IND)) {
+	    unlikely(size == 0 || !pool_elem || major_type == EM_EVENT_TYPE_TIMER_IND ||
+		     major_type == EM_EVENT_TYPE_ODP)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ALLOC,
 			       "Invalid args: size:%u type:%u pool:%" PRI_POOL "",
 			       size, type, pool);
@@ -75,7 +110,7 @@ em_event_t em_alloc(uint32_t size, em_event_type_t type, em_pool_t pool)
 		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, EM_ESCOPE_ALLOC,
 			       "EM-pool:'%s': sz:%u type:0x%x pool:%" PRI_POOL "",
 			       pool_elem->name, size, type, pool);
-		if (EM_DEBUG_PRINT && err != EM_OK &&
+		if (EM_DEBUG_PRINT_BASE && err != EM_OK &&
 		    (pool_elem->stats_opt.bit.available ||
 		     pool_elem->stats_opt.bit.cache_available)) {
 			em_pool_info_print(pool);
@@ -97,10 +132,11 @@ int em_alloc_multi(em_event_t events[/*out*/], int num,
 
 	const mpool_elem_t *const pool_elem = pool_elem_get(pool);
 	int ret = 0;
+	em_event_type_t major_type = em_event_type_major(type);
 
 	if (EM_CHECK_LEVEL > 0 &&
 	    unlikely(!events || num < 0 || size == 0 || !pool_elem ||
-		     em_event_type_major(type) == EM_EVENT_TYPE_TIMER_IND)) {
+		     major_type == EM_EVENT_TYPE_TIMER_IND || major_type == EM_EVENT_TYPE_ODP)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ALLOC_MULTI,
 			       "Invalid args: events:%p num:%d size:%u type:%u pool:%" PRI_POOL "",
 			       events, num, size, type, pool);
@@ -122,7 +158,7 @@ int em_alloc_multi(em_event_t events[/*out*/], int num,
 		 * pkt events.
 		 */
 		if (EM_CHECK_LEVEL >= 1 &&
-		    unlikely(em_event_type_major(type) == EM_EVENT_TYPE_PACKET)) {
+		    unlikely(major_type == EM_EVENT_TYPE_PACKET)) {
 			INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_ALLOC_MULTI,
 				       "EM-pool:%s(%" PRI_POOL "): Invalid event type:0x%x for buf",
 				       pool_elem->name, pool, type);
@@ -131,7 +167,7 @@ int em_alloc_multi(em_event_t events[/*out*/], int num,
 		ret = event_alloc_buf_multi(events, num, pool_elem, size, type);
 	} else if (pool_elem->event_type == EM_EVENT_TYPE_VECTOR) {
 		if (EM_CHECK_LEVEL >= 1 &&
-		    unlikely(em_event_type_major(type) != EM_EVENT_TYPE_VECTOR)) {
+		    unlikely(major_type != EM_EVENT_TYPE_VECTOR)) {
 			INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED, EM_ESCOPE_ALLOC,
 				       "EM-pool:%s(%" PRI_POOL "): Inv. event type:0x%x for vector",
 				       pool_elem->name, pool, type);
@@ -147,7 +183,7 @@ int em_alloc_multi(em_event_t events[/*out*/], int num,
 			       "EM-pool:'%s': sz:%u type:0x%x pool:%" PRI_POOL "",
 			       num, ret,
 			       pool_elem->name, size, type, pool);
-		if (EM_DEBUG_PRINT && err != EM_OK &&
+		if (EM_DEBUG_PRINT_BASE && err != EM_OK &&
 		    (pool_elem->stats_opt.bit.available ||
 		     pool_elem->stats_opt.bit.cache_available)) {
 			em_pool_info_print(pool);
@@ -172,7 +208,8 @@ static inline bool is_vector_type(em_event_t vector_event)
 	odp_event_t odp_event = event_em2odp(vector_event);
 	odp_event_type_t odp_etype = odp_event_type(odp_event);
 
-	if (odp_etype == ODP_EVENT_PACKET_VECTOR)
+	if (odp_etype == ODP_EVENT_VECTOR ||
+	    odp_etype == ODP_EVENT_PACKET_VECTOR)
 		return true;
 
 	return false;
@@ -198,16 +235,31 @@ static inline bool is_vector_type_or_error(em_event_t vector_event,
 	return false;
 }
 
-/**
- * @brief Handle ESV state for 'em_free' for the event-table of a vector event
- *
- * @param event  Vector event handle
- */
-static void event_vector_prepare_free_full(em_event_t event, const uint16_t api_op)
+static inline void
+event_vector_prepare_free_full__odp_evvec(odp_event_vector_t evvec, const uint16_t api_op)
 {
-	/* em_free() frees the vector as well as all the events it contains */
-	em_event_t *ev_tbl;
-	uint32_t sz = event_vector_tbl(event, &ev_tbl);
+	em_event_t *ev_tbl = NULL;
+	uint32_t sz = event_vector_tbl__odp_evvec(evvec, &ev_tbl /*out*/);
+
+	if (sz) {
+		event_hdr_t *ev_hdrs[sz];
+
+		/* same as event_to_hdr_multi(), removes gcc-12 LTO error in haswell */
+		for (uint32_t i = 0; i < sz; i++)
+			ev_hdrs[i] = event_to_hdr(ev_tbl[i]);
+
+		evstate_free_multi(ev_tbl, ev_hdrs, sz, api_op);
+
+		/* drop ESV generation from event handles */
+		(void)events_em2odp_inplace(ev_tbl, sz);
+	}
+}
+
+static inline void
+event_vector_prepare_free_full__odp_pktvec(odp_packet_vector_t pkt_vec, const uint16_t api_op)
+{
+	em_event_t *ev_tbl = NULL;
+	uint32_t sz = event_vector_tbl__odp_pktvec(pkt_vec, &ev_tbl /*out*/);
 
 	if (sz) {
 		event_hdr_t *ev_hdrs[sz];
@@ -220,6 +272,29 @@ static void event_vector_prepare_free_full(em_event_t event, const uint16_t api_
 
 		/* drop ESV generation from event handles */
 		(void)events_em2pkt_inplace(ev_tbl, sz);
+	}
+}
+
+/**
+ * @brief Handle ESV state for 'em_free' for the event-table of a vector event
+ *
+ * @param event  Vector event handle
+ */
+static void event_vector_prepare_free_full(em_event_t vector_event, const uint16_t api_op)
+{
+	/* em_free() frees the vector as well as all the events it contains */
+	odp_event_t odp_event = event_em2odp(vector_event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
+
+	if (odp_etype == ODP_EVENT_VECTOR) {
+		odp_event_vector_t evvec = odp_event_vector_from_event(odp_event);
+
+		event_vector_prepare_free_full__odp_evvec(evvec, api_op);
+	} else {
+		/* odp_etype == ODP_EVENT_PACKET_VECTOR */
+		odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+
+		event_vector_prepare_free_full__odp_pktvec(pkt_vec, api_op);
 	}
 }
 
@@ -283,10 +358,12 @@ void em_free(em_event_t event)
 			evstate_free(event, ev_hdr, EVSTATE__FREE);
 	} else if (esv_ena) {
 		event_hdr_t *ev_hdr = event_to_hdr(event);
-
-		evstate_free(event, ev_hdr, EVSTATE__FREE);
-		if (is_vector_type(event))
-			event_vector_prepare_free_full(event, EVSTATE__FREE);
+		/* If event has a hdr, change esv state */
+		if (likely(ev_hdr->event_type != EM_EVENT_TYPE_ODP)) {
+			evstate_free(event, ev_hdr, EVSTATE__FREE);
+			if (is_vector_type(event))
+				event_vector_prepare_free_full(event, EVSTATE__FREE);
+		}
 	}
 
 	if (EM_API_HOOKS_ENABLE)
@@ -533,11 +610,14 @@ send_internal(em_event_t event, event_hdr_t *ev_hdr, em_queue_t queue)
 	switch (q_elem->type) {
 	case EM_QUEUE_TYPE_ATOMIC:
 	case EM_QUEUE_TYPE_PARALLEL:
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
-		stat = send_event(event, q_elem);
+	case EM_QUEUE_TYPE_ORDERED:
+		stat = send_sched(event, q_elem);
 		break;
 	case EM_QUEUE_TYPE_UNSCHEDULED:
 		stat = queue_unsched_enqueue(event, q_elem);
+		break;
+	case EM_QUEUE_TYPE_AGGR:
+		stat = send_aggr(event, ev_hdr, q_elem);
 		break;
 	case EM_QUEUE_TYPE_LOCAL:
 		stat = send_local(event, q_elem);
@@ -627,11 +707,14 @@ send_internal_multi(const em_event_t events[], event_hdr_t *ev_hdrs[],
 	switch (q_elem->type) {
 	case EM_QUEUE_TYPE_ATOMIC:
 	case EM_QUEUE_TYPE_PARALLEL:
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
-		num_sent = send_event_multi(events, num, q_elem);
+	case EM_QUEUE_TYPE_ORDERED:
+		num_sent = send_sched_multi(events, num, q_elem);
 		break;
 	case EM_QUEUE_TYPE_UNSCHEDULED:
 		num_sent = queue_unsched_enqueue_multi(events, num, q_elem);
+		break;
+	case EM_QUEUE_TYPE_AGGR:
+		num_sent = send_aggr_multi(events, ev_hdrs, num, q_elem);
 		break;
 	case EM_QUEUE_TYPE_LOCAL:
 		num_sent = send_local_multi(events, num, q_elem);
@@ -815,10 +898,10 @@ void *em_event_pointer_and_size(em_event_t event, uint32_t *size /*out*/)
 	return ev_ptr;
 }
 
-uint32_t em_event_get_size(em_event_t event)
+uint32_t em_event_size(em_event_t event)
 {
 	if (unlikely(EM_CHECK_LEVEL > 0 && event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_SIZE,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_SIZE,
 			       "event undefined!");
 		return 0;
 	}
@@ -840,48 +923,27 @@ uint32_t em_event_get_size(em_event_t event)
 	}
 
 	if (EM_CHECK_LEVEL > 0)
-		INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_GET_SIZE,
+		INTERNAL_ERROR(EM_ERR_NOT_FOUND, EM_ESCOPE_EVENT_SIZE,
 			       "Unexpected odp event type:%u", odp_etype);
 	return 0;
 }
 
-static inline odp_pool_t event_get_odp_pool(em_event_t event)
+static inline odp_pool_t event_odp_pool(em_event_t event)
 {
 	odp_event_t odp_event = event_em2odp(event);
 
-#if ODP_VERSION_API_NUM(1, 43, 0) <= ODP_VERSION_API
 	return odp_event_pool(odp_event);
-#else
-	odp_event_type_t type = odp_event_type(odp_event);
-	odp_pool_t odp_pool = ODP_POOL_INVALID;
-
-	if (type == ODP_EVENT_PACKET) {
-		odp_packet_t pkt = odp_packet_from_event(odp_event);
-
-		odp_pool = odp_packet_pool(pkt);
-	} else if (type == ODP_EVENT_BUFFER) {
-		odp_buffer_t buf = odp_buffer_from_event(odp_event);
-
-		odp_pool = odp_buffer_pool(buf);
-	} else if (type == ODP_EVENT_PACKET_VECTOR) {
-		odp_packet_vector_t pktvec = odp_packet_vector_from_event(odp_event);
-
-		odp_pool = odp_packet_vector_pool(pktvec);
-	}
-
-	return odp_pool;
-#endif
 }
 
-em_pool_t em_event_get_pool(em_event_t event)
+em_pool_t em_event_pool(em_event_t event)
 {
 	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_POOL,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_POOL,
 			       "event undefined!");
 		return EM_POOL_UNDEF;
 	}
 
-	odp_pool_t odp_pool = event_get_odp_pool(event);
+	odp_pool_t odp_pool = event_odp_pool(event);
 
 	if (unlikely(odp_pool == ODP_POOL_INVALID))
 		return EM_POOL_UNDEF;
@@ -896,15 +958,15 @@ em_pool_t em_event_get_pool(em_event_t event)
 	return pool;
 }
 
-em_pool_t em_event_get_pool_subpool(em_event_t event, int *subpool /*out*/)
+em_pool_t em_event_pool_subpool(em_event_t event, int *subpool /*out*/)
 {
 	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_POOL_SUBPOOL,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_POOL_SUBPOOL,
 			       "event undefined!");
 		return EM_POOL_UNDEF;
 	}
 
-	odp_pool_t odp_pool = event_get_odp_pool(event);
+	odp_pool_t odp_pool = event_odp_pool(event);
 
 	if (unlikely(odp_pool == ODP_POOL_INVALID))
 		return EM_POOL_UNDEF;
@@ -944,6 +1006,19 @@ em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype)
 		ev_hdr = odp_buffer_user_area(odp_buf);
 		break;
 	}
+	case ODP_EVENT_VECTOR: {
+		odp_event_vector_t odp_evvec = odp_event_vector_from_event(odp_event);
+
+		if (EM_CHECK_LEVEL >= 1) {
+			em_event_type_t new_major = em_event_type_major(newtype);
+
+			RETURN_ERROR_IF(new_major != EM_EVENT_TYPE_VECTOR,
+					EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_SET_TYPE,
+					"Event type:0x%x not suitable for a vector", newtype);
+		}
+		ev_hdr = odp_event_vector_user_area(odp_evvec);
+		break;
+	}
 	case ODP_EVENT_PACKET_VECTOR: {
 		odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
 
@@ -967,29 +1042,21 @@ em_status_t em_event_set_type(em_event_t event, em_event_type_t newtype)
 	return EM_OK;
 }
 
-em_event_type_t em_event_get_type(em_event_t event)
+em_event_type_t em_event_type(em_event_t event)
 {
-	const event_hdr_t *ev_hdr;
-
 	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_GET_TYPE,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_TYPE,
 			       "event undefined!");
 		return EM_EVENT_TYPE_UNDEF;
 	}
 
-	ev_hdr = event_to_hdr(event);
-
-	if (EM_CHECK_LEVEL >= 3 && unlikely(ev_hdr == NULL)) {
-		INTERNAL_ERROR(EM_ERR_BAD_POINTER, EM_ESCOPE_EVENT_GET_TYPE,
-			       "ev_hdr == NULL");
-		return EM_EVENT_TYPE_UNDEF;
-	}
+	const event_hdr_t *ev_hdr = event_to_hdr(event);
 
 	return ev_hdr->event_type;
 }
 
-int em_event_get_type_multi(const em_event_t events[], int num,
-			    em_event_type_t types[/*out:num*/])
+int em_event_type_multi(const em_event_t events[], int num,
+			em_event_type_t types[/*out:num*/])
 {
 	int i;
 
@@ -997,7 +1064,7 @@ int em_event_get_type_multi(const em_event_t events[], int num,
 	if (EM_CHECK_LEVEL > 0) {
 		if (unlikely(!events || num < 0 || !types)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG,
-				       EM_ESCOPE_EVENT_GET_TYPE_MULTI,
+				       EM_ESCOPE_EVENT_TYPE_MULTI,
 				       "Inv.args: events:%p num:%d types:%p",
 				       events, num, types);
 			return 0;
@@ -1011,7 +1078,7 @@ int em_event_get_type_multi(const em_event_t events[], int num,
 			;
 		if (unlikely(i != num)) {
 			INTERNAL_ERROR(EM_ERR_BAD_POINTER,
-				       EM_ESCOPE_EVENT_GET_TYPE_MULTI,
+				       EM_ESCOPE_EVENT_TYPE_MULTI,
 				       "events[%d] undefined!", i);
 			return 0;
 		}
@@ -1077,6 +1144,13 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
 		RETURN_ERROR_IF(event == EM_EVENT_UNDEF,
 				EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_SEND,
 				"Inv.args: event:%" PRI_EVENT "", event);
+
+	event_hdr_t *ev_hdr = event_to_hdr(event);
+	em_event_type_t evtype_major = em_event_type_major(ev_hdr->event_type);
+
+	if (unlikely(evtype_major == EM_EVENT_TYPE_ODP))
+		return EM_OK;
+
 	if (EM_CHECK_LEVEL >= 3) {
 		const queue_elem_t *const q_elem = queue_elem_get(queue);
 
@@ -1088,10 +1162,9 @@ em_status_t em_event_mark_send(em_event_t event, em_queue_t queue)
 				queue, q_elem->type);
 	}
 
-	event_hdr_t *ev_hdr = event_to_hdr(event);
-
-	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
-			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_SEND, "Timer-ring event not allowed");
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && evtype_major == EM_EVENT_TYPE_TIMER_IND,
+			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_SEND,
+			"Event type:%u not allowed", evtype_major);
 
 	/* avoid unnecessary writing 'undef' in case event is a ref */
 	if (ev_hdr->egrp != EM_EVENT_GROUP_UNDEF)
@@ -1121,10 +1194,14 @@ em_status_t em_event_unmark_send(em_event_t event)
 				"Inv.args: event:%" PRI_EVENT "", event);
 
 	event_hdr_t *ev_hdr = event_to_hdr(event);
+	em_event_type_t evtype_major = em_event_type_major(ev_hdr->event_type);
 
-	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND,
+	if (unlikely(evtype_major == EM_EVENT_TYPE_ODP))
+		return EM_OK;
+
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 && evtype_major == EM_EVENT_TYPE_TIMER_IND,
 			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_SEND,
-			"Timer-ring event not allowed");
+			"Event type:%u not allowed", evtype_major);
 
 	evstate_unmark_send(event, ev_hdr);
 
@@ -1143,8 +1220,12 @@ void em_event_mark_free(em_event_t event)
 	}
 
 	event_hdr_t *const ev_hdr = event_to_hdr(event);
+	em_event_type_t evtype_major = em_event_type_major(ev_hdr->event_type);
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND)) {
+	if (unlikely(evtype_major == EM_EVENT_TYPE_ODP))
+		return;
+
+	if (EM_CHECK_LEVEL > 0 && unlikely(evtype_major == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_FREE,
 			       "Timer-ring event not allowed");
 		return;
@@ -1168,8 +1249,12 @@ void em_event_unmark_free(em_event_t event)
 	}
 
 	event_hdr_t *const ev_hdr = event_to_hdr(event);
+	em_event_type_t evtype_major = em_event_type_major(ev_hdr->event_type);
 
-	if (EM_CHECK_LEVEL > 0 && unlikely(ev_hdr->event_type == EM_EVENT_TYPE_TIMER_IND)) {
+	if (unlikely(evtype_major == EM_EVENT_TYPE_ODP))
+		return;
+
+	if (EM_CHECK_LEVEL > 0 && unlikely(evtype_major == EM_EVENT_TYPE_TIMER_IND)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_FREE,
 			       "Timer-ring event not allowed");
 		return;
@@ -1211,8 +1296,13 @@ void em_event_mark_free_multi(const em_event_t events[], int num)
 	event_to_hdr_multi(events, ev_hdrs, num);
 
 	for (int i = 0; i < num; i++) {
+		em_event_type_t evtype_major = em_event_type_major(ev_hdrs[i]->event_type);
+
+		if (unlikely(evtype_major == EM_EVENT_TYPE_ODP))
+			continue;
+
 		if (EM_CHECK_LEVEL > 0 &&
-		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER_IND)) {
+		    unlikely(evtype_major == EM_EVENT_TYPE_TIMER_IND)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_MARK_FREE_MULTI,
 				       "Timer-ring event[%d] not allowed", i);
 			continue;
@@ -1255,8 +1345,13 @@ void em_event_unmark_free_multi(const em_event_t events[], int num)
 	event_to_hdr_multi(events, ev_hdrs, num);
 
 	for (int i = 0; i < num; i++) {
+		em_event_type_t evtype_major = em_event_type_major(ev_hdrs[i]->event_type);
+
+		if (unlikely(evtype_major == EM_EVENT_TYPE_ODP))
+			continue;
+
 		if (EM_CHECK_LEVEL > 0 &&
-		    unlikely(ev_hdrs[i]->event_type == EM_EVENT_TYPE_TIMER_IND)) {
+		    unlikely(evtype_major == EM_EVENT_TYPE_TIMER_IND)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UNMARK_FREE_MULTI,
 				       "Timer-ring event[%d] not allowed", i);
 			continue;
@@ -1409,7 +1504,7 @@ static em_event_t event_clone_part(em_event_t event, em_pool_t pool/*or EM_POOL_
 		em_status_t err = INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, escope,
 						 "EM-pool:'%s': sz:%u type:0x%x pool:%" PRI_POOL "",
 						 pool_elem->name, size, type, em_pool);
-		if (EM_DEBUG_PRINT && err != EM_OK &&
+		if (EM_DEBUG_PRINT_BASE && err != EM_OK &&
 		    (pool_elem->stats_opt.bit.available ||
 		     pool_elem->stats_opt.bit.cache_available))
 			em_pool_info_print(em_pool);
@@ -1472,35 +1567,48 @@ event_uarea_init(em_event_t event, event_hdr_t **ev_hdr/*out*/)
 	const odp_event_t odp_event = event_em2odp(event);
 	const odp_event_type_t odp_evtype = odp_event_type(odp_event);
 	odp_pool_t odp_pool = ODP_POOL_INVALID;
-	odp_packet_t odp_pkt;
-	odp_buffer_t odp_buf;
-	odp_packet_vector_t odp_pktvec;
 	event_hdr_t *hdr;
 	bool is_init;
 
 	switch (odp_evtype) {
-	case ODP_EVENT_PACKET:
-		odp_pkt = odp_packet_from_event(odp_event);
+	case ODP_EVENT_PACKET: {
+		odp_packet_t odp_pkt = odp_packet_from_event(odp_event);
+
 		hdr = odp_packet_user_area(odp_pkt);
 		is_init = hdr->user_area.isinit;
 		if (!is_init)
 			odp_pool = odp_packet_pool(odp_pkt);
 		break;
-	case ODP_EVENT_BUFFER:
-		odp_buf = odp_buffer_from_event(odp_event);
+	}
+	case ODP_EVENT_BUFFER: {
+		odp_buffer_t odp_buf = odp_buffer_from_event(odp_event);
+
 		hdr = odp_buffer_user_area(odp_buf);
 		is_init = hdr->user_area.isinit;
 		if (!is_init)
 			odp_pool = odp_buffer_pool(odp_buf);
 		break;
-	case ODP_EVENT_PACKET_VECTOR:
-		odp_pktvec = odp_packet_vector_from_event(odp_event);
+	}
+	case ODP_EVENT_VECTOR: {
+		odp_event_vector_t odp_evvec = odp_event_vector_from_event(odp_event);
+
+		hdr = odp_event_vector_user_area(odp_evvec);
+		is_init = hdr->user_area.isinit;
+		if (!is_init)
+			odp_pool = odp_event_vector_pool(odp_evvec);
+		break;
+	}
+	case ODP_EVENT_PACKET_VECTOR: {
+		odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
+
 		hdr = odp_packet_vector_user_area(odp_pktvec);
 		is_init = hdr->user_area.isinit;
 		if (!is_init)
 			odp_pool = odp_packet_vector_pool(odp_pktvec);
 		break;
+	}
 	default:
+		/* Not an EM event */
 		return -1;
 	}
 
@@ -1531,11 +1639,11 @@ event_uarea_init(em_event_t event, event_hdr_t **ev_hdr/*out*/)
 	return 0;
 }
 
-void *em_event_uarea_get(em_event_t event, size_t *size /*out, if given*/)
+void *em_event_uarea(em_event_t event, size_t *size /*out, if given*/)
 {
 	/* Check args */
 	if (EM_CHECK_LEVEL > 0 && unlikely(event == EM_EVENT_UNDEF)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_GET,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA,
 			       "Inv.arg: event undef");
 		goto no_uarea;
 	}
@@ -1544,7 +1652,7 @@ void *em_event_uarea_get(em_event_t event, size_t *size /*out, if given*/)
 	int err = event_uarea_init(event, &ev_hdr/*out*/);
 
 	if (EM_CHECK_LEVEL > 0 && unlikely(err)) {
-		INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_EVENT_UAREA_GET,
+		INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_EVENT_UAREA,
 			       "Cannot init event user area: %d", err);
 		goto no_uarea;
 	}
@@ -1590,8 +1698,8 @@ em_status_t em_event_uarea_id_set(em_event_t event, uint16_t id)
 	return EM_OK;
 }
 
-em_status_t em_event_uarea_id_get(em_event_t event, bool *isset /*out*/,
-				  uint16_t *id /*out*/)
+em_status_t em_event_uarea_id(em_event_t event, bool *isset /*out*/,
+			      uint16_t *id /*out*/)
 {
 	bool id_set = false;
 	em_status_t status = EM_OK;
@@ -1599,7 +1707,7 @@ em_status_t em_event_uarea_id_get(em_event_t event, bool *isset /*out*/,
 	/* Check args, either 'isset' or 'id' ptrs must be provided (or both) */
 	if (EM_CHECK_LEVEL > 0 &&
 	    (event == EM_EVENT_UNDEF || !(id || isset))) {
-		status = INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_ID_GET,
+		status = INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_UAREA_ID,
 					"Inv.args: event:%" PRI_EVENT " isset:%p id:%p",
 					event, isset, id);
 		goto id_isset;
@@ -1609,8 +1717,7 @@ em_status_t em_event_uarea_id_get(em_event_t event, bool *isset /*out*/,
 	int err = event_uarea_init(event, &ev_hdr/*out*/);
 
 	if (EM_CHECK_LEVEL > 0 && unlikely(err)) {
-		status = INTERNAL_ERROR(EM_ERR_OPERATION_FAILED,
-					EM_ESCOPE_EVENT_UAREA_ID_GET,
+		status = INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_EVENT_UAREA_ID,
 					"Cannot init event user area: %d", err);
 		goto id_isset;
 	}
@@ -1771,9 +1878,18 @@ void em_event_vector_free(em_event_t vector_event)
 	}
 
 	odp_event_t odp_event = event_em2odp(vector_event);
-	odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
 
-	odp_packet_vector_free(pkt_vec);
+	if (odp_etype == ODP_EVENT_PACKET_VECTOR) {
+		odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+
+		odp_packet_vector_free(pkt_vec);
+	} else {
+		/* odp_etype == ODP_EVENT_VECTOR */
+		odp_event_vector_t ev_vec = odp_event_vector_from_event(odp_event);
+
+		odp_event_vector_free(ev_vec);
+	}
 }
 
 uint32_t em_event_vector_tbl(em_event_t vector_event,
@@ -1796,6 +1912,154 @@ uint32_t em_event_vector_tbl(em_event_t vector_event,
 	return event_vector_tbl(vector_event, event_tbl /*out*/);
 }
 
+static em_event_type_t event_vector_type(em_event_t vector_event, em_escope_t escope)
+{
+	odp_event_t odp_event = event_em2odp(vector_event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
+
+	if (odp_etype == ODP_EVENT_PACKET_VECTOR) {
+		odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
+		const event_hdr_t *ev_hdr = odp_packet_vector_user_area(odp_pktvec);
+
+		if (ev_hdr->flags.vectype_set)
+			return ev_hdr->vector_type;
+		else
+			return EM_EVENT_TYPE_PACKET;
+	} else if (unlikely(odp_etype != ODP_EVENT_VECTOR)) {
+		/* Not a vector, log error and return */
+		(void)INTERNAL_ERROR(EM_ERR_NOT_SUPPORTED, escope,
+				     "Event:%" PRI_EVENT " not a vector", vector_event);
+		return EM_EVENT_TYPE_UNDEF;
+	}
+
+	/*
+	 * odp_etype == ODP_EVENT_VECTOR:
+	 */
+	odp_event_vector_t odp_evvec = odp_event_vector_from_event(odp_event);
+	event_hdr_t *ev_hdr = odp_event_vector_user_area(odp_evvec);
+
+	if (ev_hdr->flags.vectype_set)
+		return ev_hdr->vector_type;
+
+	/*
+	 * ev_hdr->flags.vectype_set == 0: determine type from ODP
+	 */
+	odp_event_type_t odp_vtype = odp_event_vector_type(odp_evvec);
+	em_event_type_t vector_type;
+
+	switch (odp_vtype) {
+	case ODP_EVENT_PACKET:
+		vector_type = EM_EVENT_TYPE_PACKET;
+		break;
+	case ODP_EVENT_ANY:
+		vector_type = EM_EVENT_TYPE_ANY;
+		break;
+	case ODP_EVENT_BUFFER:
+		vector_type = EM_EVENT_TYPE_SW;
+		break;
+	case ODP_EVENT_TIMEOUT:
+		vector_type = EM_EVENT_TYPE_TIMER_IND;
+		break;
+	case ODP_EVENT_IPSEC_STATUS:    /* fallthrough */
+	case ODP_EVENT_PACKET_TX_COMPL: /* fallthrough */
+	case ODP_EVENT_DMA_COMPL:       /* fallthrough */
+	case ODP_EVENT_ML_COMPL:
+		vector_type = EM_EVENT_TYPE_ODP;
+		break;
+	default:
+		/* also ODP_EVENT_VECTOR, ODP_EVENT_PACKET_VECTOR */
+		(void)INTERNAL_ERROR(EM_ERR_BAD_TYPE, escope,
+				     "Invalid odp event-vector type:%d", odp_vtype);
+		return EM_EVENT_TYPE_UNDEF;
+	}
+
+	ev_hdr->vector_type = vector_type;
+	ev_hdr->flags.vectype_set = 1;
+
+	return vector_type;
+}
+
+em_event_type_t em_event_vector_type(em_event_t vector_event)
+{
+	if (EM_CHECK_LEVEL > 0 &&
+	    unlikely(vector_event == EM_EVENT_UNDEF)) {
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_VECTOR_TYPE,
+			       "Invalid args: vector_event:%" PRI_EVENT "", vector_event);
+		return EM_EVENT_TYPE_UNDEF;
+	}
+
+	return event_vector_type(vector_event, EM_ESCOPE_EVENT_VECTOR_TYPE);
+}
+
+em_status_t em_event_vector_type_set(em_event_t vector_event, em_event_type_t vector_type)
+{
+	em_event_type_t evtype_major = em_event_type_major(vector_type);
+
+	RETURN_ERROR_IF(EM_CHECK_LEVEL > 0 &&
+			(vector_event == EM_EVENT_UNDEF || vector_type == EM_EVENT_TYPE_UNDEF ||
+			 evtype_major == EM_EVENT_TYPE_VECTOR || evtype_major > EM_EVENT_TYPE_ANY),
+			EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_VECTOR_TYPE_SET,
+			"Invalid args: vector_event:%" PRI_EVENT ", vector_type:%u",
+			vector_event, vector_type);
+
+	odp_event_t odp_event = event_em2odp(vector_event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
+
+	if (odp_etype == ODP_EVENT_PACKET_VECTOR) {
+		odp_packet_vector_t odp_pktvec = odp_packet_vector_from_event(odp_event);
+		event_hdr_t *ev_hdr = odp_packet_vector_user_area(odp_pktvec);
+
+		RETURN_ERROR_IF(evtype_major != EM_EVENT_TYPE_PACKET,
+				EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_VECTOR_TYPE_SET,
+				"Invalid major event type:%u for packet vector table",
+				evtype_major);
+
+		ev_hdr->vector_type = vector_type;
+		ev_hdr->flags.vectype_set = 1;
+
+		return EM_OK;
+	}
+
+	RETURN_ERROR_IF(odp_etype != ODP_EVENT_VECTOR,
+			EM_ERR_NOT_SUPPORTED, EM_ESCOPE_EVENT_VECTOR_TYPE_SET,
+			"Event:%" PRI_EVENT " not a vector", vector_event);
+
+	/*
+	 * odp_etype == ODP_EVENT_VECTOR:
+	 */
+	odp_event_vector_t odp_evvec = odp_event_vector_from_event(odp_event);
+	event_hdr_t *ev_hdr = odp_event_vector_user_area(odp_evvec);
+	odp_event_type_t odp_vtype;
+
+	switch (evtype_major) {
+	case EM_EVENT_TYPE_PACKET:
+		odp_vtype = ODP_EVENT_PACKET;
+		break;
+	case EM_EVENT_TYPE_SW:
+		odp_vtype = ODP_EVENT_BUFFER;
+		break;
+	case EM_EVENT_TYPE_TIMER_IND:
+		odp_vtype = ODP_EVENT_TIMEOUT;
+		break;
+	case EM_EVENT_TYPE_TIMER:  /* fallthrough */
+	case EM_EVENT_TYPE_CRYPTO: /* fallthrough */
+	case EM_EVENT_TYPE_ODP:    /* fallthrough */
+	case EM_EVENT_TYPE_ANY:
+		odp_vtype = ODP_EVENT_ANY;
+		break;
+	default:
+		/* also EM_EVENT_TYPE_VECTOR */
+		return INTERNAL_ERROR(EM_ERR_BAD_TYPE, EM_ESCOPE_EVENT_VECTOR_TYPE_SET,
+				      "Invalid event vector_type:%u", vector_type);
+	}
+
+	odp_event_vector_type_set(odp_evvec, odp_vtype);
+	ev_hdr->vector_type = vector_type;
+	ev_hdr->flags.vectype_set = 1;
+
+	return EM_OK;
+}
+
 uint32_t em_event_vector_size(em_event_t vector_event)
 {
 	if (EM_CHECK_LEVEL > 0 &&
@@ -1810,9 +2074,18 @@ uint32_t em_event_vector_size(em_event_t vector_event)
 		return 0;
 
 	odp_event_t odp_event = event_em2odp(vector_event);
-	odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
 
-	return odp_packet_vector_size(pkt_vec);
+	if (odp_etype == ODP_EVENT_PACKET_VECTOR) {
+		odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+
+		return odp_packet_vector_size(pkt_vec);
+	}
+
+	/* odp_etype == ODP_EVENT_VECTOR */
+	odp_event_vector_t ev_vec = odp_event_vector_from_event(odp_event);
+
+	return odp_event_vector_size(ev_vec);
 }
 
 void em_event_vector_size_set(em_event_t vector_event, uint32_t size)
@@ -1824,14 +2097,37 @@ void em_event_vector_size_set(em_event_t vector_event, uint32_t size)
 		return;
 	}
 
-	if (EM_CHECK_LEVEL > 2 &&
-	    unlikely(!is_vector_type_or_error(vector_event, EM_ESCOPE_EVENT_VECTOR_SIZE_SET)))
-		return;
+	if (EM_CHECK_LEVEL > 2) {
+		bool is_vec = is_vector_type_or_error(vector_event,
+						      EM_ESCOPE_EVENT_VECTOR_SIZE_SET);
+		if (unlikely(!is_vec))
+			return;
+
+		uint32_t max_size = 0;
+		em_status_t err = event_vector_max_size(vector_event, &max_size,
+							EM_ESCOPE_EVENT_VECTOR_SIZE_SET);
+		if (unlikely(err != EM_OK ||
+			     /* 'max_size=0 && EM_OK' is not error: odp pool used */
+			     (size > max_size && max_size > 0))) {
+			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_EVENT_VECTOR_SIZE_SET,
+				       "Invalid arg, given size:%u > max_size:%u", size, max_size);
+			return;
+		}
+	}
 
 	odp_event_t odp_event = event_em2odp(vector_event);
-	odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+	odp_event_type_t odp_etype = odp_event_type(odp_event);
 
-	odp_packet_vector_size_set(pkt_vec, size);
+	if (odp_etype == ODP_EVENT_PACKET_VECTOR) {
+		odp_packet_vector_t pkt_vec = odp_packet_vector_from_event(odp_event);
+
+		odp_packet_vector_size_set(pkt_vec, size);
+	} else {
+		/* odp_etype == ODP_EVENT_VECTOR */
+		odp_event_vector_t ev_vec = odp_event_vector_from_event(odp_event);
+
+		odp_event_vector_size_set(ev_vec, size);
+	}
 }
 
 uint32_t em_event_vector_max_size(em_event_t vector_event)
@@ -1876,6 +2172,9 @@ em_status_t em_event_vector_info(em_event_t vector_event,
 		goto err_vecinfo;
 	}
 
+	/* Get the event type of events stored in the vector's event-table */
+	vector_info->event_type = event_vector_type(vector_event, EM_ESCOPE_EVENT_VECTOR_INFO);
+
 	/* Get the max size */
 	status = event_vector_max_size(vector_event, &vector_info->max_size,
 				       EM_ESCOPE_EVENT_VECTOR_INFO);
@@ -1889,6 +2188,7 @@ em_status_t em_event_vector_info(em_event_t vector_event,
 
 err_vecinfo:
 	if (vector_info) {
+		vector_info->event_type = EM_EVENT_TYPE_UNDEF;
 		vector_info->event_tbl = NULL;
 		vector_info->size = 0;
 		vector_info->max_size = 0;

@@ -346,7 +346,7 @@ ping_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Copy EO name */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	if (eo_ctx->is_a) {
 		queue_name = "queue A";

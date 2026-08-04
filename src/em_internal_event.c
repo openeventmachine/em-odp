@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2014-2016, Nokia Solutions and Networks
+ *   Copyright (c) 2014-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -35,34 +35,101 @@
  * EM Internal Control
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
-/* doc in header file */
-em_status_t create_ctrl_queues(void)
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_atomic_group.h"
+#include "em_atomic_group_types.h"
+#include "em_core.h"
+#include "em_eo.h"
+#include "em_eo_types.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_group.h"
+#include "em_event_group_types.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_internal_event.h"
+#include "em_internal_event_types.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_queue_group_types.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+
+em_status_t create_shared_ctrl_queue(void)
 {
-	const int num_cores = em_core_count();
-	char q_name[EM_QUEUE_NAME_LEN];
 	em_queue_t shared_unsched_queue;
 	em_queue_t queue;
-	em_queue_conf_t unsch_conf;
-
+	em_queue_param_t param;
 	const char *err_str = "";
 
-	EM_DBG("%s()\n", __func__);
+	DBG_PRINT("%s()\n", __func__);
 
 	/*
 	 * Create shared internal unsched queue used for internal EM messaging.
 	 * Cannot use em_queue_create_static() here since the requested handle
-	 * 'SHARED_INTERNAL_UNSCHED_QUEUE' lies outside of the normal static
-	 * range.
+	 * em_shm->queue_tbl.shared_internal_queue_id lies outside of the normal
+	 * static range.
 	 */
-	shared_unsched_queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
-	queue = queue_create("EMctrl-unschedQ-shared", EM_QUEUE_TYPE_UNSCHEDULED,
-			     EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF,
-			     shared_unsched_queue, EM_ATOMIC_GROUP_UNDEF,
-			     NULL /* use default queue config */, &err_str);
+	shared_unsched_queue = queue_id2hdl(em_shm->queue_tbl.shared_internal_queue_id);
+
+	em_queue_param_init(&param);
+	param.queue = shared_unsched_queue;
+	param.type = EM_QUEUE_TYPE_UNSCHEDULED;
+
+	queue = queue_create_param("EMctrl-unschedQ-shared", &param, &err_str);
 	if (queue == EM_QUEUE_UNDEF || queue != shared_unsched_queue)
 		return EM_FATAL(EM_ERR_NOT_FREE);
+
+	return EM_OK;
+}
+
+em_status_t create_ctrl_queue(void)
+{
+	const int thr = odp_thread_id();
+	char q_name[EM_QUEUE_NAME_LEN];
+	em_queue_t queue;
+	em_queue_t queue_req;
+	em_queue_param_t param;
+	const char *err_str = "";
+
+	snprintf(q_name, sizeof(q_name), "EMctrl-unschedQ-thr%d", thr);
+	q_name[EM_QUEUE_NAME_LEN - 1] = '\0';
+
+	DBG_PRINT("%s(): %s\n", __func__, q_name);
+
+	queue = em_queue_find(q_name);
+	if (queue != EM_QUEUE_UNDEF) {
+		DBG_PRINT("%s(): thr:%d, %s already created - reusing\n",
+			  __func__, thr, q_name);
+
+		const queue_elem_t *q_elem = queue_elem_get(queue);
+
+		if (unlikely(!q_elem || !queue_allocated(q_elem))) {
+			DBG_PRINT("%s(): q_elem invalid for %s\n",
+				  __func__, q_name);
+			return EM_ERR_BAD_POINTER;
+		}
+
+		return EM_OK;
+	}
 
 	/*
 	 * Create static internal per-core UNSCHEDULED queues used for
@@ -70,24 +137,16 @@ em_status_t create_ctrl_queues(void)
 	 * here since the requested handles lies outside of the normal
 	 * static range.
 	 */
-	memset(&unsch_conf, 0, sizeof(unsch_conf));
-	unsch_conf.flags |= EM_QUEUE_FLAG_DEQ_NOT_MTSAFE;
+	queue_req = queue_id2hdl(em_shm->queue_tbl.first_internal_queue_id + (uint16_t)thr);
 
-	for (int i = 0; i < num_cores; i++) {
-		em_queue_t queue_req;
+	em_queue_param_init(&param);
+	param.queue = queue_req;
+	param.type = EM_QUEUE_TYPE_UNSCHEDULED;
+	param.flags = EM_QUEUE_FLAG_DEQ_NOT_MTSAFE;
 
-		queue_req = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
-		snprintf(q_name, sizeof(q_name), "EMctrl-unschedQ-core%d", i);
-		q_name[EM_QUEUE_NAME_LEN - 1] = '\0';
-
-		queue = queue_create(q_name, EM_QUEUE_TYPE_UNSCHEDULED,
-				     EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF,
-				     queue_req, EM_ATOMIC_GROUP_UNDEF,
-				     &unsch_conf, /* request deq-not-mtsafe */
-				     &err_str);
-		if (unlikely(queue == EM_QUEUE_UNDEF || queue != queue_req))
-			return EM_FATAL(EM_ERR_NOT_FREE);
-	}
+	queue = queue_create_param(q_name, &param, &err_str);
+	if (unlikely(queue == EM_QUEUE_UNDEF || queue != queue_req))
+		return EM_FATAL(EM_ERR_NOT_FREE);
 
 	return EM_OK;
 }
@@ -95,12 +154,12 @@ em_status_t create_ctrl_queues(void)
 /* doc in header file */
 em_status_t delete_ctrl_queues(void)
 {
-	const int num_cores = em_core_count();
 	em_queue_t unsched_queue;
 	em_event_t unsched_event;
+	const queue_elem_t *q_elem = NULL;
 	em_status_t stat;
 
-	unsched_queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
+	unsched_queue = queue_id2hdl(em_shm->queue_tbl.shared_internal_queue_id);
 	for (;/* flush unsched queue */;) {
 		unsched_event = em_queue_dequeue(unsched_queue);
 		if (unsched_event == EM_EVENT_UNDEF)
@@ -112,8 +171,13 @@ em_status_t delete_ctrl_queues(void)
 		return INTERNAL_ERROR(stat, EM_ESCOPE_DELETE_CTRL_QUEUES,
 				      "shared unschedQ delete");
 
-	for (int i = 0; i < num_cores; i++) {
-		unsched_queue = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE + i);
+	for (int i = 0; i < MAX_INTERNAL_QUEUES - 1; i++) {
+		unsched_queue = queue_id2hdl(em_shm->queue_tbl.first_internal_queue_id + i);
+		q_elem = queue_elem_get(unsched_queue);
+
+		if (!q_elem || !queue_allocated(q_elem) ||
+		    q_elem->type != EM_QUEUE_TYPE_UNSCHEDULED)
+			continue;
 
 		for (;/* flush unsched queue */;) {
 			unsched_event = em_queue_dequeue(unsched_queue);
@@ -131,8 +195,7 @@ em_status_t delete_ctrl_queues(void)
 	return stat;
 }
 
-/* doc in header file */
-int send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
+int send_core_ctrl_events(const odp_thrmask_t *const thr_mask, em_event_t ctrl_event,
 			  void (*f_done_callback)(void *arg_ptr),
 			  void *f_done_arg_ptr,
 			  int num_notif, const em_notif_t notif_tbl[],
@@ -141,14 +204,13 @@ int send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_even
 	em_status_t err;
 	em_event_group_t event_group = EM_EVENT_GROUP_UNDEF;
 	const internal_event_t *i_event  = em_event_pointer(ctrl_event);
-	const int core_count = em_core_count(); /* All running EM cores */
-	const int mask_count = em_core_mask_count(mask); /* Subset of cores*/
+	const int mask_count = odp_thrmask_count(thr_mask);
 	int alloc_count = 0;
 	int sent_count = 0;
 	int unsent_count = mask_count;
 	int first_qidx;
-	int i;
 	em_event_t events[mask_count];
+	int i;
 
 	if (unlikely(num_notif > EM_EVENT_GROUP_MAX_NOTIF)) {
 		INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_INTERNAL_NOTIF,
@@ -197,25 +259,27 @@ int send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_even
 	/*
 	 * Send ctrl events to the concerned cores
 	 */
-	first_qidx = queue_id2idx(FIRST_INTERNAL_UNSCHED_QUEUE);
+	first_qidx = queue_id2idx(em_shm->queue_tbl.first_internal_queue_id);
 
-	for (i = 0; i < core_count; i++) {
-		if (em_core_mask_isset(i, mask)) {
-			/*
-			 * Send copy to each core-specific queue,
-			 * track completion using an event group.
-			 */
-			err = em_send_group(events[sent_count],
-					    queue_idx2hdl(first_qidx + i),
-					    event_group);
-			if (unlikely(err != EM_OK)) {
-				INTERNAL_ERROR(err, EM_ESCOPE_INTERNAL_NOTIF,
-					       "Event group send failed");
-				goto err_free_resources;
-			}
-			sent_count++;
-			unsent_count--;
+	int thr = odp_thrmask_first(thr_mask);
+
+	while (thr >= 0) {
+		/*
+		 * Send copy to each core-specific unscheduled ctrl queue,
+		 * track completion using an event group.
+		 */
+		err = send_ctrl_queue(events[sent_count],
+				      queue_idx2hdl(first_qidx + thr),
+				      event_group);
+		if (unlikely(err != EM_OK)) {
+			INTERNAL_ERROR(err, EM_ESCOPE_INTERNAL_NOTIF,
+				       "Event group send failed");
+			goto err_free_resources;
 		}
+		sent_count++;
+		unsent_count--;
+
+		thr = odp_thrmask_next(thr_mask, thr);
 	}
 
 	return 0; /* Success, all ctrl events sent */
@@ -319,6 +383,10 @@ internal_event_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 		i_event__eo_local_func_call_req(i_event);
 		break;
 
+	case TERM_THREAD_REQ:
+		i_event__term_thread_req(i_event);
+		break;
+
 	default:
 		INTERNAL_ERROR(EM_ERR_BAD_ID,
 			       EM_ESCOPE_INTERNAL_EVENT_RECV_FUNC,
@@ -369,19 +437,16 @@ em_event_group_t internal_done_w_notif_req(int event_group_count,
 	i_event->done.f_done_arg_ptr = f_done_arg_ptr;
 	i_event->done.num_notif = num_notif;
 
-	for (int i = 0; i < num_notif; i++) {
-		i_event->done.notif_tbl[i].event = notif_tbl[i].event;
-		i_event->done.notif_tbl[i].queue = notif_tbl[i].queue;
-		i_event->done.notif_tbl[i].egroup = notif_tbl[i].egroup;
-	}
+	for (int i = 0; i < num_notif; i++)
+		i_event->done.notif_tbl[i] = notif_tbl[i];
 
 	i_notif.event = event;
-	if (sync_operation) {
-		i_notif.queue = queue_id2hdl(FIRST_INTERNAL_UNSCHED_QUEUE +
-					     em_core_id());
-	} else {
-		i_notif.queue = queue_id2hdl(SHARED_INTERNAL_UNSCHED_QUEUE);
-	}
+	if (sync_operation)
+		i_notif.queue = queue_id2hdl(em_shm->queue_tbl.first_internal_queue_id +
+					     (uint16_t)odp_thread_id());
+	else
+		i_notif.queue = queue_id2hdl(em_shm->queue_tbl.shared_internal_queue_id);
+
 	i_notif.egroup = EM_EVENT_GROUP_UNDEF;
 
 	/*
@@ -407,7 +472,7 @@ void evgrp_abort_delete(em_event_group_t event_group)
 {
 	em_notif_t free_notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
 
-	int num = em_event_group_get_notif(event_group,
+	int num = em_event_group_notif(event_group,
 					   EM_EVENT_GROUP_MAX_NOTIF,
 					   free_notif_tbl);
 	em_status_t err = em_event_group_abort(event_group);
@@ -525,14 +590,16 @@ handle_ctrl_events(em_queue_t unsched_queue,
 		 * Event belongs to an event_group, update the count and
 		 * if requested send notifications
 		 */
-		if (locm->current.egrp != EM_EVENT_GROUP_UNDEF) {
+		event_group_elem_t *const current_egrp_elem = locm->current.egrp_elem;
+
+		if (current_egrp_elem) {
 			/*
 			 * Atomically decrease the event group count.
 			 * If the new count is zero, send notification events.
 			 */
-			event_group_count_decrement(1);
+			event_group_count_decrement(1, current_egrp_elem);
+			locm->current.egrp_elem = NULL;
 		}
-		locm->current.egrp = EM_EVENT_GROUP_UNDEF;
 	}
 }
 
@@ -541,8 +608,8 @@ void poll_unsched_ctrl_queue(void)
 {
 	em_locm_t *const locm = &em_locm;
 
-	queue_elem_t *core_unsch_qelem = locm->sync_api.ctrl_poll.core_unsched_qelem;
-	em_queue_t core_unsched_queue = locm->sync_api.ctrl_poll.core_unsched_queue;
+	queue_elem_t *thr_unsch_qelem = locm->sync_api.ctrl_poll.thr_unsched_qelem;
+	em_queue_t thr_unsched_queue = locm->sync_api.ctrl_poll.thr_unsched_queue;
 
 	queue_elem_t *shared_unsch_qelem = locm->sync_api.ctrl_poll.shared_unsched_qelem;
 	em_queue_t shared_unsched_queue = locm->sync_api.ctrl_poll.shared_unsched_queue;
@@ -550,18 +617,18 @@ void poll_unsched_ctrl_queue(void)
 	em_locm_current_t current;
 
 	const int deq_max = 16;
-	em_event_t core_ev_tbl[deq_max];
+	em_event_t thr_ev_tbl[deq_max];
 	em_event_t shared_ev_tbl[deq_max];
-	int core_num;
+	int thr_num;
 	int shared_num;
 	int round = 0;
 
 	do {
-		core_num = queue_dequeue_multi(core_unsch_qelem,
-					       core_ev_tbl/*out*/, deq_max);
+		thr_num = queue_dequeue_multi(thr_unsch_qelem,
+					      thr_ev_tbl/*out*/, deq_max);
 		shared_num = queue_dequeue_multi(shared_unsch_qelem,
 						 shared_ev_tbl/*out*/, deq_max);
-		if (core_num <= 0 && shared_num <= 0)
+		if (thr_num <= 0 && shared_num <= 0)
 			break; /* no ctrl events, exit loop */
 
 		/* Save local current state the first time only */
@@ -571,10 +638,10 @@ void poll_unsched_ctrl_queue(void)
 			locm->current.sched_context_type = EM_SCHED_CONTEXT_TYPE_NONE;
 		}
 
-		if (core_num > 0) {
-			locm->current.q_elem = core_unsch_qelem;
-			locm->current.sched_q_elem = core_unsch_qelem;
-			handle_ctrl_events(core_unsched_queue, core_ev_tbl, core_num);
+		if (thr_num > 0) {
+			locm->current.q_elem = thr_unsch_qelem;
+			locm->current.sched_q_elem = thr_unsch_qelem;
+			handle_ctrl_events(thr_unsched_queue, thr_ev_tbl, thr_num);
 		}
 		if (shared_num > 0) {
 			locm->current.q_elem = shared_unsch_qelem;

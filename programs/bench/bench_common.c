@@ -1,4 +1,4 @@
-/* Copyright (c) 2023, Nokia
+/* Copyright (c) 2023-2025, Nokia
  * All rights reserved.
  *
  * SPDX-License-Identifier:     BSD-3-Clause
@@ -38,122 +38,116 @@ int setup_sig_handler(void)
 	return 0;
 }
 
-/* Run given benchmark indefinitely */
-static void run_indef(const bench_info_t *bench)
+/* Run one benchmark once */
+static inline int run_bench(const bench_info_t *bench, const cmd_opt_t *opt,
+			    uint64_t *result /*out*/)
 {
 	const char *desc = bench->desc != NULL ? bench->desc : bench->name;
+	const int meas_time = opt->time;
+	uint64_t c1 = 0, c2 = 0;
+	odp_time_t t1 = ODP_TIME_NULL, t2 = ODP_TIME_NULL;
 
-	printf("Running %s test indefinitely\n", desc);
+	if (bench->init)
+		bench->init();
 
-	while (!odp_atomic_load_u32(&exit_thread)) {
-		int ret;
+	if (meas_time)
+		t1 = odp_time_local();
+	else
+		c1 = odp_cpu_cycles();
 
-		if (bench->init != NULL)
-			bench->init();
+	int bench_ret = bench->run();
 
-		ret = bench->run();
+	if (meas_time)
+		t2 = odp_time_local();
+	else
+		c2 = odp_cpu_cycles();
 
-		if (bench->term != NULL)
-			bench->term();
-
-		if (!ret)
-			ODPH_ABORT("Benchmark %s failed\n", desc);
+	if (!bench_ret) {
+		ODPH_ERR("Benchmark %s failed: %d\n", desc, bench_ret);
+		return -1;
 	}
+
+	if (bench->term)
+		bench->term();
+
+	if (meas_time)
+		*result = odp_time_diff_ns(t2, t1);
+	else
+		*result = odp_cpu_cycles_diff(c2, c1);
+
+	return 0;
 }
 
 int run_benchmarks(void *arg)
 {
-	int i, j;
-	uint64_t c1 = 0, c2 = 0;
-	odp_time_t t1 = ODP_TIME_NULL, t2 = ODP_TIME_NULL;
 	run_bench_arg_t *args = arg;
-	cmd_opt_t *opt = &args->opt;
+	const cmd_opt_t *opt = &args->opt;
 	const int meas_time = opt->time;
 	int ret = 0;
 
-	/* Init EM */
-	if (em_init_core() != EM_OK) {
-		ODPH_ERR("EM core init failed\n");
+	/* Init EM worker */
+	em_conf_local_t conf_local;
+
+	em_conf_local_init(&conf_local);
+	conf_local.core_type = EM_CORE_TYPE_WORKER;
+
+	if (em_init_local(&conf_local) != EM_OK) {
+		ODPH_ERR("EM local init failed\n");
 		return -1;
 	}
 
 	printf("\nAverage %s per function call\n", meas_time ? "time (nsec)" : "CPU cycles");
 	printf("------------------------------------------------------\n");
 
-	/* Run each test twice. Results from the first warm-up round are ignored. */
-	for (i = 0; i < 2; i++) {
-		uint64_t total = 0;
-		uint32_t round = 1;
+	uint64_t total = 0;
+	uint32_t round = 0; /* round '0' is the warm-up round excluded from results */
+	int i = 0;
+	bool run_indef = false; /* run one given test case indefinitely */
 
-		for (j = 0; j < args->num_bench && !odp_atomic_load_u32(&exit_thread); round++) {
-			const char *desc;
-			const bench_info_t *bench = &args->bench[j];
-			uint32_t max_rounds = opt->rounds;
+	if (opt->bench_idx) {
+		/* Run selected test indefinitely */
+		i = opt->bench_idx - 1;
+		run_indef = true;
+	}
 
-			if (bench->max_rounds && max_rounds > bench->max_rounds)
-				max_rounds = bench->max_rounds;
+	while (i < args->num_bench && !odp_atomic_load_u32(&exit_thread)) {
+		const bench_info_t *bench = &args->bench[i];
+		const char *desc = bench->desc != NULL ? bench->desc : bench->name;
+		uint32_t max_rounds = opt->rounds;
+		uint64_t result = 0;
 
-			/* Run selected test indefinitely */
-			if (opt->bench_idx) {
-				if ((j + 1) != opt->bench_idx) {
-					j++;
-					continue;
-				}
+		if (bench->max_rounds && max_rounds > bench->max_rounds)
+			max_rounds = bench->max_rounds;
 
-				run_indef(bench);
-				goto exit;
-			}
+		/* run one benchmark once */
+		int err = run_bench(bench, opt, &result);
 
-			desc = bench->desc != NULL ? bench->desc : bench->name;
+		if (err) {
+			ODPH_ERR("Benchmark %s failed: %d\n", desc, err);
+			args->bench_failed = -1;
+			ret = -1;
+			goto exit;
+		}
 
-			if (bench->init)
-				bench->init();
+		if (round > 0) /* don't include warm-up round (0) in the results */
+			total += result;
 
-			if (meas_time)
-				t1 = odp_time_local();
+		if (unlikely(round >= max_rounds)) {
+			/* Each benchmark runs internally REPEAT_COUNT times. */
+			args->result[i] = ((double)total) / (max_rounds * REPEAT_COUNT);
+
+			if (bench->desc != NULL)
+				printf("[%03d] %-50s: %12.2f\n", i + 1, desc, args->result[i]);
 			else
-				c1 = odp_cpu_cycles();
+				printf("[%03d] em_%-47s: %12.2f\n", i + 1, desc, args->result[i]);
 
-			int bench_ret = bench->run();
+			total = 0;
+			round = 0; /* Start with warm up round (0) */
 
-			if (meas_time)
-				t2 = odp_time_local();
-			else
-				c2 = odp_cpu_cycles();
-
-			if (!bench_ret) {
-				ODPH_ERR("Benchmark %s failed: %d\n", desc, bench_ret);
-				args->bench_failed = -1;
-				ret = -1;
-				goto exit;
-			}
-
-			if (bench->term)
-				bench->term();
-
-			if (meas_time)
-				total += odp_time_diff_ns(t2, t1);
-			else
-				total += odp_cpu_cycles_diff(c2, c1);
-
-			if (round >= max_rounds) {
-				/* Each benchmark runs internally REPEAT_COUNT times. */
-				args->result[j] = ((double)total) / (max_rounds * REPEAT_COUNT);
-
-				/* No print from warm-up round */
-				if (i > 0) {
-					if (bench->desc != NULL)
-						printf("[%02d] %-50s: %12.2f\n", j + 1, desc,
-						       args->result[j]);
-					else
-						printf("[%02d] em_%-47s: %12.2f\n", j + 1, desc,
-						       args->result[j]);
-				}
-
-				j++;
-				total = 0;
-				round = 1;
-			}
+			if (!run_indef)
+				i++; /* Move to next benchmark */
+		} else {
+			round++;
 		}
 	}
 

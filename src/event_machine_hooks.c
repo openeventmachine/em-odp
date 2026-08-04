@@ -35,7 +35,22 @@
  *
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdint.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_hooks.h"
+#include "em_hook_types.h"
+#include "em_mem.h"
 
 em_status_t
 em_hooks_register_alloc(em_api_hook_alloc_t func)

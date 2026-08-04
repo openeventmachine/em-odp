@@ -37,6 +37,10 @@
 #ifndef EM_TIMER_CONF_H_
 #define EM_TIMER_CONF_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Global configuration for the EM timer
  */
@@ -72,6 +76,10 @@
  * will enable ~forever retry. 3 or bigger is recommended
  */
 #define EM_TIMER_ACK_TRIES	5
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif /* EM_TIMER_CONF_H_ */

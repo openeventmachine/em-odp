@@ -374,7 +374,7 @@ ping_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Copy EO name */
-	em_eo_get_name(eo, my_eo_ctx->name, sizeof(my_eo_ctx->name));
+	em_eo_name(eo, my_eo_ctx->name, sizeof(my_eo_ctx->name));
 
 	if (my_eo_ctx->is_a) {
 		queue_name = "queue A";
@@ -525,7 +525,7 @@ enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 static void
 exit_cb(em_eo_t eo)
 {
-	my_eo_context_t *my_eo_ctx = em_eo_get_context(eo);
+	my_eo_context_t *my_eo_ctx = em_eo_context(eo);
 
 	APPL_PRINT("-  Dispatch exit callback  EO:'%s'(%" PRI_EO ")\n",
 		   my_eo_ctx->name, eo);
@@ -544,7 +544,7 @@ alloc_hook(const em_event_t events[/*num_act*/], int num_act, int num_req,
 	eo = em_eo_current();
 	if (unlikely(eo == EM_EO_UNDEF))
 		return;
-	eo_ctx = em_eo_get_context(eo);
+	eo_ctx = em_eo_context(eo);
 	if (unlikely(eo_ctx == NULL))
 		return;
 
@@ -578,7 +578,7 @@ free_hook(const em_event_t events[], int num)
 	eo = em_eo_current();
 	if (unlikely(eo == EM_EO_UNDEF))
 		return;
-	eo_ctx = em_eo_get_context(eo);
+	eo_ctx = em_eo_context(eo);
 	if (unlikely(eo_ctx == NULL))
 		return;
 
@@ -613,7 +613,7 @@ send_hook(const em_event_t events[], int num,
 	eo = em_eo_current();
 	if (unlikely(eo == EM_EO_UNDEF))
 		return;
-	eo_ctx = em_eo_get_context(eo);
+	eo_ctx = em_eo_context(eo);
 	if (unlikely(eo_ctx == NULL))
 		return;
 

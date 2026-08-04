@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -29,7 +29,7 @@
  */
 
 /*
- * env generic macros - don't include this file directly,
+ * env generic macros  & defines - don't include this file directly,
  * instead #include <environment.h>
  */
 
@@ -37,6 +37,14 @@
 #define _ENV_MACROS_H_
 
 #pragma GCC visibility push(default)
+
+#include <stdlib.h>
+
+#include <odp_api.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * Branch Prediction macros
@@ -72,5 +80,43 @@
 /** Clear the lowest bit of 'n' */
 #define ENV_CLEAR_LOWEST_BIT(n)  ((n) & ((n) - 1))
 
+/**
+ * Thread local vars
+ */
+#define ENV_LOCAL __thread
+
+/**
+ * Cache line size
+ */
+#define ENV_CACHE_LINE_SIZE           ODP_CACHE_LINE_SIZE
+
+/**
+ * Cache line size round up
+ */
+#define ENV_CACHE_LINE_SIZE_ROUNDUP(x) \
+	((((x) + ENV_CACHE_LINE_SIZE - 1) / ENV_CACHE_LINE_SIZE) \
+	 * ENV_CACHE_LINE_SIZE)
+
+#define ENV_ALIGNED(x)  ODP_ALIGNED(x)
+
+/**
+ * Cache line alignment
+ */
+#define ENV_CACHE_LINE_ALIGNED  ODP_ALIGNED_CACHE
+
+/*
+ * Cache Prefetch-macros
+ */
+/** Prefetch into all cache levels */
+#define ENV_PREFETCH(addr) odp_prefetch((addr))
+
+/**
+ * Panic
+ */
+#define env_panic(...) abort()
+
+#ifdef __cplusplus
+}
+#endif
 #pragma GCC visibility pop
 #endif

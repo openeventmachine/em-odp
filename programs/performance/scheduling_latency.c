@@ -113,7 +113,7 @@ const char *queue_type_str(em_queue_type_t type)
 	case EM_QUEUE_TYPE_PARALLEL:
 			return "PARALLEL";
 		break;
-	case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+	case EM_QUEUE_TYPE_ORDERED:
 			return "ORDERED";
 		break;
 	case EM_QUEUE_TYPE_ATOMIC:
@@ -266,7 +266,7 @@ int parse_args(int first, int argc, char *argv[])
 				g_options.queue_type = EM_QUEUE_TYPE_ATOMIC;
 				break;
 			case 2:
-				g_options.queue_type = EM_QUEUE_TYPE_PARALLEL_ORDERED;
+				g_options.queue_type = EM_QUEUE_TYPE_ORDERED;
 				break;
 
 			default: return 0;

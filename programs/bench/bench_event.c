@@ -1,4 +1,4 @@
-/* Copyright (c) 2023, Nokia
+/* Copyright (c) 2023-2026, Nokia
  * All rights reserved.
  *
  * SPDX-License-Identifier:     BSD-3-Clause
@@ -10,11 +10,12 @@
 
 #include <getopt.h>
 #include <unistd.h>
+#include <string.h>
 
 /* Maximum burst size for *_multi() operations */
 #define MAX_BURST 64
 
-/* Maximum number if test events */
+/* Maximum number of test events */
 #define MAX_EVENTS (REPEAT_COUNT * MAX_BURST)
 
 /* User area size in bytes */
@@ -56,20 +57,28 @@ typedef struct {
 	em_pool_t sw_event_pool;
 	em_pool_t packet_pool;
 	em_pool_t vector_pool;
+	em_pool_t packet_pool2;
+
+	/* Test EO */
+	em_eo_t eo;
 
 	/* Test queues */
 	em_queue_t unsched_queue;
+	em_queue_t atomic_queue;
+	em_queue_t parallel_queue;
+	em_queue_t ordered_queue;
+	em_queue_t local_queue;
 
 	/* Test case input / output data */
 	em_event_t      event_tbl[MAX_EVENTS];
 	em_event_t     event2_tbl[MAX_EVENTS];
+	em_event_t  event_ref_tbl[MAX_EVENTS];
 	void             *ptr_tbl[MAX_EVENTS];
 	uint16_t          u16_tbl[MAX_EVENTS];
 	uint32_t          u32_tbl[MAX_EVENTS];
 	em_event_type_t    et_tbl[MAX_EVENTS];
 	em_pool_t        pool_tbl[MAX_EVENTS];
 	odp_event_t odp_event_tbl[MAX_EVENTS];
-
 } gbl_args_t;
 
 static gbl_args_t *gbl_args;
@@ -119,6 +128,14 @@ static int create_pools(void)
 	}
 	gbl_args->packet_pool = pool;
 
+	pool_conf.event_type = EM_EVENT_TYPE_PACKET;
+	pool = em_pool_create("packet_pool", EM_POOL_UNDEF, &pool_conf);
+	if (pool == EM_POOL_UNDEF) {
+		ODPH_ERR("EM packet pool create failed\n");
+		return -1;
+	}
+	gbl_args->packet_pool2 = pool;
+
 	pool_conf.event_type = EM_EVENT_TYPE_VECTOR;
 	pool_conf.subpool[0].size = gbl_args->event_opt.vector_size;
 	pool = em_pool_create("vector_pool", EM_POOL_UNDEF, &pool_conf);
@@ -131,15 +148,48 @@ static int create_pools(void)
 	return 0;
 }
 
+/*em_start_func_t */
+static em_status_t eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
+{
+	(void)eo_ctx;
+	(void)eo;
+	(void)conf;
+	return EM_OK;
+}
+
+/* em_stop_func_t */
+static em_status_t eo_stop(void *eo_ctx, em_eo_t eo)
+{
+	(void)eo_ctx;
+	(void)eo;
+	return EM_OK;
+}
+
+/* em_receive_func_t */
+static void eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
+		       em_queue_t queue, void *q_ctx)
+{
+	(void)eo_ctx;
+	(void)type;
+	(void)queue;
+	(void)q_ctx;
+
+	em_free(event);
+}
+
 static int create_queues(void)
 {
 	em_queue_t unsched_queue = EM_QUEUE_UNDEF;
+	em_queue_t atomic_queue = EM_QUEUE_UNDEF;
+	em_queue_t parallel_queue = EM_QUEUE_UNDEF;
+	em_queue_t ordered_queue = EM_QUEUE_UNDEF;
+	em_queue_t local_queue = EM_QUEUE_UNDEF;
 	em_queue_conf_t conf = {0};
 	const int burst_size = gbl_args->event_opt.burst_size;
 
 	conf.flags = EM_QUEUE_FLAG_DEFAULT;
 	conf.min_events = burst_size * REPEAT_COUNT;
-	conf.conf_len = 0;
+	conf.conf_len = 0; /* len of conf.conf (0: not used) */
 
 	unsched_queue = em_queue_create("unsch-queue", EM_QUEUE_TYPE_UNSCHEDULED,
 					EM_QUEUE_PRIO_UNDEF, EM_QUEUE_GROUP_UNDEF, &conf);
@@ -147,34 +197,115 @@ static int create_queues(void)
 		ODPH_ERR("EM unscheduled queue create failed\n");
 		return -1;
 	}
-
 	gbl_args->unsched_queue = unsched_queue;
+
+	em_eo_t eo = em_eo_create("bench-events-eo", eo_start, NULL, eo_stop, NULL,
+				  eo_receive, NULL);
+	if (eo == EM_EO_UNDEF) {
+		ODPH_ERR("EM EO create failed\n");
+		return -1;
+	}
+	gbl_args->eo = eo;
+
+	atomic_queue = em_queue_create("atomic-queue", EM_QUEUE_TYPE_ATOMIC,
+				       EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT, &conf);
+	if (atomic_queue == EM_QUEUE_UNDEF) {
+		ODPH_ERR("EM atomic queue create failed\n");
+		return -1;
+	}
+	gbl_args->atomic_queue = atomic_queue;
+
+	parallel_queue = em_queue_create("parallel-queue", EM_QUEUE_TYPE_PARALLEL,
+					 EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT, &conf);
+	if (parallel_queue == EM_QUEUE_UNDEF) {
+		ODPH_ERR("EM parallel queue create failed\n");
+		return -1;
+	}
+	gbl_args->parallel_queue = parallel_queue;
+
+	local_queue = em_queue_create("local-queue", EM_QUEUE_TYPE_LOCAL,
+				      EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_UNDEF, &conf);
+	if (local_queue == EM_QUEUE_UNDEF) {
+		ODPH_ERR("EM local queue create failed\n");
+		return -1;
+	}
+	gbl_args->local_queue = local_queue;
+
+	ordered_queue = em_queue_create("ordered-queue", EM_QUEUE_TYPE_ORDERED,
+					EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT, &conf);
+	if (ordered_queue == EM_QUEUE_UNDEF) {
+		ODPH_ERR("EM ordered queue create failed\n");
+		return -1;
+	}
+	gbl_args->ordered_queue = ordered_queue;
+
+	if (em_eo_add_queue_sync(eo, atomic_queue) != EM_OK) {
+		ODPH_ERR("Adding atomic queue to EO failed\n");
+		return -1;
+	}
+	if (em_eo_add_queue_sync(eo, parallel_queue) != EM_OK) {
+		ODPH_ERR("Adding parallel queue to EO failed\n");
+		return -1;
+	}
+	if (em_eo_add_queue_sync(eo, ordered_queue) != EM_OK) {
+		ODPH_ERR("Adding ordered queue to EO failed\n");
+		return -1;
+	}
+	if (em_eo_add_queue_sync(eo, local_queue) != EM_OK) {
+		ODPH_ERR("Adding local queue to EO failed\n");
+		return -1;
+	}
+
+	if (em_eo_start_sync(eo, NULL, NULL) != EM_OK) {
+		ODPH_ERR("Starting EO failed\n");
+		return -1;
+	}
 
 	return 0;
 }
 
 static int delete_queues(void)
 {
-	em_queue_t unsched_queue = gbl_args->unsched_queue;
-	em_event_t event = EM_EVENT_UNDEF;
 	em_status_t err;
+	em_queue_t unsched_queue = gbl_args->unsched_queue;
 
-	if (unsched_queue == EM_QUEUE_UNDEF)
-		return -1;
+	if (unsched_queue != EM_QUEUE_UNDEF) {
+		em_event_t event = EM_EVENT_UNDEF;
 
-	do {
-		event = em_queue_dequeue(unsched_queue);
-		if (event != EM_EVENT_UNDEF)
-			em_free(event);
-	} while (event != EM_EVENT_UNDEF);
+		do {
+			event = em_queue_dequeue(unsched_queue);
+			if (event != EM_EVENT_UNDEF)
+				em_free(event);
+		} while (event != EM_EVENT_UNDEF);
 
-	err = em_queue_delete(unsched_queue);
-	if (err != EM_OK) {
-		ODPH_ERR("em_queue_delete() fails\n");
-		return -1;
+		err = em_queue_delete(unsched_queue);
+		if (err != EM_OK) {
+			ODPH_ERR("em_queue_delete() failed\n");
+			return -1;
+		}
+		gbl_args->unsched_queue = EM_QUEUE_UNDEF;
 	}
 
-	gbl_args->unsched_queue = EM_QUEUE_UNDEF;
+	em_eo_t eo = gbl_args->eo;
+
+	if (eo != EM_EO_UNDEF) {
+		if (em_eo_stop_sync(eo) != EM_OK) {
+			ODPH_ERR("Stopping EO failed\n");
+			return -1;
+		}
+
+		err = em_eo_remove_queue_all_sync(eo, EM_TRUE); /* +delete queues */
+
+		if (err != EM_OK) {
+			ODPH_ERR("Removing all added queues from EO failed\n");
+			return -1;
+		}
+
+		gbl_args->atomic_queue = EM_QUEUE_UNDEF;
+		gbl_args->parallel_queue = EM_QUEUE_UNDEF;
+		gbl_args->ordered_queue = EM_QUEUE_UNDEF;
+		gbl_args->local_queue = EM_QUEUE_UNDEF;
+	}
 
 	return 0;
 }
@@ -192,12 +323,49 @@ static void init_test_events(em_event_t event[], int num)
 	}
 }
 
+static void init_test_events_refs(em_event_t event[], int num)
+{
+	for (int i = 0; i < num; i++) {
+		em_status_t ret;
+
+		ret = em_event_uarea_id_set(event[i], i);
+		if (ret != EM_OK)
+			ODPH_ABORT("Setting event user area ID failed\n");
+
+		gbl_args->odp_event_tbl[i] = em_odp_event2odp(event[i]);
+		gbl_args->event_ref_tbl[i] = em_event_ref(event[i]);
+	}
+}
+
 static void allocate_test_events(em_pool_t pool, em_event_type_t type, em_event_t event[], int num)
 {
 	int num_events = 0;
 	int num_retries = 0;
 	const int size = type == EM_EVENT_TYPE_VECTOR ? gbl_args->event_opt.vector_size :
 				gbl_args->event_opt.event_size;
+
+	while (num_events < num) {
+		int ret;
+
+		ret = em_alloc_multi(&event[num_events], num - num_events,
+				     size, type, pool);
+		if (ret < 1) {
+			num_retries++;
+			if (ret < 0 || num_retries > MAX_RETRY)
+				ODPH_ABORT("Allocating test events failed\n");
+			continue;
+		}
+		num_retries = 0;
+		num_events += ret;
+	}
+}
+
+static void allocate_test_events_concat(em_pool_t pool, em_event_type_t type,
+					em_event_t event[], int num)
+{
+	int num_events = 0;
+	int num_retries = 0;
+	const int size = gbl_args->event_opt.event_size / 2;
 
 	while (num_events < num) {
 		int ret;
@@ -277,6 +445,39 @@ static void create_packets_multi(void)
 	init_test_events(gbl_args->event_tbl, num_events);
 }
 
+static void create_packets_concat(void)
+{
+	allocate_test_events_concat(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+				    gbl_args->event_tbl, REPEAT_COUNT);
+	init_test_events(gbl_args->event_tbl, REPEAT_COUNT);
+
+	allocate_test_events_concat(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+				    gbl_args->event2_tbl, REPEAT_COUNT);
+	init_test_events(gbl_args->event2_tbl, REPEAT_COUNT);
+}
+
+static void create_packets_concat_dif(void)
+{
+	allocate_test_events_concat(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+				    gbl_args->event_tbl, REPEAT_COUNT);
+	init_test_events(gbl_args->event_tbl, REPEAT_COUNT);
+
+	allocate_test_events_concat(gbl_args->packet_pool2, EM_EVENT_TYPE_PACKET,
+				    gbl_args->event2_tbl, REPEAT_COUNT);
+	init_test_events(gbl_args->event2_tbl, REPEAT_COUNT);
+}
+
+static void create_packets_concat_refs(void)
+{
+	allocate_test_events_concat(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+				    gbl_args->event_tbl, REPEAT_COUNT);
+	init_test_events(gbl_args->event_tbl, REPEAT_COUNT);
+
+	allocate_test_events_concat(gbl_args->packet_pool, EM_EVENT_TYPE_PACKET,
+				    gbl_args->event2_tbl, REPEAT_COUNT);
+	init_test_events_refs(gbl_args->event2_tbl, REPEAT_COUNT);
+}
+
 static void create_sw_events(void)
 {
 	allocate_test_events(gbl_args->sw_event_pool, EM_EVENT_TYPE_SW, gbl_args->event_tbl,
@@ -321,6 +522,12 @@ static void free_event_tbl(em_event_t event_tbl[], int num)
 
 static void free_events(void)
 {
+	free_event_tbl(gbl_args->event_tbl, REPEAT_COUNT);
+}
+
+static void free_events_refs(void)
+{
+	free_event_tbl(gbl_args->event_ref_tbl, REPEAT_COUNT);
 	free_event_tbl(gbl_args->event_tbl, REPEAT_COUNT);
 }
 
@@ -524,19 +731,19 @@ static int event_pointer_and_size(void)
 	return i;
 }
 
-static int event_uarea_get(void)
+static int event_uarea(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	void **ptr = gbl_args->ptr_tbl;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		ptr[i] = em_event_uarea_get(event_tbl[i], NULL);
+		ptr[i] = em_event_uarea(event_tbl[i], NULL);
 
 	return i;
 }
 
-static int event_uarea_get_size(void)
+static int event_uarea_size(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	void **ptr = gbl_args->ptr_tbl;
@@ -544,36 +751,36 @@ static int event_uarea_get_size(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		ptr[i] = em_event_uarea_get(event_tbl[i], &size);
+		ptr[i] = em_event_uarea(event_tbl[i], &size);
 
 	return size;
 }
 
-static int event_get_size(void)
+static int event_size(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	uint32_t *u32 = gbl_args->u32_tbl;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		u32[i] = em_event_get_size(event_tbl[i]);
+		u32[i] = em_event_size(event_tbl[i]);
 
 	return i;
 }
 
-static int event_get_type(void)
+static int event_type(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_event_type_t *et = gbl_args->et_tbl;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		et[i] = em_event_get_type(event_tbl[i]);
+		et[i] = em_event_type(event_tbl[i]);
 
 	return i;
 }
 
-static int event_get_type_multi(void)
+static int event_type_multi(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_event_type_t *et = gbl_args->et_tbl;
@@ -581,8 +788,8 @@ static int event_get_type_multi(void)
 	int ret = 0;
 
 	for (int i = 0; i < REPEAT_COUNT; i++)
-		ret += em_event_get_type_multi(&event_tbl[i * burst_size], burst_size,
-					       &et[i * burst_size]);
+		ret += em_event_type_multi(&event_tbl[i * burst_size], burst_size,
+					   &et[i * burst_size]);
 
 	return ret;
 }
@@ -611,19 +818,19 @@ static int event_set_type(void)
 	return i;
 }
 
-static int event_get_pool(void)
+static int event_pool(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_pool_t *pool = gbl_args->pool_tbl;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		pool[i] = em_event_get_pool(event_tbl[i]);
+		pool[i] = em_event_pool(event_tbl[i]);
 
 	return i;
 }
 
-static int event_get_pool_subpool(void)
+static int event_pool_subpool(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_pool_t *pool = gbl_args->pool_tbl;
@@ -631,12 +838,12 @@ static int event_get_pool_subpool(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		pool[i] = em_event_get_pool_subpool(event_tbl[i], &subpool);
+		pool[i] = em_event_pool_subpool(event_tbl[i], &subpool);
 
 	return i;
 }
 
-static int event_uarea_id_get(void)
+static int event_uarea_id(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	uint16_t *u16 = gbl_args->u16_tbl;
@@ -644,7 +851,7 @@ static int event_uarea_id_get(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		em_event_uarea_id_get(event_tbl[i], &isset, &u16[i]);
+		em_event_uarea_id(event_tbl[i], &isset, &u16[i]);
 
 	return i + isset;
 }
@@ -711,7 +918,7 @@ static int event_clone_part(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_event_t *event2_tbl = gbl_args->event2_tbl;
-	uint32_t size = em_event_get_size(event_tbl[0]); /* all events are of same size */
+	uint32_t size = em_event_size(event_tbl[0]); /* all events are of same size */
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
@@ -724,11 +931,23 @@ static int event_clone_part__no_uarea(void)
 {
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_event_t *event2_tbl = gbl_args->event2_tbl;
-	uint32_t size = em_event_get_size(event_tbl[0]); /* all events are of same size */
+	uint32_t size = em_event_size(event_tbl[0]); /* all events are of same size */
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
 		event2_tbl[i] = em_event_clone_part(event_tbl[i], EM_POOL_UNDEF, 0, size, false);
+
+	return i;
+}
+
+static int packet_concat(void)
+{
+	em_event_t *event_tbl = gbl_args->event_tbl;
+	em_event_t *event2_tbl = gbl_args->event2_tbl;
+	int i;
+
+	for (i = 0; i < REPEAT_COUNT; i++)
+		em_packet_concat(&event_tbl[i], event2_tbl[i]);
 
 	return i;
 }
@@ -876,15 +1095,26 @@ static int odp_events2em(void)
 	return i;
 }
 
-static int unsched_send(void)
+static void dispatch_events_free(void)
 {
-	em_queue_t unsched_queue = gbl_args->unsched_queue;
+	em_dispatch_events(REPEAT_COUNT, NULL, NULL);
+}
+
+static void dispatch_events_free_multi(void)
+{
+	const int burst_size = gbl_args->event_opt.burst_size;
+
+	em_dispatch_events(REPEAT_COUNT * burst_size, NULL, NULL);
+}
+
+static int send_queue(em_queue_t queue)
+{
 	em_event_t *event_tbl = gbl_args->event_tbl;
 	em_status_t err;
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++) {
-		err = em_send(event_tbl[i], unsched_queue);
+		err = em_send(event_tbl[i], queue);
 		if (unlikely(err != EM_OK))
 			return 0; /* error */
 	}
@@ -892,20 +1122,92 @@ static int unsched_send(void)
 	return i;
 }
 
+static int atomic_send(void)
+{
+	em_queue_t atomic_queue = gbl_args->atomic_queue;
+
+	return send_queue(atomic_queue);
+}
+
+static int parallel_send(void)
+{
+	em_queue_t parallel_queue = gbl_args->parallel_queue;
+
+	return send_queue(parallel_queue);
+}
+
+static int ordered_send(void)
+{
+	em_queue_t ordered_queue = gbl_args->ordered_queue;
+
+	return send_queue(ordered_queue);
+}
+
+static int local_send(void)
+{
+	em_queue_t local_queue = gbl_args->local_queue;
+
+	return send_queue(local_queue);
+}
+
+static int unsched_send(void)
+{
+	em_queue_t unsched_queue = gbl_args->unsched_queue;
+
+	return send_queue(unsched_queue);
+}
+
+static inline int send_queue_multi(em_queue_t queue)
+{
+	em_event_t *event_tbl = gbl_args->event_tbl;
+	const int burst_size = gbl_args->event_opt.burst_size;
+	int ret = burst_size;
+	int tot = 0;
+
+	for (int i = 0; i < REPEAT_COUNT && ret == burst_size; i++) {
+		ret = em_send_multi(&event_tbl[i * burst_size], burst_size, queue);
+		tot += ret;
+	}
+
+	if (unlikely(tot != burst_size * REPEAT_COUNT))
+		return 0; /* error */
+
+	return tot;
+}
+
+static inline int atomic_send_multi(void)
+{
+	em_queue_t atomic_queue = gbl_args->atomic_queue;
+
+	return send_queue_multi(atomic_queue);
+}
+
+static inline int parallel_send_multi(void)
+{
+	em_queue_t parallel_queue = gbl_args->parallel_queue;
+
+	return send_queue_multi(parallel_queue);
+}
+
+static inline int ordered_send_multi(void)
+{
+	em_queue_t ordered_queue = gbl_args->ordered_queue;
+
+	return send_queue_multi(ordered_queue);
+}
+
+static inline int local_send_multi(void)
+{
+	em_queue_t local_queue = gbl_args->local_queue;
+
+	return send_queue_multi(local_queue);
+}
+
 static inline int unsched_send_multi(void)
 {
 	em_queue_t unsched_queue = gbl_args->unsched_queue;
-	em_event_t *event_tbl = gbl_args->event_tbl;
-	const int burst_size = gbl_args->event_opt.burst_size;
-	int ret = 0;
 
-	for (int i = 0; i < REPEAT_COUNT; i++)
-		ret += em_send_multi(&event_tbl[i * burst_size], burst_size, unsched_queue);
-
-	if (unlikely(ret != burst_size * REPEAT_COUNT))
-		return 0; /* error */
-
-	return ret;
+	return send_queue_multi(unsched_queue);
 }
 
 static int unsched_dequeue(void)
@@ -1045,8 +1347,42 @@ bench_info_t test_suite[] = {
 		   "event_alloc_free_multi(pkt)"),
 	BENCH_INFO(event_vector_alloc_free_multi, NULL, NULL, 0,
 		   "event_alloc_free_multi(vect)"),
+	BENCH_INFO(atomic_send, create_sw_events, dispatch_events_free, 0,
+		   "em_send(atomic-Q, sw)"),
+	BENCH_INFO(atomic_send, create_packets, dispatch_events_free, 0,
+		   "em_send(atomic-Q, pkt)"),
+	BENCH_INFO(parallel_send, create_sw_events, dispatch_events_free, 0,
+		   "em_send(parallel-Q, sw)"),
+	BENCH_INFO(parallel_send, create_packets, dispatch_events_free, 0,
+		   "em_send(parallel-Q, pkt)"),
+	BENCH_INFO(ordered_send, create_sw_events, dispatch_events_free, 0,
+		   "em_send(ordered-Q, sw)"),
+	BENCH_INFO(ordered_send, create_packets, dispatch_events_free, 0,
+		   "em_send(ordered-Q, pkt)"),
+	BENCH_INFO(local_send, create_sw_events, dispatch_events_free, 0,
+		   "em_send(local-Q, sw)"),
+	BENCH_INFO(local_send, create_packets, dispatch_events_free, 0,
+		   "em_send(local-Q, pkt)"),
 	BENCH_INFO(unsched_send, create_sw_events, unsched_dequeue_free, 0,
-		   "em_send(unsched-Q)"),
+		   "em_send(unsched-Q, sw)"),
+	BENCH_INFO(unsched_send, create_packets, unsched_dequeue_free, 0,
+		   "em_send(unsched-Q, pkt)"),
+	BENCH_INFO(atomic_send_multi, create_sw_events_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(atomic-Q, sw)"),
+	BENCH_INFO(atomic_send_multi, create_packets_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(atomic-Q, pkt)"),
+	BENCH_INFO(parallel_send_multi, create_sw_events_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(parallel-Q, sw)"),
+	BENCH_INFO(parallel_send_multi, create_packets_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(parallel-Q, pkt)"),
+	BENCH_INFO(ordered_send_multi, create_sw_events_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(ordered-Q, sw)"),
+	BENCH_INFO(ordered_send_multi, create_packets_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(ordered-Q, pkt)"),
+	BENCH_INFO(local_send_multi, create_sw_events_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(local-Q, sw)"),
+	BENCH_INFO(local_send_multi, create_packets_multi, dispatch_events_free_multi, 0,
+		   "em_send_multi(local-Q, pkt)"),
 	BENCH_INFO(unsched_send_multi, create_sw_events_multi, unsched_dequeue_free_multi, 0,
 		   "em_send_multi(unsched-Q)"),
 	BENCH_INFO(unsched_dequeue, create_send_unsched_sw_events, free_events, 0,
@@ -1081,18 +1417,18 @@ bench_info_t test_suite[] = {
 		   "em_event_pointer_and_size(sw)"),
 	BENCH_INFO(event_pointer_and_size, create_packets, free_events, 0,
 		   "em_event_pointer_and_size(pkt)"),
-	BENCH_INFO(event_get_size, create_sw_events, free_events, 0,
-		   "em_event_get_size(sw)"),
-	BENCH_INFO(event_get_size, create_packets, free_events, 0,
-		   "em_event_get_size(pkt)"),
-	BENCH_INFO(event_get_type, create_sw_events, free_events, 0,
-		   "em_event_get_type(sw)"),
-	BENCH_INFO(event_get_type, create_packets, free_events, 0,
-		   "em_event_get_type(pkt)"),
-	BENCH_INFO(event_get_type_multi, create_sw_events_multi, free_events_multi, 0,
-		   "em_event_get_type_multi(sw)"),
-	BENCH_INFO(event_get_type_multi, create_packets_multi, free_events_multi, 0,
-		   "em_event_get_type_multi(pkt)"),
+	BENCH_INFO(event_size, create_sw_events, free_events, 0,
+		   "em_event_size(sw)"),
+	BENCH_INFO(event_size, create_packets, free_events, 0,
+		   "em_event_size(pkt)"),
+	BENCH_INFO(event_type, create_sw_events, free_events, 0,
+		   "em_event_type(sw)"),
+	BENCH_INFO(event_type, create_packets, free_events, 0,
+		   "em_event_type(pkt)"),
+	BENCH_INFO(event_type_multi, create_sw_events_multi, free_events_multi, 0,
+		   "em_event_type_multi(sw)"),
+	BENCH_INFO(event_type_multi, create_packets_multi, free_events_multi, 0,
+		   "em_event_type_multi(pkt)"),
 	BENCH_INFO(event_same_type_multi, create_sw_events_multi, free_events_multi, 0,
 		   "em_event_same_type_multi(sw)"),
 	BENCH_INFO(event_same_type_multi, create_packets_multi, free_events_multi, 0,
@@ -1101,32 +1437,32 @@ bench_info_t test_suite[] = {
 		   "em_event_set_type(sw)"),
 	BENCH_INFO(event_set_type, create_packets, free_events, 0,
 		   "em_event_set_type(pkt)"),
-	BENCH_INFO(event_get_pool, create_sw_events, free_events, 0,
-		   "em_event_get_pool(sw)"),
-	BENCH_INFO(event_get_pool, create_packets, free_events, 0,
-		   "em_event_get_pool(pkt)"),
-	BENCH_INFO(event_get_pool_subpool, create_sw_events, free_events, 0,
-		   "em_event_get_pool_subpool(sw)"),
-	BENCH_INFO(event_get_pool_subpool, create_packets, free_events, 0,
-		   "em_event_get_pool_subpool(pkt)"),
-	BENCH_INFO(event_uarea_get, create_sw_events, free_events, 0,
-		   "em_event_uarea_get(sw, null)"),
-	BENCH_INFO(event_uarea_get, create_packets, free_events, 0,
-		   "em_event_uarea_get(pkt, null)"),
-	BENCH_INFO(event_uarea_get, create_ext_packets, free_events, 0,
-		   "em_event_uarea_get(ext-pkt, null)"),
-	BENCH_INFO(event_uarea_get_size, create_sw_events, free_events, 0,
-		   "em_event_uarea_get(sw, size)"),
-	BENCH_INFO(event_uarea_get_size, create_packets, free_events, 0,
-		   "em_event_uarea_get(pkt, size)"),
-	BENCH_INFO(event_uarea_get_size, create_ext_packets, free_events, 0,
-		   "em_event_uarea_get(ext-pkt, size)"),
-	BENCH_INFO(event_uarea_id_get, create_sw_events, free_events, 0,
-		   "em_event_uarea_id_get(sw)"),
-	BENCH_INFO(event_uarea_id_get, create_packets, free_events, 0,
-		   "em_event_uarea_id_get(pkt)"),
-	BENCH_INFO(event_uarea_id_get, create_ext_packets, free_events, 0,
-		   "em_event_uarea_id_get(ext-pkt)"),
+	BENCH_INFO(event_pool, create_sw_events, free_events, 0,
+		   "em_event_pool(sw)"),
+	BENCH_INFO(event_pool, create_packets, free_events, 0,
+		   "em_event_pool(pkt)"),
+	BENCH_INFO(event_pool_subpool, create_sw_events, free_events, 0,
+		   "em_event_pool_subpool(sw)"),
+	BENCH_INFO(event_pool_subpool, create_packets, free_events, 0,
+		   "em_event_pool_subpool(pkt)"),
+	BENCH_INFO(event_uarea, create_sw_events, free_events, 0,
+		   "em_event_uarea(sw, null)"),
+	BENCH_INFO(event_uarea, create_packets, free_events, 0,
+		   "em_event_uarea(pkt, null)"),
+	BENCH_INFO(event_uarea, create_ext_packets, free_events, 0,
+		   "em_event_uarea(ext-pkt, null)"),
+	BENCH_INFO(event_uarea_size, create_sw_events, free_events, 0,
+		   "em_event_uarea(sw, size)"),
+	BENCH_INFO(event_uarea_size, create_packets, free_events, 0,
+		   "em_event_uarea(pkt, size)"),
+	BENCH_INFO(event_uarea_size, create_ext_packets, free_events, 0,
+		   "em_event_uarea(ext-pkt, size)"),
+	BENCH_INFO(event_uarea_id, create_sw_events, free_events, 0,
+		   "em_event_uarea_id(sw)"),
+	BENCH_INFO(event_uarea_id, create_packets, free_events, 0,
+		   "em_event_uarea_id(pkt)"),
+	BENCH_INFO(event_uarea_id, create_ext_packets, free_events, 0,
+		   "em_event_uarea_id(ext-pkt)"),
 	BENCH_INFO(event_uarea_id_set, create_sw_events, free_events, 0,
 		   "em_event_uarea_id_set(sw)"),
 	BENCH_INFO(event_uarea_id_set, create_packets, free_events, 0,
@@ -1161,7 +1497,13 @@ bench_info_t test_suite[] = {
 	BENCH_INFO(odp_events2em, create_sw_events_multi, free_events_multi, 0,
 		   "em_odp_events2em(sw)"),
 	BENCH_INFO(odp_events2em, create_packets_multi, free_events_multi, 0,
-		   "em_odp_events2em(pkt)")
+		   "em_odp_events2em(pkt)"),
+	BENCH_INFO(packet_concat, create_packets_concat, free_events, 0,
+		   "em_packet_concat(pkt)"),
+	BENCH_INFO(packet_concat, create_packets_concat_dif, free_events, 0,
+		   "em_packet_concat(pkt, dif-pools)"),
+	BENCH_INFO(packet_concat, create_packets_concat_refs, free_events_refs, 0,
+		   "em_packet_concat(pkt, refs)")
 };
 
 /* Print usage information */
@@ -1283,6 +1625,7 @@ static void print_info(const char *cpumask_str, const event_opt_t *event_opt,
 		       const cmd_opt_t *com_opt)
 {
 	odp_sys_info_print();
+	em_info_print();
 
 	printf("\n"
 	       "bench_events options\n"
@@ -1318,12 +1661,29 @@ static void init_default_pool_config(em_pool_cfg_t *pool_conf)
 "Date,clone_part(sw),clone_part(pkt),clone_part(sw no-uarea),clone_part(pkt no-uarea)\n" \
 "%s,%.2f,%.2f,%.2f,%.2f\n"
 
+/*
+ * Look up a benchmark's result by its unique description string. Keying on
+ * 'desc' instead of a fixed array index keeps the CSV output correct even when
+ * benchmarks are reordered or inserted into test_suite[].
+ */
+static double bench_result(const char *desc)
+{
+	const run_bench_arg_t *arg = &gbl_args->run_bench_arg;
+
+	for (int i = 0; i < arg->num_bench; i++) {
+		if (arg->bench[i].desc && !strcmp(arg->bench[i].desc, desc))
+			return arg->result[i];
+	}
+
+	ODPH_ERR("Benchmark '%s' not found\n", desc);
+	return 0.0;
+}
+
 static void write_result_to_csv(void)
 {
 	FILE *file;
 	char file_name[32] = {0};
 	char time_str[72] = {0};
-	double *result = gbl_args->run_bench_arg.result;
 
 	fill_time_str(time_str);
 
@@ -1334,7 +1694,10 @@ static void write_result_to_csv(void)
 	}
 
 	fprintf(file, "Date,em_alloc(sw),em_alloc(pkt),em_alloc(vec)\n"
-		"%s,%.2f,%.2f,%.2f\n", time_str, result[0], result[1], result[2]);
+		"%s,%.2f,%.2f,%.2f\n", time_str,
+		bench_result("em_event_alloc(sw)"),
+		bench_result("em_event_alloc(pkt)"),
+		bench_result("em_event_alloc(vect)"));
 
 	fclose(file);
 
@@ -1347,7 +1710,10 @@ static void write_result_to_csv(void)
 	}
 
 	fprintf(file, "Date,em_alloc_multi(sw),em_alloc_multi(pkt),em_alloc_multi(vec)\n"
-		"%s,%.2f,%.2f,%.2f\n", time_str, result[3], result[4], result[5]);
+		"%s,%.2f,%.2f,%.2f\n", time_str,
+		bench_result("em_event_alloc_multi(sw)"),
+		bench_result("em_event_alloc_multi(pkt)"),
+		bench_result("em_event_alloc_multi(vect)"));
 	fclose(file);
 
 	/* em_free */
@@ -1358,7 +1724,10 @@ static void write_result_to_csv(void)
 	}
 
 	fprintf(file, "Date,em_free(sw),em_free(pkt),em_free(vec)\n"
-		"%s,%.2f,%.2f,%.2f\n", time_str, result[6], result[7], result[8]);
+		"%s,%.2f,%.2f,%.2f\n", time_str,
+		bench_result("em_free(sw)"),
+		bench_result("em_free(pkt)"),
+		bench_result("em_free(vect)"));
 
 	fclose(file);
 
@@ -1372,7 +1741,10 @@ static void write_result_to_csv(void)
 	}
 
 	fprintf(file, "Date,em_free_multi(sw),em_free_multi(pkt),em_free_multi(vec)\n"
-		"%s,%.2f,%.2f,%.2f\n", time_str, result[9], result[10], result[11]);
+		"%s,%.2f,%.2f,%.2f\n", time_str,
+		bench_result("em_free_multi(sw)"),
+		bench_result("em_free_multi(pkt)"),
+		bench_result("em_free_multi(vect)"));
 	fclose(file);
 
 	/* em_event_clone */
@@ -1383,7 +1755,9 @@ static void write_result_to_csv(void)
 	}
 
 	fprintf(file, "Date,em_event_clone(sw),em_event_clone(pkt)\n"
-		"%s,%.2f,%.2f\n", time_str, result[25], result[26]);
+		"%s,%.2f,%.2f\n", time_str,
+		bench_result("em_event_clone(sw)"),
+		bench_result("em_event_clone(pkt)"));
 	fclose(file);
 
 	/* em_event_clone_part */
@@ -1393,8 +1767,11 @@ static void write_result_to_csv(void)
 		return;
 	}
 
-	fprintf(file, CLONE_PART_FMT, time_str, result[27], result[28],
-		result[29], result[30]);
+	fprintf(file, CLONE_PART_FMT, time_str,
+		bench_result("em_event_clone_part(sw)"),
+		bench_result("em_event_clone_part(pkt)"),
+		bench_result("em_event_clone_part(sw, no uarea)"),
+		bench_result("em_event_clone_part(pkt, no-uarea)"));
 	fclose(file);
 }
 
@@ -1458,7 +1835,6 @@ int main(int argc, char *argv[])
 
 	/* Init EM */
 	em_core_mask_zero(&core_mask);
-	em_core_mask_set(odp_cpu_id(), &core_mask);
 	em_core_mask_set(worker_cpu, &core_mask);
 
 	init_default_pool_config(&pool_conf);
@@ -1469,7 +1845,7 @@ int main(int argc, char *argv[])
 	else
 		conf.thread_per_core = 1;
 	conf.default_pool_cfg = pool_conf;
-	conf.core_count = 2;
+	conf.core_count = 1;
 	conf.phys_mask = core_mask;
 
 	if (em_init(&conf) != EM_OK) {
@@ -1477,8 +1853,13 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	if (em_init_core() != EM_OK) {
-		ODPH_ERR("EM core init failed\n");
+	em_conf_local_t conf_local;
+
+	em_conf_local_init(&conf_local);
+	conf_local.core_type = EM_CORE_TYPE_EXTERNAL;
+
+	if (em_init_local(&conf_local) != EM_OK) {
+		ODPH_ERR("EM local init failed\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -1503,15 +1884,23 @@ int main(int argc, char *argv[])
 	odp_atomic_init_u32(&exit_thread, 0);
 
 	memset(gbl_args, 0, sizeof(gbl_args_t));
-	gbl_args->sw_event_pool = EM_POOL_UNDEF;
-	gbl_args->packet_pool = EM_POOL_UNDEF;
-	gbl_args->unsched_queue = EM_QUEUE_UNDEF;
-
-	gbl_args->event_opt = event_opt;
 	gbl_args->run_bench_arg.opt = com_opt;
 	gbl_args->run_bench_arg.bench = test_suite;
 	gbl_args->run_bench_arg.num_bench = num_bench;
 	gbl_args->run_bench_arg.result = result;
+
+	gbl_args->event_opt = event_opt;
+
+	gbl_args->sw_event_pool = EM_POOL_UNDEF;
+	gbl_args->packet_pool = EM_POOL_UNDEF;
+	gbl_args->packet_pool2 = EM_POOL_UNDEF;
+	gbl_args->vector_pool = EM_POOL_UNDEF;
+	gbl_args->eo = EM_EO_UNDEF;
+	gbl_args->unsched_queue = EM_QUEUE_UNDEF;
+	gbl_args->atomic_queue = EM_QUEUE_UNDEF;
+	gbl_args->parallel_queue = EM_QUEUE_UNDEF;
+	gbl_args->ordered_queue = EM_QUEUE_UNDEF;
+	gbl_args->local_queue = EM_QUEUE_UNDEF;
 
 	for (int i = 0; i < MAX_EVENTS; i++) {
 		gbl_args->event_tbl[i] = EM_EVENT_UNDEF;
@@ -1564,6 +1953,8 @@ exit:
 
 	if (gbl_args->packet_pool != EM_POOL_UNDEF)
 		em_pool_delete(gbl_args->packet_pool);
+	if (gbl_args->packet_pool2 != EM_POOL_UNDEF)
+		em_pool_delete(gbl_args->packet_pool2);
 
 	if (gbl_args->vector_pool != EM_POOL_UNDEF)
 		em_pool_delete(gbl_args->vector_pool);
@@ -1571,10 +1962,14 @@ exit:
 	if (delete_queues())
 		ODPH_ERR("Deleting queues failed\n");
 
-	if (em_term_core() != EM_OK)
-		ODPH_ERR("EM core terminate failed\n");
+	em_term_local_t term_local;
 
-	if (em_term(&conf) != EM_OK)
+	em_term_local_init(&term_local);
+
+	if (em_term_local(&term_local) != EM_OK)
+		ODPH_ERR("EM local terminate failed\n");
+
+	if (em_term() != EM_OK)
 		ODPH_ERR("EM terminate failed\n");
 
 	if (odp_shm_free(shm)) {

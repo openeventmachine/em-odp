@@ -1,0 +1,34 @@
+// markdownlint configuration for this repository.
+//
+// Consumed only by editor tooling and by `markdownlint` / `markdownlint-cli`
+// when run locally.
+// markdownlint parses this file as JSONC, so `//` comments are allowed,
+// and the `.jsonc` extension keeps editors from flagging those comments
+// as invalid JSON.
+//
+// Each key below is a markdownlint rule ID. Only rules whose defaults we want
+// to change are listed; every other rule keeps its default.
+{
+  // MD010 "no-hard-tabs": flags literal tab characters (Markdown expects
+  // spaces for indentation). "code_blocks": false exempts fenced/indented
+  // code blocks, so tabs are still allowed inside them (e.g. Makefile or
+  // shell snippets) while remaining flagged in normal prose.
+  "MD010": {
+    "code_blocks": false
+  },
+
+  // MD013 "line-length": flags lines longer than the limit. We raise the
+  // limit to 100 characters (markdownlint's default is 80).
+  "MD013": {
+    "line_length": 100
+  },
+
+  // MD024 "no-duplicate-heading": flags two headings with identical text.
+  // "siblings_only": true restricts the check to headings under the same
+  // parent, so repeated subheadings under different parents are allowed
+  // (e.g. the recurring "### Added" / "### Fixed" sections under each
+  // version heading in the CHANGELOG).
+  "MD024": {
+    "siblings_only": true
+  }
+}

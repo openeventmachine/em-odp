@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2016-2024, Nokia Solutions and Networks
+ *   Copyright (c) 2016-2025, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -29,11 +29,6 @@
  */
 
 /**
- * @file
- *  Event Machine timer
- * @defgroup em_timer Event timer
- *  Event Machine timer
- *
- * @deprecated Do not use or include this file include/add-ons/event_machine_timer.h
- * anymore. EM timer is moved under EM API.
+ * @deprecated Do not use or include include/add-ons/event_machine_timer.h.
+ *             The EM timer is included in the EM API, include event_machine.h.
  */

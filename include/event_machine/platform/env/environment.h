@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,65 +38,42 @@
  *
  * Environment header file
  */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdlib.h>
-
 #include <odp_api.h>
-/* env generic macros */
-#include <event_machine/platform/env/env_macros.h>
-/* env configuration affecting other env files */
-#include <event_machine/platform/env/env_conf.h>
-
-/**
- * Thread local vars
- */
-#define ENV_LOCAL __thread
-
-/**
- * Cache line size
- */
-#define ENV_CACHE_LINE_SIZE           ODP_CACHE_LINE_SIZE
-
-/**
- * Cache line size round up
- */
-#define ENV_CACHE_LINE_SIZE_ROUNDUP(x) \
-	((((x) + ENV_CACHE_LINE_SIZE - 1) / ENV_CACHE_LINE_SIZE) \
-	 * ENV_CACHE_LINE_SIZE)
-
-#define ENV_ALIGNED(x)  ODP_ALIGNED(x)
-
-/**
- * Cache line alignment
- */
-#define ENV_CACHE_LINE_ALIGNED  ODP_ALIGNED_CACHE
-
-/*
- * Cache Prefetch-macros
- */
-/** Prefetch into all cache levels */
-#define ENV_PREFETCH(addr) odp_prefetch((addr))
 
 /*
  * env helper include files - don't include these files directly,
  * instead #include <environment.h>
+ *
+ * env_conf.h provides ENV_DEPRECATED_API (derived from EM_DEPRECATED_API)
+ * and must be included before the conditional env_atomic.h below.
  */
+#include <event_machine/platform/env/env_conf.h>
+#include <event_machine/platform/env/env_macros.h>
+#if ENV_DEPRECATED_API
 #include <event_machine/platform/env/env_atomic.h>
+#endif
 #include <event_machine/platform/env/env_bitmask.h>
 #include <event_machine/platform/env/env_barrier.h>
 #include <event_machine/platform/env/env_sharedmem.h>
 #include <event_machine/platform/env/env_spinlock.h>
 #include <event_machine/platform/env/env_time.h>
 
-/**
- * Panic
- */
-#define env_panic(...) abort()
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+/**
+ * Get the current cpu cycle count
+ *
+ * The cycle count frequency follows the cpu frequency and may thus change at
+ * any time. The cycle count should not be used for time measurements due to
+ * the possibility of frequency variation.
+ * The count may advance in steps larger than one.
+ *
+ * @return Current cycle count on the cpu the caller is running on
+ * @retval 0 if the cpu cycle counter is not supported
+ */
 static inline uint64_t env_get_cycle(void)
 {
 	return odp_cpu_cycles();
@@ -105,8 +82,8 @@ static inline uint64_t env_get_cycle(void)
 /**
  * Returns difference of cpu cycles (cycles2 - cycles1).
  *
- * @param cycles2	Second cycle count
- * @param cycles1	First cycle count
+ * @param cycles2  Second cycle count
+ * @param cycles1  First cycle count
  *
  * @return Difference between given cpu cycles
  */

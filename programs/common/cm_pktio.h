@@ -32,21 +32,25 @@
 #ifndef CM_PKTIO_H
 #define CM_PKTIO_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <arpa/inet.h>
 
+#include <odp_api.h>
 #include <odp/helper/odph_api.h>
+
+#include <event_machine.h>
 #include <event_machine/platform/env/environment.h>
 #include <event_machine/platform/event_machine_odp_ext.h>
 
+#include "cm_setup.h"
 #include "table.h"
 #include "cuckootable.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define IPV4_PROTO_UDP  ODPH_IPPROTO_UDP
 
@@ -146,7 +150,7 @@ typedef struct tx_burst {
 	/** count the number of events in 'queue', updated atomically */
 	odp_atomic_u64_t cnt;
 	/** lock needed when dequeueing from 'queue' */
-	odp_spinlock_t lock;
+	odp_ticketlock_t lock;
 	/** store the output interface port also here for easy access */
 	int if_port;
 	/** Transmit burst using this pktout_queue */

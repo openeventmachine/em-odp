@@ -33,7 +33,29 @@
  * SPDX-License-Identifier:     BSD-3-Clause
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <libconfig.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_libconfig.h"
+#include "em_libconfig_types.h"
+#include "em_mem.h"
 #include "include/em_libconfig_config.h"
 
 #define SETTING_NAME_LEN 64

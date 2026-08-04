@@ -28,11 +28,36 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
-/* per core (thread) state for em_queue_group_get_next() */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_core.h"
+#include "em_error.h"
+#include "em_internal_event.h"
+#include "em_internal_event_types.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_queue_group_types.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+
+/* per core (thread) state for em_queue_group_next() */
 static ENV_LOCAL unsigned int _qgrp_tbl_iter_idx;
-/* Per core (thread) state of em_queue_group_queue_get_next() */
+/* Per core (thread) state of em_queue_group_queue_next() */
 static ENV_LOCAL unsigned int _qgrp_q_iter_idx;
 static ENV_LOCAL em_queue_group_t _qgrp_q_iter_qgrp;
 
@@ -46,17 +71,6 @@ em_queue_group_create(const char *name, const em_core_mask_t *mask,
 	if (unlikely(!mask)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE,
 			       "Core mask NULL");
-		return EM_QUEUE_GROUP_UNDEF;
-	}
-
-	err = queue_group_check_mask(mask);
-	if (unlikely(err != EM_OK)) {
-		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
-		char mstr[ODP_CPUMASK_STR_SIZE];
-
-		em_core_mask_tostr(mstr, sizeof(mstr), mask);
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE,
-			       "Invalid mask given:%s", mstr);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
@@ -76,22 +90,10 @@ em_queue_group_t
 em_queue_group_create_sync(const char *name, const em_core_mask_t *mask)
 {
 	em_queue_group_t queue_group;
-	em_status_t err;
 
 	if (unlikely(!mask)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC,
 			       "Core mask NULL");
-		return EM_QUEUE_GROUP_UNDEF;
-	}
-
-	err = queue_group_check_mask(mask);
-	if (unlikely(err != EM_OK)) {
-		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
-		char mstr[ODP_CPUMASK_STR_SIZE];
-
-		em_core_mask_tostr(mstr, sizeof(mstr), mask);
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_CREATE_SYNC,
-			       "Invalid mask given:%s", mstr);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
@@ -107,8 +109,7 @@ em_queue_group_delete(em_queue_group_t queue_group,
 	em_core_mask_t zero_mask;
 	em_status_t err;
 
-	queue_group_elem_t *const qgrp_elem =
-		queue_group_elem_get(queue_group);
+	queue_group_elem_t *const qgrp_elem = queue_group_elem_get(queue_group);
 
 	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
 			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_DELETE,
@@ -137,8 +138,7 @@ em_queue_group_delete_sync(em_queue_group_t queue_group)
 	em_core_mask_t zero_mask;
 	em_status_t err;
 
-	queue_group_elem_t *const qgrp_elem =
-		queue_group_elem_get(queue_group);
+	queue_group_elem_t *const qgrp_elem = queue_group_elem_get(queue_group);
 
 	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
 			EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_DELETE_SYNC,
@@ -162,8 +162,7 @@ em_queue_group_modify(em_queue_group_t queue_group,
 		      const em_core_mask_t *new_mask,
 		      int num_notif, const em_notif_t notif_tbl[])
 {
-	queue_group_elem_t *const qgrp_elem =
-		queue_group_elem_get(queue_group);
+	queue_group_elem_t *const qgrp_elem = queue_group_elem_get(queue_group);
 	em_status_t err;
 
 	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
@@ -173,17 +172,6 @@ em_queue_group_modify(em_queue_group_t queue_group,
 	RETURN_ERROR_IF(!new_mask, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
 			"Queue group mask NULL! Queue group:%" PRI_QGRP "",
 			queue_group);
-
-	err = queue_group_check_mask(new_mask);
-	if (unlikely(err != EM_OK)) {
-		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
-		char mstr[ODP_CPUMASK_STR_SIZE];
-
-		em_core_mask_tostr(mstr, sizeof(mstr), new_mask);
-		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
-				      "Queue group:%" PRI_QGRP ", invalid mask given:%s",
-				      queue_group, mstr);
-	}
 
 	err = check_notif_tbl(num_notif, notif_tbl);
 	RETURN_ERROR_IF(err != EM_OK, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY,
@@ -201,8 +189,7 @@ em_status_t
 em_queue_group_modify_sync(em_queue_group_t queue_group,
 			   const em_core_mask_t *new_mask)
 {
-	queue_group_elem_t *const qgrp_elem =
-		queue_group_elem_get(queue_group);
+	queue_group_elem_t *const qgrp_elem = queue_group_elem_get(queue_group);
 	em_status_t err;
 
 	RETURN_ERROR_IF(!qgrp_elem || !queue_group_allocated(qgrp_elem),
@@ -212,17 +199,6 @@ em_queue_group_modify_sync(em_queue_group_t queue_group,
 	RETURN_ERROR_IF(!new_mask, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
 			"Queue group mask NULL! Queue group:%" PRI_QGRP "",
 			queue_group);
-
-	err = queue_group_check_mask(new_mask);
-	if (unlikely(err != EM_OK)) {
-		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
-		char mstr[ODP_CPUMASK_STR_SIZE];
-
-		em_core_mask_tostr(mstr, sizeof(mstr), new_mask);
-		return INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC,
-				      "Queue group:%" PRI_QGRP ", invalid core mask given:%s",
-				      queue_group, mstr);
-	}
 
 	err = queue_group_modify_sync(qgrp_elem, new_mask, false/*!is_delete*/);
 
@@ -256,8 +232,8 @@ em_queue_group_find(const char *name)
 	return EM_QUEUE_GROUP_UNDEF;
 }
 
-em_status_t
-em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask /*out*/)
+em_status_t em_queue_group_mask(em_queue_group_t queue_group,
+				em_core_mask_t *mask /*out*/)
 {
 	int allocated;
 	bool ongoing_delete;
@@ -266,13 +242,13 @@ em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask /*out
 	RETURN_ERROR_IF(!qgrp_elem, EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_MASK,
 			"Invalid queue group:%" PRI_QGRP "", queue_group);
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 
 	allocated = queue_group_allocated(qgrp_elem);
 	ongoing_delete = qgrp_elem->ongoing_delete;
 	em_core_mask_copy(mask, &qgrp_elem->core_mask);
 
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	RETURN_ERROR_IF(!allocated || ongoing_delete,
 			EM_ERR_BAD_STATE, EM_ESCOPE_QUEUE_GROUP_MASK,
@@ -284,9 +260,8 @@ em_queue_group_get_mask(em_queue_group_t queue_group, em_core_mask_t *mask /*out
 	return EM_OK;
 }
 
-size_t
-em_queue_group_get_name(em_queue_group_t queue_group,
-			char *name, size_t maxlen)
+size_t em_queue_group_name(em_queue_group_t queue_group,
+			   char *name, size_t maxlen)
 {
 	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 	odp_schedule_group_info_t info;
@@ -294,7 +269,7 @@ em_queue_group_get_name(em_queue_group_t queue_group,
 	int ret;
 
 	if (unlikely(!name || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_NAME,
 			       "Invalid name=0x%" PRIx64 " or maxlen=%zu",
 			       name, maxlen);
 		return 0;
@@ -303,7 +278,7 @@ em_queue_group_get_name(em_queue_group_t queue_group,
 	name[0] = '\0';
 
 	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_NAME,
 			       "Invalid queue group:%" PRI_QGRP "",
 			       queue_group);
 		return 0;
@@ -311,7 +286,7 @@ em_queue_group_get_name(em_queue_group_t queue_group,
 
 	ret = odp_schedule_group_info(qgrp_elem->odp_sched_group, &info);
 	if (unlikely(ret != 0)) {
-		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_GROUP_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_LIB_FAILED, EM_ESCOPE_QUEUE_GROUP_NAME,
 			       "Failed to retrieve queue group info");
 		return 0;
 	}
@@ -329,8 +304,7 @@ em_queue_group_get_name(em_queue_group_t queue_group,
 	return len;
 }
 
-em_queue_group_t
-em_queue_group_get_first(unsigned int *num)
+em_queue_group_t em_queue_group_first(unsigned int *num)
 {
 	const queue_group_elem_t *const qgrp_elem_tbl =
 		em_shm->queue_group_tbl.queue_group_elem;
@@ -344,7 +318,7 @@ em_queue_group_get_first(unsigned int *num)
 		*num = qgrp_cnt;
 
 	if (qgrp_cnt == 0) {
-		_qgrp_tbl_iter_idx = max_qgrps; /* UNDEF = _get_next() */
+		_qgrp_tbl_iter_idx = max_qgrps; /* UNDEF = _next() */
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
@@ -359,8 +333,7 @@ em_queue_group_get_first(unsigned int *num)
 	return qgrp_idx2hdl(_qgrp_tbl_iter_idx);
 }
 
-em_queue_group_t
-em_queue_group_get_next(void)
+em_queue_group_t em_queue_group_next(void)
 {
 	const unsigned int max_qgrps = EM_MAX_QUEUE_GROUPS;
 
@@ -385,14 +358,14 @@ em_queue_group_get_next(void)
 	return qgrp_idx2hdl(_qgrp_tbl_iter_idx);
 }
 
-em_queue_t
-em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
+em_queue_t em_queue_group_queue_first(unsigned int *num,
+				      em_queue_group_t queue_group)
 {
-	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
-	const unsigned int max_queues = em_shm->opt.queue.max_num;
+	queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
+	const unsigned int max_queues = em_shm->queue_tbl.max_queue_num;
 
 	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_QUEUE_GET_FIRST,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_QUEUE_GROUP_QUEUE_FIRST,
 			       "Invalid queue group:%" PRI_QGRP "",
 			       queue_group);
 		if (num)
@@ -400,14 +373,13 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 		return EM_QUEUE_UNDEF;
 	}
 
-	const unsigned int num_queues =
-		env_atomic32_get(&qgrp_elem->num_queues);
+	const unsigned int num_queues = odp_atomic_load_u32(&qgrp_elem->num_queues);
 
 	if (num)
 		*num = num_queues;
 
 	if (num_queues == 0) {
-		_qgrp_q_iter_idx = max_queues; /* UNDEF = _get_next() */
+		_qgrp_q_iter_idx = max_queues; /* UNDEF = _next() */
 		return EM_QUEUE_UNDEF;
 	}
 
@@ -436,10 +408,9 @@ em_queue_group_queue_get_first(unsigned int *num, em_queue_group_t queue_group)
 	return queue_idx2hdl(_qgrp_q_iter_idx);
 }
 
-em_queue_t
-em_queue_group_queue_get_next(void)
+em_queue_t em_queue_group_queue_next(void)
 {
-	const unsigned int max_queues = em_shm->opt.queue.max_num;
+	const unsigned int max_queues = em_shm->queue_tbl.max_queue_num;
 
 	if (_qgrp_q_iter_idx >= max_queues - 1)
 		return EM_QUEUE_UNDEF;

@@ -287,7 +287,7 @@ void enter_cb(em_eo_t eo, void **eo_ctx, em_event_t events[], int num,
 void exit_cb(em_eo_t eo)
 {
 	static int count;
-	app_eo_ctx_t *const my_eo_ctx = em_eo_get_context(eo);
+	app_eo_ctx_t *const my_eo_ctx = em_eo_context(eo);
 
 	if (unlikely(!my_eo_ctx))
 		return;
@@ -1023,7 +1023,7 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 		if (!add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count, msg->tidx))
 			send_stop(eo_ctx); /* triggers state change to stop */
 
-		if (unlikely(em_tmo_get_type(event, NULL, false) != EM_TMO_TYPE_PERIODIC))
+		if (unlikely(em_tmo_type(event, NULL, false) != EM_TMO_TYPE_PERIODIC))
 			test_error(EM_ERROR_SET_FATAL(0xDEAD), 0xBEEF, "Unexpected, event is not tmo\n");
 
 		if (g_options.work_prop) {
@@ -1055,7 +1055,7 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 		em_event_t tmo_event = EM_EVENT_UNDEF;
 
 		add_trace(eo_ctx, msg->id, OP_TMO, 0, msg->count, msg->tidx);
-		em_tmo_get_stats(msg->tmo, &ctrs);
+		em_tmo_stats(msg->tmo, &ctrs);
 		APPL_PRINT("STAT-ACK [%d]:  %lu acks, %lu late, %lu skips\n",
 			   msg->id, ctrs.num_acks, ctrs.num_late_ack, ctrs.num_period_skips);
 		eo_ctx->tmo_data[msg->id].ack_late = ctrs.num_late_ack;
@@ -1072,7 +1072,7 @@ int handle_periodic(app_eo_ctx_t *eo_ctx, em_event_t event)
 				add_prof(eo_ctx, t1, OP_PROF_CANCEL, msg);
 			test_fatal_if(ret == EM_OK, "tmo_cancel ok, expecting fail here!\n");
 		} else {
-			if (em_tmo_get_state(msg->tmo) == EM_TMO_STATE_ACTIVE)
+			if (em_tmo_state(msg->tmo) == EM_TMO_STATE_ACTIVE)
 				em_tmo_cancel(msg->tmo, &tmo_event);
 			ret = em_tmo_delete(msg->tmo);
 			if (g_options.profile)
@@ -1633,7 +1633,7 @@ void test_start(const appl_conf_t *appl_conf)
 	test_fatal_if(stat != EM_OK, "Failed to register error handler");
 
 	/* Create atomic group and queues for control messages */
-	stat = em_queue_group_get_mask(EM_QUEUE_GROUP_DEFAULT, &mask);
+	stat = em_queue_group_mask(EM_QUEUE_GROUP_DEFAULT, &mask);
 	test_fatal_if(stat != EM_OK, "Failed to get default Q grp mask!");
 	grp = em_queue_group_create_sync("CTRL_GRP", &mask);
 	test_fatal_if(grp == EM_QUEUE_GROUP_UNDEF, "Failed to create Q grp!");
@@ -1808,12 +1808,12 @@ first_timer_create(app_eo_ctx_t *eo_ctx)
 
 	create_timers(eo_ctx);
 
-	int num_timers = em_timer_get_all(tmr, PRINT_MAX_TMRS);
+	int num_timers = em_timer_list(tmr, PRINT_MAX_TMRS);
 
 	test_fatal_if(num_timers < 2, "Not all timers created");
 
 	for (int i = 0; i < (num_timers > PRINT_MAX_TMRS ? PRINT_MAX_TMRS : num_timers); i++) {
-		if (em_timer_get_attr(tmr[i], &attr) != EM_OK) {
+		if (em_timer_attr(tmr[i], &attr) != EM_OK) {
 			APPL_ERROR("Can't get timer info\n");
 			return;
 		}
@@ -1823,10 +1823,10 @@ first_timer_create(app_eo_ctx_t *eo_ctx)
 		APPL_PRINT("  -num_tmo: %d\n", attr.num_tmo);
 		APPL_PRINT("  -clk_src: %d\n", attr.resparam.clk_src);
 		APPL_PRINT("  -tick Hz: %" PRIu64 " hz\n",
-			   em_timer_get_freq(tmr[i]));
+			   em_timer_freq(tmr[i]));
 	}
 
-	eo_ctx->test_hz = em_timer_get_freq(m_shm->test_tmr[0]); /* use timer[0] */
+	eo_ctx->test_hz = em_timer_freq(m_shm->test_tmr[0]); /* use timer[0] */
 	test_fatal_if(eo_ctx->test_hz == 0,
 		      "get_freq() failed, timer:%" PRI_TMR "", m_shm->test_tmr[0]);
 }
@@ -1994,7 +1994,7 @@ static em_status_t app_eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t
 	msg->command = CMD_HEARTBEAT;
 	msg->count = 0;
 	msg->id = -1;
-	eo_ctx->hb_hz = em_timer_get_freq(m_shm->hb_tmr);
+	eo_ctx->hb_hz = em_timer_freq(m_shm->hb_tmr);
 	if (eo_ctx->hb_hz < 10)
 		APPL_ERROR("WARNING: HB timer hz very low!\n");
 	else
@@ -2064,9 +2064,10 @@ static em_status_t app_eo_start_local(void *eo_context, em_eo_t eo)
 	eo_ctx->cdat[core].jobs = 0;
 
 	memset(&eo_ctx->cdat[core].rng, 0, sizeof(rnd_state_t));
-	initstate_r(time(NULL), eo_ctx->cdat[core].rng.rndstate, RND_STATE_BUF,
-		    &eo_ctx->cdat[core].rng.rdata);
-	srandom_r(time(NULL), &eo_ctx->cdat[core].rng.rdata);
+	/* use time(NULL) as seed, don't care about time_t truncation */
+	initstate_r((unsigned int)time(NULL), eo_ctx->cdat[core].rng.rndstate,
+		    RND_STATE_BUF, &eo_ctx->cdat[core].rng.rdata);
+	srandom_r((unsigned int)time(NULL), &eo_ctx->cdat[core].rng.rdata);
 	return EM_OK;
 }
 
@@ -2088,7 +2089,7 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 		return EM_OK;
 
 	if (eo_ctx->heartbeat_tmo != EM_TMO_UNDEF) {
-		if (em_tmo_get_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
+		if (em_tmo_state(eo_ctx->heartbeat_tmo) == EM_TMO_STATE_ACTIVE)
 			em_tmo_cancel(eo_ctx->heartbeat_tmo, &event);
 		em_tmo_delete(eo_ctx->heartbeat_tmo);
 		eo_ctx->heartbeat_tmo = EM_TMO_UNDEF;
@@ -2102,7 +2103,7 @@ static em_status_t app_eo_stop(void *eo_context, em_eo_t eo)
 	for (int i = 0; i < g_options.num_periodic; i++) {
 		if (eo_ctx->tmo_data[i].handle != EM_TMO_UNDEF) {
 			event = EM_EVENT_UNDEF;
-			if (em_tmo_get_state(eo_ctx->tmo_data[i].handle) == EM_TMO_STATE_ACTIVE)
+			if (em_tmo_state(eo_ctx->tmo_data[i].handle) == EM_TMO_STATE_ACTIVE)
 				em_tmo_cancel(eo_ctx->tmo_data[i].handle, &event);
 			em_tmo_delete(eo_ctx->tmo_data[i].handle);
 			eo_ctx->tmo_data[i].handle = EM_TMO_UNDEF;

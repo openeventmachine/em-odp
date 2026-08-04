@@ -60,17 +60,17 @@
  * load balancing and dynamic scheduling in favor of raw performance.
  *
  * Try also with EM_QUEUE_TYPE_ATOMIC, EM_QUEUE_TYPE_PARALLEL or
- * EM_QUEUE_TYPE_PARALLEL_ORDERED.
+ * EM_QUEUE_TYPE_ORDERED.
  * Alt. set QUEUE_TYPE_MIX to '1' to use all queue types simultaneously.
  */
 #define QUEUE_TYPE  EM_QUEUE_TYPE_LOCAL
 /* #define QUEUE_TYPE  EM_QUEUE_TYPE_ATOMIC */
 /* #define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL */
-/* #define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL_ORDERED */
+/* #define QUEUE_TYPE  EM_QUEUE_TYPE_ORDERED */
 
 /**
  * Test with all different queue types simultaneously:
- * LOCAL, ATOMIC, PARALLEL, PARALLEL_ORDERED
+ * LOCAL, ATOMIC, PARALLEL, ORDERED
  */
 #define QUEUE_TYPE_MIX  0 /* 0=False or 1=True */
 
@@ -438,7 +438,7 @@ start_eo(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Store the EO name in the EO-context data */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	APPL_PRINT("EO %" PRI_EO ":'%s' global start, if-count:%d\n",
 		   eo, eo_ctx->name, eo_ctx->if_count);
@@ -572,7 +572,7 @@ create_queue_per_flow(const em_eo_t eo, eo_context_t *const eo_ctx)
 				else if (nbr_q == 2)
 					qtype = EM_QUEUE_TYPE_PARALLEL;
 				else
-					qtype = EM_QUEUE_TYPE_PARALLEL_ORDERED;
+					qtype = EM_QUEUE_TYPE_ORDERED;
 			}
 
 			/* Create a queue */

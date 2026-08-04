@@ -32,7 +32,7 @@
 /**
  * @file
  *
- * Event Machine Parallel-Ordered queue test
+ * Event Machine ordered queue test
  */
 
 #include <inttypes.h>
@@ -333,7 +333,7 @@ void test_start(const appl_conf_t *appl_conf)
 				    eo_ordered_stop, NULL, eo_ordered_receive,
 				    eo_ordered_ctx);
 		queue_a = em_queue_create("ordered",
-					  EM_QUEUE_TYPE_PARALLEL_ORDERED,
+					  EM_QUEUE_TYPE_ORDERED,
 					  get_queue_priority(i),
 					  EM_QUEUE_GROUP_DEFAULT, NULL);
 

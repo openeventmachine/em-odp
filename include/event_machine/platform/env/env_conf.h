@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,9 +38,36 @@
 
 #pragma GCC visibility push(default)
 
+#include <event_machine/api/event_machine_deprecated.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if !(defined(ENV_64_BIT) || defined(ENV_32_BIT))
   #error Missing architecture definition. Define ENV_64_BIT or ENV_32_BIT!
 #endif
 
+/*
+ * Deprecated Environment API Definitions
+ *
+ * ENV_DEPRECATED_API is derived from EM_DEPRECATED_API (set via the
+ * configure option --enable-deprecated). Defined here so that env
+ * sub-headers can use it without depending on the full EM API and
+ * without relying on environment.h include order.
+ *
+ * Values:
+ *   0 - Deprecated environment API definitions are disabled (default)
+ *   1 - Deprecated environment API definitions are enabled
+ */
+#if defined(EM_DEPRECATED_API) && (EM_DEPRECATED_API == 1)
+#define ENV_DEPRECATED_API 1
+#else
+#define ENV_DEPRECATED_API 0
+#endif
+
+#ifdef __cplusplus
+}
+#endif
 #pragma GCC visibility pop
 #endif

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2018-2023, Nokia Solutions and Networks
+ *   Copyright (c) 2018-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -35,9 +35,30 @@
  *
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 
-/* per core (thread) state for em_atomic_group_get_next() */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_internal_event.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_inline.h"
+#include "em_pool_types.h"
+
+/* per core (thread) state for em_atomic_group_next() */
 static ENV_LOCAL unsigned int _pool_tbl_iter_idx;
 
 void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
@@ -62,7 +83,8 @@ void em_pool_cfg_init(em_pool_cfg_t *const pool_cfg)
 
 	buf_cache_sz = odp_pool_defaults.buf.cache_size;
 	pkt_cache_sz = odp_pool_defaults.pkt.cache_size;
-	vec_cache_sz = odp_pool_defaults.vector.cache_size;
+	vec_cache_sz = MIN(odp_pool_defaults.vector.cache_size,
+			   odp_pool_defaults.event_vector.cache_size);
 	cache_sz = MIN(buf_cache_sz, pkt_cache_sz);
 	cache_sz = MIN(cache_sz, vec_cache_sz);
 
@@ -132,21 +154,20 @@ em_pool_find(const char *name)
 	return EM_POOL_UNDEF;
 }
 
-size_t
-em_pool_get_name(em_pool_t pool, char *name /*out*/, size_t maxlen)
+size_t em_pool_name(em_pool_t pool, char *name /*out*/, size_t maxlen)
 {
 	const mpool_elem_t *mpool_elem = pool_elem_get(pool);
 	size_t len = 0;
 
 	if (unlikely(name == NULL || maxlen == 0)) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_NAME,
 			       "Invalid args: name=0x%" PRIx64 ", maxlen=%zu",
 			       name, maxlen);
 		return 0;
 	}
 
 	if (unlikely(mpool_elem == NULL || !pool_allocated(mpool_elem))) {
-		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_GET_NAME,
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_NAME,
 			       "Invalid Pool:%" PRI_POOL "", pool);
 		name[0] = '\0';
 		return 0;
@@ -162,8 +183,7 @@ em_pool_get_name(em_pool_t pool, char *name /*out*/, size_t maxlen)
 	return len;
 }
 
-em_pool_t
-em_pool_get_first(unsigned int *num)
+em_pool_t em_pool_first(unsigned int *num)
 {
 	const mpool_elem_t *const mpool_elem_tbl = em_shm->mpool_tbl.pool;
 	const mpool_elem_t *mpool_elem = &mpool_elem_tbl[0];
@@ -175,7 +195,7 @@ em_pool_get_first(unsigned int *num)
 		*num = pool_cnt;
 
 	if (pool_cnt == 0) {
-		_pool_tbl_iter_idx = EM_CONFIG_POOLS; /* UNDEF = _get_next() */
+		_pool_tbl_iter_idx = EM_CONFIG_POOLS; /* UNDEF = _next() */
 		return EM_POOL_UNDEF;
 	}
 
@@ -190,8 +210,7 @@ em_pool_get_first(unsigned int *num)
 	return pool_idx2hdl(_pool_tbl_iter_idx);
 }
 
-em_pool_t
-em_pool_get_next(void)
+em_pool_t em_pool_next(void)
 {
 	if (_pool_tbl_iter_idx >= EM_CONFIG_POOLS - 1)
 		return EM_POOL_UNDEF;
@@ -230,7 +249,7 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 
 	memset(pool_info, 0, sizeof(*pool_info));
 	/* copy pool info into the user provided 'pool_info' */
-	strncpy(pool_info->name, pool_elem->name, sizeof(pool_info->name));
+	strncpy(pool_info->name, pool_elem->name, sizeof(pool_info->name) - 1);
 	pool_info->name[sizeof(pool_info->name) - 1] = '\0';
 	pool_info->em_pool = pool_elem->em_pool;
 	pool_info->event_type = pool_elem->event_type;
@@ -244,14 +263,19 @@ em_pool_info(em_pool_t pool, em_pool_info_t *pool_info /*out*/)
 		pool_info->subpool[i].cache_size = pool_elem->pool_cfg.subpool[i].cache_size;
 	}
 
+	pool_stats_opt_odp2em(&pool_info->stats_opt, &pool_elem->stats_opt);
+
 	/*
 	 * EM pool usage statistics only collected if the pool was created with
-	 * 'available' or 'cache_available' statistics enabled either through
-	 * EM config file: 'pool.statistics' or in 'em_pool_cfg_t::stats_opt'
-	 * given to function em_pool_create(..., pool_cfg).
+	 * 'available' enabled either through EM config file: 'pool.statistics' or
+	 * in 'em_pool_cfg_t::stats_opt' given to function em_pool_create(..., pool_cfg).
+	 *
+	 * Following code still tries to fetch 'cache_available' which would be 0
+	 * if it was not enabled or enabled but ineffective without ODP support. In
+	 * this case, 'pool_info->subpool[i].free' and 'pool_info->subpool[i].used'
+	 * fields may not be accurate.
 	 */
-	if (!pool_elem->stats_opt.bit.available &&
-	    !pool_elem->stats_opt.bit.cache_available)
+	if (!pool_elem->stats_opt.bit.available)
 		return EM_OK; /* no statistics, return */
 
 	/* EM pool usage statistics _enabled_ - collect it: */
@@ -290,7 +314,7 @@ em_pool_info_print(em_pool_t pool)
 	pool_info_print(pool);
 }
 
-int em_pool_get_num_subpools(em_pool_t pool)
+int em_pool_num_subpools(em_pool_t pool)
 {
 	const mpool_elem_t *pool_elem = pool_elem_get(pool);
 
@@ -315,12 +339,53 @@ em_pool_info_print_all(void)
 	em_pool_t pool;
 	unsigned int num;
 
-	pool = em_pool_get_first(&num);
+	pool = em_pool_first(&num);
 
 	pool_info_print_hdr(num);
 	while (pool != EM_POOL_UNDEF) {
 		pool_info_print(pool);
-		pool = em_pool_get_next();
+		pool = em_pool_next();
+	}
+}
+
+em_status_t
+em_pool_stats_opt(em_pool_t pool, em_pool_stats_opt_t *pool_stats_opt /*out*/)
+{
+	const mpool_elem_t *pool_elem = pool_elem_get(pool);
+
+	if (EM_CHECK_LEVEL > 0)
+		RETURN_ERROR_IF(!pool_elem || !pool_stats_opt,
+				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_STATS_OPT,
+				"Inv. args: pool:%" PRI_POOL " pool_stats_opt:%p",
+				pool, pool_stats_opt);
+
+	if (EM_CHECK_LEVEL >= 2)
+		RETURN_ERROR_IF(!pool_allocated(pool_elem),
+				EM_ERR_NOT_CREATED, EM_ESCOPE_POOL_STATS_OPT,
+				"EM-pool:%" PRI_POOL " not created", pool);
+
+	pool_stats_opt_odp2em(pool_stats_opt, &pool_elem->stats_opt);
+
+	return EM_OK;
+}
+
+void em_pool_stats_opt_print(em_pool_t pool)
+{
+	pool_stats_opt_print_hdr();
+	pool_stats_opt_print(pool);
+}
+
+void em_pool_stats_opt_print_all(void)
+{
+	em_pool_t pool;
+	unsigned int num;
+
+	pool = em_pool_first(&num);
+
+	pool_stats_opt_print_hdr();
+	while (pool != EM_POOL_UNDEF) {
+		pool_stats_opt_print(pool);
+		pool = em_pool_next();
 	}
 }
 
@@ -421,7 +486,7 @@ em_pool_subpool_stats(em_pool_t pool, const int subpools[], int num_subpools,
 
 	for (int i = 0; i < num_subpools; i++) {
 		if (EM_CHECK_LEVEL > 0 &&
-		    unlikely(subpools[i] > pool_elem->num_subpools - 1)) {
+		    unlikely(subpools[i] < 0 || subpools[i] > pool_elem->num_subpools - 1)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS,
 				       "arg 'subpools[%d]: %d' out of range", i, subpools[i]);
 			return num_stats;
@@ -465,7 +530,7 @@ em_pool_subpool_stats_reset(em_pool_t pool, const int subpools[], int num_subpoo
 				"EM-pool:%" PRI_POOL " not created", pool);
 
 	for (int i = 0; i < num_subpools; i++) {
-		RETURN_ERROR_IF(subpools[i] > pool_elem->num_subpools - 1,
+		RETURN_ERROR_IF(subpools[i] < 0 || subpools[i] > pool_elem->num_subpools - 1,
 				EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS_RESET,
 				"arg 'subpools[%d]: %d' out of range", i, subpools[i]);
 
@@ -579,14 +644,14 @@ int em_pool_subpool_stats_selected(em_pool_t pool, const int subpools[], int num
 	assign_odp_stats_opt(&opt_odp, opt);
 
 	for (int i = 0; i < num_subpools; i++) {
-		odp_pool_t odp_pool = pool_elem->odp_pool[subpools[i]];
-
 		if (EM_CHECK_LEVEL > 0 &&
-		    unlikely(subpools[i] > pool_elem->num_subpools - 1)) {
+		    unlikely(subpools[i] < 0 || subpools[i] > pool_elem->num_subpools - 1)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,
 				       "arg 'subpools[%d]: %d' out of range", i, subpools[i]);
 			return num_stats;
 		}
+
+		odp_pool_t odp_pool = pool_elem->odp_pool[subpools[i]];
 
 		if (EM_CHECK_LEVEL >= 3 && unlikely(odp_pool == ODP_POOL_INVALID)) {
 			INTERNAL_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_POOL_SUBPOOL_STATS_SELECTED,

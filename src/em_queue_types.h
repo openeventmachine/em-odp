@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,40 +37,45 @@
 #ifndef EM_QUEUE_TYPES_H_
 #define EM_QUEUE_TYPES_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "misc/list.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*
+ * Forward declaration — queue_elem_t holds an eo_elem_t* (pointer only).
+ * Using a forward declaration instead of #include "em_eo_types.h" keeps
+ * the *_types.h layer free of inter-includes, preventing circular
+ * dependencies if a reverse pointer is ever added.
+ */
+struct eo_elem_t;
+typedef struct eo_elem_t eo_elem_t;
 
 /*
  * EM internal queue ids - local part of the queue only, i.e missing the
  * device-id.
  * Note that the EM queue handle range is determined by 'EM_QUEUE_RANGE_OFFSET'
  */
-#define MAX_INTERNAL_QUEUES   ROUND_UP(EM_MAX_CORES + 1, 32)
+#define MAX_INTERNAL_QUEUES (EM_MAX_CORES + EM_MAX_EXTTHRS + 1/*shared internal queue*/)
 
-#define _FIRST_INTERNAL_QUEUE (_EM_QUEUE_STATIC_MAX + 1)
-#define FIRST_INTERNAL_QUEUE  ((uint16_t)_FIRST_INTERNAL_QUEUE)
-
-#define _LAST_INTERNAL_QUEUE  (_FIRST_INTERNAL_QUEUE + MAX_INTERNAL_QUEUES - 1)
-#define LAST_INTERNAL_QUEUE   ((uint16_t)_LAST_INTERNAL_QUEUE)
-
-#define FIRST_INTERNAL_UNSCHED_QUEUE   (FIRST_INTERNAL_QUEUE)
-#define SHARED_INTERNAL_UNSCHED_QUEUE  (LAST_INTERNAL_QUEUE)
+COMPILE_TIME_ASSERT(MAX_INTERNAL_QUEUES - 1 >= EM_MAX_CORES, TOO_FEW_INTERNAL_QUEUES_ERROR);
 
 /* Priority for the EM-internal queues */
 #define INTERNAL_QUEUE_PRIORITY (EM_QUEUE_PRIO_HIGHEST)
 
-COMPILE_TIME_ASSERT(MAX_INTERNAL_QUEUES - 1 >= EM_MAX_CORES,
-		    TOO_FEW_INTERNAL_QUEUES_ERROR);
-
-/* Dynamic queue ids */
-#define _FIRST_DYN_QUEUE (_LAST_INTERNAL_QUEUE + 1)
-#define FIRST_DYN_QUEUE  ((uint16_t)_FIRST_DYN_QUEUE)
-
-COMPILE_TIME_ASSERT(_FIRST_DYN_QUEUE > _LAST_INTERNAL_QUEUE,
-		    FIRST_DYN_QUEUE_ERROR);
-
 #define QUEUE_ELEM_VALID ((uint16_t)0xCAFE)
+
+#define INVALID_QUEUE_ID ((uint16_t)0xFFFF)
 
 /* Verify that the byte order is defined for 'internal_queue_t' */
 #if \
@@ -78,18 +83,6 @@ COMPILE_TIME_ASSERT(_FIRST_DYN_QUEUE > _LAST_INTERNAL_QUEUE,
 (__BYTE_ORDER__ != __ORDER_BIG_ENDIAN__)
 #error __BYTE_ORDER__ not defined!
 #endif
-
-/**
- * Queue create-params passed to queue_setup...()
- */
-typedef struct {
-	const char *name;
-	em_queue_type_t type;
-	em_queue_prio_t prio;
-	em_atomic_group_t atomic_group;
-	em_queue_group_t queue_group;
-	const em_queue_conf_t *conf;
-} queue_setup_t;
 
 /**
  * Internal representation of the EM queue handle
@@ -171,8 +164,71 @@ typedef struct q_elem_output_ {
 	/** Output queue index used for output queue tracking, not same as queue index */
 	uint32_t idx;
 	/** Lock for output queues during an ordered-context */
-	env_spinlock_t lock;
+	odp_ticketlock_t lock;
 } q_elem_output_t;
+
+/**
+ * Parent queue aggregator data.
+ *
+ * Stored in the parent (scheduled or unscheduled) queue element when the
+ * queue was created with child aggregator queues (em_queue_param_t::num_aggr).
+ */
+typedef struct q_elem_aggr_parent_ {
+	/** Number of aggregator child queues */
+	uint32_t num_aggr;
+	/** Array of aggregator child queue handles (as uint32_t's) */
+	uint32_t aggr_queues[EM_QUEUE_MAX_AGGR];
+} q_elem_aggr_parent_t;
+
+/**
+ * Child aggregator queue data.
+ *
+ * Stored in aggregator (EM_QUEUE_TYPE_AGGR) queue elements.
+ * Aggregator queues are never added to an EO or queue group, so this
+ * data shares space (union) with q_elem_atomic_group_t and q_elem_output_t.
+ */
+typedef struct q_elem_aggr_ {
+	/** Back-reference to the parent queue handle */
+	em_queue_t parent_queue;
+
+	/** Event vector pool (from em_queue_aggr_conf_t) */
+	em_pool_t pool;
+
+	/** Maximum time to wait to fill a vector (from em_queue_aggr_conf_t) */
+	uint64_t max_tmo_ns;
+
+	/** Maximum number of events in vector (from em_queue_aggr_conf_t) */
+	uint32_t max_size;
+
+	/** Aggregation and vector event type (from em_queue_aggr_conf_t) */
+	em_event_type_t event_type;
+} q_elem_aggr_t;
+
+/**
+ * Internal EM queue flags.
+ *
+ * Contains per-queue boolean flags packed into a single byte, which describe
+ * aspects of the queue's nature and use. Intended for internal bookkeeping
+ * within EM.
+ */
+typedef union queue_elem_flags_ {
+	/** Access all flags as an 8-bit unsigned integer */
+	uint8_t all;
+	struct {
+		/** true(1):receive_multi_func(), false(0):receive_func() */
+		uint8_t use_multi_rcv   : 1;
+		/** Set if queue is scheduled, i.e. atomic, parallel or ordered */
+		uint8_t scheduled       : 1;
+		/** Does this queue belong to an EM Atomic Group (true/false)? */
+		uint8_t in_atomic_group : 1;
+		/** Is this an ODP pktin event queue (true/false)? */
+		uint8_t is_pktin        : 1;
+		/** Does this queue have aggregator child queues (true/false)? */
+		uint8_t has_aggr        : 1;
+		/** Reserved bits */
+		uint8_t rsvd            : 3;
+	};
+} queue_elem_flags_t;
 
 /**
  * EM queue element
@@ -190,21 +246,8 @@ typedef struct queue_elem_t {
 	 */
 	uint16_t valid_check;
 
-	union {
-		uint8_t all;
-		struct {
-			/* true:receive_multi_func(), false:receive_func() */
-			uint8_t use_multi_rcv   : 1;
-			/** set if queue is scheduled, i.e. atomic, parallel or ordered */
-			uint8_t scheduled       : 1;
-			/** Does this queue belong to an EM Atomic Group (true/false)? */
-			uint8_t in_atomic_group : 1;
-			/** Is this an ODP pktin event queue (true/false)? */
-			uint8_t is_pktin        : 1;
-			/** reserved bits */
-			uint8_t rsvd            : 4;
-		};
-	} flags;
+	/** Queue flags */
+	queue_elem_flags_t flags;
 
 	/** Queue state */
 	queue_state_t state; /* queue_state_e */
@@ -212,7 +255,7 @@ typedef struct queue_elem_t {
 	/** Queue priority */
 	uint8_t priority; /* em_queue_prio_t */
 
-	/** Atomic, parallel, ordered, unscheduled, local, output */
+	/** Atomic, parallel, ordered, unscheduled, local, output, aggregator */
 	uint8_t type; /* em_queue_type_t */
 
 	/** Max number of events passed to the EO's multi-event receive function */
@@ -240,8 +283,27 @@ typedef struct queue_elem_t {
 	/** Copy of the user defined eo context (or NULL) for performance */
 	void *eo_ctx;
 
+	/**
+	 * Atomic group specific data.
+	 * Only used if the queue belongs to an atomic group. Cannot be placed
+	 * in the union below (with the other q_elem_*_t's) since a queue might
+	 * both belong to an atomic group and have aggregator child queues (i.e.
+	 * .agrp and .aggr_parent might be simultaneously in use).
+	 */
+	q_elem_atomic_group_t agrp;
+
+	/**
+	 * Type-specific queue data (union).
+	 *
+	 * Only one variant is active, determined by the queue type:
+	 * - aggr_parent: scheduled or unscheduled queue with child aggregator queues,
+	 *                only used when aggregators have been configured and set up.
+	 * - aggr:        EM_QUEUE_TYPE_AGGR (aggregator child queue)
+	 * - output:      EM_QUEUE_TYPE_OUTPUT
+	 */
 	union {
-		q_elem_atomic_group_t agrp;
+		q_elem_aggr_parent_t aggr_parent;
+		q_elem_aggr_t aggr;
 		q_elem_output_t output;
 	};
 
@@ -252,11 +314,22 @@ typedef struct queue_elem_t {
 	em_queue_group_t queue_group;
 
 	/** List node for linking queue elems belonging to an EO */
-	list_node_t queue_node;
+	list_node_t eo_queue_node;
 	/** List node for linking queue elems belonging to a queue group */
 	list_node_t qgrp_node;
+
 	/** Queue pool elem for linking free queues for queue_alloc() */
 	objpool_elem_t queue_pool_elem;
+
+	/**
+	 * End of queue element data,
+	 * for offsetof(queue_elem_t, end_data)
+	 */
+	uint8_t end_data[0];
+
+	/*
+	 * ! EMPTY SPACE !
+	 */
 
 	/** Guarantee that size is a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
@@ -264,6 +337,9 @@ typedef struct queue_elem_t {
 
 COMPILE_TIME_ASSERT(sizeof(queue_elem_t) % ENV_CACHE_LINE_SIZE == 0,
 		    QUEUE_ELEM_T__SIZE_ERROR);
+/* Catch unintentional size increase */
+COMPILE_TIME_ASSERT(sizeof(queue_elem_t) <= 3 * ENV_CACHE_LINE_SIZE,
+		    QUEUE_ELEM_T__SIZE_TOO_LARGE);
 
 /**
  * EM queue element table
@@ -274,11 +350,36 @@ typedef struct queue_tbl_t {
 	/** ODP schedule capabilities related to queues */
 	odp_schedule_capability_t odp_schedule_capability;
 	/** Current number of allocated output queues */
-	env_atomic32_t output_queue_count ENV_CACHE_LINE_ALIGNED;
+	odp_atomic_u32_t output_queue_count ENV_CACHE_LINE_ALIGNED;
 	/** Free output queue indexes */
 	bool output_queue_idx_free[EM_MAX_OUTPUT_QUEUES];
 	/** Lock for output queue (de-)allocations */
-	env_spinlock_t output_queue_lock;
+	odp_ticketlock_t output_queue_lock;
+
+	/** First static queue ID */
+	uint16_t first_static_queue_id;
+	/** Last static queue ID */
+	uint16_t last_static_queue_id;
+
+	/** First internal queue ID */
+	uint16_t first_internal_queue_id;
+	/** Last internal queue ID */
+	uint16_t last_internal_queue_id;
+	/** Shared internal queue ID */
+	uint16_t shared_internal_queue_id;
+
+	/** First dynamic queue ID */
+	uint16_t first_dyn_queue_id;
+	/** Last dynamic queue ID */
+	uint16_t last_dyn_queue_id;
+
+	/** First aggregator queue ID */
+	uint16_t first_aggr_queue_id;
+	/** Last aggregator queue ID */
+	uint16_t last_aggr_queue_id;
+
+	/** Maximum number of EM queues */
+	uint16_t max_queue_num;
 
 	/**
 	 * Dynamically allocated memory starts here. The elements
@@ -286,9 +387,9 @@ typedef struct queue_tbl_t {
 	 * reserved depends on the max number of EM queues given in
 	 * EM config file.
 	 */
-	/** Queue element table, format: queue_elem[em_queue_get_max_num()] */
+	/** Queue element table, format: queue_elem[em_queue_max_num()] */
 	queue_elem_t *queue_elem ENV_CACHE_LINE_ALIGNED;
-	/** Queue name table, format: name[em_queue_get_max_num()][EM_QUEUE_NAME_LEN] */
+	/** Queue name table, format: name[em_queue_max_num()][EM_QUEUE_NAME_LEN] */
 	char (*name)[EM_QUEUE_NAME_LEN];
 } queue_tbl_t;
 

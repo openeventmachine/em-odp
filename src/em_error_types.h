@@ -37,6 +37,17 @@
 #ifndef EM_ERROR_TYPES_H_
 #define EM_ERROR_TYPES_H_
 
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
 	em_log_func_t log_fn;
 	em_vlog_func_t vlog_fn;
@@ -50,9 +61,9 @@ typedef union {
 		/** Global Error Handler (func ptr or NULL) */
 		em_error_handler_t em_error_handler ENV_CACHE_LINE_ALIGNED;
 		/** Global Error Count */
-		env_atomic64_t global_error_count;
+		odp_atomic_u64_t global_error_count;
 		/** Lock */
-		env_spinlock_t lock;
+		odp_ticketlock_t lock;
 		/** Is the error handler initialized? */
 		int initialized;
 	};
@@ -63,5 +74,9 @@ typedef union {
 
 COMPILE_TIME_ASSERT(sizeof(error_handler_t) == ENV_CACHE_LINE_SIZE,
 		    ERROR_HANDLER_T_SIZE_ERROR);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EM_ERROR_TYPES_H_ */

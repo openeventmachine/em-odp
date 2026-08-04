@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2022, Nokia Solutions and Networks
+ *   Copyright (c) 2022-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,8 @@
  *
  * Not for normal application use, may lower performance or cause latency.
  */
+
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {

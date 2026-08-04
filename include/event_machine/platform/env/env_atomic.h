@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2013, Nokia Solutions and Networks
+ *   Copyright (c) 2013-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,17 @@
 #define _ENV_ATOMIC_H_
 
 #pragma GCC visibility push(default)
+
+#include <stdint.h>
+
+#include <event_machine/platform/env/env_conf.h>
+#include <event_machine/platform/env/env_macros.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if ENV_DEPRECATED_API
 
 /*
  * Atomic operations - types & functions
@@ -286,5 +297,10 @@ env_atomic64_cnt_bits(const env_atomic64_t *atom)
 	return __builtin_popcountll(env_atomic64_get(atom));
 }
 
+#endif
+
+#ifdef __cplusplus
+}
+#endif
 #pragma GCC visibility pop
 #endif /* _ENV_ATOMIC_H_ */

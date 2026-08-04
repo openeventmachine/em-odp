@@ -16,20 +16,18 @@
 /* Default event size */
 #define EVENT_SIZE 1024
 
-/* Number of events in EM_POOL_DEFAULT */
+/* Number of events in the test pool */
 #define NUM_EVENTS 1024
 
 /* Maximum number of pool statistics to get */
 #define MAX_POOL_STATS 1024u
-
-/* Number of EM core count */
-#define CORE_COUNT 2
 
 typedef struct {
 	/* Command line options and benchmark info */
 	run_bench_arg_t run_bench_arg;
 
 	/* Test case input / output data */
+	em_pool_t test_pool;
 	int subpools[EM_MAX_SUBPOOLS];
 	em_pool_stats_opt_t stats_opt;
 	odp_pool_stats_opt_t stats_opt_odp;
@@ -53,7 +51,7 @@ static int pool_stats(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		em_pool_stats(EM_POOL_DEFAULT, &gbl_args->pool_stats[i]);
+		em_pool_stats(gbl_args->test_pool, &gbl_args->pool_stats[i]);
 
 	return i;
 }
@@ -89,7 +87,8 @@ static int pool_stats_selected(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		em_pool_stats_selected(EM_POOL_DEFAULT, &gbl_args->pool_stats_selected[i],
+		em_pool_stats_selected(gbl_args->test_pool,
+				       &gbl_args->pool_stats_selected[i],
 				       &gbl_args->stats_opt);
 
 	return i;
@@ -105,7 +104,7 @@ static int subpool_stats(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		em_pool_subpool_stats(EM_POOL_DEFAULT, gbl_args->subpools, 1,
+		em_pool_subpool_stats(gbl_args->test_pool, gbl_args->subpools, 1,
 				      &gbl_args->subpool_stats[i]);
 
 	return i;
@@ -116,7 +115,8 @@ static int subpool_stats_selected(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		em_pool_subpool_stats_selected(EM_POOL_DEFAULT, gbl_args->subpools, 1,
+		em_pool_subpool_stats_selected(gbl_args->test_pool,
+					       gbl_args->subpools, 1,
 					       &gbl_args->subpool_stats_selected[i],
 					       &gbl_args->stats_opt);
 
@@ -128,7 +128,7 @@ static int pool_info(void)
 	int i;
 
 	for (i = 0; i < REPEAT_COUNT; i++)
-		em_pool_info(EM_POOL_DEFAULT, &gbl_args->pool_info[i]);
+		em_pool_info(gbl_args->test_pool, &gbl_args->pool_info[i]);
 
 	return i;
 }
@@ -156,7 +156,7 @@ static void usage(void)
 	       "  -t, --time <opt>        Time measurement.\n"
 	       "                          0: measure CPU cycles (default)\n"
 	       "                          1: measure time\n"
-	       "  -i, --index <idx>       Benchmark index to run indefinitely.\n"
+	       "  -i, --index <idx>       Benchmark index to run indefinitely[start from 1]].\n"
 	       "  -r, --rounds <num>      Run each test case 'num' times (default %u).\n"
 	       "  -w, --write-csv         Write result to csv files(used in CI) or not.\n"
 	       "                          default: not write\n"
@@ -256,20 +256,97 @@ static void init_default_pool_config(em_pool_cfg_t *pool_conf)
 	pool_conf->subpool[0].cache_size = 0;
 }
 
-/* Allocate and free events to create more realistic statistics than a band new pool */
-static void alloc_free_event(void)
+static em_status_t
+expected_alloc_error_handler(em_eo_t eo, em_status_t error,
+			     em_escope_t escope, va_list args)
 {
-	/* Alloc 10 extra events than the pool has to create some statistics about
-	 * alloc_fails, so 10 EM ERROR prints about em_alloc() are expected.
+	/* expected alloc error from the alloc_free_event() function */
+	if (odp_likely(escope == EM_ESCOPE_ALLOC && !EM_ERROR_IS_FATAL(error)))
+		return error;
+
+	if (EM_ESCOPE(escope)) {
+		char error_str[512];
+
+		em_error_format_string(error_str, sizeof(error_str), eo,
+				       error, escope, args);
+		ODPH_ERR("\n%s\n", error_str);
+	}
+
+	if (EM_ERROR_IS_FATAL(error)) {
+		/*
+		 * Abort process, flush all open streams, dump stack,
+		 * generate core dump, never return.
+		 */
+		ODPH_ERR("\nFATAL ERROR:0x%08X on core:%02i - ABORT!\n\n",
+			 error, em_core_id());
+		abort();
+	}
+
+	return error;
+}
+
+static em_pool_t create_test_pool(void)
+{
+	em_pool_t pool;
+	em_pool_cfg_t pool_conf;
+
+	em_pool_cfg_init(&pool_conf);
+	pool_conf.event_type = EM_EVENT_TYPE_SW;
+	pool_conf.user_area.in_use = true;
+	pool_conf.user_area.size = UAREA_SIZE;
+	pool_conf.num_subpools = 1;
+	pool_conf.subpool[0].size = EVENT_SIZE;
+	pool_conf.subpool[0].cache_size = 32;
+	pool_conf.subpool[0].num = NUM_EVENTS;
+
+	/* Enable pool statistics */
+	pool_conf.stats_opt.in_use = true;
+	pool_conf.stats_opt.opt.available = 1;
+	pool_conf.stats_opt.opt.alloc_ops = 1;
+	pool_conf.stats_opt.opt.alloc_fails = 1;
+	pool_conf.stats_opt.opt.free_ops = 1;
+	pool_conf.stats_opt.opt.total_ops = 1;
+	pool_conf.stats_opt.opt.cache_available = 1;
+	pool_conf.stats_opt.opt.cache_alloc_ops = 1;
+	pool_conf.stats_opt.opt.cache_free_ops = 1;
+
+	pool = em_pool_create("bench_pool_test", EM_POOL_UNDEF, &pool_conf);
+	if (pool == EM_POOL_UNDEF)
+		ODPH_ERR("Creating test pool failed\n");
+
+	return pool;
+}
+
+/* Allocate and free events to create more realistic statistics than a brand new pool */
+static void alloc_free_event(em_pool_t pool)
+{
+	/*
+	 * Alloc 10 extra events than the pool has to create some statistics about
+	 * alloc_fails, so 10 EM ERRORs are expected and handled by the
+	 * expected_alloc_error_handler().
 	 */
 	const int event_tbl_size = NUM_EVENTS + 10;
 	em_event_t event_tbl[event_tbl_size];
+	em_status_t status;
 	int i;
 
-	for (i = 0; i < event_tbl_size; i++) {
+	for (i = 0; i < NUM_EVENTS; i++) {
 		event_tbl[i] = EM_EVENT_UNDEF;
-		event_tbl[i] = em_alloc(EVENT_SIZE, EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
+		event_tbl[i] = em_alloc(EVENT_SIZE, EM_EVENT_TYPE_SW, pool);
 	}
+
+	status = em_register_error_handler(expected_alloc_error_handler);
+	if (status != EM_OK)
+		ODPH_ERR("Registering error handler failed!");
+
+	for (i = NUM_EVENTS; i < event_tbl_size; i++) {
+		event_tbl[i] = EM_EVENT_UNDEF;
+		event_tbl[i] = em_alloc(EVENT_SIZE, EM_EVENT_TYPE_SW, pool);
+	}
+
+	status = em_unregister_error_handler();
+	if (status != EM_OK)
+		ODPH_ERR("Unregistering error handler failed!");
 
 	/* Free all allocated events */
 	for (i = 0; i < event_tbl_size; i++) {
@@ -386,10 +463,7 @@ int main(int argc, char *argv[])
 
 	/* Init EM */
 	em_core_mask_zero(&core_mask);
-	em_core_mask_set(odp_cpu_id(), &core_mask);
 	em_core_mask_set(worker_cpu, &core_mask);
-	if (odp_cpumask_count(&core_mask.odp_cpumask) != CORE_COUNT)
-		goto odp_term;
 
 	init_default_pool_config(&pool_conf);
 
@@ -399,22 +473,27 @@ int main(int argc, char *argv[])
 	else
 		conf.thread_per_core = 1;
 	conf.default_pool_cfg = pool_conf;
-	conf.core_count = CORE_COUNT;
+	conf.core_count = 1;
 	conf.phys_mask = core_mask;
 
 	if (em_init(&conf) != EM_OK) {
 		ODPH_ERR("EM init failed\n");
-		exit(EXIT_FAILURE);
+		goto odp_term;
 	}
 
-	if (em_init_core() != EM_OK) {
-		ODPH_ERR("EM core init failed\n");
-		exit(EXIT_FAILURE);
+	em_conf_local_t conf_local;
+
+	em_conf_local_init(&conf_local);
+	conf_local.core_type = EM_CORE_TYPE_EXTERNAL;
+
+	if (em_init_local(&conf_local) != EM_OK) {
+		ODPH_ERR("EM local init failed\n");
+		goto odp_term;
 	}
 
 	if (setup_sig_handler()) {
 		ODPH_ERR("Signal handler setup failed\n");
-		exit(EXIT_FAILURE);
+		goto odp_term;
 	}
 
 	/* Reserve memory for args from shared mem */
@@ -437,8 +516,14 @@ int main(int argc, char *argv[])
 	gbl_args->run_bench_arg.num_bench = num_bench;
 	gbl_args->run_bench_arg.opt = cmd_opt;
 	gbl_args->run_bench_arg.result = result;
+	gbl_args->test_pool = create_test_pool();
 
-	alloc_free_event();
+	if (gbl_args->test_pool == EM_POOL_UNDEF) {
+		ODPH_ERR("Creating test pool failed\n");
+		goto em_term;
+	}
+
+	alloc_free_event(gbl_args->test_pool);
 
 	memset(&worker_thread, 0, sizeof(odph_thread_t));
 	odp_cpumask_zero(&cpumask);
@@ -463,10 +548,14 @@ int main(int argc, char *argv[])
 	if (cmd_opt.write_csv)
 		write_result_to_csv();
 
-	if (em_term_core() != EM_OK)
-		ODPH_ERR("EM core terminate failed\n");
+	em_term_local_t term_local;
+em_term:
+	em_term_local_init(&term_local);
 
-	if (em_term(&conf) != EM_OK)
+	if (em_term_local(&term_local) != EM_OK)
+		ODPH_ERR("EM local terminate failed\n");
+
+	if (em_term() != EM_OK)
 		ODPH_ERR("EM terminate failed\n");
 
 	if (odp_shm_free(shm)) {

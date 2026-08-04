@@ -27,7 +27,37 @@
  *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_chaining.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+#include "em_timer.h"
+#include "em_timer_types.h"
 
 static int read_config_file(void);
 
@@ -67,12 +97,18 @@ em_status_t timer_term_local(void)
 
 em_status_t timer_term(timer_storage_t *const tmrs)
 {
+#if PRE_1_50_ODP_TIMER_API
+	/* ring_tmo_pool is managed by em-odp only on old ODP API.
+	 * New ODP API creates/destroys it as part of periodic timer pool lifecycle.
+	 */
 	if (tmrs && tmrs->ring_tmo_pool != ODP_POOL_INVALID) {
 		if (odp_pool_destroy(tmrs->ring_tmo_pool) != 0)
 			return EM_ERR_LIB_FAILED;
 		tmrs->ring_tmo_pool = ODP_POOL_INVALID;
 	}
-
+#else
+	(void)tmrs;
+#endif
 	return EM_OK;
 }
 
@@ -83,7 +119,7 @@ static int read_config_file(void)
 	int ret;
 	bool bval;
 
-	EM_PRINT("EM-timer config:\n");
+	EM_PRINT("EM timer config:\n");
 
 	/*
 	 * Option: timer.shared_tmo_pool_enable

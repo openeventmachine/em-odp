@@ -38,21 +38,79 @@
 
 #include "cm_error_handler.h"
 #include "cm_setup.h"
+/*
+ * Helper: format & print application (non EM ESCOPE) errors.
+ */
+static void application_error_print(em_eo_t eo, em_status_t error, em_escope_t escope,
+				    int core_id, va_list args)
+{
+	char *file = va_arg(args, char*);
+	const char *func = va_arg(args, const char*);
+	const int line = va_arg(args, const int);
+	const char *format = va_arg(args, const char*);
+	const char *base = basename(file);
+	char eo_str[sizeof("EO:xxxxxx-abdc  ") + EM_EO_NAME_LEN];
+
+	/* Find out name of the EO */
+	if (eo == EM_EO_UNDEF) {
+		eo_str[0] = '\0';
+	} else {
+		char eo_name[EM_EO_NAME_LEN];
+		size_t nlen;
+
+		nlen = em_eo_name(eo, eo_name, sizeof(eo_name));
+		eo_name[nlen] = '\0';
+
+		snprintf(eo_str, sizeof(eo_str),
+			 "EO:%" PRI_EO "-\"%s\"  ", eo, eo_name);
+		eo_str[sizeof(eo_str) - 1] = '\0';
+	}
+
+	/* Combine header, location and formatted message into one write */
+	char err_msg[1024];
+
+	int n = snprintf(err_msg, sizeof(err_msg),
+			 "\nAPP ERROR:0x%08X  ESCOPE:0x%08X  %s\n"
+			 "core:%02d %s:%d %s()\n",
+			 error, escope, eo_str,
+			 core_id, base, line, func);
+
+	if (n > 0 && (size_t)n < sizeof(err_msg)) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+		size_t rem_sz = sizeof(err_msg) - n;
+		int m = vsnprintf(&err_msg[n], rem_sz, format, args);
+#pragma GCC diagnostic pop
+		if (m > 0) {
+			/* check truncation */
+			if ((size_t)m >= rem_sz)
+				m = (int)(rem_sz - 1); /* safe: sizeof(err_msg) < INT_MAX */
+			int end = n + m; /* '\0' from vsnprintf */
+
+			/* Ensure space for two newlines + final '\0' */
+			if ((size_t)end + 3 <= sizeof(err_msg)) {
+				err_msg[end++] = '\n';
+				err_msg[end++] = '\n';
+				err_msg[end] = '\0';
+			}
+		}
+	}
+
+	fprintf(stderr, "%s", err_msg);
+}
 
 /**
  * Common default error handler for example applications
  *
- * @param eo            Execution object id
- * @param error         The error code
- * @param escope        Error scope
- * @param args          List of arguments (__FILE__, __func__, __LINE__,
- *                                         (format), ## __VA_ARGS__)
+ * @param eo      Execution object handle
+ * @param error   Error code
+ * @param escope  Error scope
+ * @param args    List of arguments (__FILE__, __func__, __LINE__, (format), ## __VA_ARGS__)
  *
  * @return The original error code. Fatal error causes abort.
  */
-em_status_t
-test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
-		   va_list args)
+em_status_t test_error_handler(em_eo_t eo, em_status_t error,
+			       em_escope_t escope, va_list args)
 {
 	const int core_id = em_core_id();
 
@@ -91,37 +149,7 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 		fprintf(stderr, "\n%s\n", error_str);
 	} else {
 		/* Application error */
-		char *file = va_arg(args, char*);
-		const char *func = va_arg(args, const char*);
-		const int line = va_arg(args, const int);
-		const char *format = va_arg(args, const char*);
-		const char *base = basename(file);
-		char eo_str[sizeof("EO:xxxxxx-abdc  ") + EM_EO_NAME_LEN];
-
-		/* Find out name of the EO */
-		if (eo == EM_EO_UNDEF) {
-			eo_str[0] = '\0';
-		} else {
-			char eo_name[EM_EO_NAME_LEN];
-			size_t nlen;
-
-			nlen = em_eo_get_name(eo, eo_name, sizeof(eo_name));
-			eo_name[nlen] = '\0';
-
-			snprintf(eo_str, sizeof(eo_str),
-				 "EO:%" PRI_EO "-\"%s\"  ", eo, eo_name);
-			eo_str[sizeof(eo_str) - 1] = '\0';
-		}
-
-		fprintf(stderr, "\nAPP ERROR:0x%08X  ESCOPE:0x%08X  %s\n",
-			error, escope, eo_str);
-		fprintf(stderr, "core:%02i %s:%i %s()\n",
-			core_id, base, line, func);
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-		vfprintf(stderr, format, args);
-#pragma GCC diagnostic pop
-		fprintf(stderr, "\n\n");
+		application_error_print(eo, error, escope, core_id, args);
 	}
 
 	if (unlikely(EM_ERROR_IS_FATAL(error))) {
@@ -130,7 +158,7 @@ test_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
 		 * generate core dump, never return.
 		 */
 		fprintf(stderr,
-			"\nFATAL EM ERROR:0x%08X on core:%02i - ABORT!\n\n",
+			"\nFATAL EM ERROR:0x%08X on EM-core:%02d - ABORT!\n\n",
 			error, core_id);
 		abort();
 	}

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -32,29 +32,54 @@
  * @file
  *
  * EM internal event group functions
- *
  */
 
 #ifndef EM_EVENT_GROUP_H_
 #define EM_EVENT_GROUP_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_event_group_types.h"
+#include "em_internal_event.h"
+#include "em_mem.h"
+
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#if EM_EVENT_GROUP_SAFE_MODE
+/** Error reporting macro for event group counters in safe mode (.pre_cnt & .post_cnt) */
+#define EGRP_CNT_ERROR(err, escope, egrp_cnt, fmt, ...) \
+	INTERNAL_ERROR((err), (escope), \
+		       fmt "\n  pre_cnt:%u post_cnt:%u gen:%u applied:%s\n", \
+		       ##__VA_ARGS__, \
+		       (uint32_t)(egrp_cnt).pre_cnt, (uint32_t)(egrp_cnt).post_cnt, \
+		       (uint32_t)(egrp_cnt).gen, (egrp_cnt).applied ? "true" : "false")
+#else
+/** Error reporting macro for event group counters in non-safe mode (only .post_cnt) */
+#define EGRP_CNT_ERROR(err, escope, egrp_cnt, fmt, ...) \
+	INTERNAL_ERROR((err), (escope), \
+		       fmt "\n  post_cnt:%u gen:%u applied:%s\n", \
+		       ##__VA_ARGS__, \
+		       (uint32_t)(egrp_cnt).post_cnt, (uint32_t)(egrp_cnt).gen, \
+		       (egrp_cnt).applied ? "true" : "false")
 #endif
 
 #define invalid_egrp(event_group) \
 	((unsigned int)egrp_hdl2idx((event_group)) >= EM_MAX_EVENT_GROUPS)
 
-em_status_t
-event_group_init(event_group_tbl_t *const event_group_tbl, odp_stash_t *const event_group_pool);
-
+em_status_t event_group_init(event_group_tbl_t *const event_group_tbl,
+			     odp_stash_t *const event_group_pool);
 em_status_t event_group_term(void);
 
-em_event_group_t
-event_group_alloc(void);
-
-em_status_t
-event_group_free(em_event_group_t event_group);
+em_event_group_t event_group_alloc(void);
+em_status_t event_group_free(em_event_group_t event_group);
 
 static inline int
 event_group_allocated(const event_group_elem_t *egrp_elem)
@@ -88,158 +113,185 @@ event_group_elem_get(const em_event_group_t event_group)
 	return egrp_elem;
 }
 
-static inline uint64_t
-event_group_gen_get(const event_group_elem_t *egrp_elem)
+static inline bool valid_pre_cnt(const event_group_elem_t *egrp_elem,
+				 const egrp_counter_t egrp_cnt, const unsigned int decr,
+				 const uint32_t event_egrp_gen)
 {
-	egrp_counter_t egrp_count;
+	if (unlikely(egrp_cnt.pre_cnt < decr || !egrp_cnt.applied ||
+		     egrp_cnt.gen != event_egrp_gen)) {
+		EGRP_CNT_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_GROUP_UPDATE_PRECNT, egrp_cnt,
+			       "Expired event(s) or inv. decr in event group:%" PRI_EGRP ":\n"
+			       "  event-egrp-gen:%u, decr:%u",
+			       egrp_elem->event_group, event_egrp_gen, decr);
+		return false;
+	}
 
-	egrp_count.all = EM_ATOMIC_GET(&egrp_elem->post.atomic);
-
-	return egrp_count.gen;
+	return true;
 }
 
 /**
- * Verifies event group state and updates pre count before setting core local
- * event group. Sets group to undefined for excess and expired group events.
+ * Decrement event group pre-counter atomically.
+ *
+ * Returns true on success, false on failure (invalid pre-count or generation).
+ * Only used when EM_EVENT_GROUP_SAFE_MODE is enabled.
  */
-static inline void
-set_local_safe(const em_event_group_t egrp, const int32_t egrp_gen,
-	       const unsigned int decr)
+static inline bool
+pre_count_decrement(event_group_elem_t *const egrp_elem, unsigned int decr,
+		    uint32_t event_egrp_gen)
 {
-	em_locm_t *const locm = &em_locm;
-	uint64_t current_count;
-	egrp_counter_t new_count;
-	event_group_elem_t *const egrp_elem = event_group_elem_get(egrp);
+	egrp_counter_t egrp_cnt;
+	egrp_counter_t new_cnt;
 
 	do {
-		current_count = EM_ATOMIC_GET(&egrp_elem->pre.atomic);
-		new_count.all = current_count;
-		new_count.count -= decr;
-		/* Check for excess and expired group events */
-		if (unlikely(new_count.count < 0 ||
-			     new_count.gen != egrp_gen)) {
-			INTERNAL_ERROR(EM_ERR_BAD_ID,
-				       EM_ESCOPE_EVENT_GROUP_UPDATE,
-				       "Expired event group event received!");
-			locm->current.egrp = EM_EVENT_GROUP_UNDEF;
-			return;
-		}
-	} while (!EM_ATOMIC_CMPSET(&egrp_elem->pre.atomic,
-				   current_count, new_count.all));
+		/* Fully relaxed: just a value check & arithmetic */
+		egrp_cnt.all_u64 = __atomic_load_n(&egrp_elem->counts.atomic_u64,
+						   __ATOMIC_RELAXED);
 
-	locm->current.egrp_gen = egrp_gen;
-	locm->current.egrp = egrp;
-	locm->current.egrp_elem = egrp_elem;
+		if (unlikely(!valid_pre_cnt(egrp_elem, egrp_cnt, decr, event_egrp_gen)))
+			return false;
+
+		new_cnt.all_u64 = egrp_cnt.all_u64;
+		new_cnt.pre_cnt -= decr;
+	} while (!__atomic_compare_exchange_n(&egrp_elem->counts.atomic_u64,
+					      &egrp_cnt.all_u64, new_cnt.all_u64, false,
+					      __ATOMIC_RELAXED /*success*/,
+					      __ATOMIC_RELAXED /*failure*/));
+	return true; /* success */
 }
 
 /**
  * Set core local event group.
  *
- * Validates event group if EM_EVENT_GROUP_SAFE_MODE is enabled.
+ * Verifies event group state and updates pre-count before setting core local
+ * event group. Sets evgroup to undefined for excess and expired evgroup events.
  *
  * Only called by the EM-dispatcher before receive function.
  */
 static inline void
-event_group_set_local(const em_event_group_t egrp, const int32_t egrp_gen,
-		      const unsigned int decr)
+event_group_set_local(em_event_group_t egrp, uint32_t event_egrp_gen, unsigned int decr)
 {
 	if (egrp == EM_EVENT_GROUP_UNDEF)
 		return;
 
-	/* event group is set: */
-	if (EM_EVENT_GROUP_SAFE_MODE) {
-		/* Group is validated before setting */
-		set_local_safe(egrp, egrp_gen, decr);
-	} else {
-		em_locm_t *const locm = &em_locm;
+	/* Group is validated before setting */
+	em_locm_t *const locm = &em_locm;
+	event_group_elem_t *const egrp_elem = event_group_elem_get(egrp);
 
-		locm->current.egrp_elem = event_group_elem_get(egrp);
-		locm->current.egrp = egrp;
+	if (unlikely(!egrp_elem))
+		return;
+
+	if (EM_EVENT_GROUP_SAFE_MODE) {
+		bool valid_precnt = pre_count_decrement(egrp_elem, decr, event_egrp_gen);
+
+		if (unlikely(!valid_precnt)) {
+			locm->current.egrp_elem = NULL;
+			return;
+		}
 	}
+
+	locm->current.egrp_elem = egrp_elem;
+	locm->current.egrp_gen = event_egrp_gen;
+}
+
+static inline bool valid_post_cnt(const event_group_elem_t *egrp_elem,
+				  const egrp_counter_t egrp_cnt,
+				  const unsigned int decr, const uint32_t egrp_gen)
+{
+	if (unlikely(egrp_cnt.post_cnt < decr || egrp_cnt.gen != egrp_gen)) {
+		if (egrp_cnt.applied) {
+			EGRP_CNT_ERROR(EM_ERR_BAD_ID, EM_ESCOPE_EVENT_GROUP_UPDATE_POSTCNT,
+				       egrp_cnt,
+				       "Expired event(s) or inv. decr in event group:%" PRI_EGRP ":\n"
+				       "  current-egrp-gen:%u, decr:%u",
+				       egrp_elem->event_group, egrp_gen, decr);
+		}
+		return false;
+	}
+
+	return true;
 }
 
 /**
- * Updates event group counter safely. Generation and count must be valid.
+ * Updates event group post-counter. Generation and count must be valid.
  */
-static inline int64_t
-count_decrement_safe(event_group_elem_t *const egrp_elem,
-		     const unsigned int decr)
+static inline int /* num_notifs when evgrp is done */
+post_count_decrement(event_group_elem_t *const egrp_elem,
+		     const unsigned int decr,
+		     em_notif_t notif_tbl[static EM_EVENT_GROUP_MAX_NOTIF /*out*/])
 {
-	uint64_t current_count;
-	egrp_counter_t new_count;
+	const em_locm_t *locm = &em_locm;
+	const uint32_t egrp_gen = locm->current.egrp_gen;
+
+	egrp_counter_t egrp_cnt;
+	egrp_counter_t new_cnt;
+	int succ_mo;
+	int num_notif; /* return value: the num notifs to send when evgrp done */
 
 	do {
-		current_count = EM_ATOMIC_GET(&egrp_elem->post.atomic);
-		new_count.all = current_count;
-		new_count.count -= decr;
-		/* Validate group state and generation before changing count */
-		if (unlikely(new_count.count < 0 ||
-			     new_count.gen != em_locm.current.egrp_gen)) {
-			/* Suppress error if group is aborted */
-			if (!egrp_elem->ready)
-				INTERNAL_ERROR(EM_ERR_BAD_ID,
-					       EM_ESCOPE_EVENT_GROUP_UPDATE,
-					       "Expired grp event in post cnt!"
-					      );
-			return -1;
+		num_notif = 0;
+		succ_mo = __ATOMIC_RELAXED;
+		/*
+		 * Need acquire here so that if this turns out to be the last event
+		 * (reads notif_tbl[]), we see prior initialization (published with a
+		 * release when applied).
+		 */
+		egrp_cnt.all_u64 = __atomic_load_n(&egrp_elem->counts.atomic_u64,
+						   __ATOMIC_ACQUIRE);
+
+		if (unlikely(!valid_post_cnt(egrp_elem, egrp_cnt, decr, egrp_gen)))
+			return 0;
+
+		new_cnt.all_u64 = egrp_cnt.all_u64;
+		new_cnt.post_cnt -= decr;
+
+		if (new_cnt.post_cnt == 0) {
+			/*
+			 * All events in event group handled!
+			 */
+			num_notif = MIN(egrp_elem->num_notif, EM_EVENT_GROUP_MAX_NOTIF);
+			/* Copy notifs before clearing '.applied' */
+			for (int i = 0; i < num_notif; i++) {
+				notif_tbl[i].event = egrp_elem->notif_tbl[i].event;
+				notif_tbl[i].queue = egrp_elem->notif_tbl[i].queue;
+				notif_tbl[i].egroup = egrp_elem->notif_tbl[i].egroup;
+			}
+			/* Clear '.applied' before sending notifications */
+			new_cnt.applied = 0;
+			/*
+			 * Use 'release' when we clear applied (last event) so a re-user
+			 * 'acquiring' the flag sees all prior writes. Otherwise 'relaxed'.
+			 */
+			succ_mo = __ATOMIC_RELEASE;
 		}
-	} while (!EM_ATOMIC_CMPSET(&egrp_elem->post.atomic, current_count,
-				   new_count.all));
-	return new_count.count;
+	} while (!__atomic_compare_exchange_n(&egrp_elem->counts.atomic_u64,
+					      &egrp_cnt.all_u64, new_cnt.all_u64, false,
+					      succ_mo /*success*/,
+					      __ATOMIC_RELAXED /*failure*/));
+
+	return num_notif;
 }
 
 /**
- * Decrements the event group count and sends notif events when group is done
+ * Decrements the event group (post-)count and sends notif events when group is done
  *
- * Only called by the EM-dispatcher after receive function.
+ * Called by the EM-dispatcher after the EO-receive function.
+ *
+ * Only called when the core-local current event group is set, e.g.,
+ *        if (em_locm.current.egrp_elem != NULL)
+ *                event_group_count_decrement(1, em_locm.current.egrp_elem);
  */
 static inline void
-event_group_count_decrement(const unsigned int decr)
+event_group_count_decrement(const unsigned int decr, event_group_elem_t *const egrp_elem)
 {
-	int64_t count;
-	event_group_elem_t *const egrp_elem = em_locm.current.egrp_elem;
+	em_notif_t notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
 
-	if (EM_EVENT_GROUP_SAFE_MODE) {
-		/* Validates group before updating counters */
-		count = count_decrement_safe(egrp_elem, decr);
-	} else {
-		count = EM_ATOMIC_SUB_RETURN(&egrp_elem->post.atomic, decr);
+	/* Validates group before updating counters */
+	const int num_notif = post_count_decrement(egrp_elem, decr, notif_tbl /*out*/);
 
-		if (unlikely(count < 0)) {
-			if (egrp_elem->ready) {
-				/* Counter should stay zero if aborted */
-				egrp_elem->post.all = 0;
-				return;
-			}
+	/* Last event in the group, send notifications */
+	if (num_notif > 0) {
+		em_status_t ret = send_notifs(num_notif, notif_tbl);
 
-			INTERNAL_ERROR(EM_FATAL(EM_ERR_BAD_ID),
-				       EM_ESCOPE_EVENT_GROUP_UPDATE,
-				       "Group count already 0!");
-		}
-	}
-
-	if (count == 0) { /* Last event in the group */
-		/* Setting pre_count here does nothing as both counters should
-		 * be zero. Only due to incorrect usage pre_count is other than
-		 * zero when notif events are about to be sent.
-		 */
-		if (EM_EVENT_GROUP_SAFE_MODE)
-			egrp_elem->pre.count = 0;
-
-		const int num_notif = egrp_elem->num_notif;
-		em_status_t ret;
-
-		/* Copy notifications to local memory */
-		em_notif_t notif_tbl[EM_EVENT_GROUP_MAX_NOTIF];
-
-		for (int i = 0; i < num_notif; i++) {
-			notif_tbl[i].event = egrp_elem->notif_tbl[i].event;
-			notif_tbl[i].queue = egrp_elem->notif_tbl[i].queue;
-			notif_tbl[i].egroup = egrp_elem->notif_tbl[i].egroup;
-		}
-
-		egrp_elem->ready = true; /* ready for 'apply' */
-		ret = send_notifs(num_notif, notif_tbl);
 		if (unlikely(ret != EM_OK))
 			INTERNAL_ERROR(ret, EM_ESCOPE_EVENT_GROUP_UPDATE,
 				       "send notifs failed");
@@ -247,31 +299,41 @@ event_group_count_decrement(const unsigned int decr)
 }
 
 static inline void
-save_current_evgrp(em_event_group_t *save_egrp /*out*/,
-		   event_group_elem_t **save_egrp_elem /*out*/,
-		   int32_t *save_egrp_gen /*out*/)
+save_current_evgrp(event_group_elem_t **save_egrp_elem /*out*/,
+		   uint32_t *save_egrp_gen /*out*/)
 {
 	const em_locm_t *locm = &em_locm;
 
 	*save_egrp_elem = locm->current.egrp_elem;
-	*save_egrp = locm->current.egrp;
 	*save_egrp_gen = locm->current.egrp_gen;
 }
 
 static inline void
-restore_current_evgrp(const em_event_group_t saved_egrp,
-		      event_group_elem_t *const saved_egrp_elem,
-		      const int32_t saved_egrp_gen)
+restore_current_evgrp(event_group_elem_t *const saved_egrp_elem,
+		      const uint32_t saved_egrp_gen)
 {
 	em_locm_t *const locm = &em_locm;
 
 	locm->current.egrp_elem = saved_egrp_elem;
-	locm->current.egrp = saved_egrp;
 	locm->current.egrp_gen = saved_egrp_gen;
 }
 
-unsigned int
-event_group_count(void);
+unsigned int event_group_count(void);
+
+/**
+ * Send an internal control event to an EM unscheduled control queue, tagged to
+ * an event group.
+ *
+ * Internal counterpart to em_send_group() for EM's own control-event plumbing:
+ * the per-core/shared unscheduled ctrl queues are dispatched by EM, so the
+ * event group count is decremented normally. Unlike em_send_group() this skips
+ * the user-facing argument checks, the unscheduled-queue restriction and the
+ * user API send-hooks. The caller must pass valid internal arguments.
+ *
+ * @return EM_OK if successful.
+ */
+em_status_t send_ctrl_queue(em_event_t event, em_queue_t queue,
+			    em_event_group_t event_group);
 
 /** Print information about all event groups */
 void event_group_info_print(void);

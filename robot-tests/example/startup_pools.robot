@@ -65,8 +65,8 @@ ${NO_SUBPOOLS_NUM_PRINT} =    SEPARATOR=
 ...    t found or wrong type.
 
 ${INVALID_ALIGN_OFFSET_PRINT} =    SEPARATOR=
-...    Invalid 'startup_pools.conf\\[0\\].pool_cfg.align_offset.value': 3\n
-...    Max align_offset is \\d+ and it must be power of 2
+...    align_offset 3 must be power of 2\n
+...    Failure detected when checking 'startup_pools.conf\\[0\\].pool_cfg.align_offset.value': 3
 
 ${INVALID_PKT_HEADROOM_PRINT} =    SEPARATOR=
 ...    'startup_pools.conf\\[0\\].pool_cfg.pkt.headroom.value' 512 too larg
@@ -144,7 +144,7 @@ Test Invalid Startup Pool Confs
         ...    @{CM_ARGS}
         ...    stderr=STDOUT
         ...    shell=True
-        ...    stdout=${TEMPDIR}/stdout.txt
+        ...    stdout=${OUT_FILE}
 
         # Delete the 'starup_pools' option that has been tested
         Run    sed -i '$ d' %{EM_CONFIG_FILE}

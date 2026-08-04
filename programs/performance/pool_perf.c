@@ -50,50 +50,10 @@
 #include "cm_error_handler.h"
 #include "pool_perf.h"
 
-static em_status_t error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args);
-static em_status_t start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf);
-static em_status_t stop(void *eo_context, em_eo_t eo);
-static void receive_func(void *eo_context, em_event_t event, em_event_type_t type,
-			 em_queue_t queue, void *q_context);
-
-static int parse_args(int first, int argc, char *argv[]);
-static void usage(void);
-static uint64_t try_timestamp_overhead(void);
-static void print_setup(void);
-static void update_allocs(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool);
-static bool enqueue_event(test_msg *msg, event_handle_t ev);
-static bool dequeue_event(test_msg *msg, event_handle_t *ev);
-static void free_ring(test_msg *msg);
-static void print_upd_stat(test_msg *msg, uint64_t endt);
-static void do_work(uint64_t ns);
-static void print_global_stat(void);
-static int parse_pool(char *arg);
-static em_pool_t create_test_pool(void);
-static em_event_t do_em_event_alloc(int64_t *diff, size_t size, em_pool_t pool);
-static odp_event_t do_odp_event_alloc(int64_t *diff, size_t size, odp_pool_t pool);
-static void do_odp_pktmulti_alloc(test_msg *msg, odp_pool_t odp_pool, size_t size,
-				  int num, int64_t *diff);
-static void do_odp_bufmulti_alloc(test_msg *msg, odp_pool_t odp_pool, size_t size,
-				  int num, int64_t *diff);
-static void allocate_events(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool,
-			    bool skip);
-static void allocate_events_multi(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool,
-				  bool skip);
-static void free_events(test_msg *msg, bool skip);
-static void free_events_multi(test_msg *msg, bool skip);
-static int64_t do_em_event_free(em_event_t ev);
-static int64_t do_odp_event_free(odp_event_t ev);
-static void add_to_bin(int bin, int64_t ns);
-static void flush_data(test_msg *msg);
-static void init_bins(void);
-static void print_bin(int bin);
-static void restart(em_queue_t testq);
-static void print_uptime(void);
-
 /* data */
 static perf_shm_t *perf_shm;
 
-config_data g_options = {
+static config_data g_options = {
 	.loops	= 1,
 	.perloop = EVENTS_PER_LOOP,
 	.events	= 1,
@@ -110,12 +70,12 @@ config_data g_options = {
 	.flush = 0
 };
 
-const char *g_bin_names[NUM_BIN_INST] = { "alloc", "free" };
-test_bin_t g_bins[NUM_BIN_INST][NUM_BINS];
-const int64_t g_bin_limits[NUM_BINS] = { 10, 20, 50, 100, 200, 300, 500, 1000, 2000, -1 };
+static const char *g_bin_names[NUM_BIN_INST] = { "alloc", "free" };
+static test_bin_t g_bins[NUM_BIN_INST][NUM_BINS];
+static const int64_t g_bin_limits[NUM_BINS] = { 10, 20, 50, 100, 200, 300, 500, 1000, 2000, -1 };
 
 /***********************************************/
-void usage(void)
+static void usage(void)
 {
 	APPL_PRINT("pool_perf %s\n\n%s", VERSION, instructions);
 
@@ -127,14 +87,14 @@ void usage(void)
 	APPL_PRINT("\n");
 }
 
-void init_bins(void)
+static void init_bins(void)
 {
 	for (int i = 0; i < NUM_BIN_INST; i++)
 		for (int b = 0; b < NUM_BINS; b++)
 			g_bins[i][b].upto_ns = g_bin_limits[b];
 }
 
-int parse_pool(char *arg)
+static int parse_pool(char *arg)
 {
 	unsigned int num, size, cache;
 	char type[64];
@@ -159,7 +119,7 @@ int parse_pool(char *arg)
 	return 1;
 }
 
-int parse_args(int first, int argc, char *argv[])
+static int parse_args(int first, int argc, char *argv[])
 {
 	optind = first + 1; /* skip '--' */
 	while (1) {
@@ -305,12 +265,12 @@ int parse_args(int first, int argc, char *argv[])
 	return 1;
 }
 
-em_status_t error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
+static em_status_t error_handler(em_eo_t eo, em_status_t error, em_escope_t escope, va_list args)
 {
 	return test_error_handler(eo, error, escope, args);
 }
 
-void do_work(uint64_t ns)
+static void do_work(uint64_t ns)
 {
 	uint64_t t1 = odp_time_local_strict_ns();
 
@@ -342,7 +302,7 @@ void test_init(const appl_conf_t *appl_conf)
 	}
 }
 
-uint64_t try_timestamp_overhead(void)
+static uint64_t try_timestamp_overhead(void)
 {
 #define NUM_TS_TRY 20
 
@@ -363,7 +323,7 @@ uint64_t try_timestamp_overhead(void)
 	return oh ? oh - 1 : oh;
 }
 
-void add_to_bin(int bin, int64_t ns)
+static void add_to_bin(int bin, int64_t ns)
 {
 	for (int i = 0; i < NUM_BINS; i++) {
 		if (ns <= g_bins[bin][i].upto_ns || g_bins[bin][i].upto_ns < 0) {
@@ -373,7 +333,7 @@ void add_to_bin(int bin, int64_t ns)
 	}
 }
 
-void print_bin(int bin)
+static void print_bin(int bin)
 {
 	APPL_PRINT("\nBin '%s' counts:\n# up to ns\t", g_bin_names[bin]);
 	for (int i = 0; i < NUM_BINS; i++)
@@ -384,7 +344,7 @@ void print_bin(int bin)
 	APPL_PRINT("\n");
 }
 
-bool enqueue_event(test_msg *msg, event_handle_t ev)
+static bool enqueue_event(test_msg *msg, event_handle_t ev)
 {
 	if (msg->top >= MAX_ALLOCS)
 		return false; /* full */
@@ -394,7 +354,7 @@ bool enqueue_event(test_msg *msg, event_handle_t ev)
 	return true;
 }
 
-bool dequeue_event(test_msg *msg, event_handle_t *ev)
+static bool dequeue_event(test_msg *msg, event_handle_t *ev)
 {
 	if (msg->top < 1)
 		return false; /* empty */
@@ -404,7 +364,8 @@ bool dequeue_event(test_msg *msg, event_handle_t *ev)
 }
 
 /* noinline for profiling */
-em_event_t __attribute__ ((noinline)) do_em_event_alloc(int64_t *diff, size_t size, em_pool_t pool)
+static em_event_t __attribute__ ((noinline))
+do_em_event_alloc(int64_t *diff, size_t size, em_pool_t pool)
 {
 	em_event_t ev;
 	uint64_t t1 = TIME_FN();
@@ -414,8 +375,8 @@ em_event_t __attribute__ ((noinline)) do_em_event_alloc(int64_t *diff, size_t si
 	return ev;
 }
 
-odp_event_t __attribute__ ((noinline)) do_odp_event_alloc(int64_t *diff, size_t size,
-							  odp_pool_t pool)
+static odp_event_t __attribute__ ((noinline))
+do_odp_event_alloc(int64_t *diff, size_t size, odp_pool_t pool)
 {
 	odp_event_t ev;
 	uint64_t t1;
@@ -435,7 +396,8 @@ odp_event_t __attribute__ ((noinline)) do_odp_event_alloc(int64_t *diff, size_t 
 	return ev;
 }
 
-void allocate_events(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool, bool skip)
+static void allocate_events(test_msg *msg, em_pool_t pool, size_t size,
+			    odp_pool_t odp_pool, bool skip)
 {
 	unsigned int num = abs(g_options.num_alloc);
 
@@ -485,7 +447,8 @@ void allocate_events(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_
 	}
 }
 
-void do_odp_pktmulti_alloc(test_msg *msg, odp_pool_t odp_pool, size_t size, int num, int64_t *diff)
+static void do_odp_pktmulti_alloc(test_msg *msg, odp_pool_t odp_pool,
+				  size_t size, int num, int64_t *diff)
 {
 	odp_packet_t pkts[MAX_ALLOCS];
 	uint64_t t1 = TIME_FN();
@@ -500,7 +463,8 @@ void do_odp_pktmulti_alloc(test_msg *msg, odp_pool_t odp_pool, size_t size, int 
 					    "Unexpected: event ring full!");
 }
 
-void do_odp_bufmulti_alloc(test_msg *msg, odp_pool_t odp_pool, size_t size, int num, int64_t *diff)
+static void do_odp_bufmulti_alloc(test_msg *msg, odp_pool_t odp_pool,
+				  size_t size, int num, int64_t *diff)
 {
 	(void)size;
 
@@ -517,8 +481,8 @@ void do_odp_bufmulti_alloc(test_msg *msg, odp_pool_t odp_pool, size_t size, int 
 					    "Unexpected: event ring full!");
 }
 
-void allocate_events_multi(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool,
-			   bool skip)
+static void allocate_events_multi(test_msg *msg, em_pool_t pool,
+				  size_t size, odp_pool_t odp_pool, bool skip)
 {
 	int num = abs(g_options.num_alloc);
 
@@ -575,9 +539,11 @@ void allocate_events_multi(test_msg *msg, em_pool_t pool, size_t size, odp_pool_
 	perf_shm->counts[em_core_id()].allocs += num;
 }
 
-int64_t __attribute__ ((noinline)) do_em_event_free(em_event_t ev)
+static int64_t __attribute__ ((noinline))
+do_em_event_free(em_event_t ev)
 {
-	test_fatal_if(ev == EM_EVENT_UNDEF, "Unexpected, no em event from ring not empty!");
+	test_fatal_if(ev == EM_EVENT_UNDEF,
+		      "Unexpected, no em event from ring not empty!");
 
 	uint64_t t1 = TIME_FN();
 
@@ -585,16 +551,18 @@ int64_t __attribute__ ((noinline)) do_em_event_free(em_event_t ev)
 	return (int64_t)TIME_FN() - (int64_t)t1;
 }
 
-int64_t __attribute__ ((noinline)) do_odp_event_free(odp_event_t ev)
+static int64_t __attribute__ ((noinline))
+do_odp_event_free(odp_event_t ev)
 {
-	test_fatal_if(ev == ODP_EVENT_INVALID, "Unexpected, no odp event from ring not empty!");
+	test_fatal_if(ev == ODP_EVENT_INVALID,
+		      "Unexpected, no odp event from ring not empty!");
 	uint64_t t1 = TIME_FN();
 
 	odp_event_free(ev);
 	return (int64_t)TIME_FN() - (int64_t)t1;
 }
 
-void free_events(test_msg *msg, bool skip)
+static void free_events(test_msg *msg, bool skip)
 {
 	unsigned int num = abs(g_options.num_free);
 
@@ -639,7 +607,7 @@ void free_events(test_msg *msg, bool skip)
 	}
 }
 
-void free_events_multi(test_msg *msg, bool skip)
+static void free_events_multi(test_msg *msg, bool skip)
 {
 	unsigned int num = abs(g_options.num_free);
 
@@ -701,7 +669,7 @@ void free_events_multi(test_msg *msg, bool skip)
 	perf_shm->counts[em_core_id()].frees -= num;
 }
 
-void update_allocs(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool)
+static void update_allocs(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_pool)
 {
 	/* operation is per context, event contains all state */
 
@@ -736,18 +704,18 @@ void update_allocs(test_msg *msg, em_pool_t pool, size_t size, odp_pool_t odp_po
 	}
 }
 
-void flush_data(test_msg *msg)
+static void flush_data(uint8_t *flush_buf, size_t flush_b)
 {
 	/* simple simulated cache flushing, copy 2nd half of buffer to begin */
 
-	size_t len =  msg->flush_b / 2;
-	uint8_t *b1 = (uint8_t *)msg->flush_buf;
+	size_t len =  flush_b / 2;
+	uint8_t *b1 = (uint8_t *)flush_buf;
 	uint8_t *b2 = b1 + len;
 
 	memcpy(b1, b2, len);
 }
 
-em_pool_t create_test_pool(void)
+static em_pool_t create_test_pool(void)
 {
 	em_pool_cfg_t cfg;
 
@@ -763,7 +731,7 @@ em_pool_t create_test_pool(void)
 	return pool;
 }
 
-void free_ring(test_msg *msg)
+static void free_ring(test_msg *msg)
 {
 	event_handle_t ev;
 
@@ -776,7 +744,7 @@ void free_ring(test_msg *msg)
 	msg->allocated = 0;
 }
 
-void print_uptime(void)
+static void print_uptime(void)
 {
 	uint64_t ns = TIME_FN() - perf_shm->start_time;
 	uint64_t ms = ns / 1000000ULL;
@@ -787,7 +755,7 @@ void print_uptime(void)
 	APPL_PRINT("%lu:%02lu:%02lu.%03lu", hours, minutes % 60, seconds % 60, ms % 1000);
 }
 
-void print_setup(void)
+static void print_setup(void)
 {
 	APPL_PRINT("\n Cores:             %u\n", perf_shm->core_count);
 	APPL_PRINT(" Loops:             %u\n", g_options.loops);
@@ -823,158 +791,7 @@ void print_setup(void)
 	APPL_PRINT("\n");
 }
 
-void restart(em_queue_t testq)
-{
-	/* start new round */
-	perf_shm->events_left = g_options.events;
-
-	for (unsigned int i = 0; i < g_options.events; i++) {
-		em_event_t ev = em_alloc(sizeof(test_msg), EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
-
-		test_fatal_if(ev == EM_EVENT_UNDEF, "Event alloc fail");
-		test_msg *msg = em_event_pointer(ev);
-
-		memset(msg, 0, sizeof(test_msg));
-		for (int j = 0; j < MAX_ALLOCS; j++) {
-			if (g_options.use_odp)
-				msg->events[j].odp_ev = ODP_EVENT_INVALID;
-			else
-				msg->events[j].em_ev = EM_EVENT_UNDEF;
-		}
-		msg->times.alloc.min_ns = INT64_MAX;
-		msg->times.alloc.max_ns = INT64_MIN;
-		msg->instance = i + 1;
-		msg->flush_b = g_options.flush * 1024;
-		msg->flush_buf = NULL;
-		if (g_options.flush) {
-			msg->flush_buf = malloc(msg->flush_b);
-			test_fatal_if(msg->flush_buf == NULL, "Malloc fail");
-		}
-
-		em_status_t ret = em_send(ev, testq);
-
-		test_fatal_if(ret != EM_OK, "Send fail");
-	}
-
-	APPL_PRINT("Start, sent %u context events\n", g_options.events);
-}
-
-void test_start(const appl_conf_t *appl_conf)
-{
-	test_fatal_if(appl_conf->core_count > MAX_CORES, "Too many cores");
-
-	/* Store the number of EM-cores running the application */
-	perf_shm->core_count = appl_conf->core_count;
-
-	perf_shm->ts_overhead = try_timestamp_overhead();
-	APPL_PRINT("time stamp pair overhead seems to be %lu ns\n",
-		   perf_shm->ts_overhead);
-
-	init_bins();
-
-	/* Create EO */
-	perf_shm->eo = em_eo_create("pool test eo", start, NULL, stop, NULL, receive_func,
-				    &perf_shm->eo_ctx);
-	test_fatal_if(perf_shm->eo == EM_EO_UNDEF, "EO create failed");
-
-	/* Queues */
-	em_queue_t q = em_queue_create("testQ", EM_QUEUE_TYPE_PARALLEL,
-				       EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT, NULL);
-
-	test_fatal_if(q == EM_QUEUE_UNDEF, "Q create fail");
-	em_eo_add_queue_sync(perf_shm->eo, q);
-
-	/* Pool */
-	if (g_options.pool.num) { /* create specific test pool */
-		em_pool_t pool = create_test_pool();
-
-		test_fatal_if(pool == EM_POOL_UNDEF, "Can't create test pool!");
-		perf_shm->eo_ctx.test_pool = pool;
-	} else {
-		if (appl_conf->num_pools >= 1)
-			perf_shm->eo_ctx.test_pool = appl_conf->pools[0];
-		else
-			perf_shm->eo_ctx.test_pool = EM_POOL_DEFAULT;
-	}
-
-	odp_pool_t opool;
-
-	test_fatal_if(em_odp_pool2odp(perf_shm->eo_ctx.test_pool, &opool, 1) < 1,
-		      "Unexpected: can't get odp pool from test pool");
-	perf_shm->eo_ctx.odp_pool = opool; /* ignores subpools */
-
-	/* adjust window to fit allocs */
-	unsigned int maxval = abs(g_options.num_alloc);
-
-	if ((unsigned int)abs(g_options.num_free) > maxval)
-		maxval = abs(g_options.num_free);
-	if (maxval > g_options.window) {
-		g_options.window = maxval;
-		APPL_PRINT("Increased alloc window to %u\n", g_options.window);
-	}
-
-	print_setup();
-
-	/* Start EO */
-	em_status_t start_ret = EM_ERR, ret;
-
-	perf_shm->eo_ctx.test_q = q;
-	perf_shm->stopping = false;
-	odp_spinlock_init(&perf_shm->lock);
-	perf_shm->times.min_alloc = INT64_MAX;
-	perf_shm->times.min_free = INT64_MAX;
-
-	ret = em_eo_start_sync(perf_shm->eo, &start_ret, NULL);
-	test_fatal_if(ret != EM_OK || start_ret != EM_OK,
-		      "EO start:%" PRI_STAT " %" PRI_STAT "", ret, start_ret);
-}
-
-void test_stop(const appl_conf_t *appl_conf)
-{
-	em_eo_t eo;
-	em_status_t ret;
-
-	(void)appl_conf;
-
-	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
-
-	/* Stop EOs */
-	eo = perf_shm->eo;
-	ret = em_eo_stop_sync(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
-
-	/* Remove and delete all of the EO's queues, then delete the EO */
-	eo = perf_shm->eo;
-	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
-	test_fatal_if(ret != EM_OK,
-		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "", ret, eo);
-	ret = em_eo_delete(eo);
-	test_fatal_if(ret != EM_OK,
-		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
-}
-
-void test_term(const appl_conf_t *appl_conf)
-{
-	(void)appl_conf;
-
-	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
-	em_unregister_error_handler();
-	env_shared_free(perf_shm);
-}
-
-em_status_t start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
-{
-	(void)conf;
-
-	APPL_PRINT("EO %" PRI_EO " starting\n", eo);
-
-	perf_shm->start_time = TIME_FN();
-	restart(((app_eo_ctx *)eo_context)->test_q);
-	return EM_OK;
-}
-
-void print_global_stat(void)
+static void print_global_stat(void)
 {
 	APPL_PRINT("Test time ");
 	print_uptime();
@@ -1016,7 +833,7 @@ void print_global_stat(void)
 	APPL_PRINT("\n");
 }
 
-void print_upd_stat(test_msg *msg, uint64_t endt)
+static void print_upd_stat(test_msg *msg, uint64_t endt)
 {
 	APPL_PRINT("# Instance #%lu:\n", msg->instance);
 
@@ -1066,7 +883,7 @@ void print_upd_stat(test_msg *msg, uint64_t endt)
 	APPL_PRINT("# Alloc rate (M a/sec): %.5f\n\n", rate / 1000000);
 
 	/* update global stats */
-	odp_spinlock_lock(&perf_shm->lock);
+	odp_ticketlock_lock(&perf_shm->lock);
 
 	if (msg->times.alloc.min_ns < perf_shm->times.min_alloc)
 		perf_shm->times.min_alloc = msg->times.alloc.min_ns;
@@ -1087,10 +904,57 @@ void print_upd_stat(test_msg *msg, uint64_t endt)
 	perf_shm->times.time_free += msg->times.free.sum_ns;
 	perf_shm->times.num_updates++;
 
-	odp_spinlock_unlock(&perf_shm->lock);
+	odp_ticketlock_unlock(&perf_shm->lock);
 }
 
-em_status_t stop(void *eo_context, em_eo_t eo)
+static void restart(em_queue_t testq)
+{
+	/* start new round */
+	perf_shm->events_left = g_options.events;
+
+	for (unsigned int i = 0; i < g_options.events; i++) {
+		em_event_t ev = em_alloc(sizeof(test_msg), EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
+
+		test_fatal_if(ev == EM_EVENT_UNDEF, "Event alloc fail");
+		test_msg *msg = em_event_pointer(ev);
+
+		memset(msg, 0, sizeof(test_msg));
+		for (int j = 0; j < MAX_ALLOCS; j++) {
+			if (g_options.use_odp)
+				msg->events[j].odp_ev = ODP_EVENT_INVALID;
+			else
+				msg->events[j].em_ev = EM_EVENT_UNDEF;
+		}
+		msg->times.alloc.min_ns = INT64_MAX;
+		msg->times.alloc.max_ns = INT64_MIN;
+		msg->instance = i + 1;
+		msg->flush_b = g_options.flush * 1024;
+		msg->flush_buf = NULL;
+		if (g_options.flush) {
+			msg->flush_buf = malloc(msg->flush_b);
+			test_fatal_if(msg->flush_buf == NULL, "Malloc fail");
+		}
+
+		em_status_t ret = em_send(ev, testq);
+
+		test_fatal_if(ret != EM_OK, "Send fail");
+	}
+
+	APPL_PRINT("Start, sent %u context events\n", g_options.events);
+}
+
+static em_status_t eo_start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
+{
+	(void)conf;
+
+	APPL_PRINT("EO %" PRI_EO " starting\n", eo);
+
+	perf_shm->start_time = TIME_FN();
+	restart(((app_eo_ctx *)eo_context)->test_q);
+	return EM_OK;
+}
+
+static em_status_t eo_stop(void *eo_context, em_eo_t eo)
 {
 	(void)eo_context;
 
@@ -1099,8 +963,8 @@ em_status_t stop(void *eo_context, em_eo_t eo)
 	return EM_OK;
 }
 
-void receive_func(void *eo_context, em_event_t event, em_event_type_t type,
-		  em_queue_t queue, void *q_context)
+static void eo_receive_func(void *eo_context, em_event_t event, em_event_type_t type,
+			    em_queue_t queue, void *q_context)
 {
 	app_eo_ctx *ctx = (app_eo_ctx *)eo_context;
 	test_msg *msg = em_event_pointer(event);
@@ -1128,7 +992,7 @@ void receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 
 	/* optional cache flush simulation */
 	if (msg->flush_buf)
-		flush_data(msg);
+		flush_data(msg->flush_buf, msg->flush_b);
 
 	/* one instance loop done? -> collect statistics */
 	if (msg->count >= g_options.perloop) {
@@ -1159,6 +1023,110 @@ void receive_func(void *eo_context, em_event_t event, em_event_type_t type,
 	/* not done, keep going */
 	ret = em_send(event, ctx->test_q);
 	test_fatal_if(ret != EM_OK, "Event send fail");
+}
+
+void test_start(const appl_conf_t *appl_conf)
+{
+	test_fatal_if(appl_conf->core_count > MAX_CORES, "Too many cores");
+
+	/* Store the number of EM-cores running the application */
+	perf_shm->core_count = appl_conf->core_count;
+
+	perf_shm->ts_overhead = try_timestamp_overhead();
+	APPL_PRINT("time stamp pair overhead seems to be %lu ns\n",
+		   perf_shm->ts_overhead);
+
+	init_bins();
+
+	/* Create EO */
+	perf_shm->eo = em_eo_create("pool test eo", eo_start, NULL, eo_stop, NULL,
+				    eo_receive_func, &perf_shm->eo_ctx);
+	test_fatal_if(perf_shm->eo == EM_EO_UNDEF, "EO create failed");
+
+	/* Queues */
+	em_queue_t q = em_queue_create("testQ", EM_QUEUE_TYPE_PARALLEL,
+				       EM_QUEUE_PRIO_NORMAL, EM_QUEUE_GROUP_DEFAULT, NULL);
+
+	test_fatal_if(q == EM_QUEUE_UNDEF, "Q create fail");
+	em_eo_add_queue_sync(perf_shm->eo, q);
+
+	/* Pool */
+	if (g_options.pool.num) { /* create specific test pool */
+		em_pool_t pool = create_test_pool();
+
+		test_fatal_if(pool == EM_POOL_UNDEF, "Can't create test pool!");
+		perf_shm->eo_ctx.test_pool = pool;
+	} else {
+		if (appl_conf->num_pools >= 1)
+			perf_shm->eo_ctx.test_pool = appl_conf->pools[0];
+		else
+			perf_shm->eo_ctx.test_pool = EM_POOL_DEFAULT;
+	}
+
+	odp_pool_t opool;
+
+	test_fatal_if(em_odp_pool2odp(perf_shm->eo_ctx.test_pool, &opool, 1) < 1,
+		      "Unexpected: can't get odp pool from test pool");
+	perf_shm->eo_ctx.odp_pool = opool; /* ignores subpools */
+
+	/* adjust window to fit allocs */
+	unsigned int maxval = abs(g_options.num_alloc);
+
+	if ((unsigned int)abs(g_options.num_free) > maxval)
+		maxval = abs(g_options.num_free);
+	if (maxval > g_options.window) {
+		g_options.window = maxval;
+		APPL_PRINT("Increased alloc window to %u\n", g_options.window);
+	}
+
+	print_setup();
+
+	/* Start EO */
+	em_status_t start_ret = EM_ERR, ret;
+
+	perf_shm->eo_ctx.test_q = q;
+	perf_shm->stopping = false;
+	odp_ticketlock_init(&perf_shm->lock);
+	perf_shm->times.min_alloc = INT64_MAX;
+	perf_shm->times.min_free = INT64_MAX;
+
+	ret = em_eo_start_sync(perf_shm->eo, &start_ret, NULL);
+	test_fatal_if(ret != EM_OK || start_ret != EM_OK,
+		      "EO start:%" PRI_STAT " %" PRI_STAT "", ret, start_ret);
+}
+
+void test_stop(const appl_conf_t *appl_conf)
+{
+	em_eo_t eo;
+	em_status_t ret;
+
+	(void)appl_conf;
+
+	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
+
+	/* Stop EOs */
+	eo = perf_shm->eo;
+	ret = em_eo_stop_sync(eo);
+	test_fatal_if(ret != EM_OK,
+		      "EO:%" PRI_EO " stop:%" PRI_STAT "", eo, ret);
+
+	/* Remove and delete all of the EO's queues, then delete the EO */
+	eo = perf_shm->eo;
+	ret = em_eo_remove_queue_all_sync(eo, EM_TRUE);
+	test_fatal_if(ret != EM_OK,
+		      "EO remove queue all:%" PRI_STAT " EO:%" PRI_EO "", ret, eo);
+	ret = em_eo_delete(eo);
+	test_fatal_if(ret != EM_OK,
+		      "EO:%" PRI_EO " delete:%" PRI_STAT "", eo, ret);
+}
+
+void test_term(const appl_conf_t *appl_conf)
+{
+	(void)appl_conf;
+
+	APPL_PRINT("%s() on EM-core %d\n", __func__, em_core_id());
+	em_unregister_error_handler();
+	env_shared_free(perf_shm);
 }
 
 /***** MAIN *****/

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2025, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,7 +37,7 @@
  * @file
  * @defgroup em_eo Execution objects (EO)
  *
- * Operations on EO
+ * Operations on EOs
  *
  * Execution objects (EO) are the application building blocks of EM.
  * An EO typically implements one logical function or one stage in a pipeline,
@@ -57,12 +57,12 @@
  *                             |
  *                             v
  *                      .-------------.
- *          .->.------->|   CREATED   | (new events discarded)
+ *          .->.------->|   CREATED   | new events discarded
  *          |  |        '-------------'
  *          |  |               | em_eo_start(+notifs) / em_eo_start_sync()
  *          |  |               v
  *          |  |        .-------------.
- *          |  |        |   STARTING  | (new events discarded)
+ *          |  |        |   STARTING  | new events discarded
  *          |  '        '-------------'
  *          |   \         global start
  *          |    \            THEN
@@ -71,12 +71,12 @@
  *          |                  | send 'start-completed' notifications
  *          |                  v
  *          .           .-------------.
- *          |           |   RUNNING   |
+ *          |           |   RUNNING   | events processed by the receive function
  *          |           '-------------'
  *          |                  | em_eo_stop(+notifs) / em_eo_stop_sync()
  *          |                  v
  *          '           .-------------.
- *           \          |   STOPPING  | (new events discarded)
+ *           \          |   STOPPING  | new events discarded
  *            \         '-------------'
  *             \               |
  *              \              v
@@ -90,16 +90,15 @@
  *  @{
  */
 
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
-#include <event_machine/api/event_machine_error.h>
-
 /**
- * Execution object (EO) event receive function (single-event)
+ * Execution Object (EO) event receive function (single-event)
  *
  * An application receives events through queues and these events are passed to
  * the application's EO receive function(s) for processing. The EO receive
@@ -134,8 +133,7 @@ extern "C" {
  *
  * The EO will not receive any events if it has not been successfully started.
  *
- * @param eo_ctx  EO context data given to em_eo_create(),
- *                EM does not dereference.
+ * @param eo_ctx  EO context data as given to em_eo_create(), EM does not touch.
  * @param event   Event handle
  * @param type    Event type
  * @param queue   Queue from which the event was dequeued
@@ -151,7 +149,7 @@ typedef void (*em_receive_func_t)(void *eo_ctx,
 				  em_queue_t queue, void *q_ctx);
 
 /**
- * Execution object (EO) multi-event receive function
+ * Execution Object (EO) multi-event receive function
  *
  * Similar to the single-event receive function (em_receive_func_t), except that
  * multiple events can be passed with one call to the EO receive function.
@@ -173,8 +171,8 @@ typedef void (*em_receive_func_t)(void *eo_ctx,
  * no event types are passed. Use appropriate event APIs if the event types
  * are needed.
  *
- * @param eo_ctx  EO context data given to em_eo_create_multircv(),
- *                EM does not dereference.
+ * @param eo_ctx  EO context data as given to em_eo_create_multircv(),
+ *                EM does not touch.
  * @param events  Event handles: events[num]
  * @param num     Number of events received
  *                (0 to 'max_events' of em_eo_create_multircv())
@@ -191,13 +189,26 @@ typedef void (*em_receive_multi_func_t)(void *eo_ctx,
 					em_queue_t queue, void *q_ctx);
 
 /**
- * Execution object (EO) start function, global.
+ * EO configuration data passed to the user provided EO start function via
+ * em_eo_start() or em_eo_start_sync().
+ * The use is optional, but provides a standard way to pass data to the
+ * EO start function. EM does not dereference any of the fields here.
+ **/
+typedef struct {
+	/** Size of the data passed via conf pointer */
+	size_t conf_len;
+	/** Application specific configuration data */
+	void *conf;
+} em_eo_conf_t;
+
+/**
+ * Execution Object (EO) start function, global.
  *
  * This EO callback function is called once on one core by em_eo_start().
  * The purpose of this global EO-start is to provide a placeholder for first
  * level EO initialization, e.g. allocating memory and initializing shared data.
  * After this global start returns, the EO core local start function (if given)
- * is called on all cores in this EM instance. If there is no core local start,
+ * is called on all cores in the EM instance. If there is no core local start,
  * then event dispatching is enabled as this function returns, otherwise the EO
  * is enabled only when all core local starts have completed successfully on all
  * the cores. If this function does not return EM_OK, the system will not call
@@ -210,15 +221,15 @@ typedef void (*em_receive_multi_func_t)(void *eo_ctx,
  * is done when sending to queues that are not scheduled.
  *
  * The last argument is an optional startup configuration passed directly
- * from em_eo_start(). If local start functions need the configuration data,
- * it must be saved during the global start.
+ * from em_eo_start/_sync(). If local start functions need the configuration
+ * data, it must be saved during the global start.
  *
  * This function should never be directly called from the application,
  * it will be called by em_eo_start(), which maintains state information.
  *
- * @param eo_ctx        Execution object internal state/instance data
- * @param eo            Execution object handle
- * @param conf          Optional startup configuration, NULL ok.
+ * @param eo_ctx  EO context data as given to em_eo_create(), EM does not touch.
+ * @param eo      EO handle
+ * @param conf    Optional startup configuration, NULL ok.
  *
  * @return EM_OK if successful, other values abort EO start
  *
@@ -228,14 +239,16 @@ typedef em_status_t (*em_start_func_t)(void *eo_ctx, em_eo_t eo,
 				       const em_eo_conf_t *conf);
 
 /**
- * Execution object (EO) start function, core local.
+ * Execution Object (EO) start function, EM-core local.
  *
- * This is similar to the global start above, but this one is called after the
- * global start has completed and is run on all cores of the EM instance
- * potentially in parallel.
+ * Similar to the global start function above, but is called after the global
+ * start function has completed and is run on all EM-cores (of types
+ * EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL) of the EM instance and
+ * potentially in parallel. The local start function is not run on EM external
+ * threads/processes (of type EM_CORE_TYPE_EXTERNAL).
  *
- * The purpose of this optional local start is to work as a placeholder for
- * core local initialization, e.g. allocating core local memory.
+ * The purpose of this optional local start function is to work as a placeholder
+ * for EM-core local initialization, e.g. allocating EM-core local memory.
  *
  * Note that events sent to scheduled queues from local start functions are
  * buffered. The buffered events will be sent into the queues when the EO start
@@ -244,13 +257,13 @@ typedef em_status_t (*em_start_func_t)(void *eo_ctx, em_eo_t eo,
  * is done when sending to queues that are not scheduled.
  *
  * This function should never be directly called from the application,
- * it will be called by em_eo_start(), which maintains state information.
+ * it will be called by em_eo_start/_sync(), which maintains state information.
  *
  * Event dispatching is not enabled if this function doesn't return EM_OK on
  * all cores.
  *
- * @param eo_ctx        Execution object internal state/instance data
- * @param eo            Execution object handle
+ * @param eo_ctx  EO context data as given to em_eo_create(), EM does not touch.
+ * @param eo      EO handle
  *
  * @return EM_OK if successful, other values prevent EO start
  *
@@ -259,19 +272,70 @@ typedef em_status_t (*em_start_func_t)(void *eo_ctx, em_eo_t eo,
 typedef em_status_t (*em_start_local_func_t)(void *eo_ctx, em_eo_t eo);
 
 /**
- * Execution object (EO) stop function, core local.
+ * Execution Object (EO) local start function mode.
  *
- * This function is called once on each core of the EM instance before the
- * global stop (reverse order of start). The system disables event dispatching
- * before calling these and also makes sure this does not get called before
- * the core has been notified of the stop condition for this EO (won't dispatch
- * any new events).
+ * The mode determines how & when the EO's local start function is run.
+ * An EO local start function, if provided, is run on all, at the time
+ * available, EM-cores (of type EM_CORE_TYPE_WORKER or EM_CORE_TYPE_CONTROL) as
+ * triggered by em_eo_start/_sync().
+ * Adding an EM-core after the EO has already been started will not have the EO
+ * local start function triggered by em_eo_start/_sync() for the new EM-core,
+ * but the user may still want to have it run to properly initialize core local
+ * data. This option controls whether the EO's local start function is run
+ * during EM-core init when adding a new EM-core.
+ *
+ * @see em_eo_stop_local_mode_t
+ */
+typedef enum {
+	/**
+	 * Use the EM config file setting from [em-odp.conf]:
+	 * 'eo.start_local_fn_at_init = true/false'.
+	 * This mode is set by em_eo_param_init() (default).
+	 * The EM config file setting determines whether the local start
+	 * functions for already started EOs are run during EM-core init
+	 * when adding a new EM-core to an EM instance.
+	 */
+	EM_EO_START_LOCAL_MODE_CONFIG_FILE = 0,
+	/**
+	 * Don't run the local start function during EM-core init.
+	 * The EO's start and local start functions are only run when
+	 * starting the EO via em_eo_start() or em_eo_start_sync().
+	 * Adding an EM-core after the EO has been started will NOT
+	 * trigger any further start functions.
+	 * Overrides the EM config file setting 'eo.start_local_fn_at_init' for
+	 * the EO.
+	 */
+	EM_EO_START_LOCAL_MODE_INIT_NORUN,
+	/**
+	 * Run the local start function at EM-core init.
+	 * Run the EO's local start function during EM-core init when a
+	 * new EM-core is added to the EM instance, but only if the EO
+	 * is already started/running (EM_EO_STATE_RUNNING).
+	 * Overrides the EM config file setting 'eo.start_local_fn_at_init' for
+	 * the EO.
+	 */
+	EM_EO_START_LOCAL_MODE_INIT_RUN,
+
+	/** Last, for bounds checking only */
+	EM_EO_START_LOCAL_MODE_LAST
+} em_eo_start_local_mode_t;
+
+/**
+ * Execution Object (EO) stop function, EM-core local.
+ *
+ * This function is called once on each EM-core (of type EM_CORE_TYPE_WORKER or
+ * EM_CORE_TYPE_CONTROL) of the EM instance before the global stop (reverse
+ * order of start). The local stop function is not run on EM external
+ * threads/processes (of type EM_CORE_TYPE_EXTERNAL). The system disables event
+ * dispatching before calling this function and also makes sure it does not get
+ * called before the core has been notified of the stop condition for this EO
+ * (won't dispatch any new events).
  *
  * This function should never be directly called from the application,
  * it will be called by em_eo_stop(), which maintains state information.
  *
- * @param eo_ctx        Execution object internal state data
- * @param eo            Execution object handle
+ * @param eo_ctx  EO context data as given to em_eo_create(), EM does not touch.
+ * @param eo      EO handle
  *
  * @return EM_OK if successful.
  *
@@ -280,7 +344,56 @@ typedef em_status_t (*em_start_local_func_t)(void *eo_ctx, em_eo_t eo);
 typedef em_status_t (*em_stop_local_func_t)(void *eo_ctx, em_eo_t eo);
 
 /**
- * Execution object (EO) stop function, global.
+ * Execution Object (EO) local stop function mode.
+ *
+ * The mode determines how & when the EO's local stop function is run.
+ * An EO local stop function, if provided, is run on all, at the time available,
+ * EM-cores (of type EM_CORE_TYPE_WORKER or EM_CORE_TYPE_CONTROL) as triggered
+ * by em_eo_stop/_sync().
+ * Removing an EM-core before the EO has been stopped will not have the EO
+ * local stop function triggered by em_eo_stop/_sync(), but the user may still
+ * want to have it run to properly clean up EM-core local data. This option
+ * controls whether the EO's local stop function is run during EM-core
+ * termination when removing an EM-core.
+ *
+ * @see em_eo_start_local_mode_t
+ */
+typedef enum {
+	/**
+	 * Use the EM config file setting from [em-odp.conf]:
+	 * 'eo.stop_local_fn_at_term = true/false'.
+	 * This mode is set by em_eo_param_init() (default).
+	 * The EM config file setting determines whether the local stop
+	 * functions for EOs are run during EM-core termination when removing an
+	 * EM-core from an EM instance while the EO is still otherwise running.
+	 */
+	EM_EO_STOP_LOCAL_MODE_CONFIG_FILE = 0,
+	/**
+	 * Don't run the local stop function during EM-core termination.
+	 * The EO's stop and local stop functions are only run when
+	 * stopping the EO via em_eo_stop() or em_eo_stop_sync().
+	 * Removing an EM-core while the EO is running will NOT trigger
+	 * any further stop functions.
+	 * Overrides the EM config file setting 'eo.stop_local_fn_at_term' for
+	 * the EO.
+	 */
+	EM_EO_STOP_LOCAL_MODE_TERM_NORUN,
+	/**
+	 * Run the local stop function for this EO during EM-core term.
+	 * Run the EO's local stop function during EM-core termination
+	 * when an EM-core is removed from the EM instance, but only if
+	 * the EO is already started/running (EM_EO_STATE_RUNNING).
+	 * Overrides the EM config file setting 'eo.stop_local_fn_at_term' for
+	 * the EO.
+	 */
+	EM_EO_STOP_LOCAL_MODE_TERM_RUN,
+
+	/** Last, for bounds checking only */
+	EM_EO_STOP_LOCAL_MODE_LAST
+} em_eo_stop_local_mode_t;
+
+/**
+ * Execution Object (EO) stop function, global.
  *
  * The EO global stop function is called once on one core after the optional
  * core local stop functions return on all cores. The system disables event
@@ -291,14 +404,32 @@ typedef em_status_t (*em_stop_local_func_t)(void *eo_ctx, em_eo_t eo);
  * This function should never be directly called from the application,
  * it will be called by em_eo_stop(), which maintains state information.
  *
- * @param eo_ctx        Execution object internal state data
- * @param eo            Execution object handle
+ * @param eo_ctx  EO context data as given to em_eo_create(), EM does not touch.
+ * @param eo      EO handle
  *
  * @return EM_OK if successful.
  *
  * @see em_eo_stop(), em_eo_create()
  */
 typedef em_status_t (*em_stop_func_t)(void *eo_ctx, em_eo_t eo);
+
+/**
+ * EO running state. Event dispatching is only enabled in running state.
+ **/
+typedef enum {
+	/** Undefined */
+	EM_EO_STATE_UNDEF = 0,
+	/** Initial state after creation */
+	EM_EO_STATE_CREATED = 1,
+	/** start called, not completed */
+	EM_EO_STATE_STARTING = 2,
+	/** running, event dispatching enabled */
+	EM_EO_STATE_RUNNING = 3,
+	/** stop called, not completed. Next state EM_EO_STATE_CREATED */
+	EM_EO_STATE_STOPPING = 4,
+	/** exceptional state, only delete allowed */
+	EM_EO_STATE_ERROR = 5
+} em_eo_state_t;
 
 /**
  * Create an Execution Object (EO).
@@ -312,6 +443,11 @@ typedef em_status_t (*em_stop_func_t)(void *eo_ctx, em_eo_t eo);
  * EM_EO_NAME_LEN. Duplicate names are allowed, but find will only match one of
  * them.
  *
+ * @note The EO start/stop local function mode is read from the EM config file
+ *       setting 'eo.start_local_fn_at_init' and 'eo.stop_local_fn_at_term' when
+ *       using this API. Consider using the newer API em_eo_create_params()
+ *       instead for more control.
+ *
  * @param name          Name of the EO (optional, NULL ok)
  * @param start         Start function
  * @param local_start   Core local start function (NULL if no local start)
@@ -322,18 +458,137 @@ typedef em_status_t (*em_stop_func_t)(void *eo_ctx, em_eo_t eo);
  *                      (NULL if no context)
  *
  * @return New EO handle if successful, otherwise EM_EO_UNDEF.
+ * @retval EM_EO_UNDEF on error
  *
  * @see em_eo_start(), em_eo_delete(), em_queue_create(), em_eo_add_queue()
  * @see em_start_func_t, em_stop_func_t, em_receive_func_t
+ * @see em_eo_create_param(), em_eo_create_multircv()
  */
-em_eo_t
-em_eo_create(const char *name,
-	     em_start_func_t start, em_start_local_func_t local_start,
-	     em_stop_func_t stop, em_stop_local_func_t local_stop,
-	     em_receive_func_t receive, const void *eo_ctx);
+em_eo_t em_eo_create(const char *name,
+		     em_start_func_t start, em_start_local_func_t local_start,
+		     em_stop_func_t stop, em_stop_local_func_t local_stop,
+		     em_receive_func_t receive, const void *eo_ctx);
 
 /**
- * EO parameters for em_eo_create_multircv(...)
+ * Execution Object (EO) parameters for em_eo_create_param(...)
+ */
+typedef struct {
+	/**
+	 * EO start function, mandatory.
+	 * Called once on one EM-core, triggered by em_eo_start/_start_sync().
+	 * First EO-function to be called.
+	 * The 'start' function can be called on any core type, i.e. also on
+	 * EM_CORE_TYPE_EXTERNAL if em_eo_start/start_sync() is called from
+	 * there.
+	 */
+	em_start_func_t start;
+	/**
+	 * EO core-local start function, optional (set NULL if not used).
+	 * Called on all EM-cores (of type EM_CORE_TYPE_WORKER or
+	 * EM_CORE_TYPE_CONTROL) after 'start' has completed.
+	 */
+	em_start_local_func_t local_start;
+	/**
+	 * EO local start function mode (see type documentation), set if using a
+	 * local start function.
+	 */
+	em_eo_start_local_mode_t local_start_mode;
+
+	/**
+	 * EO stop function, mandatory.
+	 * Called once on one EM-core, triggered by em_eo_stop/_stop_sync().
+	 * Last EO-function to be called.
+	 * The 'stop' function can be called on any core type, i.e. also on
+	 * EM_CORE_TYPE_EXTERNAL if em_eo_stop/stop_sync() is called from
+	 * there.
+	 */
+	em_stop_func_t stop;
+	/**
+	 * EO core-local stop function, optional (set NULL if not used).
+	 * Called and completed on all EM-cores (of type EM_CORE_TYPE_WORKER or
+	 * EM_CORE_TYPE_CONTROL) before 'stop'.
+	 */
+	em_stop_local_func_t local_stop;
+	/**
+	 * EO local stop function mode (see type documentation), set if using a
+	 * local stop function.
+	 */
+	em_eo_stop_local_mode_t local_stop_mode;
+
+	/**
+	 * EO receive function for multiple events, mandatory.
+	 * Only EM-cores of type of type EM_CORE_TYPE_WORKER or
+	 * EM_CORE_TYPE_CONTROL will run this function.
+	 */
+	em_receive_func_t receive;
+	/**
+	 * User defined EO context data, optional (NULL if no context).
+	 * EM only passes the value.
+	 */
+	const void *eo_ctx;
+
+	/**
+	 * Internal check - don't touch!
+	 *
+	 * EM will verify that em_eo_param_init(param) has been called
+	 * before creating an EO with em_eo_create_param(..., param)
+	 */
+	uint32_t __internal_check;
+} em_eo_param_t;
+
+/**
+ * Initialize parameters for Execution Object (EO) creation.
+ *
+ * Initialize em_eo_param_t to default values for all fields.
+ * After initialization, the user further needs to set the mandatory fields of
+ * 'em_eo_param_t' before calling em_eo_create_param().
+ * Always initialize 'param' first with em_eo_param_init(&param) to
+ * ensure backwards compatibility with potentially added new options.
+ *
+ * @param param  Address of the em_eo_param_t to be initialized
+ *
+ * @see em_eo_create_param()
+ */
+void em_eo_param_init(em_eo_param_t *param);
+
+/**
+ * Create an Execution Object (EO) with parameters
+ *
+ * Allocate an EO handle and initialize internal data for the new EO.
+ * The EO is left in a non-active state, i.e. no events are dispatched before
+ * em_eo_start/_sync() has been called.
+ *
+ * The EO name is copied into EO internal data. The maximum length stored is
+ * EM_EO_NAME_LEN. Duplicate names are allowed, but find will only match one of
+ * them.
+ *
+ * Always initialize 'param' first with em_eo_param_init(&param) to ensure
+ * backwards compatibility and default values for all fields before setting your
+ * own params and calling em_eo_create_param():
+ * @code
+ *	em_eo_param_t param;
+ *	em_eo_t eo;
+ *
+ *	em_eo_param_init(&param); - Set default values for all fields
+ *	param.start = my_start_fn;
+ *	param.stop = my_stop_fn;
+ *	param.receive = my_receive_fn;
+ *	...
+ *	eo = em_eo_create_param("my-eo", &param);
+ *	if (unlikely(eo == EM_EO_UNDEF))
+ *		report_error();
+ * @endcode
+ *
+ * @param name   Name of the EO (optional, NULL ok)
+ * @param param  EO parameters
+ *
+ * @return New EO handle if successful, otherwise EM_EO_UNDEF.
+ * @retval EM_EO_UNDEF on error
+ */
+em_eo_t em_eo_create_param(const char *name, const em_eo_param_t *param);
+
+/**
+ * Execution Object (EO) parameters for em_eo_create_multircv(...)
  */
 typedef struct {
 	/**
@@ -348,6 +603,11 @@ typedef struct {
 	 */
 	em_start_local_func_t local_start;
 	/**
+	 * EO local start function mode (see type documentation)
+	 */
+	em_eo_start_local_mode_t local_start_mode;
+
+	/**
 	 * EO stop function, mandatory.
 	 * Called once on one core, triggered by em_eo_stop/_stop_sync().
 	 * Last EO-function to be called.
@@ -358,6 +618,11 @@ typedef struct {
 	 * Called and completed on all EM-cores before 'stop'.
 	 */
 	em_stop_local_func_t local_stop;
+	/**
+	 * EO local stop function mode (see type documentation)
+	 */
+	em_eo_stop_local_mode_t local_stop_mode;
+
 	/**
 	 * EO receive function for multiple events, mandatory.
 	 */
@@ -387,7 +652,8 @@ typedef struct {
 } em_eo_multircv_param_t;
 
 /**
- * Initialize parameters for the multi-event receive-function EO.
+ * Initialize parameters for the Execution Object (EO) with a
+ * multi-event receive-function.
  *
  * Initialize em_eo_multircv_param_t to default values for all fields.
  * After initialization, the user further needs to set the mandatory fields of
@@ -395,7 +661,7 @@ typedef struct {
  * Always initialize 'param' first with em_eo_multircv_param_init(&param) to
  * ensure backwards compatibility with potentially added new options.
  *
- * @param param   Address of the em_eo_multircv_param_t to be initialized
+ * @param param  Address of the em_eo_multircv_param_t to be initialized
  *
  * @see em_eo_create_multircv()
  */
@@ -426,8 +692,8 @@ void em_eo_multircv_param_init(em_eo_multircv_param_t *param);
  *		report_error();
  * @endcode
  *
- * @param name     Name of the EO (optional, NULL ok)
- * @param param    EO parameters
+ * @param name   Name of the EO (optional, NULL ok)
+ * @param param  EO parameters
  *
  * @return New EO handle if successful, otherwise EM_EO_UNDEF.
  *
@@ -435,11 +701,11 @@ void em_eo_multircv_param_init(em_eo_multircv_param_t *param);
  * @see em_eo_start(), em_eo_start_sync(), em_eo_stop(), em_eo_stop_sync()
  * @see em_start_func_t, em_stop_func_t, em_receive_multi_func_t
  */
-em_eo_t
-em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param);
+em_eo_t em_eo_create_multircv(const char *name,
+			      const em_eo_multircv_param_t *param);
 
 /**
- * Delete Execution Object (EO).
+ * Delete an Execution Object (EO).
  *
  * Immediately delete the given EO and free the identifier.
  *
@@ -457,17 +723,16 @@ em_eo_create_multircv(const char *name, const em_eo_multircv_param_t *param);
  * will cleanly delete an EO from the EM point of view (not including user
  * allocated data).
  *
- * @param eo     EO handle to delete
+ * @param eo  EO handle to delete
  *
  * @return EM_OK if successful.
  *
  * @see em_eo_stop(), em_eo_remove_queue()
  */
-em_status_t
-em_eo_delete(em_eo_t eo);
+em_status_t em_eo_delete(em_eo_t eo);
 
 /**
- * Returns the name given to the EO when it was created.
+ * Returns the name given to the Execution Object (EO) when it was created.
  *
  * A copy of the name string (up to 'maxlen' characters) is
  * written to the user buffer 'name'.
@@ -476,35 +741,36 @@ em_eo_delete(em_eo_t eo);
  *
  * The function returns 0 and writes an empty string if the EO has no name.
  *
- * @param      eo       EO handle
- * @param[out] name     Destination buffer
- * @param      maxlen   Maximum length (including the terminating '0')
+ * @param      eo      EO handle
+ * @param[out] name    Destination buffer
+ * @param      maxlen  Maximum length (including the terminating '0')
  *
  * @return Number of characters written (excludes the terminating '0').
  *
  * @see em_eo_create()
  */
-size_t
-em_eo_get_name(em_eo_t eo, char *name, size_t maxlen);
+size_t em_eo_name(em_eo_t eo, char *name, size_t maxlen);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_get_name em_eo_name
 
 /**
- * Find EO by name.
+ * Find Execution Object (EO) by name.
  *
  * Finds an EO by the given name (exact match). An empty string will not match
  * anything. The search is case sensitive. This function will return the first
  * match only if there are duplicate names.
  *
- * @param name          the name to look for
+ * @param name  the name to look for
  *
  * @return EO handle or EM_EO_UNDEF if not found
  *
  * @see em_eo_create()
  */
-em_eo_t
-em_eo_find(const char *name);
+em_eo_t em_eo_find(const char *name);
 
 /**
- * Add a queue to an EO, asynchronous (non-blocking)
+ * Add a queue to an Execution Object (EO), asynchronous (non-blocking)
  *
  * Add the given queue to the EO and enable scheduling for it. The function
  * returns immediately, but the operation can be asynchronous and only fully
@@ -514,23 +780,22 @@ em_eo_find(const char *name);
  * operational, but if the target EO is not yet started then events sent into
  * the queue will still be dropped by dispatcher.
  *
- * @param eo            EO handle
- * @param queue         Queue handle
- * @param num_notif     Number of notification events, 0 for no notification
- * @param notif_tbl     Array of pairs of event and queue identifiers
- *                      (+ optional event groups to send the events with)
+ * @param eo         EO handle
+ * @param queue      Queue handle
+ * @param num_notif  Number of notification events, 0 for no notification
+ * @param notif_tbl  Array of pairs of event and queue identifiers
+ *                   (+ optional event groups to send the events with)
  *
  * @return EM_OK if successful.
  *
  * @see em_queue_create(), em_eo_create(), em_eo_remove_queue(),
  *      em_eo_add_queue_sync()
  */
-em_status_t
-em_eo_add_queue(em_eo_t eo, em_queue_t queue,
-		int num_notif, const em_notif_t notif_tbl[]);
+em_status_t em_eo_add_queue(em_eo_t eo, em_queue_t queue,
+			    int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Add a queue to an EO, synchronous (blocking)
+ * Add a queue to an Execution Object (EO), synchronous (blocking)
  *
  * As em_eo_add_queue(), but does not return until the queue is ready to
  * receive events.
@@ -545,19 +810,18 @@ em_eo_add_queue(em_eo_t eo, em_queue_t queue,
  * sent internally.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
- * @param eo            EO handle
- * @param queue         Queue handle
+ * @param eo     EO handle
+ * @param queue  Queue handle
  *
  * @return EM_OK if successful.
  *
  * @see em_queue_create(), em_eo_create(), em_eo_remove_queue()
  * @see em_eo_add_queue() for an asynchronous version of the API
  */
-em_status_t
-em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue);
+em_status_t em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue);
 
 /**
- * Removes a queue from an EO, asynchronous (non-blocking)
+ * Removes a queue from an Execution Object (EO), asynchronous (non-blocking)
  *
  * Disables queue scheduling and removes the queue from the EO. The function
  * returns immediately, but the operation can be asynchronous and only fully
@@ -566,22 +830,21 @@ em_eo_add_queue_sync(em_eo_t eo, em_queue_t queue);
  * anymore. Use notifications to know when the operation has fully completed
  * and the queue can safely be deleted.
  *
- * @param eo            EO handle
- * @param queue         Queue handle to remove
- * @param num_notif     Number of notification events, 0 for no notification
- * @param notif_tbl     Array of pairs of event and queue identifiers
- *                      (+ optional event groups to send the events with)
+ * @param eo         EO handle
+ * @param queue      Queue handle to remove
+ * @param num_notif  Number of notification events, 0 for no notification
+ * @param notif_tbl  Array of pairs of event and queue identifiers
+ *                   (+ optional event groups to send the events with)
  *
  * @return EM_OK if successful.
  *
  * @see em_eo_add_queue(), em_eo_remove_queue_sync()
  */
-em_status_t
-em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
-		   int num_notif, const em_notif_t notif_tbl[]);
+em_status_t em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
+			       int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Removes a queue from an EO, synchronous (blocking)
+ * Removes a queue from an Execution Object (EO), synchronous (blocking)
  *
  * As em_eo_remove_queue(), but will not return until the queue has been
  * disabled, removed from the EO and no more events are being processed from
@@ -597,18 +860,17 @@ em_eo_remove_queue(em_eo_t eo, em_queue_t queue,
  * sent internally.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
- * @param eo            EO handle
- * @param queue         Queue handle to remove
+ * @param eo     EO handle
+ * @param queue  Queue handle to remove
  *
  * @return EM_OK if successful.
  *
  * @see em_eo_remove_queue() for an asynchronous version of the API
  */
-em_status_t
-em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue);
+em_status_t em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue);
 
 /**
- * Removes all queues from an EO, asynchronous (non-blocking)
+ * Removes all queues from an Execution Object (EO), asynchronous (non-blocking)
  *
  * Like em_eo_remove_queue(), but removes all queues currently associated with
  * the EO.
@@ -627,12 +889,11 @@ em_eo_remove_queue_sync(em_eo_t eo, em_queue_t queue);
  * @see em_eo_add_queue(), em_eo_remove_queue_sync(),
  *      em_eo_remove_queue_all_sync()
  */
-em_status_t
-em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
-		       int num_notif, const em_notif_t notif_tbl[]);
+em_status_t em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
+				   int num_notif, const em_notif_t notif_tbl[]);
 
 /**
- * Removes all queues from an EO, synchronous (blocking).
+ * Removes all queues from an Execution Object (EO), synchronous (blocking).
  *
  * As em_eo_remove_queue_all(), but does not return until all queues have
  * been removed.
@@ -647,19 +908,18 @@ em_eo_remove_queue_all(em_eo_t eo, int delete_queues,
  * sent internally.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
- * @param eo              EO handle
- * @param delete_queues   delete the EO's queues if set to EM_TRUE
+ * @param eo             EO handle
+ * @param delete_queues  delete the EO's queues if set to EM_TRUE
  *
  * @return EM_OK if successful.
  *
  *
  * @see em_eo_remove_queue_all() for an asynchronous version of the API
  */
-em_status_t
-em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues);
+em_status_t em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues);
 
 /**
- * Register an EO specific error handler.
+ * Register an Execution Object (EO) specific error handler.
  *
  * The EO specific error handler is called if an error occurs or em_error() is
  * called in the context of the running EO.
@@ -668,28 +928,26 @@ em_eo_remove_queue_all_sync(em_eo_t eo, int delete_queues);
  * The global error handler is called if no EO specific error handler is
  * registered.
  *
- * @param eo            EO handle
- * @param handler       New error handler
+ * @param eo       EO handle
+ * @param handler  New error handler
  *
  * @return EM_OK if successful.
  *
  * @see em_register_error_handler(), em_error_handler_t()
  */
-em_status_t
-em_eo_register_error_handler(em_eo_t eo, em_error_handler_t handler);
+em_status_t em_eo_register_error_handler(em_eo_t eo, em_error_handler_t handler);
 
 /**
- * Unregister an EO specific error handler.
+ * Unregister an Execution Object (EO) specific error handler.
  *
  * Removes a previously registered EO specific error handler and restores the
  * global error handler into use for the EO.
  *
- * @param eo            EO handle
+ * @param eo  EO handle
  *
  * @return EM_OK if successful.
  */
-em_status_t
-em_eo_unregister_error_handler(em_eo_t eo);
+em_status_t em_eo_unregister_error_handler(em_eo_t eo);
 
 /**
  * Start an Execution Object (EO), asynchronous (non-blocking)
@@ -697,12 +955,15 @@ em_eo_unregister_error_handler(em_eo_t eo);
  * Start and enable a previously created EO.
  * The em_eo_start() function will first call the user provided global EO start
  * function. If that global start function returns EM_OK then events to trigger
- * the (optional) user provided local start function are sent to all cores.
+ * the (optional) user provided local start function are sent to all EM-cores.
  * The em_eo_start() function returns immediately after the global start
  * returns, which means that the action only fully completes later.
  * Notifications should be used if the caller needs to know when the EO start
  * has fully completed. The given notification event(s) will be sent to the
  * given queue(s) when the start is completed on all cores.
+ *
+ * The EO's global start function can be called on any core type, i.e. also on
+ * EM_CORE_TYPE_EXTERNAL if em_eo_start() is called from there.
  *
  * Local start is not called and event dispatching is not enabled for this EO if
  * the global start function does not return EM_OK.
@@ -738,9 +999,8 @@ em_eo_unregister_error_handler(em_eo_t eo);
  * @see em_start_func_t(), em_start_local_func_t(), em_eo_stop(),
  *      em_eo_start_sync()
  */
-em_status_t
-em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
-	    int num_notif, const em_notif_t notif_tbl[]);
+em_status_t em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
+			int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Start Execution Object (EO), synchronous (blocking)
@@ -752,10 +1012,13 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
  * Sync-API calls can block the core for a long (indefinite) time, thus they
  * should not be used to make runtime changes on real time EM cores - consider
  * the async variants of the APIs in these cases instead.
- * While one core is calling a sync-API function, the others must be running the
- * EM dispatch loop to be able to receive and handle the sync-API request events
- * sent internally.
+ * While one EM-core is calling a sync-API function, the others must be running
+ * the EM dispatch loop to be able to receive and handle the sync-API request
+ * events sent internally.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
+ *
+ * The EO's global start function can be called on any core type, i.e. also on
+ * EM_CORE_TYPE_EXTERNAL if em_eo_start_sync() is called from there.
  *
  * @param      eo      EO handle
  * @param[out] result  Optional pointer to em_status_t, which gets updated to
@@ -768,8 +1031,8 @@ em_eo_start(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf,
  * @see em_start_func_t(), em_start_local_func_t(), em_eo_stop()
  * @see em_eo_start() for an asynchronous version of the API
  */
-em_status_t
-em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf);
+em_status_t em_eo_start_sync(em_eo_t eo, em_status_t *result,
+			     const em_eo_conf_t *conf);
 
 /**
  * Stop Execution Object (EO), asynchronous (non-blocking)
@@ -782,6 +1045,9 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf);
  * This guarantees no other core is accessing EO data during the EO global stop
  * function.
  *
+ * The EO's global stop function can be called on any core type, i.e. also on
+ * EM_CORE_TYPE_EXTERNAL if em_eo_stop() is called from there.
+ *
  * This function returns immediately, but may only fully complete later. If the
  * caller needs to know when the EO stop has actually completed, the num_notif
  * and notif_tbl should be used. The given notification event(s) will be sent to
@@ -790,18 +1056,17 @@ em_eo_start_sync(em_eo_t eo, em_status_t *result, const em_eo_conf_t *conf);
  *
  * When the EO has stopped it can be started again with em_eo_start().
  *
- * @param eo            EO handle
- * @param num_notif     Number of notification events, 0 for no notification
- * @param notif_tbl     Array of pairs of event and queue identifiers
- *                      (+ optional event groups to send the events with)
+ * @param eo         EO handle
+ * @param num_notif  Number of notification events, 0 for no notification
+ * @param notif_tbl  Array of pairs of event and queue identifiers
+ *                   (+ optional event groups to send the events with)
  *
  * @return EM_OK if successful.
  *
  * @see em_stop_func_t(), em_stop_local_func_t(), em_eo_start(),
  *      em_eo_stop_sync()
  */
-em_status_t
-em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[]);
+em_status_t em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[]);
 
 /**
  * Stop Execution Object (EO), synchronous (blocking)
@@ -818,18 +1083,20 @@ em_eo_stop(em_eo_t eo, int num_notif, const em_notif_t notif_tbl[]);
  * sent internally.
  * Use the sync-APIs mainly to simplify application start-up or teardown.
  *
- * @param eo            EO handle
+ * The EO's global stop function can be called on any core type, i.e. also on
+ * EM_CORE_TYPE_EXTERNAL if em_eo_stop_sync() is called from there.
+ *
+ * @param eo  EO handle
  *
  * @return EM_OK if successful.
  *
  * @see em_stop_func_t(), em_stop_local_func_t(), em_eo_start()
  * @see em_eo_stop() for an asynchronous version of the API
  */
-em_status_t
-em_eo_stop_sync(em_eo_t eo);
+em_status_t em_eo_stop_sync(em_eo_t eo);
 
 /**
- * Return the currently active EO
+ * Return the currently active Execution Object (EO)
  *
  * Returns the EO handle associated with the currently running EO function.
  * Only valid if called within an EO-context, will return EM_EO_UNDEF otherwise.
@@ -841,97 +1108,105 @@ em_eo_stop_sync(em_eo_t eo);
  *
  * @return The current EO or EM_EO_UNDEF if no current EO (or error)
  */
-em_eo_t
-em_eo_current(void);
+em_eo_t em_eo_current(void);
 
 /**
- * Get EO specific (application) context.
+ * Get Execution Object (EO) specific (application) context.
  *
  * Returns the EO context pointer that the application has earlier provided via
- * em_eo_create().
+ * em_eo_create/_param() or em_eo_create_multircv() for the given EO.
  *
- * @param eo         EO for which the context is requested
+ * @param eo  EO for which the context is requested
  *
  * @return EO specific context pointer or NULL if no context (or error)
  */
-void *
-em_eo_get_context(em_eo_t eo);
+void *em_eo_context(em_eo_t eo);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_get_context em_eo_context
 
 /**
- * Return the EO state.
+ * Return the Execution Object (EO) state.
  *
  * Returns the current state of the given EO.
  *
  * @return The current EO state or EM_EO_STATE_UNDEF if never created.
  */
-em_eo_state_t
-em_eo_get_state(em_eo_t eo);
+em_eo_state_t em_eo_state(em_eo_t eo);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_get_state em_eo_state
 
 /**
- * Initialize EO iteration and return the first EO handle.
+ * Initialize Execution Object (EO) iteration and return the first EO handle.
  *
  * Can be used to initialize the iteration to retrieve all created EOs for
- * debugging or management purposes. Use em_eo_get_next() after this call until
- * it returns EM_EO_UNDEF. A new call to em_eo_get_first() resets the iteration,
+ * debugging or management purposes. Use em_eo_next() after this call until
+ * it returns EM_EO_UNDEF. A new call to em_eo_first() resets the iteration,
  * which is maintained per core (thread). The operation should be completed in
  * one go before returning from the EO's event receive function (or start/stop).
  *
  * The number of EOs (output arg 'num') may not match the amount of EOs actually
- * returned by iterating using em_eo_get_next() if EOs are added or removed in
+ * returned by iterating using em_eo_next() if EOs are added or removed in
  * parallel by another core. The order of the returned EO handles is undefined.
  *
  * @code
  *	unsigned int num;
- *	em_eo_t eo = em_eo_get_first(&num);
+ *	em_eo_t eo = em_eo_first(&num);
  *	while (eo != EM_EO_UNDEF) {
- *		eo = em_eo_get_next();
+ *		eo = em_eo_next();
  *	}
  * @endcode
  *
  * @param[out] num   Pointer to an unsigned int to store the amount of EOs into
  * @return The first EO handle or EM_EO_UNDEF if none exist
  *
- * @see em_eo_get_next()
+ * @see em_eo_next()
  */
-em_eo_t
-em_eo_get_first(unsigned int *num);
+em_eo_t em_eo_first(unsigned int *num);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_get_first em_eo_first
 
 /**
- * Return the next EO handle.
+ * Return the next Execution Object (EO) handle.
  *
- * Continues the EO iteration started by em_eo_get_first() and returns the next
+ * Continues the EO iteration started by em_eo_first() and returns the next
  * EO handle.
  *
  * @return The next EO handle or EM_EO_UNDEF if the EO iteration is completed
  *         (i.e. no more EO's available).
  *
- * @see em_eo_get_first()
+ * @see em_eo_first()
  */
-em_eo_t
-em_eo_get_next(void);
+em_eo_t em_eo_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_get_next em_eo_next
 
 /**
- * Initialize iteration of an EO's queues and return the first queue handle.
+ * Initialize iteration of an Execution Object's (EO) queues and
+ * return the first queue handle.
  *
  * Can be used to initialize the iteration to retrieve all queues associated
  * with the given EO for debugging or management purposes.
- * Use em_eo_queue_get_next() after this call until it returns EM_QUEUE_UNDEF.
- * A new call to em_eo_queue_get_first() resets the iteration, which is
+ * Use em_eo_queue_next() after this call until it returns EM_QUEUE_UNDEF.
+ * A new call to em_eo_queue_first() resets the iteration, which is
  * maintained per core (thread). The operation should be started and completed
  * in one go before returning from the EO's event receive function (or
  * start/stop).
  *
  * The number of queues owned by the EO (output arg 'num') may not match the
- * amount of queues actually returned by iterating using em_eo_queue_get_next()
+ * amount of queues actually returned by iterating using em_eo_queue_next()
  * if queues are added or removed in parallel by another core. The order of
  * the returned queue handles is undefined.
  *
  * Simplified example:
  * @code
  *	unsigned int num;
- *	em_queue_t q = em_eo_queue_get_first(&num, eo);
+ *	em_queue_t q = em_eo_queue_first(&num, eo);
  *	while (q != EM_QUEUE_UNDEF) {
- *		q = em_eo_queue_get_next();
+ *		q = em_eo_queue_next();
  *	}
  * @endcode
  *
@@ -941,27 +1216,31 @@ em_eo_get_next(void);
  * @return The first queue handle or EM_QUEUE_UNDEF if none exist or the EO
  *         is invalid.
  *
- * @see em_eo_queue_get_next()
+ * @see em_eo_queue_next()
  **/
-em_queue_t
-em_eo_queue_get_first(unsigned int *num, em_eo_t eo);
+em_queue_t em_eo_queue_first(unsigned int *num, em_eo_t eo);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_queue_get_first em_eo_queue_first
 
 /**
- * Return the EO's next queue handle.
+ * Return the Execution Object's (EO) next queue handle.
  *
- * Continues the queue iteration started by em_eo_queue_get_first() and returns
+ * Continues the queue iteration started by em_eo_queue_first() and returns
  * the next queue handle owned by the EO.
  *
  * @return The next queue handle or EM_QUEUE_UNDEF if the queue iteration is
  *         completed (i.e. no more queues available for this EO).
  *
- * @see em_eo_queue_get_first()
+ * @see em_eo_queue_first()
  **/
-em_queue_t
-em_eo_queue_get_next(void);
+em_queue_t em_eo_queue_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_eo_queue_get_next em_eo_queue_next
 
 /**
- * Convert an EO handle to an unsigned integer
+ * Convert an Execution Object (EO) handle to an unsigned integer
  *
  * @param eo  EO handle to be converted
  * @return    uint64_t value that can be used to print/display the handle

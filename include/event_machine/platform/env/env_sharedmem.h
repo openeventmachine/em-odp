@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2013-2019, Nokia Solutions and Networks
+ *   Copyright (c) 2013-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,12 @@
 #define _ENV_SHAREDMEM_H_
 
 #pragma GCC visibility push(default)
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * Shared memory allocation routines
@@ -82,6 +88,10 @@ void *env_shared_malloc(size_t size);
  * @note Not for use in the fast path, func call overhead might be too much.
  */
 void env_shared_free(void *buf);
+
+#ifdef __cplusplus
+}
+#endif
 
 #pragma GCC visibility pop
 #endif /* _ENV_SHAREDMEM_H_ */

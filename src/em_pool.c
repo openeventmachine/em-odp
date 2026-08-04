@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2023, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,40 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_chaining.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_inline.h"
+#include "em_pool_types.h"
+#include "em_queue.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+#include "misc/list.h"
+#include "misc/objpool.h"
 
 #ifndef __clang__
 COMPILE_TIME_ASSERT(EM_POOL_DEFAULT > (em_pool_t)0 &&
@@ -52,6 +85,14 @@ COMPILE_TIME_ASSERT(ALIGN_OFFSET_MAX <=
 		    ((1 << (sizeof_field(event_hdr_t, align_offset) * 8)) - 1),
 		    ALIGN_OFFSET_MAX__TOO_LARGE);
 
+/*
+ * The payload placement math 'base + 32 - align_offset' (see event_alloc_buf()
+ * and the buf.size adjustment in create_subpools()) relies on a 32-byte base
+ * alignment. ALIGN_OFFSET_MAX must stay below 32 to keep '32 - align_offset'
+ * positive and avoid unsigned underflow.
+ */
+COMPILE_TIME_ASSERT(ALIGN_OFFSET_MAX < 32, ALIGN_OFFSET_MAX__BREAKS_32B_BASE);
+
 /**
  * @brief Undef value for a pool_subpool_t
  * pool_subpool_undef = {.pool = EM_POOL_UNDEF, .subpool = 0};
@@ -64,6 +105,39 @@ mpool_poolelem2pool(objpool_elem_t *const objpool_elem)
 {
 	return (mpool_elem_t *)((uintptr_t)objpool_elem -
 				offsetof(mpool_elem_t, objpool_elem));
+}
+
+uint32_t align_offset_get(const em_pool_cfg_t *pool_cfg)
+{
+	/* Pool-specific param overrides config file 'align_offset' value */
+	if (pool_cfg->event_type == EM_EVENT_TYPE_SW ||
+	    pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
+		if (pool_cfg->align_offset.in_use)
+			return pool_cfg->align_offset.value; /* pool cfg */
+		else
+			return em_shm->opt.pool.align_offset; /* cfg file */
+	}
+
+	return 0;
+}
+
+uint32_t odp_align_get(const em_pool_cfg_t *pool_cfg)
+{
+	const odp_pool_capability_t *capa =
+		&em_shm->mpool_tbl.odp_pool_capability;
+
+	uint32_t align = ODP_CACHE_LINE_SIZE;
+
+	/* Set subpool minimum alignment */
+	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
+		if (align > capa->pkt.max_align)
+			return capa->pkt.max_align;
+	} else {
+		if (align > capa->buf.max_align)
+			return capa->buf.max_align;
+	}
+
+	return align;
 }
 
 static em_pool_t
@@ -92,7 +166,7 @@ pool_alloc(em_pool_t pool)
 			return EM_POOL_UNDEF;
 	}
 
-	env_atomic32_inc(&em_shm->pool_count);
+	odp_atomic_inc_u32(&em_shm->pool_count);
 	return mpool_elem->em_pool;
 }
 
@@ -108,7 +182,7 @@ pool_free(em_pool_t pool)
 		    mpool_elem->objpool_elem.subpool_idx,
 		    &mpool_elem->objpool_elem);
 
-	env_atomic32_dec(&em_shm->pool_count);
+	odp_atomic_dec_u32(&em_shm->pool_count);
 	return EM_OK;
 }
 
@@ -174,13 +248,31 @@ static inline int read_config_subpool(const libconfig_list_t *subpool, int index
 
 	/* If cache_size is given, check if it is valid */
 	if (ret == 1) {
-		uint32_t min_cache_size;
+		uint32_t min_cache_size = 0;
 		const odp_pool_capability_t *capa;
 
 		capa = &em_shm->mpool_tbl.odp_pool_capability;
 
-		min_cache_size = (cfg->event_type == EM_EVENT_TYPE_SW) ?
-			capa->buf.min_cache_size : capa->pkt.min_cache_size;
+		switch (cfg->event_type) {
+		case EM_EVENT_TYPE_SW:
+			min_cache_size = capa->buf.min_cache_size;
+			break;
+		case EM_EVENT_TYPE_PACKET:
+			min_cache_size = capa->pkt.min_cache_size;
+			break;
+		case EM_EVENT_TYPE_VECTOR:
+			if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET)
+				min_cache_size = capa->vector.min_cache_size;
+			else /* EM_VECTOR_BACKEND_EVENT */
+				min_cache_size = capa->event_vector.min_cache_size;
+
+			break;
+		default:
+			EM_LOG(EM_LOG_ERR,
+			       "'%s.subpools[%d].cache_size' for pool type:%u not available.\n",
+			       pool_cfg_str, index, cfg->event_type);
+			return -1;
+		}
 
 		if (unlikely(cfg->subpool[index].cache_size < min_cache_size)) {
 			EM_LOG(EM_LOG_ERR,
@@ -215,9 +307,17 @@ static int is_pool_type_supported(em_event_type_t type,
 			return -1;
 		}
 	} else if (type == EM_EVENT_TYPE_VECTOR) {
-		if (capa->vector.max_pools == 0) {
-			*err_str = "VECTOR pool type unsupported";
-			return -1;
+		if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET) {
+			if (capa->vector.max_pools == 0) {
+				*err_str = "VECTOR (pkt) pool type unsupported";
+				return -1;
+			}
+		} else {
+			/* EM_VECTOR_BACKEND_EVENT */
+			if (capa->event_vector.max_pools == 0) {
+				*err_str = "EVENT_VECTOR pool type unsupported";
+				return -1;
+			}
 		}
 	} else {
 		*err_str = "Pool type unsupported, use _SW, _PACKET or _VECTOR";
@@ -227,15 +327,43 @@ static int is_pool_type_supported(em_event_type_t type,
 	return 0;
 }
 
-static inline bool is_align_offset_valid(const em_pool_cfg_t *pool_cfg)
+/*
+ * pool_create() helper: determine payload alignment.
+ */
+static inline int is_align_offset_valid(const em_pool_cfg_t *pool_cfg)
 {
-	if (pool_cfg->align_offset.in_use &&
-	    (pool_cfg->align_offset.value > ALIGN_OFFSET_MAX ||
-	     !POWEROF2(pool_cfg->align_offset.value))) {
-		return false;
+	uint32_t offset = align_offset_get(pool_cfg);
+	uint32_t align = odp_align_get(pool_cfg);
+
+	/* verify alignment requirements */
+	if (!POWEROF2(offset)) {
+		EM_LOG(EM_LOG_ERR, "align_offset %d must be power of 2\n",
+		       offset);
+		return -1;
 	}
 
-	return true;
+	if (!POWEROF2(align)) {
+		EM_LOG(EM_LOG_ERR, "Invalid max_align value: %d\n"
+		       "max_align must be power of 2\n",
+		       align);
+		return -2;
+	}
+
+	if (offset > ALIGN_OFFSET_MAX) {
+		EM_LOG(EM_LOG_ERR,
+		       "align_offset %d must be less or equal than max align_offset %d\n",
+		       offset, ALIGN_OFFSET_MAX);
+		return -3;
+	}
+
+	if (offset >= align) {
+		EM_LOG(EM_LOG_ERR,
+		       "align offset %d must be less than configuration max_align %d\n",
+		       offset, align);
+		return -4;
+	}
+
+	return 0;
 }
 
 static inline int is_user_area_valid(const em_pool_cfg_t *pool_cfg,
@@ -260,11 +388,19 @@ static inline int is_user_area_valid(const em_pool_cfg_t *pool_cfg,
 		}
 	}
 	if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR) {
-		size_t req_odp_uarea_sz = pool_cfg->user_area.size +
-					  sizeof(event_hdr_t);
-		if (req_odp_uarea_sz > capa->vector.max_uarea_size) {
-			*err_str = "ODP pkt-vector max uarea not large enough";
-			return -1;
+		size_t req_odp_uarea_sz = pool_cfg->user_area.size + sizeof(event_hdr_t);
+
+		if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET) {
+			if (req_odp_uarea_sz > capa->vector.max_uarea_size) {
+				*err_str = "ODP pkt-vector max uarea not large enough";
+				return -1;
+			}
+		} else {
+			/* EM_VECTOR_BACKEND_EVENT */
+			if (req_odp_uarea_sz > capa->event_vector.max_uarea_size) {
+				*err_str = "ODP event-vector max uarea not large enough";
+				return -1;
+			}
 		}
 	}
 
@@ -299,11 +435,11 @@ static inline int read_config_align_offset(const libconfig_group_t *align_offset
 	}
 
 	/* Check whether the given value is valid or not */
-	if (!is_align_offset_valid(cfg)) {
-		EM_LOG(EM_LOG_ERR, "Invalid '%s.align_offset.value': %d\n"
-		       "Max align_offset is %d and it must be power of 2\n",
-		       pool_cfg_str, cfg->align_offset.value, ALIGN_OFFSET_MAX);
-		return -1;
+	ret = is_align_offset_valid(cfg);
+	if (unlikely(ret)) {
+		EM_LOG(EM_LOG_ERR, "Failure detected when checking '%s.align_offset.value': %d\n",
+		       pool_cfg_str, cfg->align_offset.value);
+		return ret;
 	}
 
 	return 0;
@@ -405,7 +541,7 @@ static int read_config_startup_pools_conf(const libconfig_list_t *list, int inde
 	const libconfig_group_t *headroom;
 	const libconfig_group_t *user_area;
 	const libconfig_group_t *align_offset;
-	startup_pool_conf_t *conf = &em_shm->opt.startup_pools.conf[index];
+	em_startup_pool_conf_t *conf = &em_shm->opt.startup_pools.conf[index];
 	em_pool_cfg_t *cfg = &conf->cfg;
 	const char *err_str = "";
 
@@ -559,7 +695,7 @@ static int read_config_startup_pools_conf(const libconfig_list_t *list, int inde
 /* Print option: startup_pools from the EM config file */
 static void print_config_startup_pools(void)
 {
-	startup_pool_conf_t *conf;
+	em_startup_pool_conf_t *conf;
 	char str_conf[32];
 	const char *str = "";
 
@@ -570,7 +706,7 @@ static void print_config_startup_pools(void)
 
 		snprintf(str_conf, sizeof(str_conf), "  startup_pools.conf[%d]", i);
 
-		if (*conf->name)
+		if (conf->name[0])
 			EM_PRINT("%s.name: %s\n", str_conf, conf->name);
 
 		if (conf->pool)
@@ -715,7 +851,7 @@ static int read_config_pool(void)
 	const odp_pool_capability_t *capa =
 		&em_shm->mpool_tbl.odp_pool_capability;
 
-	EM_PRINT("EM-pool config:\n");
+	EM_PRINT("EM pool config:\n");
 
 	/*
 	 * Option: pool.statistics.available
@@ -1206,7 +1342,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 	int ret;
 	em_pool_t pool;
 	em_pool_t pool_default;
-	startup_pool_conf_t *startup_pool_conf;
+	em_startup_pool_conf_t *startup_pool_conf;
 	bool default_pool_set = false;
 	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
 
@@ -1220,7 +1356,7 @@ pool_init(mpool_tbl_t *const mpool_tbl, mpool_pool_t *const mpool_pool,
 
 	memset(mpool_tbl, 0, sizeof(mpool_tbl_t));
 	memset(mpool_pool, 0, sizeof(mpool_pool_t));
-	env_atomic32_init(&em_shm->pool_count);
+	odp_atomic_init_u32(&em_shm->pool_count, 0);
 
 	ret = objpool_init(&mpool_pool->objpool, objpool_subpools);
 	if (ret != 0)
@@ -1348,7 +1484,10 @@ static int invalid_pool_cache_cfg(const em_pool_cfg_t *pool_cfg,
 	else if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET)
 		min_cache_size = capa->pkt.min_cache_size;
 	else if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR)
-		min_cache_size = capa->vector.min_cache_size;
+		if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET)
+			min_cache_size = capa->vector.min_cache_size;
+		else /* EM_VECTOR_BACKEND_EVENT */
+			min_cache_size = capa->event_vector.min_cache_size;
 	else
 		return -9;
 
@@ -1400,9 +1539,10 @@ int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg, const char **err_str/*out*/)
 	if (ret)
 		return ret;
 
-	if (!is_align_offset_valid(pool_cfg)) {
+	ret = is_align_offset_valid(pool_cfg);
+	if (ret) {
 		*err_str = "Invalid align offset";
-		return -1;
+		return ret;
 	}
 
 	ret = is_user_area_valid(pool_cfg, capa, err_str/*out*/);
@@ -1423,7 +1563,6 @@ int invalid_pool_cfg(const em_pool_cfg_t *pool_cfg, const char **err_str/*out*/)
 
 int check_pool_uarea_persistence(const em_pool_cfg_t *pool_cfg, const char **err_str/*out*/)
 {
-#if ODP_VERSION_API_NUM(1, 42, 0) <= ODP_VERSION_API
 	bool has_uarea_persistence;
 	const odp_pool_capability_t *capa = &em_shm->mpool_tbl.odp_pool_capability;
 
@@ -1437,7 +1576,10 @@ int check_pool_uarea_persistence(const em_pool_cfg_t *pool_cfg, const char **err
 		*err_str = "pkt-pool (EM_EVENT_TYPE_PACKET)";
 		break;
 	case EM_EVENT_TYPE_VECTOR:
-		has_uarea_persistence = capa->vector.uarea_persistence ? true : false;
+		if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET)
+			has_uarea_persistence = capa->vector.uarea_persistence ? true : false;
+		else /* EM_VECTOR_BACKEND_EVENT */
+			has_uarea_persistence = capa->event_vector.uarea_persistence ? true : false;
 		*err_str = "vector-pool (EM_EVENT_TYPE_VECTOR)";
 		break;
 	default:
@@ -1447,9 +1589,6 @@ int check_pool_uarea_persistence(const em_pool_cfg_t *pool_cfg, const char **err
 	}
 
 	return has_uarea_persistence ? 0 : -1; /* 0: success, <0: not supported */
-#else
-	return 0;
-#endif
 }
 
 /*
@@ -1551,54 +1690,22 @@ set_poolcache_size(em_pool_cfg_t *pool_cfg)
 	int num_subpools = pool_cfg->num_subpools;
 	uint32_t max_cache_size;
 
-	if (pool_cfg->event_type == EM_EVENT_TYPE_SW)
+	if (pool_cfg->event_type == EM_EVENT_TYPE_SW) {
 		max_cache_size = capa->buf.max_cache_size;
-	else if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET)
+	} else if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
 		max_cache_size = capa->pkt.max_cache_size;
-	else /* EM_EVENT_TYPE_VECTOR */
-		max_cache_size = capa->vector.max_cache_size;
+	} else {
+		/* EM_EVENT_TYPE_VECTOR */
+		if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET)
+			max_cache_size = capa->vector.max_cache_size;
+		else /* EM_VECTOR_BACKEND_EVENT */
+			max_cache_size = capa->event_vector.max_cache_size;
+	}
 
 	for (int i = 0; i < num_subpools; i++) {
 		if (max_cache_size < pool_cfg->subpool[i].cache_size)
 			pool_cfg->subpool[i].cache_size = max_cache_size;
 	}
-}
-
-/*
- * pool_create() helper: determine payload alignment.
- */
-static int
-set_align(const em_pool_cfg_t *pool_cfg,
-	  uint32_t *align_offset /*out*/, uint32_t *odp_align /*out*/)
-{
-	const odp_pool_capability_t *capa =
-		&em_shm->mpool_tbl.odp_pool_capability;
-	uint32_t offset = 0;
-	uint32_t align = ODP_CACHE_LINE_SIZE;
-
-	/* Pool-specific param overrides config file 'align_offset' value */
-	if (pool_cfg->align_offset.in_use)
-		offset = pool_cfg->align_offset.value; /* pool cfg */
-	else
-		offset = em_shm->opt.pool.align_offset; /* cfg file */
-
-	/* Set subpool minimum alignment */
-	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
-		if (align > capa->pkt.max_align)
-			align = capa->pkt.max_align;
-	} else {
-		if (align > capa->buf.max_align)
-			align = capa->buf.max_align;
-	}
-
-	*align_offset = offset;
-	*odp_align = align;
-
-	/* verify alignment requirements */
-	if (!POWEROF2(align) || align <= offset)
-		return -1;
-
-	return 0;
 }
 
 /*
@@ -1617,12 +1724,20 @@ set_uarea_size(const em_pool_cfg_t *pool_cfg, size_t *uarea_size/*out*/)
 	else /* use cfg-file */
 		size = em_shm->opt.pool.user_area_size;
 
-	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET)
+	if (pool_cfg->event_type == EM_EVENT_TYPE_PACKET) {
 		max_size = MIN(capa->pkt.max_uarea_size, EM_EVENT_USER_AREA_MAX_SIZE);
-	else if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR)
-		max_size = MIN(capa->vector.max_uarea_size, EM_EVENT_USER_AREA_MAX_SIZE);
-	else if (size > 0) /* EM_EVENT_TYPE_SW: bufs */
+	} else if (pool_cfg->event_type == EM_EVENT_TYPE_VECTOR) {
+		if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET) {
+			max_size = MIN(capa->vector.max_uarea_size,
+				       EM_EVENT_USER_AREA_MAX_SIZE);
+		} else { /* EM_VECTOR_BACKEND_EVENT */
+			max_size = MIN(capa->event_vector.max_uarea_size,
+				       EM_EVENT_USER_AREA_MAX_SIZE);
+		}
+	} else if (size > 0) {
+		/* EM_EVENT_TYPE_SW: bufs */
 		max_size = MIN(capa->buf.max_uarea_size, EM_EVENT_USER_AREA_MAX_SIZE);
+	}
 
 	if (size > max_size)
 		return -1;
@@ -1749,22 +1864,36 @@ static void set_pool_params_vector(odp_pool_param_t *pool_params /* out */,
 				   uint32_t cache_size, uint32_t uarea_size)
 {
 	const odp_pool_capability_t *capa = &em_shm->mpool_tbl.odp_pool_capability;
+	const odp_pool_stats_opt_t *capa_stats_opt;
 
 	odp_pool_param_init(pool_params);
 
-	pool_params->type = ODP_POOL_VECTOR;
-	pool_params->vector.num = num;
-	pool_params->vector.max_size = size;
-	/* Reserve space for the EM event header in the vector's ODP-user-area */
-	pool_params->vector.uarea_size = sizeof(event_hdr_t) + uarea_size;
-	pool_params->vector.cache_size = cache_size;
+	if (em_shm->opt.vector.backend == EM_VECTOR_BACKEND_PACKET) {
+		/* ODP packet vector pool */
+		pool_params->type = ODP_POOL_VECTOR;
+		pool_params->vector.num = num;
+		pool_params->vector.max_size = size;
+		/* Reserve space for the EM event header in the vector's ODP-user-area */
+		pool_params->vector.uarea_size = sizeof(event_hdr_t) + uarea_size;
+		pool_params->vector.cache_size = cache_size;
+		capa_stats_opt = &capa->vector.stats;
+	} else { /*  EM_VECTOR_BACKEND_EVENT */
+		/* ODP event vector pool */
+		pool_params->type = ODP_POOL_EVENT_VECTOR;
+		pool_params->event_vector.num = num;
+		pool_params->event_vector.max_size = size;
+		/* Reserve space for the EM event header in the vector's ODP-user-area */
+		pool_params->event_vector.uarea_size = sizeof(event_hdr_t) + uarea_size;
+		pool_params->event_vector.cache_size = cache_size;
+		capa_stats_opt = &capa->event_vector.stats;
+	}
 
 	/* Vector pool statistics */
 	if (pool_cfg->stats_opt.in_use)
-		set_pool_params_stats(&pool_params->stats, &capa->vector.stats,
+		set_pool_params_stats(&pool_params->stats, capa_stats_opt,
 				      &pool_cfg->stats_opt.opt);
 	else
-		set_pool_params_stats(&pool_params->stats, &capa->vector.stats,
+		set_pool_params_stats(&pool_params->stats, capa_stats_opt,
 				      &em_shm->opt.pool.statistics);
 }
 
@@ -1882,7 +2011,7 @@ pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
 	mpool_elem->num_subpools = 0;
 	/* Store the event pool name, if given */
 	if (name && *name) {
-		strncpy(mpool_elem->name, name, sizeof(mpool_elem->name));
+		strncpy(mpool_elem->name, name, sizeof(mpool_elem->name) - 1);
 		mpool_elem->name[sizeof(mpool_elem->name) - 1] = '\0';
 	} else {
 		mpool_elem->name[0] = '\0';
@@ -1907,22 +2036,11 @@ pool_create(const char *name, em_pool_t req_pool, const em_pool_cfg_t *pool_cfg)
 	/*
 	 * Event payload alignment requirement for the pool
 	 */
-	uint32_t align_offset = 0;
-	uint32_t odp_align = 0;
-
 	/* align only valid for bufs and pkts */
-	if (pool_evtype == EM_EVENT_TYPE_SW ||
-	    pool_evtype == EM_EVENT_TYPE_PACKET) {
-		err = set_align(&sorted_cfg, &align_offset/*out*/,
-				&odp_align/*out*/);
-		if (unlikely(err)) {
-			INTERNAL_ERROR(EM_ERR_TOO_LARGE, EM_ESCOPE_POOL_CREATE,
-				       "EM-pool:\"%s\" align mismatch:\n"
-				       "align:%u cfg:align_offset:%u",
-				       name, odp_align, align_offset);
-			goto error;
-		}
-	}
+	/* align_offset and odp_align must be checked beforehand in invalid_pool_cfg(...)*/
+	uint32_t align_offset = align_offset_get(&sorted_cfg);
+	uint32_t odp_align = odp_align_get(&sorted_cfg);
+
 	/* store the align offset, needed in pkt-alloc */
 	mpool_elem->align_offset = align_offset;
 
@@ -2050,7 +2168,23 @@ pool_find(const char *name)
 unsigned int
 pool_count(void)
 {
-	return env_atomic32_get(&em_shm->pool_count);
+	return odp_atomic_load_u32(&em_shm->pool_count);
+}
+
+void pool_stats_opt_odp2em(em_pool_stats_opt_t *em_stats_opt /*out*/,
+			   const odp_pool_stats_opt_t *odp_stats_opt)
+{
+	memset(em_stats_opt, 0, sizeof(*em_stats_opt));
+
+	em_stats_opt->available = odp_stats_opt->bit.available;
+	em_stats_opt->alloc_ops = odp_stats_opt->bit.alloc_ops;
+	em_stats_opt->alloc_fails = odp_stats_opt->bit.alloc_fails;
+	em_stats_opt->free_ops = odp_stats_opt->bit.free_ops;
+	em_stats_opt->total_ops = odp_stats_opt->bit.total_ops;
+	em_stats_opt->cache_available = odp_stats_opt->bit.cache_available;
+	em_stats_opt->cache_alloc_ops = odp_stats_opt->bit.cache_alloc_ops;
+	em_stats_opt->cache_free_ops = odp_stats_opt->bit.cache_free_ops;
+	em_stats_opt->core_cache_available = odp_stats_opt->bit.thread_cache_available;
 }
 
 #define POOL_INFO_HDR_STR \
@@ -2123,6 +2257,41 @@ void pool_info_print(em_pool_t pool)
 	}
 
 	EM_PRINT("\n");
+}
+
+#define POOL_STATS_OPT_HDR_STR \
+"Pool Available Alloc_ops Alloc_fails Free_ops Total_ops Cache_available" \
+" Cache_alloc_ops Cache_free_ops Core_cache_available\n"\
+
+void pool_stats_opt_print_hdr(void)
+{
+	EM_PRINT("EM pool statistic counter options: 1(enable) 0(disable)\n"
+		 "-------------------------------------------------------\n"
+		 POOL_STATS_OPT_HDR_STR);
+}
+
+void pool_stats_opt_print(em_pool_t pool)
+{
+	em_status_t stat;
+	em_pool_stats_opt_t pool_stats_opt;
+
+	stat = em_pool_stats_opt(pool, &pool_stats_opt/*out*/);
+	if (unlikely(stat != EM_OK)) {
+		EM_PRINT("Fail to fetch pool statistics counters options for pool %" PRI_POOL "\n",
+			 pool);
+		return;
+	}
+
+	EM_PRINT("%-8" PRI_POOL "%-10u%-10u%-12u%-9u%-10u%-16u%-16u%-15u%-21u\n",
+		 pool, pool_stats_opt.available,
+		 pool_stats_opt.alloc_ops,
+		 pool_stats_opt.alloc_fails,
+		 pool_stats_opt.free_ops,
+		 pool_stats_opt.total_ops,
+		 pool_stats_opt.cache_available,
+		 pool_stats_opt.cache_alloc_ops,
+		 pool_stats_opt.cache_free_ops,
+		 pool_stats_opt.core_cache_available);
 }
 
 #define POOL_STATS_HDR_STR \
@@ -2397,30 +2566,31 @@ void print_pool_elem_info(void)
 		 "pool-elem size: %zu B\n",
 		 sizeof(mpool_elem_t));
 
-	EM_DBG("\t\toffset\tsize\n"
-	       "\t\t------\t-----\n"
-	       "event_type:\t%3zu B\t%3zu B\n"
-	       "align_offset:\t%3zu B\t%3zu B\n"
-	       "user_area info:\t%3zu B\t%3zu B\n"
-	       "num_subpools:\t%3zu B\t%3zu B\n"
-	       "size[]:\t\t%3zu B\t%3zu B\n"
-	       "odp_pool[]:\t%3zu B\t%3zu B\n"
-	       "em_pool:\t%3zu B\t%3zu B\n"
-	       "objpool_elem:\t%3zu B\t%3zu B\n"
-	       "stats_opt:\t%3zu B\t%3zu B\n"
-	       "pool_cfg:\t%3zu B\t%3zu B\n"
-	       "name[]:\t\t%3zu B\t%3zu B\n",
-	       offsetof(mpool_elem_t, event_type), sizeof_field(mpool_elem_t, event_type),
-	       offsetof(mpool_elem_t, align_offset), sizeof_field(mpool_elem_t, align_offset),
-	       offsetof(mpool_elem_t, user_area), sizeof_field(mpool_elem_t, user_area),
-	       offsetof(mpool_elem_t, num_subpools), sizeof_field(mpool_elem_t, num_subpools),
-	       offsetof(mpool_elem_t, size), sizeof_field(mpool_elem_t, size),
-	       offsetof(mpool_elem_t, odp_pool), sizeof_field(mpool_elem_t, odp_pool),
-	       offsetof(mpool_elem_t, em_pool), sizeof_field(mpool_elem_t, em_pool),
-	       offsetof(mpool_elem_t, objpool_elem), sizeof_field(mpool_elem_t, objpool_elem),
-	       offsetof(mpool_elem_t, stats_opt), sizeof_field(mpool_elem_t, stats_opt),
-	       offsetof(mpool_elem_t, pool_cfg), sizeof_field(mpool_elem_t, pool_cfg),
-	       offsetof(mpool_elem_t, name), sizeof_field(mpool_elem_t, name));
+	DBG_PRINT("\t\toffset\tsize\n"
+		  "\t\t------\t-----\n"
+		  "event_type:\t%3zu B\t%3zu B\n"
+		  "align_offset:\t%3zu B\t%3zu B\n"
+		  "user_area info:\t%3zu B\t%3zu B\n"
+		  "num_subpools:\t%3zu B\t%3zu B\n"
+		  "size[]:\t\t%3zu B\t%3zu B\n"
+		  "odp_pool[]:\t%3zu B\t%3zu B\n"
+		  "em_pool:\t%3zu B\t%3zu B\n"
+		  "objpool_elem:\t%3zu B\t%3zu B\n"
+		  "stats_opt:\t%3zu B\t%3zu B\n"
+		  "pool_cfg:\t%3zu B\t%3zu B\n"
+		  "name[]:\t\t%3zu B\t%3zu B\n",
+		  offsetof(mpool_elem_t, event_type), sizeof_field(mpool_elem_t, event_type),
+		  offsetof(mpool_elem_t, align_offset), sizeof_field(mpool_elem_t, align_offset),
+		  offsetof(mpool_elem_t, user_area), sizeof_field(mpool_elem_t, user_area),
+		  offsetof(mpool_elem_t, num_subpools), sizeof_field(mpool_elem_t, num_subpools),
+		  offsetof(mpool_elem_t, size), sizeof_field(mpool_elem_t, size),
+		  offsetof(mpool_elem_t, odp_pool), sizeof_field(mpool_elem_t, odp_pool),
+		  /* NOLINTNEXTLINE(bugprone-sizeof-expression) */
+		  offsetof(mpool_elem_t, em_pool), sizeof_field(mpool_elem_t, em_pool),
+		  offsetof(mpool_elem_t, objpool_elem), sizeof_field(mpool_elem_t, objpool_elem),
+		  offsetof(mpool_elem_t, stats_opt), sizeof_field(mpool_elem_t, stats_opt),
+		  offsetof(mpool_elem_t, pool_cfg), sizeof_field(mpool_elem_t, pool_cfg),
+		  offsetof(mpool_elem_t, name), sizeof_field(mpool_elem_t, name));
 
-	       EM_PRINT("\n");
+	EM_PRINT("\n");
 }

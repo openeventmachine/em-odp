@@ -39,14 +39,25 @@
 #ifndef EM_INTERNAL_EVENT_H_
 #define EM_INTERNAL_EVENT_H_
 
+#include <stdbool.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @brief Create EM's internal unscheduled control queues at startup.
+ * @brief Create EM's internal shared unscheduled control queue at startup
  */
-em_status_t create_ctrl_queues(void);
+em_status_t create_shared_ctrl_queue(void);
+
+/**
+ * @brief Create EM's internal unscheduled control queues at startup - one per core
+ */
+em_status_t create_ctrl_queue(void);
 
 /**
  * @brief Delete EM's internal unscheduled control queues at teardown.
@@ -59,9 +70,9 @@ em_status_t delete_ctrl_queues(void);
 void poll_unsched_ctrl_queue(void);
 
 /**
- * @brief Sends an internal control event to each core set in 'mask'.
+ * @brief Sends an internal control event to each thread set in 'mask'.
  *
- * When all cores set in 'mask' has processed the event an additional
+ * When all threads set in 'mask' have processed the event an additional
  * internal 'done' msg is sent to synchronize - this done-event can then
  * trigger any notifications for the user that the operation was completed.
  * Processing of the 'done' event will also call the 'f_done_callback'
@@ -70,7 +81,7 @@ void poll_unsched_ctrl_queue(void);
  * @return 0 on success, otherwise return the number of ctrl events that could
  *         not be sent due to error
  */
-int send_core_ctrl_events(const em_core_mask_t *const mask, em_event_t ctrl_event,
+int send_core_ctrl_events(const odp_thrmask_t *const mask, em_event_t ctrl_event,
 			  void (*f_done_callback)(void *arg_ptr),
 			  void *f_done_arg_ptr,
 			  int num_notif, const em_notif_t notif_tbl[],

@@ -28,8 +28,28 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_dispatcher.h"
 #include "em_dispatcher_inline.h"
+#include "em_dispatcher_types.h"
+#include "em_error.h"
+#include "em_hooks.h"
+#include "em_hook_types.h"
+#include "em_mem.h"
 
 static const em_dispatch_opt_t dispatch_opt_default = {
 	.burst_size = EM_SCHED_MULTI_MAX_BURST,
@@ -42,17 +62,25 @@ uint64_t em_dispatch(uint64_t rounds /* 0 = forever */)
 	uint64_t events;
 
 	em_locm_t *const locm = &em_locm;
-	const bool do_input_poll = locm->do_input_poll;
-	const bool do_output_drain = locm->do_output_drain;
+	const em_input_poll_func_t input_poll_fn = locm->input_poll_fn;
+	const em_output_drain_func_t output_drain_fn = locm->output_drain_fn;
 	const bool do_schedule_pause = em_shm->opt.dispatch.sched_pause;
+
+	if (unlikely(EM_CHECK_LEVEL >= 3 && !locm->is_em_core)) {
+		EM_LOG(EM_LOG_ERR, "%s(): Not an EM-core, can not dispatch!", __func__);
+		return 0;
+	}
 
 	if (locm->is_sched_paused) {
 		odp_schedule_resume();
 		locm->is_sched_paused = false;
 	}
 
-	if (do_input_poll || do_output_drain)
-		events = dispatch_with_userfn(rounds, do_input_poll, do_output_drain);
+	/* Reset local queue event count - updated during the dispatch rounds */
+	locm->local_event_cnt = 0;
+
+	if (input_poll_fn || output_drain_fn)
+		events = dispatch_with_userfn(rounds, input_poll_fn, output_drain_fn);
 	else
 		events = dispatch_no_userfn(rounds);
 
@@ -71,7 +99,8 @@ uint64_t em_dispatch(uint64_t rounds /* 0 = forever */)
 		} while (round_events > 0);
 	}
 
-	return events;
+	/* add events dispatched from local queues to the dispatch count */
+	return events + locm->local_event_cnt;
 }
 
 void em_dispatch_opt_init(em_dispatch_opt_t *opt)
@@ -91,21 +120,34 @@ dispatch_duration(const em_dispatch_duration_t *duration,
 		  em_dispatch_results_t *results /*out, optional*/)
 {
 	em_locm_t *const locm = &em_locm;
-	const bool do_input_poll = locm->do_input_poll && !opt->skip_input_poll;
-	const bool do_output_drain = locm->do_output_drain && !opt->skip_output_drain;
+	const em_input_poll_func_t input_poll_fn = locm->input_poll_fn;
+	const em_output_drain_func_t output_drain_fn = locm->output_drain_fn;
+	const bool do_input_poll = input_poll_fn && !opt->skip_input_poll;
+	const bool do_output_drain = output_drain_fn && !opt->skip_output_drain;
 	const bool do_sched_pause = opt->sched_pause;
 	uint64_t events;
+
+	if (unlikely(EM_CHECK_LEVEL >= 3 && !locm->is_em_core)) {
+		EM_LOG(EM_LOG_ERR, "%s(): Not an EM-core, can not dispatch!", __func__);
+		if (results)
+			memset(results, 0, sizeof(*results));
+		return EM_ERR_NOT_SUPPORTED;
+	}
 
 	if (locm->is_sched_paused) {
 		odp_schedule_resume();
 		locm->is_sched_paused = false;
 	}
 
+	/* Reset local queue event count - updated during the dispatch rounds */
+	locm->local_event_cnt = 0;
+
 	if (do_input_poll || do_output_drain)
-		events = dispatch_duration_with_userfn(duration, opt, results,
-						       do_input_poll, do_output_drain);
+		events = dispatch_duration_with_userfn(duration, opt,
+						       input_poll_fn, output_drain_fn,
+						       results /*out*/);
 	else
-		events = dispatch_duration_no_userfn(duration, opt, results);
+		events = dispatch_duration_no_userfn(duration, opt, results /*out*/);
 
 	/* pause scheduling before exiting the dispatch loop */
 	if (do_sched_pause) {
@@ -128,6 +170,11 @@ dispatch_duration(const em_dispatch_duration_t *duration,
 			results->rounds += rounds;
 			results->events = events;
 		}
+	}
+
+	if (results) {
+		/* add events dispatched from local queues to the result */
+		results->events += locm->local_event_cnt;
 	}
 
 	return EM_OK;

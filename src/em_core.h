@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2024, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -34,45 +34,35 @@
 /**
  * @file
  * EM internal core-related functions
- *
  */
+
+#include <stdio.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_core_types.h"
+#include "em_internal_event_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-em_status_t core_map_init(core_map_t *const core_map, int core_count,
-			  const em_core_mask_t *phys_mask);
-em_status_t core_map_init_local(core_map_t *const core_map);
-em_status_t core_map_term_local(core_map_t *const core_map);
+em_status_t core_map_init(core_map_t *const core_map);
+em_status_t core_map_init_local(core_map_t *const core_map, const em_conf_local_t *conf_local);
+em_status_t core_map_init_extthr(core_map_t *const core_map);
 
-static inline int
-logic_to_phys_core_id(const int logic_core)
-{
-	if (unlikely(logic_core >= EM_MAX_CORES))
-		return -1;
+void i_event__term_thread_req(const internal_event_t *i_ev);
 
-	return em_shm->core_map.phys_vs_logic.phys[logic_core];
-}
+int core_map_term_local(core_map_t *const core_map, em_escope_t escope);
+int core_map_term_extthr(core_map_t *const core_map, em_escope_t escope);
 
-static inline int
-phys_to_logic_core_id(const int phys_core)
-{
-	if (unlikely(phys_core >= EM_MAX_CORES))
-		return -1;
-
-	return em_shm->core_map.phys_vs_logic.logic[phys_core];
-}
-
-int logic_to_thr_core_id(const int logic_core);
-
-int thr_to_logic_core_id(const int thr_id);
-
+void mask_em2odp__rwlocked(const em_core_mask_t *const core_mask,
+			   odp_thrmask_t *const odp_thrmask /*out*/);
 void mask_em2odp(const em_core_mask_t *const em_core_mask,
 		 odp_thrmask_t *const odp_thrmask /*out*/);
-
-void mask_em2phys(const em_core_mask_t *const em_core_mask,
-		  odp_cpumask_t *const odp_cpumask /*out*/);
+int read_proc_cpuid(FILE *proc_tid_stat_file);
 
 #ifdef __cplusplus
 }

@@ -39,9 +39,27 @@
 #ifndef EM_INTERNAL_EVENT_TYPES_H_
 #define EM_INTERNAL_EVENT_TYPES_H_
 
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*
+ * Forward declarations — internal_event_t holds eo_elem_t* and
+ * queue_elem_t* fields (pointers only).
+ * Using forward declarations instead of #includes keeps the *_types.h
+ * layer free of inter-includes, preventing circular dependencies if
+ * a reverse pointer is ever added.
+ */
+struct eo_elem_t;
+typedef struct eo_elem_t eo_elem_t;
+struct queue_elem_t;
+typedef struct queue_elem_t queue_elem_t;
 
 /*
  * Internal event IDs
@@ -63,26 +81,36 @@ extern "C" {
 #define QUEUE_GROUP_ADD_REQ             (EVENT_ID_MASK | 0x30)
 #define QUEUE_GROUP_REM_REQ             (EVENT_ID_MASK | 0x31)
 
+#define TERM_THREAD_REQ                 (EVENT_ID_MASK | 0x32)
+
 /**
  * Store local function return values into a common struct for later inspection
  */
 typedef struct {
 	/** EO elem related to the local functions */
 	eo_elem_t *eo_elem;
+
 	/** Queue elem related to the local functions */
 	queue_elem_t *q_elem;
+
+	/** store allocated event handle inside struct for em_free() */
+	em_event_t event;
+
 	/**
 	 * Request to also delete the queues when removing them,
 	 * em_eo_remove_queue_all(_sync)(...) only
 	 */
 	int delete_queues;
-	/** store allocated event handle inside struct for em_free() */
-	em_event_t event;
+
 	/**
 	 * For error situation handling, use count to determine a safe time
 	 * to free this struct/event without multicore race conditions
 	 */
-	env_atomic32_t free_at_zero;
+	odp_atomic_u32_t free_at_zero;
+
+	/** Mask of cores that were sent the local function request */
+	em_core_mask_t core_mask;
+
 	/** Slot for each core to store the actual local func retval */
 	em_status_t core[EM_MAX_CORES];
 } loc_func_retval_t;
@@ -116,9 +144,15 @@ typedef union internal_event_t {
 		em_event_group_t event_group;
 		eo_elem_t *eo_elem;
 		queue_elem_t *q_elem;
-		int delete_queues; /* for em_eo_remove_queue_all(_sync)(...) */
 		loc_func_retval_t *retvals; /* ptr to separate allocation */
+		int delete_queues; /* for em_eo_remove_queue_all(_sync)(...) */
 	} loc_func;
+
+	/** EM thread termination request / announcement */
+	struct {
+		uint64_t id;
+		int thr;
+	} term_thread;
 
 } internal_event_t;
 

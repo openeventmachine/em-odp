@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2023, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -39,13 +39,19 @@
  *  Event Machine dispatcher related services.
  * @{
  *
- * The EM dispatcher contains the main loop of processing on each EM-core and
- * interfaces with the scheduler to obtain events for processing.
+ * The EM dispatcher contains the main loop of processing on each EM-core of
+ * type 'worker' or 'control', and interfaces with the event scheduler to obtain
+ * events for processing.
  * Further, the EM dispatcher is responsible for passing the events received
- * on a core, from the scheduler, to the correct EO-receive function along with
- * information about which queue the events originated from, what their types
- * are etc. Different flavours of the EM dispatch APIs exist along with
- * configuration options.
+ * on an EM-core, from the scheduler, to the correct EO-receive function along
+ * with information about which queue the events originated from, what their
+ * event types are etc. Different flavours of the EM dispatch APIs exist along
+ * with configuration options.
+ *
+ * Note that only EM-cores of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL
+ * can call the EM dispatch functions. Calling dispatch functions on an
+ * EM external thread/process (EM_CORE_TYPE_EXTERNAL) is not allowed and will
+ * result in error.
  *
  * EM provides APIs to register, or unregister, dispatch callback hooks, i.e.
  * user provided callback functions that will be run just before EM calls the
@@ -78,12 +84,12 @@
  * enter-callbacks - but still running all exit-callbacks.
  */
 
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
 
 /**
  * @brief EM dispatch duration selection flags
@@ -224,7 +230,7 @@ typedef struct {
 
 	/**
 	 * Override the possibly configured dispatcher input-polling callback
-	 * (set via em_conf_t::input.input_poll_fn).
+	 * (set via em_conf_local_t::input_poll_fn).
 	 *
 	 * false: Do not skip the input-poll callback if configured (default).
 	 * true:  Skip the input-poll callback in the dispatcher.
@@ -233,7 +239,7 @@ typedef struct {
 
 	/**
 	 * Override the possibly configured dispatcher output-drain callback
-	 * (set via em_conf_t::output.output_drain_fn).
+	 * (set via em_conf_local_t::output_drain_fn).
 	 *
 	 * false: Do not skip the output-drain callback if configured (default).
 	 * true:  Skip the output-drain callback in the dispatcher.
@@ -318,6 +324,10 @@ void em_dispatch_opt_init(em_dispatch_opt_t *opt);
  * events to the application EO's receive-function based on the queue the events
  * were received / dequeued from.
  *
+ * @note Only EM-cores of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL
+ *       can call the EM dispatch functions. Calling dispatch functions on an
+ *       EM external thread/process (EM_CORE_TYPE_EXTERNAL) is not allowed.
+ *
  * Combining (bitwise OR) several DURATION selection flags
  * (see em_dispatch_duration_select_t) will dispatch until the first
  * duration-condition is met, whichever happens first.
@@ -394,6 +404,10 @@ em_status_t em_dispatch_duration(const em_dispatch_duration_t *duration,
  * is not covered by 'ns'.
  * EM will request new events to dispatch while the elapsed time is < 'ns'.
  *
+ * @note Only EM-cores of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL
+ *       can call the EM dispatch functions. Calling dispatch functions on an
+ *       EM external thread/process (EM_CORE_TYPE_EXTERNAL) is not allowed.
+ *
  * @see em_dispatch_duration() for documentation and usage.
  *
  * @param      ns       Dispatch duration in nanoseconds.
@@ -432,6 +446,10 @@ em_status_t em_dispatch_ns(uint64_t ns,
  * events dispatched since the EM dispatcher needs to fetch and handle
  * any leftover events held locally by the scheduler before returning.
  *
+ * @note Only EM-cores of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL
+ *       can call the EM dispatch functions. Calling dispatch functions on an
+ *       EM external thread/process (EM_CORE_TYPE_EXTERNAL) is not allowed.
+ *
  * @see em_dispatch_duration() for documentation and usage.
  *
  * @param      events   Dispatch duration events. Dispatch until the given
@@ -461,6 +479,10 @@ em_status_t em_dispatch_events(uint64_t events,
  *
  * Similar to em_dispatch_duration(), but with a simplified dispatch duration:
  * here only the number of rounds to dispatch is provided.
+ *
+ * @note Only EM-cores of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL
+ *       can call the EM dispatch functions. Calling dispatch functions on an
+ *       EM external thread/process (EM_CORE_TYPE_EXTERNAL) is not allowed.
  *
  * @see em_dispatch_duration() for documentation and usage.
  *
@@ -497,6 +519,10 @@ em_status_t em_dispatch_rounds(uint64_t rounds,
  *
  * See the EM config file for options controlling the global behaviour of
  * em_dispatch().
+ *
+ * @note Only EM-cores of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL
+ *       can call the EM dispatch functions. Calling dispatch functions on an
+ *       EM external thread/process (EM_CORE_TYPE_EXTERNAL) is not allowed.
  *
  * @param rounds  Dispatch rounds before returning,
  *                0 means 'never return from dispatch'
@@ -586,6 +612,12 @@ typedef void (*em_dispatch_exit_func_t)(em_eo_t eo);
  * The maximum number of simultaneous callbacks is system specific
  * (EM_CALLBACKS_MAX).
  *
+ * @note A newly registered callback takes effect at scheduler-burst
+ *       granularity (not per event). Events from a burst already pulled
+ *       from the scheduler before the registration may bypass the new
+ *       callback. The new callback is guaranteed to be called from the
+ *       next scheduler burst onwards on each core.
+ *
  * @param func  Dispatch enter-callback function
  *
  * @return EM_OK if callback registration succeeded
@@ -602,10 +634,12 @@ em_status_t em_dispatch_register_enter_cb(em_dispatch_enter_func_t func);
  * The given function is searched for and, if found, removed from the call list.
  * If the same function has been registered multiple times, only one reference
  * is removed per unregister call.
- * Note that when this function returns, no new calls are made to the removed
- * callback function, but it is still possible that another core could be
- * executing the function, so care must be taken before removing anything it may
- * still use.
+ * Note that when this function returns, no new calls to the unregistered
+ * callback are started from the next scheduler burst onwards on each
+ * core. A burst already in progress on another core might still invoke
+ * the callback for its remaining events. Additionally, another core
+ * could be in the middle of executing the function, so care must be
+ * taken before removing anything it may still use.
  *
  * @param func  Dispatch enter-callback function
  *
@@ -629,6 +663,12 @@ em_status_t em_dispatch_unregister_enter_cb(em_dispatch_enter_func_t func);
  * The maximum number of simultaneous callbacks is system specific
  * (EM_CALLBACKS_MAX).
  *
+ * @note A newly registered callback takes effect at scheduler-burst
+ *       granularity (not per event). Events from a burst already pulled
+ *       from the scheduler before the registration may bypass the new
+ *       callback. The new callback is guaranteed to be called from the
+ *       next scheduler burst onwards on each core.
+ *
  * @param func   Dispatch exit-callback function
  *
  * @return EM_OK if callback registration succeeded
@@ -645,10 +685,12 @@ em_status_t em_dispatch_register_exit_cb(em_dispatch_exit_func_t func);
  * The given function is searched for and, if found, removed from the call list.
  * If the same function has been registered multiple times, only one reference
  * is removed per unregister call.
- * Note that when this function returns, no new calls are made to the removed
- * callback function, but it is still possible that another core could be
- * executing the function, so care must be taken before removing anything it may
- * still use.
+ * Note that when this function returns, no new calls to the unregistered
+ * callback are started from the next scheduler burst onwards on each
+ * core. A burst already in progress on another core might still invoke
+ * the callback for its remaining events. Additionally, another core
+ * could be in the middle of executing the function, so care must be
+ * taken before removing anything it may still use.
  *
  * @param func  Dispatch exit-callback function
  *

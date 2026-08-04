@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,12 @@
 
 #pragma GCC visibility push(default)
 
+#include <odp_api.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef odp_spinlock_t env_spinlock_t;
 
 static inline void
@@ -69,6 +75,10 @@ env_spinlock_unlock(env_spinlock_t *const lock)
 {
 	odp_spinlock_unlock(lock);
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #pragma GCC visibility pop
 #endif /* _ENV_SPINLOCK_H_ */

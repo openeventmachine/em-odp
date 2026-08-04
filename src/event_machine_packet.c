@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2024, Nokia Solutions and Networks
+ *   Copyright (c) 2024-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,31 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_inline.h"
+#include "em_pool_types.h"
 
 static inline bool is_odp_packet(odp_event_t odp_event)
 {
@@ -323,4 +347,160 @@ em_status_t em_packet_reset(em_event_t pktev, uint32_t size)
 	ev_hdr->user_area.isinit = 1;
 
 	return EM_OK;
+}
+
+/**
+ * Helper function for em_packet_concat() checks whether the event pointer has
+ * changed, updates the new handle with the correct evgen, and modifies the
+ * event header accordingly.
+ */
+static inline em_event_t
+check_update_event(evhdl_t original_hdl, evhdl_t updated_hdl, event_hdr_t *updated_hdr)
+{
+	if (original_hdl.evptr != updated_hdl.evptr) {
+		/* update event handle and ev_hdr, ev_hdr is copied from original first_pkt */
+		updated_hdl.evgen = original_hdl.evgen;
+		updated_hdr->event = updated_hdl.event;
+		return	updated_hdl.event;
+	}
+	return original_hdl.event;
+}
+
+/**
+ * Helper function for em_packet_concat(), does a packet copy if the second_pkt
+ * has references.
+ *
+ * Only needed with ODP API < 1.50, where odp_packet_concat() does not support a
+ * 'src' packet that has references. ODP API >= 1.50 handles this natively.
+ */
+static inline em_status_t
+concat_packet_with_ref(em_event_t *first_pkt, em_event_t second_pkt)
+{
+	odp_event_t odp_event_first = event_em2odp(*first_pkt);
+	odp_event_t odp_event_second = event_em2odp(second_pkt);
+
+	if (unlikely(EM_CHECK_LEVEL >= 3 &&
+		     (!is_odp_packet(odp_event_first) ||
+		      !is_odp_packet(odp_event_second)))) {
+		(void)INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_PACKET_CONCAT,
+				     "first_pkt and/or second_pkt not a packet");
+		return -1;
+	}
+
+	const bool esv_ena = esv_enabled();
+	event_hdr_t *ev_hdr_first;
+
+	/* Save event hdl for checking if it has changed */
+	evhdl_t first_ev = {.event = *first_pkt};
+
+	odp_packet_t odp_pkt_first = odp_packet_from_event(odp_event_first);
+	odp_packet_t odp_pkt_second = odp_packet_from_event(odp_event_second);
+	uint32_t first_len = odp_packet_len(odp_pkt_first);
+	uint32_t second_len = odp_packet_len(odp_pkt_second);
+
+	/* Mark first_pkt as free, since ODP might free it */
+	if (esv_ena) {
+		ev_hdr_first = odp_packet_user_area(odp_pkt_first);
+		evstate_free(*first_pkt, ev_hdr_first, EVSTATE__MARK_FREE);
+	}
+	/* Increase packet data length to fit the second_pkt data */
+	int ret = odp_packet_extend_tail(&odp_pkt_first, second_len, NULL, NULL);
+
+	if (unlikely(ret < 0)) {
+		if (esv_ena)
+			evstate_unmark_free(*first_pkt, ev_hdr_first, EVSTATE__UNMARK_FREE);
+
+		return -1;
+	}
+	/* Copy second_pkt data to the first_pkt */
+	(void)odp_packet_copy_from_pkt(odp_pkt_first, first_len,
+				       odp_pkt_second, 0, second_len);
+	evhdl_t ev_hdl_updated = {.event = event_odp2em(odp_packet_to_event(odp_pkt_first))};
+
+	ev_hdr_first = odp_packet_user_area(odp_pkt_first);
+
+	/* Check if event handle has changed, and update it */
+	*first_pkt = check_update_event(first_ev, ev_hdl_updated, ev_hdr_first);
+
+	/* Unmark free resulted first_pkt */
+	if (esv_ena)
+		evstate_unmark_free(*first_pkt, ev_hdr_first, EVSTATE__UNMARK_FREE);
+
+	em_free(second_pkt);
+
+	/* Packet data was copied */
+	return 1;
+}
+
+int em_packet_concat(em_event_t *first_pkt /*in,out*/, em_event_t second_pkt)
+{
+	if (unlikely(EM_CHECK_LEVEL >= 3 && event_has_ref(*first_pkt))) {
+		(void)INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_PACKET_CONCAT,
+				     "first_pkt has a reference");
+		return -1;
+	}
+
+	if (ODP_VERSION_API_NUM(1, 50, 0) > ODP_VERSION_API &&
+	    unlikely(event_has_ref(second_pkt))) {
+		/*
+		 * ODP API < 1.50 does not support packet concatenating if second_pkt has
+		 * references, so fall back to a manual data copy. ODP API >= 1.50 handles
+		 * a referenced 'src' packet natively in odp_packet_concat() below.
+		 */
+		return concat_packet_with_ref(first_pkt, second_pkt);
+	}
+
+	odp_event_t odp_event_first = event_em2odp(*first_pkt);
+	odp_event_t odp_event_second = event_em2odp(second_pkt);
+
+	if (unlikely(EM_CHECK_LEVEL >= 3 &&
+		     (!is_odp_packet(odp_event_first) ||
+		      !is_odp_packet(odp_event_second)))) {
+		(void)INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_PACKET_CONCAT,
+				     "first_pkt and/or second_pkt not a packet");
+		return -1;
+	}
+
+	const bool esv_ena = esv_enabled();
+	event_hdr_t *ev_hdr_first;
+	event_hdr_t *ev_hdr_second;
+
+	/* Save event hdl for later checking if it has changed */
+	evhdl_t ev_hdl_original = {.event = *first_pkt};
+
+	odp_packet_t odp_pkt_first = odp_packet_from_event(odp_event_first);
+	odp_packet_t odp_pkt_second = odp_packet_from_event(odp_event_second);
+
+	/* Mark pkts as free, since ODP might free it */
+	if (esv_ena) {
+		ev_hdr_first = odp_packet_user_area(odp_pkt_first);
+		ev_hdr_second = odp_packet_user_area(odp_pkt_second);
+
+		evstate_free(*first_pkt, ev_hdr_first, EVSTATE__MARK_FREE);
+		evstate_free(second_pkt, ev_hdr_second, EVSTATE__MARK_FREE);
+	}
+
+	int ret = odp_packet_concat(&odp_pkt_first, odp_pkt_second);
+
+	if (unlikely(ret < 0)) {
+		/* If odp_packet_concat() fails, pkt handles will not change */
+		if (esv_ena) {
+			evstate_unmark_free(*first_pkt, ev_hdr_first, EVSTATE__UNMARK_FREE);
+			evstate_unmark_free(second_pkt, ev_hdr_second, EVSTATE__UNMARK_FREE);
+		}
+		return -1;
+	}
+	ev_hdr_first = odp_packet_user_area(odp_pkt_first);
+	/* Check if the event handle has changed, and update it and event hdr */
+	evhdl_t ev_hdl_updated = {.event = event_odp2em(odp_packet_to_event(odp_pkt_first))};
+
+	*first_pkt = check_update_event(ev_hdl_original, ev_hdl_updated, ev_hdr_first);
+	/* Unmark free resulted first_pkt */
+	if (esv_ena)
+		evstate_unmark_free(*first_pkt, ev_hdr_first, EVSTATE__UNMARK_FREE);
+
+	if (ret == 0)
+		return 0;
+
+	return 1;
 }

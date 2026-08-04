@@ -9,7 +9,7 @@ Documentation    Resource file
 Library    Collections
 Library    Process
 Library    String
-
+Library    OperatingSystem
 
 *** Variables ***
 ${KILL_TIMEOUT} =    30s
@@ -38,11 +38,16 @@ ${KILL_TIMEOUT} =    30s
 @{REGEX_MATCH} =
 ...    Done\\s*-\\s*exit
 
+# The file to which standard output is written
+${OUT_FILE} =    ${TEMPDIR}/em_robot_stdout.txt
+
 
 *** Keywords ***
 Kill Any Hanging Applications
     [Documentation]    Kill any hanging applications
     Terminate All Processes    kill=true
+    Run Keyword And Ignore Error    Remove File    ${OUT_FILE}
+    File Should Not Exist    ${OUT_FILE}
 
 Check Pool Statistics
     [Documentation]    Check if pool statistics printed just before program exit
@@ -53,7 +58,7 @@ Check Pool Statistics
 
     # Match only the pool statistic printed just before program exit
     ${last_pool_statistic} =    Get Regexp Matches    ${output.stdout}
-    ...    ^Status before delete:(.|\n)*Done - exit$(?m)
+    ...    (?m)^Status before delete:(.|\n)*Done - exit$
 
     # Should have only one match
     ${num_match} =    Get Length    ${last_pool_statistic}
@@ -83,7 +88,7 @@ Run EM-ODP Test
     ...    @{args}
     ...    stderr=STDOUT
     ...    shell=True
-    ...    stdout=${TEMPDIR}/stdout.txt
+    ...    stdout=${OUT_FILE}
 
     IF    ${sleep_time}
         # Sleep ${sleep_time} seconds
@@ -135,7 +140,7 @@ Run EM-ODP Test To Complete
     ...    stderr=STDOUT
     ...    timeout=${time_out}
     ...    shell=True
-    ...    stdout=${TEMPDIR}/stdout.txt
+    ...    stdout=${OUT_FILE}
 
     # Log output
     Log    ${output.stdout}\n\nApplication Return Code: ${output.rc}    console=yes

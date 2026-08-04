@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2024, Nokia Solutions and Networks
+ *   Copyright (c) 2024-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -74,12 +74,12 @@
  * packet I/O).
  */
 
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
 
 /**
  * Get the packet event data pointer
@@ -138,7 +138,7 @@ uint32_t em_packet_size(em_event_t pktev);
  * @retval NULL on error ('size' not touched)
  *
  * @see em_packet_pointer(), em_packet_size()
- * @see em_event_pointer(), em_event_get_size(), em_event_pointer_and_size()
+ * @see em_event_pointer(), em_event_size(), em_event_pointer_and_size()
  */
 void *em_packet_pointer_and_size(em_event_t pktev, uint32_t *size /*out*/);
 
@@ -315,6 +315,37 @@ void *em_packet_pull_tail(em_event_t pktev, uint32_t len);
  * @return EM_OK when successful or an EM error code on error.
  */
 em_status_t em_packet_reset(em_event_t pktev, uint32_t size);
+
+/**
+ * @brief Concatenate packet events.
+ *
+ * Concatenates the data from second_pkt to the end of first_pkt's data.
+ * The operation is performed either by linking packet segments or,
+ * if necessary, by copying data. The first_pkt must not have any
+ * existing references. The second_pkt may have references.
+ *
+ * The return value indicates whether pointers taken before the call
+ * (pointing to packet data or event headers) remain valid. A return
+ * value of 0 means that neither packet data nor metadata was moved
+ * in memory, and all such pointers remain valid. A return value > 0
+ * indicates that packet data was relocated, and any pointers must be
+ * refreshed using the returned first_pkt handle.
+ *
+ * On success, the first_pkt event handle is updated to a new handle,
+ * and the second_pkt event handle becomes invalid.
+ *
+ * If the operation fails, both event handles remain valid.
+ *
+ * @param[in,out]       first_pkt       Pointer to first packet event handle,
+ *                                      a successful operation outputs a new
+ *                                      event handle
+ * @param               second_pkt      Second packet event handle
+ *
+ * @retval 0            Success, old data pointers remain valid.
+ * @retval > 0          Success, old data pointers are invalid.
+ * @retval < 0          Failure
+ */
+int em_packet_concat(em_event_t *first_pkt /*in,out*/, em_event_t second_pkt);
 
 /**
  * @}

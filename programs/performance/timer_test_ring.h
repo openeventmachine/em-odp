@@ -1,5 +1,16 @@
+#ifndef TIMER_TEST_RING_H
+#define TIMER_TEST_RING_H
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* for struct random_data */
+#endif
+
 #include <getopt.h>
+#include <inttypes.h>
 #include <stdatomic.h>
+#include <stdlib.h>
+
+#include <event_machine.h>
 
 #define APP_EO_NAME	"ringEO"
 #define SHM_NAME	"TimerRing-test"
@@ -28,13 +39,13 @@ const struct option longopts[] = {
 	{"delay",		required_argument, NULL, 'd'},
 	{"recreate-timer",	no_argument, NULL, 'R'},
 	{"reuse-tmo",		no_argument, NULL, 'N'},
-	{"reuse-event",		no_argument, NULL, 'E'},
 	{"api-profile",		no_argument, NULL, 'a'},
+	{"freq-mode",		no_argument, NULL, 'F'},
 	{"help",		no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
-const char *shortopts = "hRNEal:m:t:b:r:M:n:c:f:T:w::o:d:";
+const char *shortopts = "hRNaFl:m:t:b:r:M:n:c:f:T:w::o:d:";
 /* descriptions for above options, keep in sync! */
 const char *descopts[] = {
 	"Number of test loops, default 1",
@@ -52,8 +63,8 @@ const char *descopts[] = {
 	"Add extra processing delay per tmo receive, ns. Default 0. Negative is random up to",
 	"Delete and re-create timers every loop, default no",
 	"Reuse tmo handles (new loop), default no",
-	"Reuse tmo event (new loop), default no",
 	"Profile API call times, default no",
+	"Use frequency-based ring timer (PERIODIC_FREQ) instead of base_mul",
 	"Print usage and exit",
 	NULL
 };
@@ -210,3 +221,5 @@ const char *trace_op_labels[] = {
 	"END",
 	"OVERFLOW"
 };
+
+#endif /* TIMER_TEST_RING_H */

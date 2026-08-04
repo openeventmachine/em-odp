@@ -38,9 +38,22 @@
 #ifndef EM_QUEUE_GROUP_TYPES_H_
 #define EM_QUEUE_GROUP_TYPES_H_
 
+#include <stdbool.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "misc/list.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define S_(x) #x
+#define S(x) S_(x)
 
 COMPILE_TIME_ASSERT(EM_QUEUE_GROUP_NAME_LEN <= ODP_SCHED_GROUP_NAME_LEN,
 		    EM_QUEUE_GROUP_NAME_LEN_ERROR);
@@ -49,7 +62,7 @@ COMPILE_TIME_ASSERT(sizeof(EM_QUEUE_GROUP_DEFAULT_NAME) <=
 		    EM_QUEUE_GROUP_NAME_LEN,
 		    EM_QUEUE_GROUP_DEFAULT_NAME_SIZE_ERROR);
 
-COMPILE_TIME_ASSERT(sizeof(EM_QUEUE_GROUP_CORE_BASE_NAME) <=
+COMPILE_TIME_ASSERT(sizeof(EM_QUEUE_GROUP_CORE_BASE_NAME) + sizeof(S(EM_MAX_CORES)) <=
 		    EM_QUEUE_GROUP_NAME_LEN,
 		    EM_QUEUE_GROUP_CORE_BASE_NAME_SIZE_ERROR);
 
@@ -61,18 +74,33 @@ typedef struct queue_group_elem_t {
 	em_queue_group_t queue_group;
 	/** Associated ODP schedule group */
 	odp_schedule_group_t odp_sched_group;
-	/** EM core mask */
-	em_core_mask_t core_mask;
+	/** Number of queues that belong to this queue group */
+	odp_atomic_u32_t num_queues;
 	/** Queue list, all queues that belong to this queue group */
 	list_node_t queue_list;
-	/** Queue group pool elem for linking free queue groups for queue_group_alloc()*/
-	objpool_elem_t queue_group_pool_elem;
-	/** Number of queues that belong to this queue group */
-	env_atomic32_t num_queues;
+	/** EM core mask */
+	em_core_mask_t core_mask;
+	union {
+		/**
+		 * Queue group pool elem for linking free queue groups for
+		 * queue_group_alloc().
+		 * Used when the queue group is not yet allocated (i.e. is in
+		 * the qgrp pool).
+		 */
+		objpool_elem_t queue_group_pool_elem;
+		/**
+		 * Queue group elements to be flushed in EM-core termination.
+		 * Used as a node when creating a list of all queue groups with
+		 * only the terminating core set in the mask - the queues
+		 * belonging to these qgrps should be flushed before terminating
+		 * the core.
+		 */
+		list_node_t qgrp_list_node;
+	};
 	/** Is queue group deletion ongoing? true/false */
 	bool ongoing_delete;
 	/** Queue group elem lock */
-	env_spinlock_t lock;
+	odp_ticketlock_t lock;
 	/** Pad to multiple of cache line size  */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } queue_group_elem_t ENV_CACHE_LINE_ALIGNED;
@@ -90,9 +118,16 @@ typedef struct queue_group_tbl_t {
 
 /**
  * Pool of free queue groups
+ *
+ * Using two objpools:
+ *  - one for the core specific queue groups to
+ *  - one for the rest of the queue groups
  */
 typedef struct queue_group_pool_t {
-	objpool_t objpool;
+	/** Objpool for core specific queue groups (EM_MAX_CORES) */
+	objpool_t objpool_rsvd;
+	/** Objpool for the rest of the queue groups */
+	objpool_t objpool_dyn;
 } queue_group_pool_t;
 
 #ifdef __cplusplus

@@ -69,9 +69,6 @@
  */
 #define EVENT_DATA_ALLOC_NBR  (MAX_CORES * 16)
 
-/** Round 'val' to the next multiple of 'N' */
-#define ROUND_UP(val, N)  ((((val) + ((N) - 1)) / (N)) * (N))
-
 /**
  * EO context used by the application
  *
@@ -112,9 +109,9 @@ typedef struct app_q_ctx_t {
 	/*
 	 * Use atomic operations to suit any queue type.
 	 * An atomic queue does not need this but parallel and
-	 * parallel-ordered do so opt to always use.
+	 * ordered do so opt to always use.
 	 */
-	env_atomic64_t event_count;
+	odp_atomic_u64_t event_count;
 } app_q_ctx_t;
 
 /**
@@ -174,7 +171,7 @@ typedef struct qgrp_shm_t {
 	unsigned int core_count;
 
 	/** The application has seen the exit_flag and is ready for tear down */
-	env_atomic32_t exit_ack;
+	odp_atomic_u32_t exit_ack;
 
 	app_eo_ctx_t app_eo_ctx ENV_CACHE_LINE_ALIGNED;
 
@@ -328,8 +325,7 @@ void test_start(const appl_conf_t *appl_conf)
 		      "Max supported core count for this test is: %u\n",
 		      qgrp_shm->core_count, MAX_CORES);
 
-	env_atomic32_init(&qgrp_shm->exit_ack);
-	env_atomic32_set(&qgrp_shm->exit_ack, 0);
+	odp_atomic_init_u32(&qgrp_shm->exit_ack, 0);
 
 	/*
 	 * Create the application EO and queues
@@ -413,7 +409,7 @@ void test_stop(const appl_conf_t *appl_conf)
 
 	egrp = qgrp_shm->app_eo_ctx.event_group;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 		err = em_event_group_abort(egrp);
 		if (err == EM_OK && num_notifs == 1)
 			em_free(notif_tbl[0].event);
@@ -449,12 +445,12 @@ receive(void *eo_context, em_event_t event, em_event_type_t type,
 	/* Only set for the test_queue */
 	app_q_ctx_t *q_ctx = queue_context;
 
-	test_fatal_if(em_get_type_major(type) != EM_EVENT_TYPE_SW,
+	test_fatal_if(em_event_type_major(type) != EM_EVENT_TYPE_SW,
 		      "Unexpected event type: 0x%x", type);
 
 	if (unlikely(appl_shm->exit_flag)) {
 		/* Handle exit request */
-		uint32_t exit_ack = env_atomic32_get(&qgrp_shm->exit_ack);
+		uint32_t exit_ack = odp_atomic_load_u32(&qgrp_shm->exit_ack);
 
 		if (exit_ack) {
 			em_free(event);
@@ -466,7 +462,7 @@ receive(void *eo_context, em_event_t event, em_event_type_t type,
 		     app_event->notif.type == NOTIF_QUEUE_GROUP_MODIFY_DONE)) {
 			/* can be set by multiple cores */
 			if (!exit_ack)
-				env_atomic32_set(&qgrp_shm->exit_ack, 1);
+				odp_atomic_store_u32(&qgrp_shm->exit_ack, 1U);
 			em_free(event);
 			return;
 		}
@@ -550,7 +546,7 @@ notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue)
 	em_core_mask_t core_mask;
 	em_notif_t notif_tbl;
 	em_status_t err;
-	const em_queue_group_t qgrp_curr = em_queue_get_group(queue);
+	const em_queue_group_t qgrp_curr = em_queue_qgroup(queue);
 	app_event_t *app_event = em_event_pointer(event);
 
 	test_fatal_if(app_event->notif.used_group != qgrp_curr,
@@ -614,8 +610,8 @@ notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue)
 		new_qtype_str = "PARALLEL";
 		break;
 	case EM_QUEUE_TYPE_PARALLEL:
-		new_qtype = EM_QUEUE_TYPE_PARALLEL_ORDERED;
-		new_qtype_str = "PARALLEL_ORDERED";
+		new_qtype = EM_QUEUE_TYPE_ORDERED;
+		new_qtype_str = "ORDERED";
 		break;
 	default:
 		new_qtype = EM_QUEUE_TYPE_ATOMIC;
@@ -638,7 +634,7 @@ notif_start_done(app_eo_ctx_t *eo_ctx, em_event_t event, em_queue_t queue)
 		   eo_ctx->test_qgrp, eo_ctx->test_qgrp_name);
 
 	memset(&qgrp_shm->app_q_ctx, 0, sizeof(qgrp_shm->app_q_ctx));
-	env_atomic64_init(&qgrp_shm->app_q_ctx.event_count);
+	odp_atomic_init_u64(&qgrp_shm->app_q_ctx.event_count, 0);
 
 	err = em_queue_set_context(eo_ctx->test_queue, &qgrp_shm->app_q_ctx);
 	test_fatal_if(err != EM_OK, "Set queue context:%" PRI_STAT "", err);
@@ -655,7 +651,7 @@ notif_queue_group_modify_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 			      em_queue_t queue)
 {
 	em_status_t err;
-	const em_queue_group_t qgrp_curr = em_queue_get_group(queue);
+	const em_queue_group_t qgrp_curr = em_queue_qgroup(queue);
 	app_event_t *app_event = em_event_pointer(event);
 
 	test_fatal_if(app_event->notif.used_group != qgrp_curr,
@@ -757,7 +753,7 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 	em_status_t err;
 	int core_count;
 	int i;
-	const em_queue_group_t qgrp_curr = em_queue_get_group(queue);
+	const em_queue_group_t qgrp_curr = em_queue_qgroup(queue);
 	app_event_t *app_event = em_event_pointer(event);
 
 	test_fatal_if(app_event->notif.used_group != qgrp_curr,
@@ -768,7 +764,7 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 
 	eo_ctx->tot_modify_count_check++;
 
-	err = em_queue_group_get_mask(eo_ctx->test_qgrp, &used_mask);
+	err = em_queue_group_mask(eo_ctx->test_qgrp, &used_mask);
 	test_fatal_if(err != EM_OK,
 		      "Get queue group mask:%" PRI_STAT "", err);
 
@@ -792,7 +788,7 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 			   "Now Modifying:\n"
 			   "    QueueGroup:%" PRI_QGRP ",  New Coremask:%s\n"
 			   "****************************************\n",
-			   env_atomic64_get(&qgrp_shm->app_q_ctx.event_count),
+			   odp_atomic_load_u64(&qgrp_shm->app_q_ctx.event_count),
 			   eo_ctx->test_queue, eo_ctx->test_qgrp,
 			   used_mask_str, eo_ctx->test_qgrp, core_mask_str);
 
@@ -827,7 +823,7 @@ notif_event_group_data_done(app_eo_ctx_t *eo_ctx, em_event_t event,
 	}
 
 	memset(qgrp_shm->core_stat, 0, sizeof(qgrp_shm->core_stat));
-	env_atomic64_set(&qgrp_shm->app_q_ctx.event_count, 0);
+	odp_atomic_store_u64(&qgrp_shm->app_q_ctx.event_count, 0);
 
 	/* Reuse the event */
 	app_event->id = EVENT_NOTIF;
@@ -859,11 +855,11 @@ receive_event_data(app_eo_ctx_t *eo_ctx, em_event_t event,
 {
 	int core_id = em_core_id();
 	app_event_t *app_event = em_event_pointer(event);
-	em_queue_group_t qgrp_curr = em_queue_get_group(queue);
+	em_queue_group_t qgrp_curr = em_queue_qgroup(queue);
 	em_core_mask_t used_mask;
 	em_status_t err;
 	const uint64_t event_count =
-		env_atomic64_add_return(&q_ctx->event_count, 1);
+		odp_atomic_fetch_inc_u64(&q_ctx->event_count) + 1;
 	qgrp_shm->core_stat[core_id].event_count++;
 
 	/* Verify that the queue group is correct & expected */
@@ -872,7 +868,7 @@ receive_event_data(app_eo_ctx_t *eo_ctx, em_event_t event,
 		      app_event->data.used_group, qgrp_curr);
 
 	/* Verify that this core is a valid receiver of events in this group */
-	err = em_queue_group_get_mask(qgrp_curr, &used_mask);
+	err = em_queue_group_mask(qgrp_curr, &used_mask);
 	test_fatal_if(err != EM_OK,
 		      "Get queue group mask:%" PRI_STAT "", err);
 
@@ -927,7 +923,7 @@ static void await_exit_ack(void)
 	do {
 		if (!exit_ack)
 			em_dispatch(1);
-		exit_ack = env_atomic32_get(&qgrp_shm->exit_ack);
+		exit_ack = odp_atomic_load_u32(&qgrp_shm->exit_ack);
 		t_now = env_time_global();
 	} while (!exit_ack && env_time_cmp(t_now, t_end) < 0);
 
@@ -971,14 +967,14 @@ start(void *eo_context, em_eo_t eo, const em_eo_conf_t *conf)
 	 * The values used below in calculations are derived from the way the
 	 * next_core_mask() function calculates the next core mask to use.
 	 */
-	ret = em_core_mask_get_bits(&tmp, 1, &eo_ctx->core_mask_max);
+	ret = em_core_mask_bits(&tmp, 1, &eo_ctx->core_mask_max);
 	if (unlikely(ret != 1)) {
 		char mask_str[EM_CORE_MASK_STRLEN];
 
 		em_core_mask_tostr(mask_str, EM_CORE_MASK_STRLEN,
 				   &eo_ctx->core_mask_max);
 		test_error(EM_ERROR_SET_FATAL(0xec0de), 0xdead,
-			   "em_core_mask_get_bits(coremask=%s), ret=%i",
+			   "em_core_mask_bits(coremask=%s), ret=%i",
 			   mask_str, ret);
 	}
 

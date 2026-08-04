@@ -36,6 +36,14 @@
 #ifndef EM_EVENT_CHECKS_H_
 #define EM_EVENT_CHECKS_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <event_machine.h>
+
+#include "em_event_types.h"
+#include "em_mem.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -75,6 +83,7 @@ typedef enum {
 	EVSTATE__UNMARK_FREE_MULTI,
 	EVSTATE__DISPATCH,
 	EVSTATE__DISPATCH_MULTI,
+	EVSTATE__DISPATCH_AGGR, /* inner event of aggregation-produced vector */
 	EVSTATE__DISPATCH_SCHED__FAIL,
 	EVSTATE__DISPATCH_LOCAL__FAIL,
 	EVSTATE__DEQUEUE,
@@ -115,8 +124,6 @@ COMPILE_TIME_ASSERT(EVSTATE__LAST <= UINT8_MAX, EVSTATE__LAST__TOO_BIG);
 #define SEND_CNT_INIT ((uint16_t)0x8000) /* =  0 + 'offset' */
 /** Initial reference count value */
 #define REF_CNT_INIT    ((uint16_t)0x8000) /* =  0 + 'offset' */
-/** Max reference count before resetting to 'REF_CNT_INIT' to avoid wrap */
-#define REF_CNT_MAX  ((uint16_t)UINT16_MAX - 0x1000)
 
 /**
  * Return 'true' if ESV is enabled
@@ -133,15 +140,6 @@ static inline bool esv_enabled(void)
  * Init ESV (if enabled at compile time), read config options
  */
 em_status_t esv_init(void);
-/**
- * In the case that ESV has been disabled during compile time, verify that the compile-time
- * option and runtime config file options do not clash - warn the user otherwise!
- *
- * The user might not notice that the run time config file option has no effect if ESV has
- * been disabled during compile time. The warning printed at startup is meant to notify the
- * user that ESV will be disabled no matter the content in the run time config file.
- */
-void esv_disabled_warn_config(void);
 /**
  * Set the initial event state during em_pool_create() when preallocating events
  */
@@ -190,12 +188,12 @@ em_event_t evstate_update(const em_event_t event,
 /**
  * Check & update event state during em_free() or em_event_mark_free()
  */
-void evstate_free(em_event_t event, event_hdr_t *const ev_hdr,
+void evstate_free(const em_event_t event, event_hdr_t *const ev_hdr,
 		  const uint16_t api_op);
 /**
  * Check & update event state during em_event_unmark_free()
  */
-void evstate_free_revert(em_event_t event, event_hdr_t *const ev_hdr,
+void evstate_free_revert(const em_event_t event, event_hdr_t *const ev_hdr,
 			 const uint16_t api_op);
 
 /**
@@ -216,12 +214,12 @@ void evstate_free_revert_multi(const em_event_t ev_tbl[],
  *
  * em_dispatch(), em_queue_dequeue(), em_tmo_cancel(), em_tmo_delete()
  */
-em_event_t evstate_em2usr(em_event_t event, event_hdr_t *const ev_hdr,
+em_event_t evstate_em2usr(const em_event_t event, event_hdr_t *const ev_hdr,
 			  const uint16_t api_op);
 /**
  * Revert EM-to-user event-state update on failed operation.
  */
-em_event_t evstate_em2usr_revert(em_event_t event, event_hdr_t *const ev_hdr,
+em_event_t evstate_em2usr_revert(const em_event_t event, event_hdr_t *const ev_hdr,
 				 const uint16_t api_op);
 /**
  * Check & update the state of multiple events - events passed from EM to user
@@ -242,12 +240,12 @@ void evstate_em2usr_revert_multi(em_event_t ev_tbl[/*in/out*/],
  *
  * em_send(), em_send_group(), em_tmo_set_abs/rel/periodic(), em_tmo_ack()
  */
-void evstate_usr2em(em_event_t event, event_hdr_t *const ev_hdr,
+void evstate_usr2em(const em_event_t event, event_hdr_t *const ev_hdr,
 		    const uint16_t api_op);
 /**
  * Revert user-to-EM event-state update on failed operation.
  */
-void evstate_usr2em_revert(em_event_t event, event_hdr_t *const ev_hdr,
+void evstate_usr2em_revert(const em_event_t event, event_hdr_t *const ev_hdr,
 			   const uint16_t api_op);
 /**
  * Check & update the state of multiple events - events passed from user to EM

@@ -1,6 +1,6 @@
 /*
  *   Copyright (c) 2012, Nokia Siemens Networks
- *   Copyright (c) 2015-2024, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2025, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -40,10 +40,6 @@
  *
  * This file includes all other needed EM headers
  */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /** @mainpage
  *
@@ -143,22 +139,29 @@ extern "C" {
  * references to local memory (e.g. pointers).
  *
  * @section section_4 Files
- * @subsection sub_1 Generic
+ * @subsection sub_1 EM API
  * - event_machine.h
- *   - Event Machine API
- *     The application should include this file only.
+ *   - Event Machine API -the application should include this file only.
  *
  * Files included by event_machine.h:
  * - event_machine_version.h
  *   - Event Machine version defines, macros and APIs
  * - event_machine_deprecated.h
  *   - EM API deprecation defines & macros
+ * - event_machine_config.h
+ *   - Event Machine constants and configuration options
  * - event_machine_types.h
  *   - Event Machine basic types
+ * - event_machine_error.h
+ *   - error logging and management related functionality
+ * - event_machine_init.h
+ *   - Event Machine initialization and termination
  * - event_machine_event.h
  *   - event related functionality
  * - event_machine_packet.h
  *   - packet event related functionality
+ * - event_machine_pool.h
+ *   - event pool related functionality
  * - event_machine_eo.h
  *   - EO related functionality
  * - event_machine_event_group.h
@@ -169,56 +172,44 @@ extern "C" {
  *   - queue related functionality
  * - event_machine_queue_group.h
  *   - queue group related functionality
- * - event_machine_error.h
- *   - error management related functionality
  * - event_machine_core.h
  *   - core/thread related functionality
+ * - event_machine_core_mask.h
+ *   - Core mask manipulation functions
  * - event_machine_scheduler.h
  *   - scheduling related functionality
  * - event_machine_dispatcher.h
  *   - dispatching related functionality
- * - event_machine_timer.h
- *   - timer APIs
- *
- * @subsection sub_2 Platform Specific
- * (also included by event_machine.h)
- * - event_machine_config.h
- *   - Event Machine constants and configuration options
- * - event_machine_hw_config.h
- *   - HW specific constants and configuration options
- * - event_machine_hw_specific.h
- *   - HW specific functions and macros
- * - event_machine_hw_types.h
- *   - HW specific types
  * - event_machine_hooks.h
  *   - API-hooks and idle-hooks
- * - event_machine_init.h
- *   - Event Machine initialization
- * - event_machine_pool.h
- *   - event pool related functionality
+ * - event_machine_timer.h
+ *   - timer APIs
  * - event_machine_timer_hw_specific.h
  *   - Platform specific timer definitions
  *
- * @subsection sub_3 Helper
+ * @subsection sub_2 Helper API
  * These files must be separately included by the application on a need basis.
  * - event_machine_helper.h
  *   - optional helper routines
  * - event_machine_debug.h
  *   - optional debug helpers (only for debug use)
  *
- * @subsection sub_4 Extensions
+ * @subsection sub_3 Extension API
  * These files must be separately included by the application on a need basis.
  * - event_machine_odp_ext.h
  *   - EM <-> ODP conversion functions and ODP related helpers
  *
  * @example hello.c
  * @example api_hooks.c
+ * @example cli_top.c
  * @example dispatcher_callback.c
+ * @example dyn_cores.c
  * @example error.c
  * @example event_group.c
  * @example event_group_abort.c
  * @example event_group_assign_end.c
  * @example event_group_chaining.c
+ * @example event_types.c
  * @example fractal.c
  * @example ordered.c
  * @example queue_types_ag.c
@@ -227,12 +218,7 @@ extern "C" {
  * @example timer_hello.c
  * performance:
  * @example atomic_processing_end.c
- * @example loop.c
- * @example loop_multircv.c
- * @example loop_refs.c
- * @example loop_vectors.c
  * @example loop_united.c
- * @example pairs.c
  * @example pool_perf.c
  * @example queue_groups.c
  * @example queues.c
@@ -249,30 +235,26 @@ extern "C" {
  * @example bench_pool.c
  */
 
-/* EM deprecated */
+/* EM deprecation macros & defines */
 #include <event_machine/api/event_machine_deprecated.h>
-
 /* EM version */
 #include <event_machine/api/event_machine_version.h>
-
-/* EM config & types */
-#include <event_machine/platform/event_machine_config.h>
+/* EM config values */
+#include <event_machine/api/event_machine_config.h>
+/* EM types */
 #include <event_machine/api/event_machine_types.h>
-
-/* HW specific EM config & types */
-#include <event_machine/platform/event_machine_hw_config.h>
-#include <event_machine/platform/event_machine_hw_types.h>
-
-/* EM error management */
+/* EM Error reporting and management */
 #include <event_machine/api/event_machine_error.h>
+/* EM Core Mask types and manipulation functions */
+#include <event_machine/api/event_machine_core_mask.h>
+/* EM Core functions */
+#include <event_machine/api/event_machine_core.h>
 /* EM Execution Object (EO) related functions */
 #include <event_machine/api/event_machine_eo.h>
 /* EM Queue functions */
 #include <event_machine/api/event_machine_queue.h>
 /* EM Queue Group functions */
 #include <event_machine/api/event_machine_queue_group.h>
-/* EM Core functions*/
-#include <event_machine/api/event_machine_core.h>
 /* EM Event functions */
 #include <event_machine/api/event_machine_event.h>
 /* EM Packet Event functions */
@@ -285,23 +267,16 @@ extern "C" {
 #include <event_machine/api/event_machine_scheduler.h>
 /* EM Dispatcher functions */
 #include <event_machine/api/event_machine_dispatcher.h>
-
 /* EM Event Pool functions */
-#include <event_machine/platform/event_machine_pool.h>
+#include <event_machine/api/event_machine_pool.h>
 /* EM API hooks */
-#include <event_machine/platform/event_machine_hooks.h>
+#include <event_machine/api/event_machine_hooks.h>
 /* EM initialization and termination */
-#include <event_machine/platform/event_machine_init.h>
-/* Other HW/Platform specific functions */
-#include <event_machine/platform/event_machine_hw_specific.h>
+#include <event_machine/api/event_machine_init.h>
 /* EM Timer HW/Platform specific */
-#include <event_machine/platform/event_machine_timer_hw_specific.h>
+#include <event_machine/api/event_machine_timer_hw_specific.h>
 /* EM Timer */
 #include <event_machine/api/event_machine_timer.h>
-
-#ifdef __cplusplus
-}
-#endif
 
 #pragma GCC visibility pop
 #endif /* EVENT_MACHINE_H */

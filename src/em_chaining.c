@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2020, Nokia Solutions and Networks
+ *   Copyright (c) 2020-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,49 +28,45 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdint.h>
+#include <stdio.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_chaining.h"
+#include "em_chaining_types.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
 
 /* em_output_func_t for event-chaining output*/
 int chaining_output(const em_event_t events[], const unsigned int num,
 		    const em_queue_t output_queue, void *output_fn_args);
 
-/**
- * Default implementation is declared as a weak symbol, meaning that the
- * user can override the function during linking with another implementation.
+/*
+ * The weak default implementations of the event-chaining output hooks
+ * event_send_device() / event_send_device_multi() live in their own
+ * translation unit (em_chaining_default.c), built without LTO, so that an
+ * application's strong override resolves reliably under static + LTO builds.
  */
-__attribute__((weak))
-em_status_t event_send_device(em_event_t event, em_queue_t queue)
-{
-	internal_queue_t iq = {.queue = queue};
-
-	(void)event;
-
-	return INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
-			      EM_ESCOPE_EVENT_SEND_DEVICE,
-			      "No %s() function given!\t"
-			      "device:0x%" PRIx16 " Q-id:0x%" PRIx16 "\n",
-			      __func__, iq.device_id, iq.queue_id);
-}
-
-/**
- * Default implementation is declared as a weak symbol, meaning that the
- * user can override the function during linking with another implementation.
- */
-__attribute__((weak))
-int event_send_device_multi(const em_event_t events[], int num, em_queue_t queue)
-{
-	internal_queue_t iq = {.queue = queue};
-
-	(void)events;
-	(void)num;
-
-	INTERNAL_ERROR(EM_ERR_NOT_IMPLEMENTED,
-		       EM_ESCOPE_EVENT_SEND_DEVICE_MULTI,
-		       "No %s() function given!\t"
-		       "device:0x%" PRIx16 " Q-id:0x%" PRIx16 "\n",
-		       __func__, iq.device_id, iq.queue_id);
-	return 0;
-}
 
 static int
 read_config_file(void)
@@ -83,7 +79,7 @@ read_config_file(void)
 	/* Zero all options first */
 	memset(&em_shm->opt.event_chaining, 0, sizeof(em_shm->opt.event_chaining));
 
-	EM_PRINT("EM Event-Chaining config:\n");
+	EM_PRINT("EM event-chaining config:\n");
 	/*
 	 * Option: event_chaining.order_keep - runtime enable/disable
 	 */

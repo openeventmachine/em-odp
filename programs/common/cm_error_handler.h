@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -30,6 +30,11 @@
 
 #ifndef TEST_ERROR_HANDLER_H
 #define TEST_ERROR_HANDLER_H
+
+#include <stdarg.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
 
 #ifdef __cplusplus
 extern "C" {

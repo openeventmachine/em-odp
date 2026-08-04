@@ -39,6 +39,12 @@
  *
  * Event Machine add-on types and definitions for exception management
  */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+#ifdef __cplusplus
+}
+#endif
 #pragma GCC visibility pop
 #endif /* EVENT_MACHINE_ADD_ON_ERROR_H_ */

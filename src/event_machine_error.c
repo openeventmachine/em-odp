@@ -28,7 +28,20 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_mem.h"
 
 em_status_t
 em_register_error_handler(em_error_handler_t handler)
@@ -37,11 +50,11 @@ em_register_error_handler(em_error_handler_t handler)
 			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_REGISTER_ERROR_HANDLER,
 			"Error Handling not initialized!");
 
-	env_spinlock_lock(&em_shm->error_handler.lock);
+	odp_ticketlock_lock(&em_shm->error_handler.lock);
 
 	em_shm->error_handler.em_error_handler = handler;
 
-	env_spinlock_unlock(&em_shm->error_handler.lock);
+	odp_ticketlock_unlock(&em_shm->error_handler.lock);
 
 	return EM_OK;
 }
@@ -53,11 +66,11 @@ em_unregister_error_handler(void)
 			EM_ERR_NOT_INITIALIZED, EM_ESCOPE_UNREGISTER_ERROR_HANDLER,
 			"Error Handling not initialized!");
 
-	env_spinlock_lock(&em_shm->error_handler.lock);
+	odp_ticketlock_lock(&em_shm->error_handler.lock);
 
 	em_shm->error_handler.em_error_handler = default_error_handler;
 
-	env_spinlock_unlock(&em_shm->error_handler.lock);
+	odp_ticketlock_unlock(&em_shm->error_handler.lock);
 
 	return EM_OK;
 }

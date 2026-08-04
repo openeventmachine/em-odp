@@ -166,10 +166,10 @@ typedef struct {
 	double cpu_mhz;
 	uint64_t cpu_hz;
 	uint64_t print_count;
-	env_atomic64_t ready_count;
+	odp_atomic_u64_t ready_count;
 	/*  if using CONST_NUM_EVENTS:*/
 	int free_flag;
-	env_atomic64_t freed_count;
+	odp_atomic_u64_t freed_count;
 } test_status_t;
 
 /**
@@ -210,7 +210,7 @@ COMPILE_TIME_ASSERT(sizeof(eo_context_t) % ENV_CACHE_LINE_SIZE == 0,
  * Queue context data
  * Keep the scheduled queue context and the associated unscheduled queue
  * context data in the same cache line for faster access - also eliminates
- * the need to call em_queue_get_context() for the unscheduled queues.
+ * the need to call em_queue_context() for the unscheduled queues.
  */
 typedef struct {
 	struct scheduled_queue_context {
@@ -432,8 +432,8 @@ void test_start(const appl_conf_t *appl_conf)
 	perf_shm->test_status.num_cores = appl_conf->core_count;
 	perf_shm->test_status.free_flag = 0;
 
-	env_atomic64_init(&perf_shm->test_status.ready_count);
-	env_atomic64_init(&perf_shm->test_status.freed_count);
+	odp_atomic_init_u64(&perf_shm->test_status.ready_count, 0);
+	odp_atomic_init_u64(&perf_shm->test_status.freed_count, 0);
 
 	/* Create EOs */
 	for (i = 0; i < NUM_EOS; i++) {
@@ -581,8 +581,7 @@ queue_step(void)
 			event = em_alloc(sizeof(perf_event_t),
 					 EM_EVENT_TYPE_SW, perf_shm->pool);
 			test_fatal_if(event == EM_EVENT_UNDEF ||
-				      sizeof(perf_event_t) !=
-				      em_event_get_size(event),
+				      sizeof(perf_event_t) != em_event_size(event),
 				      "EM alloc failed (%i)", i);
 
 			perf_event = em_event_pointer(event);
@@ -638,8 +637,7 @@ queue_step(void)
 						     EM_EVENT_TYPE_SW,
 						     perf_shm->pool);
 				test_fatal_if(events[j] == EM_EVENT_UNDEF ||
-					      sizeof(perf_event_t) !=
-					      em_event_get_size(events[j]),
+					      sizeof(perf_event_t) != em_event_size(events[j]),
 					      "EM alloc failed (%d,%d)", i, j);
 
 				perf_event = em_event_pointer(events[j]);
@@ -825,11 +823,10 @@ update_test_state(em_event_t event, em_event_t unsch_event)
 				em_free(event);
 				em_free(unsch_event);
 				freed_count =
-				env_atomic64_add_return(&tstat->freed_count, 2);
+				odp_atomic_fetch_add_u64(&tstat->freed_count, 2) + 2;
 				if (freed_count == CONST_NUM_EVENTS) {
 					/* Last event */
-					env_atomic64_set(&tstat->freed_count,
-							 0);
+					odp_atomic_store_u64(&tstat->freed_count, 0);
 					tstat->reset_flag = 0;
 					tstat->free_flag = 0;
 					queue_step();
@@ -844,10 +841,10 @@ update_test_state(em_event_t event, em_event_t unsch_event)
 			cstat->begin_time = ENV_TIME_NULL;
 
 			ready_count =
-			env_atomic64_add_return(&tstat->ready_count, 1);
+			odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 			if (ready_count == (uint64_t)tstat->num_cores) {
-				env_atomic64_set(&tstat->ready_count, 0);
+				odp_atomic_store_u64(&tstat->ready_count, 0);
 
 				if (CONST_NUM_EVENTS) {
 					int sample = tstat->samples;
@@ -884,7 +881,7 @@ update_test_state(em_event_t event, em_event_t unsch_event)
 		begin_time = cstat->begin_time;
 		cstat->diff_time = env_time_diff(end_time, begin_time);
 
-		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
+		ready_count = odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 		/*
 		 * Check whether all cores are done with the step,
@@ -892,7 +889,7 @@ update_test_state(em_event_t event, em_event_t unsch_event)
 		 */
 		if (unlikely((int)ready_count == tstat->num_cores)) {
 			/* No real need for atomicity here, ran on last core*/
-			env_atomic64_set(&tstat->ready_count, 0);
+			odp_atomic_store_u64(&tstat->ready_count, 0);
 
 			tstat->reset_flag = 1;
 			tstat->samples++;
@@ -1038,7 +1035,7 @@ create_and_link_queues(int start_queue, int num_queues)
 			 * scheduled and the unscheduled queue, access queue
 			 * specific context by using q_ctx->sch_q.* or
 			 * q_ctx->unsch_q.* - this eliminates the need to call
-			 * em_queue_get_context() for each event for the
+			 * em_queue_context() for each event for the
 			 * unscheduled queues
 			 */
 			ret = em_queue_set_context(queue_unscheduled, q_ctx);
@@ -1047,9 +1044,9 @@ create_and_link_queues(int start_queue, int num_queues)
 				      "Unsched-Q:%" PRI_QUEUE "",
 				      ret, queue_unscheduled);
 			/* Sanity check */
-			test_fatal_if(em_queue_get_context(queue) !=
-				      em_queue_get_context(queue_unscheduled),
-				      "em_queue_get_context failed.");
+			test_fatal_if(em_queue_context(queue) !=
+				      em_queue_context(queue_unscheduled),
+				      "em_queue_context failed.");
 
 			next_queue = queue;
 			next_unscheduled = queue_unscheduled;
@@ -1156,7 +1153,7 @@ alloc_free_per_event(em_event_t event)
 	perf_event_t *perf_event = em_event_pointer(event);
 	env_time_t send_time = perf_event->send_time;
 	int seq = perf_event->seq;
-	uint32_t event_size = em_event_get_size(event);
+	uint32_t event_size = em_event_size(event);
 
 	em_free(event);
 

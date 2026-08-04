@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -39,11 +39,16 @@
 
 #pragma GCC visibility push(default)
 
+#include <stdint.h>
+#include <stdio.h>
+
+#include <odp_api.h>
+
+#include <event_machine/platform/env/env_macros.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdio.h>
 
 /*
  * Type for a bit mask.

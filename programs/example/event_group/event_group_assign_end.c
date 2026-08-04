@@ -505,7 +505,7 @@ egroup_stop(void *eo_context, em_eo_t eo)
 	/* First normal event group */
 	egrp = eo_ctx->egrp.event_group;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 		ret = em_event_group_abort(egrp);
 		if (ret == EM_OK && num_notifs == 1)
 			em_free(notif_tbl[0].event);
@@ -518,7 +518,7 @@ egroup_stop(void *eo_context, em_eo_t eo)
 	/* Event group assigned to events sent without any event group */
 	egrp = eo_ctx->egrp_assign.event_group;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 		ret = em_event_group_abort(egrp);
 		if (ret == EM_OK && num_notifs == 1)
 			em_free(notif_tbl[0].event);
@@ -531,7 +531,7 @@ egroup_stop(void *eo_context, em_eo_t eo)
 	/* Event group used to track completion of the two event groups above*/
 	egrp = eo_ctx->all_done_event_group;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 		ret = em_event_group_abort(egrp);
 		if (ret == EM_OK && num_notifs == 1)
 			em_free(notif_tbl[0].event);

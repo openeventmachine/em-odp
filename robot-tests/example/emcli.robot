@@ -30,9 +30,9 @@ Test Emcli
     ...    @{CM_ARGS}
     ...    stderr=STDOUT
     ...    shell=True
-    ...    stdout=${TEMPDIR}/stdout.txt
+    ...    stdout=${OUT_FILE}
 
-    Sleep    10s
+    Sleep    20s
     Process Should Be Running    ${app_handle}
 
     # Open telnet connection
@@ -90,22 +90,24 @@ Show Available Commands
     ...    list all suppoorted EM-CLI commands.
 
     ${pool_stats_help} =    Catenate    SEPARATOR=
-    ...    ^\\s{2}em_pool_stats\\s+\\[i<pool id>\\|n<pool name>\\|s<pool id:
-    ...    \\[subpool ids\\]>\\[:o\\]\\|h\\]\\s?$(?m)
+    ...    (?m)^\\s{2}em_pool_stats\\s+\\[-i<pool id>\\[:o\\]\\|-n<pool name>\\[:o\\]
+    ...    \\|-s<pool id:\\[subpool ids\\]>\\[:o\\]\\|-h\\]\\s?$
 
     # (?m) switch on multiline mode, making ^ and $ match also at the start and end
     # of a new line, otherwise, ^ and $ match only at the start and end of whole text.
     @{telnet_regex} =    Create List
     ...    Commands available:
-    ...    ^\\s{2}em_agrp_print\\s+\\[a\\|i <ag id>\\|n <ag name>\\|h\\]\\s?$(?m)
-    ...    ^\\s{2}em_eo_print\\s+\\[a\\|i <eo id>\\|n <eo name>\\|h\\]\\s?$(?m)
-    ...    ^\\s{2}em_egrp_print\\s+$(?m)
-    ...    ^\\s{2}em_info_print\\s+\\[a\\|p\\|c\\|h\\]\\s?$(?m)
-    ...    ^\\s{2}em_pool_print\\s+\\[a\\|i <pool id>\\|n <pool name>\\|h\\]\\s?$(?m)
+    ...    (?m)^\\s{2}em_agrp_print\\s+\\[-a\\|-i <ag id>\\|-n <ag name>\\|-h\\]\\s?$
+    ...    (?m)^\\s{2}em_eo_print\\s+\\[-a\\|-i <eo id>\\|-n <eo name>\\|-h\\]\\s?$
+    ...    (?m)^\\s{2}em_egrp_print\\s+$
+    ...    (?m)^\\s{2}em_info_print\\s+\\[-a\\|-p\\|-c\\|-h\\]\\s?$
+    ...    (?m)^\\s{2}em_pool_print\\s+\\[-a\\|-i <pool id>\\|-n <pool name>\\|-h\\]\\s?$
     ...    ${pool_stats_help}
-    ...    ^\\s{2}em_queue_print\\s+\\[a\\|c\\|h\\]\\s?$(?m)
-    ...    ^\\s{2}em_qgrp_print\\s+\\[a\\|i <qgrp id>\\|n <qgrp name>\\|h\\]\\s?$(?m)
-    ...    ^\\s{2}em_core_print\\s+$(?m)
+    ...    (?m)^\\s{2}em_queue_print\\s+\\[-a\\|-c\\|-h\\]\\s?$
+    ...    (?m)^\\s{2}em_qgrp_print\\s+\\[-a\\|-i <qgrp id>\\|-n <qgrp name>\\|-h\\]\\s?$
+    ...    (?m)^\\s{2}em_core_print\\s+$
+    ...    (?m)^\\s{2}top\\s+\\[-t <time\\(s\\)>\\|-h\\]\\s?$
+    ...    (?m)^\\s{2}stop\\s+Stop the top printing, used after top\\s?$
 
     # Show available commands
     Write    help
@@ -123,17 +125,21 @@ Test Atomic Group Print
 
     # em_agrp_print should display "No atomic group has been created" for hello
     ${agrp} =    Execute Command    em_agrp_print
-    Should Match Regexp    ${agrp}    ^No atomic group has been created\\s+$(?m)
+    Should Match Regexp    ${agrp}    (?m)^No atomic group has been created\\s+$
 
     # em_agrp_print -h
     @{agrp_help_regex} =    Create List
     ...    Usage: em_agrp_print \\[OPTION\\]
+    ...    Description:
     ...    Print info about atomic groups
     ...    Options:
-    ...    ^\\s{2}-a, --all\\s+Print info about all atomic groups\\s?$(?m)
-    ...    ^\\s{2}-i, --id <ag id>\\s+Print info about all queues of <ag id>\\s?$(?m)
-    ...    ^\\s{2}-n, --name <ag name>\\s+Print info about all queues of <ag name>\\s?$(?m)
-    ...    ^\\s{2}-h, --help\\s+Display this help\\s?$(?m)
+    ...    (?m)^\\s{2}-a, --all\\s+Print info about all atomic groups\\s?$
+    ...    (?m)^\\s{2}-i, --id <ag id>\\s+Print info about all queues of <ag id>\\s?$
+    ...    (?m)^\\s{2}-n, --name <ag name>\\s+Print info about all queues of <ag name>\\s?$
+    ...    (?m)^\\s{2}-h, --help\\s+Display this help\\s?$
+    ...    Examples:
+    ...    em_agrp_print
+    ...    em_agrp_print -n AG-A1
 
     ${agrp_help} =    Execute Command    em_agrp_print -h
     FOR    ${line}    IN    @{agrp_help_regex}
@@ -145,8 +151,8 @@ Test EO Print
     ...    as expected.
 
     ${eo_info_fmt} =    Catenate    SEPARATOR=
-    ...    ^ID\\s+Name\\s+State\\s+Start-local\\s+Stop-local\\s+Multi-rcv\\s+Max-events
-    ...    \\s+Err-hdl\\s+Q-num\\s+EO-ctx\\s?$(?m)
+    ...    (?m)^ID\\s+Name\\s+State\\s+Start-local\\s+Stop-local\\s+Multi-rcv\\s+Max-events
+    ...    \\s+Err-hdl\\s+Q-num\\s+EO-ctx\\s?$
 
     # em_eo_print
     # 122 is from EO_INFO_LEN - 1 in em_eo.c
@@ -154,7 +160,7 @@ Test EO Print
     ...    Number of EOs: 2
     ...    ${eo_info_fmt}
     ...    -{122}
-    ...    ^0x[A-Fa-f0-9]+\\s+EO [AB]\\s+RUNNING\\s+N\\s+N\\s+N\\s+1\\s+N\\s+1\\s+Y(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+EO [AB]\\s+RUNNING\\s+N\\s+N\\s+N\\s+1\\s+N\\s+1\\s+Y
 
     ${eo_print} =    Execute Command    em_eo_print
     FOR    ${line}    IN    @{eo_regex}
@@ -169,9 +175,9 @@ Test EO Print
     # 84 is from EO_Q_INFO_LEN - 1 in em_eo.c
     @{eo_a_regex} =    Create List
     ...    EO ${eo_ids[0]}\\(EO A\\) has 1 queue\\(s\\):
-    ...    ^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Ctx\\s?$(?m)
+    ...    (?m)^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Ctx\\s?$
     ...    -{84}
-    ...    ^0x[A-Fa-f0-9]+\\s+queue A\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+\\s+Y(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+queue A\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+\\s+Y
 
     # Fetch information about queues belonging to EO A using its EO ID
     ${eo_a} =    Execute Command    em_eo_print -i ${eo_ids[0]}
@@ -181,9 +187,9 @@ Test EO Print
 
     @{eo_b_regex} =    Create List
     ...    EO ${eo_ids[1]}\\(EO B\\) has 1 queue\\(s\\):
-    ...    ^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Ctx\\s?$(?m)
+    ...    (?m)^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Ctx\\s?$
     ...    -{84}
-    ...    ^0x[A-Fa-f0-9]+\\s+queue B\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+\\s+Y(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+queue B\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+\\s+Y
 
     ${eo_b} =    Execute Command    em_eo_print -n "EO B"
     FOR    ${line}    IN    @{eo_b_regex}
@@ -196,11 +202,11 @@ Test Event Group Print
 
     # em_egrp_print
     ${egrp_print} =    Execute Command    em_egrp_print
-    Should Match Regexp    ${egrp_print}    ^No event group!\\s?$(?m)
+    Should Match Regexp    ${egrp_print}    (?m)^No event group!\\s?$
 
     # em_egrp_print -h
     ${egrp_extra} =    Execute Command    em_egrp_print -h
-    Should Match Regexp    ${egrp_extra}    ^Error: extra parameter given to command!\\s?$(?m)
+    Should Match Regexp    ${egrp_extra}    (?m)^Error: extra parameter given to command!\\s?$
 
 Test EM Info Print
     [Documentation]    Test em_info_print command and check if it outputs EM info
@@ -208,13 +214,13 @@ Test EM Info Print
 
     # em_info_print
     @{em_info_regex} =    Create List
-    ...    ^EM Info on target: em-odp\\s?$(?m)
-    ...    ^Core mapping: EM-core <-> phys-core <-> ODP-thread\\s?$(?m)
-    ...    ^ODP Queue Capabilities\\s?$(?m)
-    ...    ^EM Queues\\s?$(?m)
-    ...    ^EM Queue group\\(s\\): 1\\s?$(?m)
-    ...    ^EM Event Pools: 2\\s?$(?m)
-    ...    ^EM Events\\s?$(?m)
+    ...    (?m)^EM Info on target: em-odp\\s?$
+    ...    (?m)^EM-core <-> phys-core <-> ODP-thread <-> type <-> pid\\s?$
+    ...    (?m)^ODP Queue Capabilities\\s?$
+    ...    (?m)^EM Queues\\s?$
+    ...    (?m)^EM Queue group\\(s\\): 1\\s?$
+    ...    (?m)^EM Event Pools: 2\\s?$
+    ...    (?m)^EM Events\\s?$
 
     ${em_info} =    Execute Command    em_info_print
     FOR    ${line}    IN    @{em_info_regex}
@@ -223,7 +229,7 @@ Test EM Info Print
 
     # Test invalid option -x
     ${info_invalid} =    Execute Command    em_info_print -x
-    Should Match Regexp    ${info_invalid}    ^Error: invalid option -- 'x'\\s?$(?m)
+    Should Match Regexp    ${info_invalid}    (?m)^Error: invalid option -- 'x'\\s?$
 
 Test Pool Print
     [Documentation]    Test em_pool_print command and check if it outputs em pool
@@ -232,15 +238,15 @@ Test Pool Print
     @{cm_regex} =    Create List
     ...    EM Event Pool
     ...    -{13}
-    ...    ^\\s{2}id\\s+name\\s+type offset uarea sizes\\s+\\[size count\\(used/free\\) cache\\](?m)
+    ...    (?m)^\\s{2}id\\s+name\\s+type offset uarea sizes\\s+\\[size count\\(used/free\\) cache\\]
 
     # em_pool_print --id 0x1
     ${id_regex} =    Catenate    SEPARATOR=
-    ...    ^\\s{2}0x1\\s+default\\s+buf\\s+00\\s+00\\s+04\\s+
+    ...    (?m)^\\s{2}0x1\\s+default\\s+buf\\s+00\\s+00\\s+04\\s+
     ...    0:\\[sz=256 n=16384\\(\\d+\\/\\d+\\) \\$=64\\]\\s+
     ...    1:\\[sz=512 n=1024\\(\\d+\\/\\d+\\) \\$=32\\]\\s+
     ...    2:\\[sz=1024 n=1024\\(\\d+\\/\\d+\\) \\$=16\\]\\s+
-    ...    3:\\[sz=2048 n=1024\\(\\d+\\/\\d+\\) \\$=8\\](?m)
+    ...    3:\\[sz=2048 n=1024\\(\\d+\\/\\d+\\) \\$=8\\]
 
     @{pool_id_regex} =    Create List
     ...    @{cm_regex}
@@ -252,15 +258,15 @@ Test Pool Print
     END
 
     ${id_lack_arg} =    Execute Command    em_pool_print --id
-    Should Match Regexp    ${id_lack_arg}    ^Error: option requires an argument -- 'id'(?m)
+    Should Match Regexp    ${id_lack_arg}    (?m)^Error: option requires an argument -- 'id'
 
     # em_pool_print --name appl_pool_1
     ${name_regex} =    Catenate    SEPARATOR=
-    ...    ^\\s{2}0x[A-Fa-f0-9]+\\s+appl_pool_1\\s+pkt\\s+00\\s+00\\s+04\\s+
+    ...    (?m)^\\s{2}0x[A-Fa-f0-9]+\\s+appl_pool_1\\s+pkt\\s+00\\s+00\\s+04\\s+
     ...    0:\\[sz=256 n=16384\\(\\d+\\/\\d+\\) \\$=128\\]\\s+
     ...    1:\\[sz=512 n=1024\\(\\d+\\/\\d+\\) \\$=64\\]\\s+
     ...    2:\\[sz=1024 n=1024\\(\\d+\\/\\d+\\) \\$=32\\]\\s+
-    ...    3:\\[sz=2048 n=1024\\(\\d+\\/\\d+\\) \\$=16\\](?m)
+    ...    3:\\[sz=2048 n=1024\\(\\d+\\/\\d+\\) \\$=16\\]
 
     @{pool_name_regex} =    Create List
     ...    @{cm_regex}
@@ -281,7 +287,7 @@ Test Pool Stats
 
     @{pool_stats_regex} =    Create List
     ...    ${stats_fmt}
-    ...    ^([0-9]+\\s+){8}[0-9]+\\s?(?m)
+    ...    (?m)^([0-9]+\\s+){8}[0-9]+\\s?
 
     ${pool_stats} =    Execute Command    em_pool_stats -i 0x1
     Should Match Regexp    ${pool_stats}    EM pool statistics for pool 0x[A-Fa-f0-9]+:
@@ -300,20 +306,20 @@ Test Queue Print
     ...    queue info as expected.
 
     ${queue_fmt} =    Catenate    SEPARATOR=
-    ...    ^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Agrp\\s+EO\\s+
-    ...    Multi-rcv\\s+Max-events\\s+Ctx(?m)
+    ...    (?m)^Handle\\s+Name\\s+Priority\\s+Type\\s+State\\s+Qgrp\\s+Agrp\\s+EO\\s+
+    ...    Multi-rcv\\s+Max-events\\s+Ctx
 
     ${unsched_queue} =    Catenate    SEPARATOR=
-    ...    ^0x[A-Fa-f0-9]+\\s+EMctrl-unschedQ-core0\\s+255\\s+UNSCH\\s+UNSCH\\s+
-    ...    \\(nil\\)\\s+\\(nil\\)\\s+\\(nil\\)\\s+N\\s+0\\s+N(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+EMctrl-unschedQ-thr\\d+\\s+255\\s+UNSCH\\s+UNSCH\\s+
+    ...    \\(nil\\)\\s+\\(nil\\)\\s+\\(nil\\)\\s+N\\s+0\\s+N
 
     ${unsched_shared} =    Catenate    SEPARATOR=
-    ...    ^0x[A-Fa-f0-9]+\\s+EMctrl-unschedQ-shared\\s+255\\s+UNSCH\\s+UNSCH\\s+
-    ...    \\(nil\\)\\s+\\(nil\\)\\s+\\(nil\\)\\s+N\\s+0\\s+N(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+EMctrl-unschedQ-shared\\s+255\\s+UNSCH\\s+UNSCH\\s+
+    ...    \\(nil\\)\\s+\\(nil\\)\\s+\\(nil\\)\\s+N\\s+0\\s+N
 
     ${queue_ab} =    Catenate    SEPARATOR=
-    ...    ^0x[A-Fa-f0-9]+\\s+queue [AB]\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+
-    ...    \\s+\\(nil\\)\\s+0x[A-Fa-f0-9]+\\s+N\\s+1\\s+Y(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+queue [AB]\\s+4\\s+ATOMIC\\s+READY\\s+0x[A-Fa-f0-9]+
+    ...    \\s+\\(nil\\)\\s+0x[A-Fa-f0-9]+\\s+N\\s+1\\s+Y
 
     # 127 is calculated as (QUEUE_INFO_LEN - 1) where QUEUE_INFO_LEN is defined
     # in em_queue.c
@@ -333,14 +339,14 @@ Test Queue Print
     # em_queue_print -c
     @{queue_capa_regex} =    Create List
     ...    ODP Queue Capabilities
-    ...    ^\\s{2}Max number of ODP queues: \\d+(?m)
+    ...    (?m)^\\s{2}Max number of ODP queues: \\d+
     ...    EM Queues
-    ...    ^\\s{2}Max number of EM queues: \\d+ \\(0x[A-Fa-f0-9]+\\)(?m)
-    ...    ^\\s{2}EM queue handle offset: \\d+ \\(0x[A-Fa-f0-9]+\\)(?m)
-    ...    ^\\s{2}EM queue range:(?m)
-    ...    ^\\s{4}static range:(?m)
-    ...    ^\\s{4}internal range:(?m)
-    ...    ^\\s{4}dynamic range:(?m)
+    ...    (?m)^\\s{2}Max number of EM queues: \\d+ \\(0x[A-Fa-f0-9]+\\)
+    ...    (?m)^\\s{2}EM queue handle offset: \\d+ \\(0x[A-Fa-f0-9]+\\)
+    ...    (?m)^\\s{2}EM queue range:
+    ...    (?m)^\\s{4}static range:
+    ...    (?m)^\\s{4}internal range:
+    ...    (?m)^\\s{4}dynamic range:
 
     ${queue_capa} =    Execute Command    em_queue_print -c
     FOR    ${line}    IN    @{queue_capa_regex}
@@ -355,9 +361,9 @@ Test Queue Group Print
     # em_queue_group.c
     @{qgrp_regex} =    Create List
     ...    EM Queue group\\(s\\): 1
-    ...    ^ID\\s+Name\\s+EM-mask\\s+Cpumask\\s+ODP-mask\\s+Q-num(?m)
+    ...    (?m)^ID\\s+Name\\s+EM-mask\\s+Cpumask\\s+ODP-mask\\s+Q-num
     ...    -{108}
-    ...    ^0x[A-Fa-f0-9]+\\s+default\\s+0x[A-Fa-f0-9]+\\s+0x[A-Fa-f0-9]+\\s+0x[A-Fa-f0-9]+\\s+2(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+default\\s+0x[A-Fa-f0-9]+\\s+0x[A-Fa-f0-9]+\\s+0x[A-Fa-f0-9]+\\s+2
 
     ${qgrp_all} =    Execute Command    em_qgrp_print --all
     ${qgrp} =    Execute Command    em_qgrp_print
@@ -371,9 +377,9 @@ Test Queue Group Print
     # 74 is calculated as (QGRP_Q_LEN - 1) where QGRP_Q_LEN is defined in em_queue_group.c
     @{qgrp_default_regex} =    Create List
     ...    Queue group 0x[A-Fa-f0-9]+\\(default\\) has 2 queue\\(s\\):
-    ...    ^Id\\s+Name\\s+Priority\\s+Type\\s+State\\s+Ctx(?m)
+    ...    (?m)^Id\\s+Name\\s+Priority\\s+Type\\s+State\\s+Ctx
     ...    -{74}
-    ...    ^0x[A-Fa-f0-9]+\\s+queue [AB]\\s+4\\s+ATOMIC\\s+READY\\s+Y(?m)
+    ...    (?m)^0x[A-Fa-f0-9]+\\s+queue [AB]\\s+4\\s+ATOMIC\\s+READY\\s+Y
 
     ${qgrp_default} =    Execute Command    em_qgrp_print -n default
     FOR    ${line}    IN    @{qgrp_default_regex}
@@ -382,11 +388,11 @@ Test Queue Group Print
 
     # Should print error when fetching info about a non-existing queue group
     ${qgrp_non_exist} =    Execute Command    em_qgrp_print -n non-exist
-    Should Match Regexp    ${qgrp_non_exist}    ^Error: can't find queue group non-exist!\\s?(?m)
+    Should Match Regexp    ${qgrp_non_exist}    (?m)^Error: can't find queue group non-exist!\\s?
 
 Test Core Print
     [Documentation]    Test em_core_print command and check if it outputs core
     ...    mapping as expected.
 
     ${core_map} =    Execute Command    em_core_print
-    Should Match Regexp    ${core_map}    Core mapping: EM-core <-> phys-core <-> ODP-thread
+    Should Match Regexp    ${core_map}    EM-core <-> phys-core <-> ODP-thread <-> type <-> pid

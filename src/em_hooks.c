@@ -28,7 +28,23 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdint.h>
+#include <string.h>
+
+#include <event_machine.h>
+
+#include "em_error.h"
+#include "em_hooks.h"
+#include "em_hook_types.h"
+#include "em_mem.h"
 
 static hook_tbl_t **
 get_hook_tbl(const uint8_t hook_type, hook_storage_t **hook_storage /*out*/);
@@ -45,9 +61,8 @@ pack_hook_tbl(hook_tbl_t hook_tbl[], unsigned int idx);
 em_status_t
 hooks_init(const em_api_hooks_t *api_hooks, const em_idle_hooks_t *idle_hooks)
 {
+	hook_fn_t hook_fn;
 	em_status_t stat = EM_OK;
-
-	EM_PRINT("EM callbacks init\n");
 
 	memset(&em_shm->dispatch_enter_cb_storage, 0, sizeof(hook_storage_t));
 	memset(&em_shm->dispatch_exit_cb_storage, 0, sizeof(hook_storage_t));
@@ -87,29 +102,32 @@ hooks_init(const em_api_hooks_t *api_hooks, const em_idle_hooks_t *idle_hooks)
 	em_shm->to_active_hook_storage.idx = 0;
 	em_shm->while_idle_hook_storage.idx = 0;
 
-	env_spinlock_init(&em_shm->dispatch_enter_cb_storage.lock);
-	env_spinlock_init(&em_shm->dispatch_exit_cb_storage.lock);
-	env_spinlock_init(&em_shm->alloc_hook_storage.lock);
-	env_spinlock_init(&em_shm->free_hook_storage.lock);
-	env_spinlock_init(&em_shm->send_hook_storage.lock);
+	odp_ticketlock_init(&em_shm->dispatch_enter_cb_storage.lock);
+	odp_ticketlock_init(&em_shm->dispatch_exit_cb_storage.lock);
+	odp_ticketlock_init(&em_shm->alloc_hook_storage.lock);
+	odp_ticketlock_init(&em_shm->free_hook_storage.lock);
+	odp_ticketlock_init(&em_shm->send_hook_storage.lock);
 
-	env_spinlock_init(&em_shm->to_idle_hook_storage.lock);
-	env_spinlock_init(&em_shm->to_active_hook_storage.lock);
-	env_spinlock_init(&em_shm->while_idle_hook_storage.lock);
+	odp_ticketlock_init(&em_shm->to_idle_hook_storage.lock);
+	odp_ticketlock_init(&em_shm->to_active_hook_storage.lock);
+	odp_ticketlock_init(&em_shm->while_idle_hook_storage.lock);
 
 	if (EM_API_HOOKS_ENABLE) {
 		if (api_hooks->alloc_hook) {
-			stat = em_hooks_register_alloc(api_hooks->alloc_hook);
+			hook_fn.alloc = api_hooks->alloc_hook;
+			stat = hook_register(ALLOC_HOOK, hook_fn);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
 		if (api_hooks->free_hook) {
-			stat = em_hooks_register_free(api_hooks->free_hook);
+			hook_fn.free = api_hooks->free_hook;
+			stat = hook_register(FREE_HOOK, hook_fn);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
 		if (api_hooks->send_hook) {
-			stat = em_hooks_register_send(api_hooks->send_hook);
+			hook_fn.send = api_hooks->send_hook;
+			stat = hook_register(SEND_HOOK, hook_fn);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
@@ -117,17 +135,20 @@ hooks_init(const em_api_hooks_t *api_hooks, const em_idle_hooks_t *idle_hooks)
 
 	if (EM_IDLE_HOOKS_ENABLE) {
 		if (idle_hooks->to_idle_hook) {
-			stat = em_hooks_register_to_idle(idle_hooks->to_idle_hook);
+			hook_fn.to_idle = idle_hooks->to_idle_hook;
+			stat = hook_register(TO_IDLE_HOOK, hook_fn);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
 		if (idle_hooks->to_active_hook) {
-			stat = em_hooks_register_to_active(idle_hooks->to_active_hook);
+			hook_fn.to_active = idle_hooks->to_active_hook;
+			stat = hook_register(TO_ACTIVE_HOOK, hook_fn);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
 		if (idle_hooks->while_idle_hook) {
-			stat = em_hooks_register_while_idle(idle_hooks->while_idle_hook);
+			hook_fn.while_idle = idle_hooks->while_idle_hook;
+			stat = hook_register(WHILE_IDLE_HOOK, hook_fn);
 			if (unlikely(stat != EM_OK))
 				return stat;
 		}
@@ -152,7 +173,7 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 	if (unlikely(active_tbl_ptr == NULL))
 		return EM_ERR_BAD_ID;
 
-	env_spinlock_lock(&hook_storage->lock);
+	odp_ticketlock_lock(&hook_storage->lock);
 
 	/* TODO: Check that no thread is still using the new memory area */
 
@@ -174,7 +195,7 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 			break;
 	}
 	if (unlikely(i == EM_CALLBACKS_MAX)) {
-		env_spinlock_unlock(&hook_storage->lock);
+		odp_ticketlock_unlock(&hook_storage->lock);
 		return EM_ERR_ALLOC_FAILED;
 	}
 	/* Add new callback */
@@ -185,7 +206,7 @@ hook_register(uint8_t hook_type, hook_fn_t hook_fn)
 
 	hook_storage->idx = next_idx;
 
-	env_spinlock_unlock(&hook_storage->lock);
+	odp_ticketlock_unlock(&hook_storage->lock);
 
 	return EM_OK;
 }
@@ -206,7 +227,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 	if (unlikely(active_tbl_ptr == NULL))
 		return EM_ERR_BAD_ID;
 
-	env_spinlock_lock(&hook_storage->lock);
+	odp_ticketlock_lock(&hook_storage->lock);
 
 	/* TODO: Check that no thread is still using the new memory area */
 
@@ -227,7 +248,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 		if (next_tbl->tbl[i].void_hook == hook_fn.void_hook)
 			break;
 	if (unlikely(i == EM_CALLBACKS_MAX)) {
-		env_spinlock_unlock(&hook_storage->lock);
+		odp_ticketlock_unlock(&hook_storage->lock);
 		return EM_ERR_NOT_FOUND;
 	}
 
@@ -238,7 +259,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 	next_tbl->tbl[i].void_hook = NULL;
 	ret = pack_hook_tbl(next_tbl, i);
 	if (unlikely(ret != 0)) {
-		env_spinlock_unlock(&hook_storage->lock);
+		odp_ticketlock_unlock(&hook_storage->lock);
 		return EM_ERR_BAD_POINTER;
 	}
 
@@ -247,7 +268,7 @@ hook_unregister(uint8_t hook_type, hook_fn_t hook_fn)
 
 	hook_storage->idx = next_idx;
 
-	env_spinlock_unlock(&hook_storage->lock);
+	odp_ticketlock_unlock(&hook_storage->lock);
 
 	return EM_OK;
 }

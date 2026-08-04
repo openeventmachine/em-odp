@@ -63,7 +63,7 @@ typedef union test_queue_ctx_t {
 		/** Input queue (this queue) */
 		em_queue_t queue;
 		/** Queue statistics: events dispatched from queue */
-		env_atomic64_t event_count;
+		odp_atomic_u64_t event_count;
 	};
 	uint8_t u8[ENV_CACHE_LINE_SIZE];
 } test_queue_ctx_t ENV_CACHE_LINE_ALIGNED;
@@ -212,7 +212,7 @@ void test_start(const appl_conf_t *appl_conf)
 	    notif_tbl[0].queue == EM_QUEUE_UNDEF)
 		APPL_EXIT_FAILURE("test-eo start notif setup failed!");
 
-	queue_prio = em_queue_get_priority(notif_tbl[0].queue);
+	queue_prio = em_queue_priority(notif_tbl[0].queue);
 	if (queue_prio != EM_QUEUE_PRIO_NORMAL)
 		APPL_EXIT_FAILURE("notif queue priority comparison failed!");
 
@@ -277,21 +277,21 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	em_core_mask_t phys_mask;
 
 	/* Queue group core mask tests: */
-	stat = em_queue_group_get_mask(EM_QUEUE_GROUP_DEFAULT, &mask);
+	stat = em_queue_group_mask(EM_QUEUE_GROUP_DEFAULT, &mask);
 	if (stat != EM_OK)
-		APPL_EXIT_FAILURE("em_queue_group_get_mask():%" PRI_STAT "", stat);
+		APPL_EXIT_FAILURE("em_queue_group_mask():%" PRI_STAT "", stat);
 	em_core_mask_tostr(mstr, sizeof(mstr), &mask);
-	em_core_mask_get_bits(mbits, mbits_len, &mask);
+	em_core_mask_bits(mbits, mbits_len, &mask);
 	printf("EM_QUEUE_GROUP_DEFAULT:%s\n", mstr);
 	printf("EM_QUEUE_GROUP_DEFAULT bits:");
 	for (i = mbits_len - 1; i >= 0; i--)
 		printf(" mbits[%d]:0x%" PRIx64 "", i, mbits[i]);
 	printf("\n");
 
-	em_core_mask_get_physical(&phys_mask, &mask);
-	len = em_core_mask_get_bits(mbits, mbits_len, &phys_mask);
+	em_core_mask_physical(&phys_mask, &mask);
+	len = em_core_mask_bits(mbits, mbits_len, &phys_mask);
 	if (len <= 0)
-		APPL_EXIT_FAILURE("em_core_mask_get_bits():%d", len);
+		APPL_EXIT_FAILURE("em_core_mask_bits():%d", len);
 	printf("physical core mask bits:");
 	for (i = len - 1; i >= 0; i--)
 		printf(" mbits[%d]:0x%" PRIx64 "", i, mbits[i]);
@@ -301,9 +301,9 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 		mbits[i] = 0xabbaacdcdeadbeef;
 	em_core_mask_set_bits(mbits, mbits_len, &mask);
 	em_core_mask_tostr(mstr, sizeof(mstr), &mask);
-	len = em_core_mask_get_bits(mbits, mbits_len, &mask);
+	len = em_core_mask_bits(mbits, mbits_len, &mask);
 	if (len <= 0)
-		APPL_EXIT_FAILURE("em_core_mask_get_bits():%d", len);
+		APPL_EXIT_FAILURE("em_core_mask_bits():%d", len);
 	printf("core mask test:%s\n", mstr);
 	printf("core mask test bits:");
 	for (i = len - 1; i >= 0; i--)
@@ -327,9 +327,9 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	if (test_eo_ctx->queues[1] == EM_QUEUE_UNDEF)
 		APPL_EXIT_FAILURE("test-q-parallel creation failed!");
 
-	/* Create a parallel-ordered queue */
+	/* Create an ordered queue */
 	test_eo_ctx->queues[2] = em_queue_create("test-q-parord",
-						 EM_QUEUE_TYPE_PARALLEL_ORDERED,
+						 EM_QUEUE_TYPE_ORDERED,
 						 EM_QUEUE_PRIO_NORMAL,
 						 EM_QUEUE_GROUP_DEFAULT, NULL);
 	if (test_eo_ctx->queues[2] == EM_QUEUE_UNDEF)
@@ -351,14 +351,14 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	/* Initialize queue context data */
 	for (i = 0; i < NBR_TEST_QUEUES; i++) {
 		test_queue_ctx_t *const test_queue_ctx =
-			em_queue_get_context(test_eo_ctx->queues[i]);
+			em_queue_context(test_eo_ctx->queues[i]);
 
 		if (test_queue_ctx == NULL)
 			APPL_EXIT_FAILURE("Queue context get failed!");
 		/* Store the queue hdl into the queue context */
 		test_queue_ctx->queue = test_eo_ctx->queues[i];
 		/* Initialize the queue specific event counter */
-		env_atomic64_init(&test_queue_ctx->event_count);
+		odp_atomic_init_u64(&test_queue_ctx->event_count, 0);
 	}
 
 	stat  = em_eo_add_queue_sync(eo, test_eo_ctx->queues[0]);
@@ -374,10 +374,10 @@ test_eo_start(void *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	if (test_qgrp == EM_QUEUE_GROUP_UNDEF)
 		APPL_EXIT_FAILURE("Test queue group creation failed!");
 
-	size_t sz = em_queue_group_get_name(test_qgrp, test_qgrp_name,
-					    sizeof(TEST_QUEUE_GROUP_NAME));
+	size_t sz = em_queue_group_name(test_qgrp, test_qgrp_name,
+					sizeof(TEST_QUEUE_GROUP_NAME));
 	if (sz == 0)
-		APPL_EXIT_FAILURE("em_queue_group_get_name():%zu", sz);
+		APPL_EXIT_FAILURE("em_queue_group_name():%zu", sz);
 	if (strncmp(test_qgrp_name, TEST_QUEUE_GROUP_NAME,
 		    sizeof(TEST_QUEUE_GROUP_NAME)) != 0)
 		APPL_EXIT_FAILURE("Test queue group get name failed!");
@@ -466,14 +466,14 @@ setup_test_events(em_queue_t queues[], const int nbr_queues)
 			if (event == EM_EVENT_UNDEF)
 				APPL_EXIT_FAILURE("event alloc failed!");
 
-			if (event_size != em_event_get_size(event))
+			if (event_size != em_event_size(event))
 				APPL_EXIT_FAILURE("event alloc size error!");
 
 			/* Print event size info for the first alloc */
 			if (i == 0 && j == 0)
 				printf("%s(): size:em_alloc(%u)=actual:%u\n",
 				       __func__, event_size,
-				       em_event_get_size(event));
+				       em_event_size(event));
 
 			test_event = em_event_pointer(event);
 			test_event->event_nbr = j;
@@ -513,7 +513,7 @@ test_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 		return;
 	}
 
-	queue_evcnt = env_atomic64_add_return(&test_queue_ctx->event_count, 1);
+	queue_evcnt = odp_atomic_fetch_inc_u64(&test_queue_ctx->event_count) + 1;
 	core_evcnt = ++test_eo_ctx->core_stat[core_id].event_count;
 
 	idx = test_event->event_nbr % NBR_TEST_QUEUES;
@@ -521,12 +521,12 @@ test_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 	queue_out = test_eo_ctx->queues[idx];
 
 	if (queue_evcnt % PRINT_EVCOUNT == 1) {
-		em_queue_type_t queue_type = em_queue_get_type(queue);
+		em_queue_type_t queue_type = em_queue_type(queue);
 		const char *qtype_name;
 		char qname[EM_QUEUE_NAME_LEN];
 		size_t len;
 
-		len = em_queue_get_name(queue, qname, sizeof(qname));
+		len = em_queue_name(queue, qname, sizeof(qname));
 		if (len == 0) /* all test queues have names */
 			APPL_EXIT_FAILURE("queue name error!");
 
@@ -537,7 +537,7 @@ test_eo_receive(void *eo_ctx, em_event_t event, em_event_type_t type,
 		case EM_QUEUE_TYPE_PARALLEL:
 			qtype_name = "type:parallel";
 			break;
-		case EM_QUEUE_TYPE_PARALLEL_ORDERED:
+		case EM_QUEUE_TYPE_ORDERED:
 			qtype_name = "type:ordered ";
 			break;
 		default:

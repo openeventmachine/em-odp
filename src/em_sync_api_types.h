@@ -37,9 +37,24 @@
  *
  */
 
+#include <stdbool.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/*
+ * Forward declaration — sync_api_t holds queue_elem_t* fields (pointers only).
+ * Using a forward declaration instead of #include "em_queue_types.h" keeps
+ * the *_types.h layer free of inter-includes, preventing circular
+ * dependencies if a reverse pointer is ever added.
+ */
+struct queue_elem_t;
+typedef struct queue_elem_t queue_elem_t;
 
 /**
  * @typedef sync_api_t
@@ -47,12 +62,12 @@ extern "C" {
  */
 typedef struct {
 	struct {
-		/** Core-local ctrl queue */
-		em_queue_t core_unsched_queue;
-		/** Queue element for the core-local unsched queue above */
-		queue_elem_t *core_unsched_qelem;
+		/** Thread-local ctrl queue */
+		em_queue_t thr_unsched_queue;
+		/** Queue element for the thread-local unsched queue above */
+		queue_elem_t *thr_unsched_qelem;
 		/** Corresponding ODP plain queue */
-		odp_queue_t core_odp_plain_queue;
+		odp_queue_t thr_odp_plain_queue;
 
 		/** Shared ctrl queue */
 		em_queue_t shared_unsched_queue;
@@ -61,7 +76,7 @@ typedef struct {
 		/** Corresponding ODP plain queue */
 		odp_queue_t shared_odp_plain_queue;
 	} ctrl_poll;
-	/** Indication whether a sync-API is in progress on this core */
+	/** Indication whether a sync-API is in progress on this thread */
 	bool in_progress;
 } sync_api_t;
 

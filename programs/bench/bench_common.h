@@ -1,4 +1,4 @@
-/* Copyright (c) 2023, Nokia
+/* Copyright (c) 2023-2025, Nokia
  * All rights reserved.
  *
  * SPDX-License-Identifier:     BSD-3-Clause
@@ -9,12 +9,14 @@
 
 #include <inttypes.h>
 #include <stdlib.h>
-#include <event_machine.h>
 #include <odp_api.h>
 #include <odp/helper/odph_api.h>
+#include <event_machine.h>
+#include <event_machine/helper/event_machine_helper.h>
+#include <event_machine/platform/env/environment.h>
 
 /* Number of API function calls per test case */
-#define REPEAT_COUNT 1000
+#define REPEAT_COUNT 500
 
 /* Default number of rounds per test case */
 #define ROUNDS 1000u
@@ -52,7 +54,6 @@ typedef struct {
 
 	/* Override default test name */
 	const char *desc;
-
 } bench_info_t;
 
 /* Common command line options */
@@ -84,7 +85,6 @@ typedef struct {
 
 	/* Benchmark run failed */
 	int bench_failed;
-
 } run_bench_arg_t;
 
 extern odp_atomic_u32_t exit_thread;

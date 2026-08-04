@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,41 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/helper/event_machine_helper.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_core.h"
+#include "em_core_types.h"
+#include "em_error.h"
+#include "em_event_group.h"
+#include "em_init.h"
+#include "em_internal_event.h"
+#include "em_internal_event_types.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_queue_group_types.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
+#include "misc/list.h"
+#include "misc/objpool.h"
 
 /**
  * em_queue_group_modify() triggers an internal 'Done'-notification event
@@ -39,7 +73,15 @@ typedef struct {
 	em_core_mask_t new_mask;
 } q_grp_done_callback_args_t;
 
-static em_status_t core_queue_groups_create(void);
+/*
+ * Assert that the value of EM_MAX_QUEUE_GROUPS is large enough to support
+ * per-core queue groups (up to EM_MAX_CORES), the default queue group
+ * as well as potential further queue groups the user might want to create.
+ */
+COMPILE_TIME_ASSERT(EM_MAX_QUEUE_GROUPS > EM_MAX_CORES,
+		    EM_MAX_QUEUE_GROUPS__TOO_SMALL);
+
+static em_status_t core_queue_group_create(void);
 static em_status_t core_queue_group_join(void);
 static em_queue_group_t default_queue_group_create(void);
 static em_queue_group_t default_queue_group_join(void);
@@ -98,7 +140,7 @@ read_config_file(void)
 	EM_PRINT("EM queue group config:\n");
 
 	/*
-	 * Option: esv.enable - runtime enable/disable
+	 * Option: queue_group.create_core_queue_groups
 	 */
 	conf_str = "queue_group.create_core_queue_groups";
 	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
@@ -111,7 +153,19 @@ read_config_file(void)
 	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
 		 val_bool);
 
-	em_shm->opt.queue_group.create_core_queue_groups = val_bool;
+	/*
+	 * Option: queue_group.term_local_flush_orphans
+	 */
+	conf_str = "queue_group.term_local_flush_orphans";
+	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
+	if (unlikely(!ret)) {
+		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
+		return -1;
+	}
+	/* store & print the value */
+	em_shm->opt.queue_group.term_local_flush_orphans = val_bool;
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
+		 val_bool);
 
 	return 0;
 }
@@ -122,7 +176,7 @@ read_config_file(void)
 em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 			     queue_group_pool_t *const queue_group_pool)
 {
-	const uint32_t objpool_subpools = MIN(4, OBJSUBPOOLS_MAX);
+	const uint32_t num_subpools = MIN(4, OBJSUBPOOLS_MAX);
 	queue_group_elem_t *queue_group_elem;
 	int ret;
 
@@ -131,23 +185,40 @@ em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 
 	memset(queue_group_tbl, 0, sizeof(queue_group_tbl_t));
 	memset(queue_group_pool, 0, sizeof(queue_group_pool_t));
-	env_atomic32_init(&em_shm->queue_group_count);
+	odp_atomic_init_u32(&em_shm->queue_group_count, 0);
 
 	for (int i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
 		queue_group_elem = &queue_group_tbl->queue_group_elem[i];
 		queue_group_elem->queue_group = qgrp_idx2hdl(i);
 		/* Initialize empty queue list */
-		env_spinlock_init(&queue_group_elem->lock);
+		odp_ticketlock_init(&queue_group_elem->lock);
 		list_init(&queue_group_elem->queue_list);
 	}
 
-	ret = objpool_init(&queue_group_pool->objpool, objpool_subpools);
+	/*
+	 * objpool for core specific queue group elems (1 -> EM_MAX_CORES)
+	 */
+	ret = objpool_init(&queue_group_pool->objpool_rsvd, num_subpools);
 	if (ret != 0)
 		return EM_ERR_LIB_FAILED;
 
-	for (uint32_t i = 0; i < EM_MAX_QUEUE_GROUPS; i++) {
+	for (uint32_t i = 0; i < EM_MAX_CORES; i++) {
 		queue_group_elem = &queue_group_tbl->queue_group_elem[i];
-		objpool_add(&queue_group_pool->objpool, i % objpool_subpools,
+		objpool_add(&queue_group_pool->objpool_rsvd, i % num_subpools,
+			    &queue_group_elem->queue_group_pool_elem);
+	}
+
+	/*
+	 * objpool for the rest of the queue group elems
+	 * (EM_MAX_CORES + 1 -> EM_MAX_QUEUE_GROUPS)
+	 */
+	ret = objpool_init(&queue_group_pool->objpool_dyn, num_subpools);
+	if (ret != 0)
+		return EM_ERR_LIB_FAILED;
+
+	for (uint32_t i = EM_MAX_CORES; i < EM_MAX_QUEUE_GROUPS; i++) {
+		queue_group_elem = &queue_group_tbl->queue_group_elem[i];
+		objpool_add(&queue_group_pool->objpool_dyn, i % num_subpools,
 			    &queue_group_elem->queue_group_pool_elem);
 	}
 
@@ -159,18 +230,6 @@ em_status_t queue_group_init(queue_group_tbl_t *const queue_group_tbl,
 	if (default_queue_group != EM_QUEUE_GROUP_DEFAULT) {
 		EM_LOG(EM_LOG_ERR, "default_queue_group_create() failed!\n");
 		return EM_ERR_LIB_FAILED;
-	}
-
-	/*
-	 * Create EM single-core queue groups if enabled by config.
-	 */
-	if (em_shm->opt.queue_group.create_core_queue_groups) {
-		em_status_t stat = core_queue_groups_create();
-
-		if (stat != EM_OK) {
-			EM_LOG(EM_LOG_ERR, "core_queue_groups_create():%" PRI_STAT "\n", stat);
-			return stat;
-		}
 	}
 
 	return EM_OK;
@@ -189,19 +248,78 @@ em_status_t queue_group_init_local(void)
 	}
 
 	/*
-	 * Update the single-core queue group with this core's information
-	 * if enabled by config.
+	 * Create EM single-core queue group if enabled by config.
 	 */
 	if (em_shm->opt.queue_group.create_core_queue_groups) {
-		em_status_t stat = core_queue_group_join();
+		em_status_t stat = core_queue_group_create();
+
+		if (stat != EM_OK) {
+			EM_LOG(EM_LOG_ERR, "core_queue_group_create():%" PRI_STAT "\n", stat);
+			return stat;
+		}
+
+		/*
+		 * Update the single-core queue group with this core's information
+		 */
+		stat = core_queue_group_join();
 
 		if (stat != EM_OK) {
 			EM_LOG(EM_LOG_ERR, "core_queue_group_join():%" PRI_STAT "\n", stat);
-			return EM_ERR_LIB_FAILED;
+			return stat;
 		}
 	}
 
 	return EM_OK;
+}
+
+em_status_t queue_group_term(void)
+{
+	em_status_t stat = EM_OK;
+	em_queue_group_t qgrp = em_queue_group_first(NULL);
+
+	/*
+	 * Destroy all ODP schedule groups to prevent resource leaks
+	 * and allow proper re-initialization.
+	 */
+	while (qgrp != EM_QUEUE_GROUP_UNDEF) {
+		queue_group_elem_t *qgrp_elem = queue_group_elem_get(qgrp);
+
+		if (unlikely(!qgrp_elem)) {
+			EM_LOG(EM_LOG_ERR, "%s(): qgrp_elem NULL\n", __func__);
+			continue;
+		}
+
+		if (unlikely(qgrp_elem->ongoing_delete)) {
+			stat = EM_ERR_BAD_STATE;
+			EM_LOG(EM_LOG_ERR,
+			       "Bad state qgrp:%" PRI_QGRP " delete is ongoing\n", qgrp);
+			/* Continue cleanup even if delete is ongoing */
+		}
+
+		if (unlikely(odp_ticketlock_is_locked(&qgrp_elem->lock))) {
+			stat = EM_ERR_BAD_STATE;
+			EM_LOG(EM_LOG_ERR, "Bad state qgrp:%" PRI_QGRP " - lock is locked\n", qgrp);
+			/* Continue cleanup even if lock is locked */
+		}
+
+		if (qgrp_elem->odp_sched_group != ODP_SCHED_GROUP_INVALID) {
+			int ret = odp_schedule_group_destroy(qgrp_elem->odp_sched_group);
+
+			if (unlikely(ret != 0)) {
+				EM_LOG(EM_LOG_ERR,
+				       "ODP schedule group destroy failed qgrp:%"
+				       PRI_QGRP " ret:%d\n", qgrp, ret);
+				stat = EM_ERR_LIB_FAILED;
+				/* Continue cleanup even if destroy fails */
+			}
+
+			qgrp_elem->odp_sched_group = ODP_SCHED_GROUP_INVALID;
+		}
+
+		qgrp = em_queue_group_next();
+	}
+
+	return stat;
 }
 
 /**
@@ -219,41 +337,51 @@ queue_group_alloc(em_queue_group_t queue_group)
 {
 	queue_group_elem_t *qgrp_elem;
 	objpool_elem_t *qgrp_pool_elem;
+	queue_group_pool_t *const qgrp_pools = &em_shm->queue_group_pool;
 
 	if (queue_group == EM_QUEUE_GROUP_UNDEF) {
 		/*
 		 * Allocate any queue group, i.e. take next available
 		 */
-		qgrp_pool_elem = objpool_rem(&em_shm->queue_group_pool.objpool,
-					     em_core_id());
-		if (unlikely(qgrp_pool_elem == NULL))
-			return EM_QUEUE_GROUP_UNDEF;
+		int core = em_core_id();
+
+		qgrp_pool_elem = objpool_rem(&qgrp_pools->objpool_dyn, core);
+
+		if (unlikely(qgrp_pool_elem == NULL)) {
+			/* try the core specific queue group pool next */
+			qgrp_pool_elem = objpool_rem(&qgrp_pools->objpool_rsvd, core);
+			if (unlikely(qgrp_pool_elem == NULL))
+				return EM_QUEUE_GROUP_UNDEF;
+		}
 
 		qgrp_elem = queue_group_poolelem2qgrpelem(qgrp_pool_elem);
 	} else {
 		/*
 		 * Allocate a specific queue group, handle given as argument
 		 */
+		objpool_t *const objpool = qgrp_hdl2idx(queue_group) < EM_MAX_CORES ?
+					   &qgrp_pools->objpool_rsvd : &qgrp_pools->objpool_dyn;
+
 		qgrp_elem = queue_group_elem_get(queue_group);
 		if (unlikely(qgrp_elem == NULL))
 			return EM_QUEUE_GROUP_UNDEF;
 
-		env_spinlock_lock(&qgrp_elem->lock);
+		odp_ticketlock_lock(&qgrp_elem->lock);
 		/* Verify that the queue group is not allocated */
 		if (queue_group_allocated(qgrp_elem)) {
-			env_spinlock_unlock(&qgrp_elem->lock);
+			odp_ticketlock_unlock(&qgrp_elem->lock);
 			return EM_QUEUE_GROUP_UNDEF;
 		}
 
 		/* Remove the queue group from the pool */
-		int ret = objpool_rem_elem(&em_shm->queue_group_pool.objpool,
-					   &qgrp_elem->queue_group_pool_elem);
-		env_spinlock_unlock(&qgrp_elem->lock);
+		int ret = objpool_rem_elem(objpool, &qgrp_elem->queue_group_pool_elem);
+
+		odp_ticketlock_unlock(&qgrp_elem->lock);
 		if (unlikely(ret != 0))
 			return EM_QUEUE_GROUP_UNDEF;
 	}
 
-	env_atomic32_inc(&em_shm->queue_group_count);
+	odp_atomic_inc_u32(&em_shm->queue_group_count);
 	return qgrp_elem->queue_group;
 }
 
@@ -270,16 +398,52 @@ queue_group_free(em_queue_group_t queue_group)
 {
 	queue_group_elem_t *const queue_group_elem =
 		queue_group_elem_get(queue_group);
+	objpool_t *const objpool = qgrp_hdl2idx(queue_group) < EM_MAX_CORES ?
+				   &em_shm->queue_group_pool.objpool_rsvd :
+				   &em_shm->queue_group_pool.objpool_dyn;
 
 	if (unlikely(queue_group_elem == NULL))
 		return EM_ERR_BAD_ID;
 
-	objpool_add(&em_shm->queue_group_pool.objpool,
+	objpool_add(objpool,
 		    queue_group_elem->queue_group_pool_elem.subpool_idx,
 		    &queue_group_elem->queue_group_pool_elem);
 
-	env_atomic32_dec(&em_shm->queue_group_count);
+	odp_atomic_dec_u32(&em_shm->queue_group_count);
 	return EM_OK;
+}
+
+/**
+ * Create a new ODP schedule group
+ *
+ * @return ODP schedule group handle
+ */
+static odp_schedule_group_t
+create_odp_schedule_group(const char *name, const odp_thrmask_t *thrmask)
+{
+	odp_schedule_group_t odp_sched_group = ODP_SCHED_GROUP_INVALID;
+
+	odp_schedule_group_param_t param;
+
+	odp_schedule_group_param_init(&param);
+
+	/* Optimize cache stashing hints for EM */
+	param.cache_stash_hints.common.regions.event_data_l2 = 1;      /* EM event data */
+	param.cache_stash_hints.common.regions.event_user_area_l2 = 1; /* EM evhdr (+ EM uarea) */
+	param.cache_stash_hints.common.regions.queue_context_l2 = 1;   /* EM queue elem */
+
+	/* EM event data: */
+	param.cache_stash_hints.common.event_data.l2.offset = 0;
+	param.cache_stash_hints.common.event_data.l2.len = ODP_CACHE_LINE_SIZE;
+	/* EM evhdr + uarea: */
+	param.cache_stash_hints.common.event_user_area.l2.offset = 0;
+	param.cache_stash_hints.common.event_user_area.l2.len = sizeof(event_hdr_t);
+	/* EM queue elem: */
+	param.cache_stash_hints.common.queue_context.l2.offset = 0;
+	param.cache_stash_hints.common.queue_context.l2.len = MIN(sizeof(queue_elem_t),
+								  ODP_CACHE_LINE_SIZE);
+	odp_sched_group = odp_schedule_group_create_2(name, thrmask, &param);
+	return odp_sched_group;
 }
 
 /**
@@ -303,7 +467,6 @@ static em_queue_group_t default_queue_group_create(void)
 
 	mask = &default_qgrp_elem->core_mask;
 	em_core_mask_zero(mask);
-	em_core_mask_set_count(em_core_count(), mask);
 
 	odp_thrmask_zero(&zero_thrmask);
 
@@ -312,14 +475,17 @@ static em_queue_group_t default_queue_group_create(void)
 	 * Don't use the ODP_SCHED_GROUP_WORKER or other predefined ODP groups
 	 * since those groups can't be modified.
 	 * Create the group without any cores/threads and update it during
-	 * em_init_core() -> default_queue_group_join() calls for each
+	 * em_init_local/core() -> default_queue_group_join() calls for each
 	 * EM core.
 	 */
 	default_qgrp_elem->odp_sched_group = ODP_SCHED_GROUP_INVALID;
-	odp_sched_group = odp_schedule_group_create(EM_QUEUE_GROUP_DEFAULT_NAME,
-						    &zero_thrmask);
-	if (unlikely(odp_sched_group == ODP_SCHED_GROUP_INVALID))
+
+	odp_sched_group = create_odp_schedule_group(EM_QUEUE_GROUP_DEFAULT_NAME, &zero_thrmask);
+	if (unlikely(odp_sched_group == ODP_SCHED_GROUP_INVALID)) {
+		DBG_PRINT("ODP schedule group creation failed for 'EM_QUEUE_GROUP_DEFAULT'\n");
 		return EM_QUEUE_GROUP_UNDEF;
+	}
+
 	/* Store the created odp sched group as the EM default queue group */
 	default_qgrp_elem->odp_sched_group = odp_sched_group;
 
@@ -329,7 +495,7 @@ static em_queue_group_t default_queue_group_create(void)
 /**
  * Update the EM default queue group with valid group information for each
  * core local init and add the ODP thread-id to the scheduling mask.
- * Run by each call to em_init_core().
+ * Run by each call to em_init_local/core() for EM worker and control cores.
  */
 static em_queue_group_t default_queue_group_join(void)
 {
@@ -347,12 +513,12 @@ static em_queue_group_t default_queue_group_join(void)
 	odp_thrmask_zero(&odp_joinmask);
 	odp_thrmask_set(&odp_joinmask, odp_thr);
 
-	env_spinlock_lock(&default_qgrp_elem->lock);
+	odp_ticketlock_lock(&default_qgrp_elem->lock);
 	em_core_mask_set(core_id, &default_qgrp_elem->core_mask);
 	/* Join this thread into the "EM default" schedule group */
 	ret = odp_schedule_group_join(default_qgrp_elem->odp_sched_group,
 				      &odp_joinmask);
-	env_spinlock_unlock(&default_qgrp_elem->lock);
+	odp_ticketlock_unlock(&default_qgrp_elem->lock);
 
 	if (unlikely(ret))
 		return EM_QUEUE_GROUP_UNDEF;
@@ -369,13 +535,13 @@ static em_queue_group_t default_queue_group_join(void)
  */
 void queue_group_join_all(void)
 {
-	em_queue_group_t qgrp = em_queue_group_get_first(NULL);
+	em_queue_group_t qgrp = em_queue_group_first(NULL);
 	const int core_id = em_locm.core_id;
 
 	while (qgrp != EM_QUEUE_GROUP_UNDEF) {
 		queue_group_elem_t *qgrp_elem = queue_group_elem_get(qgrp);
 
-		env_spinlock_lock(&qgrp_elem->lock);
+		odp_ticketlock_lock(&qgrp_elem->lock);
 
 		int allocated = queue_group_allocated(qgrp_elem);
 		bool ongoing_delete = qgrp_elem->ongoing_delete;
@@ -385,13 +551,120 @@ void queue_group_join_all(void)
 			em_core_mask_set(core_id, &qgrp_elem->core_mask);
 			q_grp_add_core(qgrp_elem);
 		}
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
 
-		qgrp = em_queue_group_get_next();
+		qgrp = em_queue_group_next();
 	}
 }
 
-static em_status_t core_queue_groups_create(void)
+static inline queue_group_elem_t *
+list_node_to_qgrp_elem(const list_node_t *const list_node)
+{
+	queue_group_elem_t *qgrp_elem = (queue_group_elem_t *)((uintptr_t)list_node
+					- offsetof(queue_group_elem_t, qgrp_list_node));
+
+	return likely(list_node != NULL) ? qgrp_elem : NULL;
+}
+
+/**
+ * @brief The calling core leaves all queue groups it is part of
+ *
+ * Also flushes the scheduler from events from queues that belong to
+ * queue groups that would only be services by the terminating core.
+ *
+ * Main use case for em_term_local()/em_term_core()
+ *
+ * @param flush_orphan_qgrps  Flush the scheduler from events from queues that
+ *                            belong to queue groups that only this core is
+ *                            handling queues for.
+ */
+void queue_group_leave_all(bool flush_orphan_qgrps)
+{
+	em_queue_group_t qgrp = em_queue_group_first(NULL);
+
+	if (qgrp == EM_QUEUE_GROUP_UNDEF)
+		return;
+
+	const int core_id = em_locm.core_id;
+	queue_group_elem_t *qgrp_elem = queue_group_elem_get(qgrp);
+	em_core_mask_t this_core_only;
+	list_node_t qgrp_list;
+
+	em_core_mask_zero(&this_core_only);
+	em_core_mask_set(core_id, &this_core_only);
+	list_init(&qgrp_list);
+
+	while (qgrp_elem) {
+		odp_ticketlock_lock(&qgrp_elem->lock);
+
+		int allocated = queue_group_allocated(qgrp_elem);
+		bool ongoing_delete = qgrp_elem->ongoing_delete;
+		bool do_unlock = true;
+
+		if (allocated && !ongoing_delete &&
+		    em_core_mask_isset(core_id, &qgrp_elem->core_mask)) {
+			if (flush_orphan_qgrps &&
+			    em_core_mask_equal(&this_core_only, &qgrp_elem->core_mask) &&
+			    !list_is_empty(&qgrp_elem->queue_list)) {
+				/* No other cores handling queues in this qgrp - add to a list */
+				list_add(&qgrp_list, &qgrp_elem->qgrp_list_node);
+				/* keep the qgrp elems in the list locked */
+				do_unlock = false;
+			} else {
+				/* Remove the EM-core from the queue group */
+				q_grp_rem_core(qgrp_elem);
+				em_core_mask_clr(core_id, &qgrp_elem->core_mask);
+			}
+		}
+		if (do_unlock)
+			odp_ticketlock_unlock(&qgrp_elem->lock);
+
+		qgrp = em_queue_group_next();
+		/* qgrp_elem is NULL for EM_QUEUE_GROUP_UNDEF */
+		qgrp_elem = queue_group_elem_get(qgrp);
+	}
+
+	/* can contain qgrps only if 'flush_orphan_qgrps = true' */
+	if (!list_is_empty(&qgrp_list)) {
+		em_locm_t *const locm = &em_locm;
+		/*
+		 * Flush the scheduler from events from queues that belong to
+		 * queue groups that only this core is handling queues for.
+		 * This is needed to avoid events being stuck in the scheduler
+		 * when an EM-core is terminating.
+		 */
+		odp_schedule_resume();
+		locm->is_sched_paused = false;
+		flush_scheduler_events();
+		/*
+		 * Flush the scheduler from locally stashed events.
+		 */
+		odp_schedule_pause();
+		locm->is_sched_paused = true;
+		flush_scheduler_events();
+
+		/*
+		 * Drain the list of qgrp-elems that only this core is
+		 * handling: remove this core from them and unlock them.
+		 *
+		 * Use list_rem_first() to properly unlink each node from
+		 * the stack-local 'qgrp_list', ensuring no global
+		 * qgrp_list_node retains a back-pointer to the stack.
+		 */
+		const list_node_t *list_node;
+
+		while ((list_node = list_rem_first(&qgrp_list)) != NULL) {
+			qgrp_elem = list_node_to_qgrp_elem(list_node);
+			/* Remove the EM-core from the queue group */
+			q_grp_rem_core(qgrp_elem);
+			em_core_mask_clr(core_id, &qgrp_elem->core_mask);
+			/* unlock the qgrp-elem that was locked earlier */
+			odp_ticketlock_unlock(&qgrp_elem->lock);
+		}
+	}
+}
+
+static em_status_t core_queue_group_create(void)
 {
 	em_queue_group_t qgrp;
 	em_queue_group_t qgrp_req;
@@ -399,47 +672,61 @@ static em_status_t core_queue_groups_create(void)
 	em_core_mask_t *mask;
 	odp_thrmask_t zero_thrmask;
 	odp_schedule_group_t odp_sched_group;
-	const int num_cores = em_core_count();
+	const int core = em_locm.core_id;
 	char qgrp_name[EM_QUEUE_GROUP_NAME_LEN];
 
-	for (int i = 0; i < num_cores; i++) {
-		qgrp_req = qgrp_idx2hdl(i);
-		qgrp = queue_group_alloc(qgrp_req);
-		if (unlikely(qgrp == EM_QUEUE_GROUP_UNDEF || qgrp != qgrp_req)) {
-			EM_DBG("queue_group_alloc() fails for core-qgrp:%d\n", i);
-			return EM_ERR_ALLOC_FAILED;
-		}
+	core_queue_grp_name(core, qgrp_name/*out*/, sizeof(qgrp_name));
+
+	qgrp = em_queue_group_find(qgrp_name);
+	if (qgrp != EM_QUEUE_GROUP_UNDEF) {
+		DBG_PRINT("%s(): core:%d, %s already created - reusing\n",
+			  __func__, core, qgrp_name);
 
 		qgrp_elem = queue_group_elem_get(qgrp);
-		if (unlikely(qgrp_elem == NULL)) {
-			EM_DBG("qgrp_elem NULL for core-qgrp:%d\n", i);
+
+		if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem))) {
+			DBG_PRINT("%s(): qgrp_elem invalid for core-qgrp:%d\n",
+				  __func__, core);
 			return EM_ERR_BAD_POINTER;
 		}
 
-		mask = &qgrp_elem->core_mask;
-		em_core_mask_zero(mask);
-		em_core_mask_set(i, mask);
-
-		odp_thrmask_zero(&zero_thrmask);
-
-		/*
-		 * Create a new odp schedule group for each EM core.
-		 * Create the group without the core/thread set and update it
-		 * during em_init_core() -> core_queue_group_join()
-		 * calls for each EM core.
-		 */
-		qgrp_elem->odp_sched_group = ODP_SCHED_GROUP_INVALID;
-		core_queue_grp_name(i/*core*/, qgrp_name/*out*/,
-				    sizeof(qgrp_name));
-		odp_sched_group = odp_schedule_group_create(qgrp_name,
-							    &zero_thrmask);
-		if (unlikely(odp_sched_group == ODP_SCHED_GROUP_INVALID)) {
-			EM_DBG("odp_schedule_group_create() fails for core-qgrp:%d\n", i);
-			return EM_ERR_LIB_FAILED;
-		}
-		/* Store the created odp sched group for this EM queue group */
-		qgrp_elem->odp_sched_group = odp_sched_group;
+		return EM_OK;
 	}
+
+	qgrp_req = qgrp_idx2hdl(core);
+	qgrp = queue_group_alloc(qgrp_req);
+	if (unlikely(qgrp == EM_QUEUE_GROUP_UNDEF || qgrp != qgrp_req)) {
+		DBG_PRINT("queue_group_alloc() fails for core-qgrp:%d\n", core);
+		return EM_ERR_ALLOC_FAILED;
+	}
+
+	qgrp_elem = queue_group_elem_get(qgrp);
+	if (unlikely(qgrp_elem == NULL)) {
+		DBG_PRINT("qgrp_elem NULL for core-qgrp:%d\n", core);
+		return EM_ERR_BAD_POINTER;
+	}
+
+	mask = &qgrp_elem->core_mask;
+	em_core_mask_zero(mask);
+	em_core_mask_set(core, mask);
+
+	odp_thrmask_zero(&zero_thrmask);
+
+	/*
+	 * Create a new odp schedule group for each EM core.
+	 * Create the group without the core/thread set and update it
+	 * during em_init_local/core() -> core_queue_group_join()
+	 * calls for each EM core.
+	 */
+	qgrp_elem->odp_sched_group = ODP_SCHED_GROUP_INVALID;
+
+	odp_sched_group = create_odp_schedule_group(qgrp_name, &zero_thrmask);
+	if (unlikely(odp_sched_group == ODP_SCHED_GROUP_INVALID)) {
+		DBG_PRINT("ODP schedule group creation failed for core-qgrp:%d\n", core);
+		return EM_ERR_LIB_FAILED;
+	}
+	/* Store the created odp sched group for this EM queue group */
+	qgrp_elem->odp_sched_group = odp_sched_group;
 
 	return EM_OK;
 }
@@ -455,15 +742,15 @@ static em_status_t core_queue_group_join(void)
 	em_queue_group_t qgrp = em_queue_group_find(qgrp_name);
 
 	if (unlikely(qgrp == EM_QUEUE_GROUP_UNDEF)) {
-		EM_DBG("%s(): core:%d, %s not found", __func__, core, qgrp_name);
+		DBG_PRINT("%s(): core:%d, %s not found\n", __func__, core, qgrp_name);
 		return EM_ERR_NOT_FOUND;
 	}
 
 	queue_group_elem_t *qgrp_elem = queue_group_elem_get(qgrp);
 
 	if (unlikely(!qgrp_elem)) {
-		EM_DBG("%s(): qgrp_elem NULL for core-qgrp:%d\n",
-		       __func__, core);
+		DBG_PRINT("%s(): qgrp_elem NULL for core-qgrp:%d\n",
+			  __func__, core);
 		return EM_ERR_BAD_POINTER;
 	}
 
@@ -473,15 +760,15 @@ static em_status_t core_queue_group_join(void)
 	odp_thrmask_zero(&odp_joinmask);
 	odp_thrmask_set(&odp_joinmask, odp_thr);
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	/* Join this thread into the core-local schedule group */
 	int ret = odp_schedule_group_join(qgrp_elem->odp_sched_group,
 					  &odp_joinmask);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	if (unlikely(ret)) {
-		EM_DBG("%s(): odp_schedule_group_join():%d, core-qgrp:%d\n",
-		       __func__, ret, core);
+		DBG_PRINT("%s(): odp_schedule_group_join():%d, core-qgrp:%d\n",
+			  __func__, ret, core);
 		return EM_ERR_LIB_FAILED;
 	}
 
@@ -500,6 +787,7 @@ queue_group_create_escope(const char *name, const em_core_mask_t *mask,
 			  em_queue_group_t requested_queue_group,
 			  em_escope_t escope)
 {
+	core_map_t *const core_map = &em_shm->core_map;
 	em_queue_group_t queue_group;
 	queue_group_elem_t *qgrp_elem;
 	odp_schedule_group_t odp_sched_group;
@@ -512,7 +800,6 @@ queue_group_create_escope(const char *name, const em_core_mask_t *mask,
 	odp_thrmask_zero(&zero_thrmask);
 	em_core_mask_zero(&rem_zero_mask);
 	em_core_mask_zero(&add_mask);
-	em_core_mask_copy(&add_mask, mask);
 
 	/*
 	 * Allocate the queue group element,
@@ -528,21 +815,50 @@ queue_group_create_escope(const char *name, const em_core_mask_t *mask,
 	}
 
 	/* Create empty schedule group, each core adds itself via an add-req */
-	odp_sched_group = odp_schedule_group_create(name, &zero_thrmask);
+	odp_sched_group = create_odp_schedule_group(name, &zero_thrmask);
 	if (unlikely(odp_sched_group == ODP_SCHED_GROUP_INVALID)) {
 		queue_group_free(queue_group);
-		INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, escope,
-			       "ODP schedule group creation failed!");
+		(void)INTERNAL_ERROR(EM_ERR_ALLOC_FAILED, escope,
+				     "ODP sched group creation for EM queue group (\"%s\") failed!",
+				     name);
 		return EM_QUEUE_GROUP_UNDEF;
 	}
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	/*
+	 * Take the core_map rwlock for reading - can afford to keep it for a
+	 * "long" time since blocking write-access is only needed in core
+	 * add/rem scenarios (via em_init/term_local() and the older
+	 * em_init/term_core()). The core ctrl events should be sent before
+	 * releasing the lock to prevent add/rem-core actions while sending
+	 * these ctrl events.
+	 */
+	odp_rwlock_read_lock(&core_map->rwlock);
+
+	stat = queue_group_check_mask(mask);
+	if (unlikely(stat != EM_OK)) {
+		odp_rwlock_read_unlock(&core_map->rwlock);
+		odp_schedule_group_destroy(odp_sched_group);
+		queue_group_free(queue_group);
+
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
+
+		em_core_mask_tostr(mstr, sizeof(mstr), mask);
+		INTERNAL_ERROR(EM_ERR_BAD_ARG, escope,
+			       "Invalid mask given:%s", mstr);
+
+		return EM_QUEUE_GROUP_UNDEF;
+	}
+
+	em_core_mask_copy(&add_mask, mask);
+
+	odp_ticketlock_lock(&qgrp_elem->lock);
 
 	/* Initialize the data of the newly allocated queue group */
 	qgrp_elem->odp_sched_group = odp_sched_group;
 	em_core_mask_copy(&qgrp_elem->core_mask, mask); /* set new mask */
 	list_init(&qgrp_elem->queue_list);
-	env_atomic32_init(&qgrp_elem->num_queues);
+	odp_atomic_init_u32(&qgrp_elem->num_queues, 0);
 	qgrp_elem->ongoing_delete = false;
 
 	if (em_core_mask_isset(core, &add_mask)) {
@@ -556,7 +872,8 @@ queue_group_create_escope(const char *name, const em_core_mask_t *mask,
 		else
 			q_grp_create_done(qgrp_elem, mask);
 
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
+		odp_rwlock_read_unlock(&core_map->rwlock);
 
 		stat = send_notifs(num_notif, notif_tbl);
 		if (unlikely(stat != EM_OK))
@@ -565,10 +882,13 @@ queue_group_create_escope(const char *name, const em_core_mask_t *mask,
 		return queue_group;
 	}
 
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	stat = send_qgrp_addrem_reqs(qgrp_elem, mask, &add_mask, &rem_zero_mask,
 				     num_notif, notif_tbl, escope);
+
+	odp_rwlock_read_unlock(&core_map->rwlock);
+
 	if (unlikely(stat != EM_OK))
 		INTERNAL_ERROR(stat, escope, "qgrp add/rem-req(s) send failed");
 
@@ -606,23 +926,16 @@ queue_group_create_sync(const char *name, const em_core_mask_t *mask,
 /*
  * queue_group_create/modify/_sync() helper:
  * Can only set core mask bits for running cores - verify this.
+ * Must be called with em_shm->core_map.rwlock locked for reads.
  */
 em_status_t queue_group_check_mask(const em_core_mask_t *mask)
 {
-	const int core_count = em_core_count();
-	em_core_mask_t max_mask;
+	const core_map_t *const core_map = &em_shm->core_map;
 	em_core_mask_t check_mask;
 
-	/*
-	 * 'mask' can contain set bits only for cores running EM,
-	 * 'max_mask' contains all allowed set bits. Check that mask
-	 * only contains set bits that are also found in max_mask.
-	 */
-	em_core_mask_zero(&max_mask);
-	em_core_mask_set_count(core_count, &max_mask);
-	em_core_mask_or(&check_mask, mask, &max_mask);
+	em_core_mask_and(&check_mask, mask, &core_map->rwlocked.logic_mask);
 
-	if (unlikely(!em_core_mask_equal(&check_mask, &max_mask)))
+	if (unlikely(!em_core_mask_equal(&check_mask, mask)))
 		return EM_ERR_TOO_LARGE;
 
 	return EM_OK;
@@ -652,49 +965,39 @@ check_qgrp_state(const queue_group_elem_t *qgrp_elem, bool is_delete,
 }
 
 /*
- * queue_group_modify/_sync() helper: count cores to be added to the queue group
+ * queue_group_modify/_sync() helper: determine cores to be added to the queue group
  */
 static int count_qgrp_adds(const em_core_mask_t *old_mask,
 			   const em_core_mask_t *new_mask,
 			   em_core_mask_t *add_mask /*out*/)
 {
-	int core_count = em_core_count();
-	int adds = 0;
+	em_core_mask_t changed_mask;
 
-	em_core_mask_zero(add_mask);
+	/* get changed cores (added and removed ones) */
+	em_core_mask_xor(&changed_mask, old_mask, new_mask);
+	/* cores that were added in the new mask */
+	em_core_mask_and(add_mask, &changed_mask, new_mask);
 
-	/* Count added cores */
-	for (int i = 0; i < core_count; i++) {
-		if (!em_core_mask_isset(i, old_mask) &&
-		    em_core_mask_isset(i, new_mask)) {
-			em_core_mask_set(i, add_mask);
-			adds++;
-		}
-	}
+	int adds = em_core_mask_count(add_mask);
 
 	return adds;
 }
 
 /*
- * queue_group_modify/_sync() helper: count cores to be removed from the queue group
+ * queue_group_modify/_sync() helper: determine cores to be removed from the queue group
  */
 static int count_qgrp_rems(const em_core_mask_t *old_mask,
 			   const em_core_mask_t *new_mask,
 			   em_core_mask_t *rem_mask /*out*/)
 {
-	int core_count = em_core_count();
-	int rems = 0;
+	em_core_mask_t changed_mask;
 
-	em_core_mask_zero(rem_mask);
+	/* get changed cores (added and removed ones) */
+	em_core_mask_xor(&changed_mask, old_mask, new_mask);
+	/* cores that were removed from the old mask */
+	em_core_mask_and(rem_mask, &changed_mask, old_mask);
 
-	/* Count removed cores */
-	for (int i = 0; i < core_count; i++) {
-		if (em_core_mask_isset(i, old_mask) &&
-		    !em_core_mask_isset(i, new_mask)) {
-			em_core_mask_set(i, rem_mask);
-			rems++;
-		}
-	}
+	int rems = em_core_mask_count(rem_mask);
 
 	return rems;
 }
@@ -720,30 +1023,44 @@ static void addrem_events_free(em_event_t add_events[], int add_count,
  *        in 'mask', send with an event group to trigger 'done' notification.
  *
  * Mark each sent event in the array as 'undef' to help detect sent vs. unsent
+ *
+ * Converts the given EM core mask to an ODP thread mask and thus requires that
+ * this function has been called with the core map rwlock taken:
+ *         odp_rwlock_read_lock(&em_shm->core_map.rwlock)
  */
-static em_status_t send_addrem_events(em_event_t addrem_events[],
+static em_status_t send_addrem_events(em_event_t addrem_events[], int count,
 				      const em_core_mask_t *mask,
 				      em_event_group_t event_group)
 {
-	const int core_count = em_core_count();
-	const int first_qidx = queue_id2idx(FIRST_INTERNAL_UNSCHED_QUEUE);
+	const int first_qidx = queue_id2idx(em_shm->queue_tbl.first_internal_queue_id);
 	int ev_idx = 0;
 	em_status_t err;
 
-	for (int i = 0; i < core_count; i++) {
-		if (em_core_mask_isset(i, mask)) {
-			/*
-			 * Send a add/rem-req to each core-specific queue,
-			 * track completion using an event group.
-			 */
-			err = em_send_group(addrem_events[ev_idx],
-					    queue_idx2hdl(first_qidx + i),
-					    event_group);
-			if (unlikely(err != EM_OK))
-				return err;
-			addrem_events[ev_idx] = EM_EVENT_UNDEF;
-			ev_idx++;
-		}
+	odp_thrmask_t thr_mask;
+	int thr;
+
+	/*
+	 * Assumes lock is already taken:
+	 * odp_rwlock_read_lock(&em_shm->core_map.rwlock)
+	 * Caller locks and unlocks.
+	 */
+	mask_em2odp__rwlocked(mask, &thr_mask);
+
+	thr = odp_thrmask_first(&thr_mask);
+	while (thr >= 0 && ev_idx < count) {
+		/*
+		 * Send an add/rem-req to each core-specific unscheduled ctrl
+		 * queue, track completion using an event group.
+		 */
+		err = send_ctrl_queue(addrem_events[ev_idx],
+				      queue_idx2hdl(first_qidx + thr),
+				      event_group);
+		if (unlikely(err != EM_OK))
+			return err;
+		addrem_events[ev_idx] = EM_EVENT_UNDEF;
+		ev_idx++;
+
+		thr = odp_thrmask_next(&thr_mask, thr);
 	}
 
 	return EM_OK;
@@ -831,28 +1148,11 @@ send_qgrp_addrem_reqs(queue_group_elem_t *qgrp_elem,
 		      int num_notif, const em_notif_t notif_tbl[],
 		      em_escope_t escope)
 {
-	const em_queue_group_t queue_group = qgrp_elem->queue_group;
-	const int add_count = em_core_mask_count(add_mask);
-	const int rem_count = em_core_mask_count(rem_mask);
-	const int addrem_count = add_count + rem_count; /* Subset of cores*/
-	em_event_t add_events[add_count];
-	em_event_t rem_events[rem_count];
-	em_event_group_t event_group;
-	em_status_t err;
-	int cnt;
-	int ret;
-
 	em_event_t callback_args_event =
 		em_alloc(sizeof(q_grp_done_callback_args_t),
 			 EM_EVENT_TYPE_SW, EM_POOL_DEFAULT);
 	if (unlikely(callback_args_event == EM_EVENT_UNDEF))
 		return EM_ERR_ALLOC_FAILED;
-
-	/* Init the 'done'-callback function arguments */
-	q_grp_done_callback_args_t *callback_args =
-		em_event_pointer(callback_args_event);
-	callback_args->qgrp_elem = qgrp_elem;
-	em_core_mask_copy(&callback_args->new_mask, new_mask);
 
 	/*
 	 * Set the 'qgrp operation done'-callback func based on given
@@ -863,12 +1163,28 @@ send_qgrp_addrem_reqs(queue_group_elem_t *qgrp_elem,
 	void  *f_done_arg_ptr = callback_args_event;
 	bool sync_operation = false;
 
-	ret = set_qgrp_done_func(escope, &f_done_callback/*out*/,
-				 &sync_operation/*out*/);
+	int ret = set_qgrp_done_func(escope, &f_done_callback/*out*/,
+				     &sync_operation/*out*/);
 	if (unlikely(ret)) {
 		em_free(callback_args_event);
 		return EM_ERR_NOT_FOUND;
 	}
+
+	const em_queue_group_t queue_group = qgrp_elem->queue_group;
+	const int add_count = em_core_mask_count(add_mask);
+	const int rem_count = em_core_mask_count(rem_mask);
+	const int addrem_count = add_count + rem_count; /* Subset of cores*/
+	em_event_t add_events[add_count];
+	em_event_t rem_events[rem_count];
+	em_event_group_t event_group;
+	em_status_t err;
+	int cnt;
+
+	/* Init the 'done'-callback function arguments */
+	q_grp_done_callback_args_t *callback_args =
+		em_event_pointer(callback_args_event);
+	callback_args->qgrp_elem = qgrp_elem;
+	em_core_mask_copy(&callback_args->new_mask, new_mask);
 
 	/*
 	 * Create an event group to track completion of all sent add/rem-reqs.
@@ -907,13 +1223,14 @@ send_qgrp_addrem_reqs(queue_group_elem_t *qgrp_elem,
 	/*
 	 * Send rem-req events to the concerned cores
 	 */
-	err = send_addrem_events(rem_events, rem_mask, event_group);
+	err = send_addrem_events(rem_events, rem_count, rem_mask, event_group);
 	if (unlikely(err != EM_OK))
 		goto err_free_resources;
 	/*
 	 * Send add-req events to the concerned cores
 	 */
-	err = send_addrem_events(add_events, add_mask, event_group);
+	err = send_addrem_events(add_events, add_count, add_mask, event_group);
+
 	if (unlikely(err != EM_OK))
 		goto err_free_resources;
 
@@ -944,18 +1261,44 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 		   int num_notif, const em_notif_t notif_tbl[],
 		   bool is_delete)
 {
+	core_map_t *const core_map = &em_shm->core_map;
+	const em_queue_group_t queue_group = qgrp_elem->queue_group;
 	em_status_t err;
 	const char *err_str = "";
 	const em_escope_t escope = is_delete ? EM_ESCOPE_QUEUE_GROUP_DELETE :
 					       EM_ESCOPE_QUEUE_GROUP_MODIFY;
 	const int core = em_core_id();
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	/*
+	 * Take the core_map rwlock for reading - can afford to keep it for a
+	 * "long" time since blocking write-access is only needed in core
+	 * add/rem scenarios (via em_init/term_local() and the older
+	 * em_init/term_core()). The core ctrl events should be sent before
+	 * releasing the lock to prevent add/rem-core actions while sending
+	 * these ctrl events.
+	 */
+	odp_rwlock_read_lock(&core_map->rwlock);
+
+	err = queue_group_check_mask(new_mask);
+	if (unlikely(err != EM_OK)) {
+		odp_rwlock_read_unlock(&core_map->rwlock);
+
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
+
+		em_core_mask_tostr(mstr, sizeof(mstr), new_mask);
+		return INTERNAL_ERROR(EM_ERR_BAD_ARG, escope,
+				      "Queue group:%" PRI_QGRP ", invalid mask given:%s",
+				      queue_group, mstr);
+	}
+
+	odp_ticketlock_lock(&qgrp_elem->lock);
 
 	/* Check Queue Group state */
 	err = check_qgrp_state(qgrp_elem, is_delete, &err_str/*out*/);
 	if (unlikely(err != EM_OK)) {
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
+		odp_rwlock_read_unlock(&core_map->rwlock);
 		return INTERNAL_ERROR(err, escope, err_str);
 	}
 
@@ -994,7 +1337,8 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 		else
 			q_grp_modify_done(qgrp_elem, new_mask);
 
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
+		odp_rwlock_read_unlock(&core_map->rwlock);
 
 		err = send_notifs(num_notif, notif_tbl);
 		RETURN_ERROR_IF(err != EM_OK, err, escope,
@@ -1006,7 +1350,7 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	if (is_delete)
 		qgrp_elem->ongoing_delete = true;
 
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	/*
 	 * Send add/rem-req events to all other concerned cores.
@@ -1016,6 +1360,9 @@ queue_group_modify(queue_group_elem_t *const qgrp_elem,
 	 */
 	err = send_qgrp_addrem_reqs(qgrp_elem, new_mask, &add_mask, &rem_mask,
 				    num_notif, notif_tbl, escope);
+
+	odp_rwlock_read_unlock(&core_map->rwlock);
+
 	RETURN_ERROR_IF(err != EM_OK, is_delete ? EM_FATAL(err) : err, escope,
 			"qgrp rem req(s) sending failed");
 
@@ -1034,6 +1381,7 @@ em_status_t
 queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 			const em_core_mask_t *new_mask, bool is_delete)
 {
+	core_map_t *const core_map = &em_shm->core_map;
 	em_locm_t *const locm = &em_locm;
 	const em_queue_group_t queue_group = qgrp_elem->queue_group;
 	em_status_t err = EM_OK;
@@ -1042,15 +1390,38 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 					: EM_ESCOPE_QUEUE_GROUP_MODIFY_SYNC;
 	const int core = em_core_id();
 
+	/*
+	 * Take the core_map rwlock for reading - can afford to keep it for a
+	 * "long" time since blocking write-access is only needed in core
+	 * add/rem scenarios (via em_init/term_local() and the older
+	 * em_init/term_core()). The core ctrl events should be sent before
+	 * releasing the lock to prevent add/rem-core actions while sending
+	 * these ctrl events.
+	 */
+	odp_rwlock_read_lock(&core_map->rwlock);
+
+	err = queue_group_check_mask(new_mask);
+	if (unlikely(err != EM_OK)) {
+		odp_rwlock_read_unlock(&core_map->rwlock);
+
+		/* use mstr len > EM_CORE_MASK_STRLEN on mask-error */
+		char mstr[ODP_CPUMASK_STR_SIZE];
+
+		em_core_mask_tostr(mstr, sizeof(mstr), new_mask);
+		return INTERNAL_ERROR(EM_ERR_BAD_ARG, escope,
+				      "Queue group:%" PRI_QGRP ", invalid core mask given:%s",
+				      queue_group, mstr);
+	}
+
 	/* Mark that a sync-API call is in progress */
 	locm->sync_api.in_progress = true;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 
 	/* Check Queue Group state */
 	err = check_qgrp_state(qgrp_elem, is_delete, &err_str/*out*/);
 	if (unlikely(err != EM_OK)) {
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
 		goto queue_group_modify_sync_error;
 	}
 
@@ -1066,7 +1437,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 		if (is_delete)
 			q_grp_delete_done(qgrp_elem, new_mask);
 
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
 
 		err = EM_OK;
 		goto queue_group_modify_sync_error; /* no error, just return */
@@ -1104,12 +1475,12 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 		else
 			q_grp_modify_done(qgrp_elem, new_mask);
 
-		env_spinlock_unlock(&qgrp_elem->lock);
+		odp_ticketlock_unlock(&qgrp_elem->lock);
 		err = EM_OK;
 		goto queue_group_modify_sync_error; /* no error, just return  */
 	}
 
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	/*
 	 * Send add/rem-req events to all other concerned cores.
@@ -1119,6 +1490,9 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	 */
 	err = send_qgrp_addrem_reqs(qgrp_elem, new_mask, &add_mask, &rem_mask,
 				    0, NULL, escope);
+
+	odp_rwlock_read_unlock(&core_map->rwlock);
+
 	if (unlikely(err != EM_OK)) {
 		if (is_delete)
 			err = EM_FATAL(err);
@@ -1137,6 +1511,7 @@ queue_group_modify_sync(queue_group_elem_t *const qgrp_elem,
 	return EM_OK;
 
 queue_group_modify_sync_error:
+	odp_rwlock_read_unlock(&core_map->rwlock);
 	locm->sync_api.in_progress = false;
 	RETURN_ERROR_IF(err != EM_OK, err, escope,
 			"Failure: Modify sync QGrp:%" PRI_QGRP ":%s",
@@ -1158,7 +1533,6 @@ static void q_grp_add_core(const queue_group_elem_t *qgrp_elem)
 	odp_thrmask_zero(&odp_joinmask);
 	odp_thrmask_set(&odp_joinmask, odp_thr);
 
-	/* Join this thread into the core-local schedule group */
 	int ret = odp_schedule_group_join(qgrp_elem->odp_sched_group,
 					  &odp_joinmask);
 	if (unlikely(ret)) {
@@ -1188,7 +1562,6 @@ static void q_grp_rem_core(const queue_group_elem_t *qgrp_elem)
 	odp_thrmask_zero(&odp_leavemask);
 	odp_thrmask_set(&odp_leavemask, odp_thr);
 
-	/* Join this thread into the core-local schedule group */
 	int ret = odp_schedule_group_leave(qgrp_elem->odp_sched_group,
 					   &odp_leavemask);
 	if (unlikely(ret)) {
@@ -1212,9 +1585,9 @@ void i_event__qgrp_add_core_req(const internal_event_t *i_ev)
 	if (unlikely(!qgrp_elem))
 		return;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	q_grp_add_core(qgrp_elem);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 }
 
 void i_event__qgrp_rem_core_req(const internal_event_t *i_ev)
@@ -1225,9 +1598,9 @@ void i_event__qgrp_rem_core_req(const internal_event_t *i_ev)
 	if (unlikely(!qgrp_elem))
 		return;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	q_grp_rem_core(qgrp_elem);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 }
 
 /**
@@ -1240,9 +1613,9 @@ static void q_grp_create_done_callback(void *arg_ptr)
 	const q_grp_done_callback_args_t *args = em_event_pointer(event);
 	queue_group_elem_t *const qgrp_elem = args->qgrp_elem;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	q_grp_create_done(qgrp_elem, &args->new_mask);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	em_free(event);
 }
@@ -1257,9 +1630,9 @@ static void q_grp_create_sync_done_callback(void *arg_ptr)
 	const q_grp_done_callback_args_t *args = em_event_pointer(event);
 	queue_group_elem_t *const qgrp_elem = args->qgrp_elem;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	q_grp_create_sync_done(qgrp_elem, &args->new_mask);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	em_free(event);
 }
@@ -1288,9 +1661,9 @@ static void q_grp_modify_done_callback(void *arg_ptr)
 	const q_grp_done_callback_args_t *args = em_event_pointer(event);
 	queue_group_elem_t *const qgrp_elem = args->qgrp_elem;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	q_grp_modify_done(qgrp_elem, &args->new_mask);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	em_free(event);
 }
@@ -1326,9 +1699,9 @@ static void q_grp_delete_done_callback(void *arg_ptr)
 	const q_grp_done_callback_args_t *args = em_event_pointer(event);
 	queue_group_elem_t *const qgrp_elem = args->qgrp_elem;
 
-	env_spinlock_lock(&qgrp_elem->lock);
+	odp_ticketlock_lock(&qgrp_elem->lock);
 	q_grp_delete_done(qgrp_elem, &args->new_mask);
-	env_spinlock_unlock(&qgrp_elem->lock);
+	odp_ticketlock_unlock(&qgrp_elem->lock);
 
 	em_free(event);
 }
@@ -1350,7 +1723,7 @@ static void q_grp_delete_sync_done_callback(void *arg_ptr)
 static void q_grp_delete_done(queue_group_elem_t *const qgrp_elem,
 			      const em_core_mask_t *const new_mask)
 {
-	const unsigned int num_queues = env_atomic32_get(&qgrp_elem->num_queues);
+	const unsigned int num_queues = odp_atomic_load_u32(&qgrp_elem->num_queues);
 	const em_queue_group_t queue_group = qgrp_elem->queue_group;
 
 	/* Sanity check: new core mask for delete is always zero */
@@ -1396,26 +1769,26 @@ static void q_grp_delete_done(queue_group_elem_t *const qgrp_elem,
 void queue_group_add_queue_list(queue_group_elem_t *const queue_group_elem,
 				queue_elem_t *const queue_elem)
 {
-	env_spinlock_lock(&queue_group_elem->lock);
+	odp_ticketlock_lock(&queue_group_elem->lock);
 	list_add(&queue_group_elem->queue_list, &queue_elem->qgrp_node);
-	env_atomic32_inc(&queue_group_elem->num_queues);
-	env_spinlock_unlock(&queue_group_elem->lock);
+	odp_atomic_inc_u32(&queue_group_elem->num_queues);
+	odp_ticketlock_unlock(&queue_group_elem->lock);
 }
 
 void queue_group_rem_queue_list(queue_group_elem_t *const queue_group_elem,
 				queue_elem_t *const queue_elem)
 {
-	env_spinlock_lock(&queue_group_elem->lock);
+	odp_ticketlock_lock(&queue_group_elem->lock);
 	if (!list_is_empty(&queue_group_elem->queue_list)) {
 		list_rem(&queue_group_elem->queue_list, &queue_elem->qgrp_node);
-		env_atomic32_dec(&queue_group_elem->num_queues);
+		odp_atomic_dec_u32(&queue_group_elem->num_queues);
 	}
-	env_spinlock_unlock(&queue_group_elem->lock);
+	odp_ticketlock_unlock(&queue_group_elem->lock);
 }
 
 unsigned int queue_group_count(void)
 {
-	return env_atomic32_get(&em_shm->queue_group_count);
+	return odp_atomic_load_u32(&em_shm->queue_group_count);
 }
 
 #define QGRP_INFO_HDR_STR \
@@ -1435,22 +1808,22 @@ static void queue_group_info_str(em_queue_group_t queue_group,
 {
 	em_core_mask_t core_mask;
 	odp_thrmask_t odp_thrmask;
-	odp_cpumask_t odp_cpumask;
+	em_core_mask_t phys_mask;
 	char qgrp_name[EM_QUEUE_GROUP_NAME_LEN];
 	char em_mask_str[EM_CORE_MASK_STRLEN];
 	char odp_thrmask_str[ODP_THRMASK_STR_SIZE];
-	char odp_cpumask_str[ODP_CPUMASK_STR_SIZE];
+	char phys_mask_str[EM_CORE_MASK_STRLEN];
 	em_status_t err;
 	int ret;
 	int len = 0;
 
-	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
+	queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 
 	if (unlikely(!qgrp_elem || !queue_group_allocated(qgrp_elem)))
 		goto info_print_err;
 
-	em_queue_group_get_name(queue_group, qgrp_name, sizeof(qgrp_name));
-	err = em_queue_group_get_mask(queue_group, &core_mask);
+	em_queue_group_name(queue_group, qgrp_name, sizeof(qgrp_name));
+	err = em_queue_group_mask(queue_group, &core_mask);
 	if (unlikely(err != EM_OK))
 		goto info_print_err;
 	em_core_mask_tostr(em_mask_str, sizeof(em_mask_str), &core_mask);
@@ -1467,17 +1840,14 @@ static void queue_group_info_str(em_queue_group_t queue_group,
 	odp_thrmask_str[ret - 1] = '\0';
 
 	/* Physical mask */
-	mask_em2phys(&core_mask, &odp_cpumask /*out*/);
-	ret = odp_cpumask_to_str(&odp_cpumask, odp_cpumask_str,
-				 sizeof(odp_cpumask_str));
-	if (unlikely(ret <= 0))
-		goto info_print_err;
-	odp_cpumask_str[ret - 1] = '\0';
+	em_core_mask_physical(&phys_mask /*out*/, &core_mask);
+	em_core_mask_tostr(phys_mask_str, sizeof(phys_mask_str), &phys_mask);
+	phys_mask_str[EM_CORE_MASK_STRLEN - 1] = '\0';
 
 	len = snprintf(qgrp_info_str, QGRP_INFO_LEN, QGRP_INFO_FMT,
 		       queue_group, qgrp_name, em_mask_str,
-		       odp_cpumask_str, odp_thrmask_str,
-		       env_atomic32_get(&qgrp_elem->num_queues));
+		       phys_mask_str, odp_thrmask_str,
+		       odp_atomic_load_u32(&qgrp_elem->num_queues));
 
 	qgrp_info_str[len] = '\0';
 	return;
@@ -1496,11 +1866,11 @@ void queue_group_info_print_all(void)
 	int len = 0;
 	int n_print = 0;
 
-	qgrp = em_queue_group_get_first(&qgrp_num);
+	qgrp = em_queue_group_first(&qgrp_num);
 
 	/*
 	 * qgrp_num may not match the amount of queue groups actually returned
-	 * by iterating using em_queue_group_get_next() if queue groups are added
+	 * by iterating using em_queue_group_next() if queue groups are added
 	 * or removed in parallel by another core. Thus space for 10 extra queue
 	 * groups is reserved. If more than 10 queue groups are added by other
 	 * cores in parallel, we print only information of the (qgrp_num + 10)
@@ -1523,7 +1893,7 @@ void queue_group_info_print_all(void)
 			break;
 
 		len += n_print;
-		qgrp = em_queue_group_get_next();
+		qgrp = em_queue_group_next();
 	}
 
 	/* No EM queue group */
@@ -1567,12 +1937,12 @@ void queue_group_queues_print(em_queue_group_t qgrp)
 		return;
 	}
 
-	em_queue_group_get_name(qgrp, qgrp_name, sizeof(qgrp_name));
-	qgrp_queue = em_queue_group_queue_get_first(&q_num, qgrp);
+	em_queue_group_name(qgrp, qgrp_name, sizeof(qgrp_name));
+	qgrp_queue = em_queue_group_queue_first(&q_num, qgrp);
 
 	/*
 	 * q_num may not match the amount of queues actually returned by iterating
-	 * using em_queue_group_queue_get_next() if queues are added or removed
+	 * using em_queue_group_queue_next() if queues are added or removed
 	 * in parallel by another core. Thus space for 10 extra queues is reserved.
 	 * If more than 10 extra queues are added to this queue group by other
 	 * cores in parallel, we print only information of the (q_num + 10) queues.
@@ -1586,17 +1956,17 @@ void queue_group_queues_print(em_queue_group_t qgrp)
 		q_elem = queue_elem_get(qgrp_queue);
 
 		if (unlikely(q_elem == NULL || !queue_allocated(q_elem))) {
-			qgrp_queue = em_queue_group_queue_get_next();
+			qgrp_queue = em_queue_group_queue_next();
 			continue;
 		}
 
-		queue_get_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
+		queue_name(q_elem, q_name, EM_QUEUE_NAME_LEN - 1);
 
 		n_print = snprintf(q_info_str + len, q_info_len - len,
 				   QGRP_Q_INFO_FMT, qgrp_queue, q_name,
 				   q_elem->priority,
-				   queue_get_type_str(q_elem->type),
-				   queue_get_state_str(q_elem->state),
+				   queue_type_str(q_elem->type),
+				   queue_state_str(q_elem->state),
 				   q_elem->context ? 'Y' : 'N');
 
 		/* Not enough space to hold more queue info */
@@ -1604,7 +1974,7 @@ void queue_group_queues_print(em_queue_group_t qgrp)
 			break;
 
 		len += n_print;
-		qgrp_queue = em_queue_group_queue_get_next();
+		qgrp_queue = em_queue_group_queue_next();
 	}
 
 	/* No queue belonging to the queue group */

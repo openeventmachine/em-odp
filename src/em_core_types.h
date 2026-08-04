@@ -37,6 +37,14 @@
  *
  */
 
+#include <stdint.h>
+#include <sys/types.h> /* pid_t */
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,32 +53,78 @@ extern "C" {
  * EM mapping from physical core ids <-> logical core ids
  */
 typedef struct {
-	/** core map lock */
-	env_spinlock_t lock;
-
-	/** Number of EM cores currently running (em_init_core() called) */
+	/**
+	 * Number of EM-cores currently running (em_init_local/core() called).
+	 * Includes EM worker and control cores, but not external threads.
+	 */
 	odp_atomic_u32_t current_core_count;
+	/** Number of EM worker cores currently running */
+	odp_atomic_u32_t worker_core_count;
+	/** Number of EM control cores currently running */
+	odp_atomic_u32_t control_core_count;
+	/** Number of EM external threads currently running */
+	odp_atomic_u32_t external_thread_count;
 
-	/** Number of EM cores */
-	int count;
+	/** Number of ongoing TERM_THREAD_REQ operations per thread */
+	odp_atomic_u32_t ongoing_term_reqs[ODP_THREAD_COUNT_MAX];
+
+	/**
+	 * Read-write lock for the 'rwlocked'-struct below.
+	 *
+	 * Multiple readers of core-map data are allowed at the same time,
+	 * but only one writer. The only two scenarios where the lock is taken
+	 * for writes are adding an EM-core via em_init_local/core() and
+	 * removing an EM-core via em_term_local/core() - thus taking the lock
+	 * for reads in control operations is not time crtitical since add/rem
+	 * core operations can afford to wait.
+	 *
+	 * This lock is also used to block EM-core adds or rems when an internal
+	 * control operation is under way that needs info about the cores
+	 * available and sends control events to them - cores can not be allowed
+	 * to be removed in the middle of this.
+	 */
+	odp_rwlock_t rwlock;
 	struct {
-		/** From physical core ids to logical EM core ids */
-		uint8_t logic[EM_MAX_CORES];
-		/** From logical EM core ids to physical core ids */
-		uint8_t phys[EM_MAX_CORES];
-	} phys_vs_logic;
+		/*
+		 * ODP-thread-id <-> EM-core mapping available for EM-cores
+		 * of type EM_CORE_TYPE_WORKER and EM_CORE_TYPE_CONTROL.
+		 */
+		struct {
+			/** From ODP thread ids to logical EM core ids */
+			uint8_t logic[ODP_THREAD_COUNT_MAX];
+			/** From logical EM core ids to ODP thread ids */
+			uint16_t odp_thr[EM_MAX_CORES];
+		} thr_vs_logic;
 
-	struct {
-		/** From ODP thread ids to logical EM core ids */
-		uint16_t logic[ODP_THREAD_COUNT_MAX];
-		/** From logical EM core ids to ODP thread ids */
-		uint8_t odp_thr[EM_MAX_CORES];
-	} thr_vs_logic;
+		/** Mask of logic EM-core ids (worker and control EM-cores) */
+		em_core_mask_t logic_mask;
+		/** Mask of logic worker EM-core ids */
+		em_core_mask_t worker_mask;
+		/** Mask of logic control EM-core ids */
+		em_core_mask_t control_mask;
 
-	/** Mask of logic core IDs */
-	em_core_mask_t logic_mask;
-	/** Mask of phys core IDs */
-	em_core_mask_t phys_mask;
+		/** Mask of ODP-thread ids of worker _and_ control EM-cores */
+		odp_thrmask_t thrmask_emcores;
+		/** Mask of ODP-thread ids of EM external threads */
+		odp_thrmask_t thrmask_extthrs;
+		/** Mask of ODP-thread ids of all threads */
+		odp_thrmask_t thrmask_all;
+
+		/** Thread ids of EM-cores (worker and control) */
+		pid_t tids[EM_MAX_CORES];
+		/** Thread ids of external EM threads/processes */
+		pid_t ext_tids[ODP_THREAD_COUNT_MAX];
+
+		/** Type of each EM-core: worker or ctrl (not external) */
+		em_core_type_t core_types[EM_MAX_CORES];
+
+		/**
+		 * Store file paths to each EM-core's /proc/[tid]/stat file
+		 * so that the paths don't have to be generated each time.
+		 */
+		char proc_tid_stat_paths[EM_MAX_CORES][32];
+	} rwlocked;
+
 	/* Pad size to a multiple of cache line size */
 	void *end[0] ENV_CACHE_LINE_ALIGNED;
 } core_map_t;
@@ -81,20 +135,6 @@ COMPILE_TIME_ASSERT(EM_MAX_CORES - 1 <= UINT8_MAX,
 		    CORE_MAP_T__TYPE_ERROR1);
 COMPILE_TIME_ASSERT(ODP_THREAD_COUNT_MAX - 1 <= UINT16_MAX,
 		    CORE_MAP_T__TYPE_ERROR2);
-
-/**
- * EM spinlock - Cache line sized & aligned
- */
-typedef union {
-	uint8_t u8[ENV_CACHE_LINE_SIZE];
-
-	struct {
-		env_spinlock_t lock;
-	};
-} em_spinlock_t  ENV_CACHE_LINE_ALIGNED;
-
-COMPILE_TIME_ASSERT(sizeof(em_spinlock_t) == ENV_CACHE_LINE_SIZE,
-		    EM_STATIC_QUEUE_LOCK_T__SIZE_ERROR);
 
 #ifdef __cplusplus
 }

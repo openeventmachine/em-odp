@@ -155,10 +155,10 @@ typedef struct {
 	double cpu_mhz;
 	uint64_t cpu_hz;
 	uint64_t print_count;
-	env_atomic64_t ready_count;
+	odp_atomic_u64_t ready_count;
 	/*  if using CONST_NUM_EVENTS:*/
 	int free_flag;
-	env_atomic64_t freed_count;
+	odp_atomic_u64_t freed_count;
 } test_status_t;
 
 /**
@@ -410,8 +410,8 @@ void test_start(const appl_conf_t *appl_conf)
 	perf_shm->test_status.num_cores = appl_conf->core_count;
 	perf_shm->test_status.free_flag = 0;
 
-	env_atomic64_init(&perf_shm->test_status.ready_count);
-	env_atomic64_init(&perf_shm->test_status.freed_count);
+	odp_atomic_init_u64(&perf_shm->test_status.ready_count, 0);
+	odp_atomic_init_u64(&perf_shm->test_status.freed_count, 0);
 
 	/* Create EOs */
 	for (i = 0; i < NUM_EOS; i++) {
@@ -699,11 +699,10 @@ update_test_state(em_event_t event)
 			if (unlikely(tstat->free_flag)) {
 				em_free(event);
 				freed_count =
-				env_atomic64_add_return(&tstat->freed_count, 1);
+				odp_atomic_fetch_inc_u64(&tstat->freed_count) + 1;
 				if (freed_count == CONST_NUM_EVENTS) {
 					/* Last event */
-					env_atomic64_set(&tstat->freed_count,
-							 0);
+					odp_atomic_store_u64(&tstat->freed_count, 0);
 					tstat->reset_flag = 0;
 					tstat->free_flag = 0;
 					queue_step();
@@ -718,10 +717,10 @@ update_test_state(em_event_t event)
 			cstat->begin_time = ENV_TIME_NULL;
 
 			ready_count =
-			env_atomic64_add_return(&tstat->ready_count, 1);
+			odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 			if (ready_count == (uint64_t)tstat->num_cores) {
-				env_atomic64_set(&tstat->ready_count, 0);
+				odp_atomic_store_u64(&tstat->ready_count, 0);
 
 				if (CONST_NUM_EVENTS) {
 					int sample = tstat->samples;
@@ -758,7 +757,7 @@ update_test_state(em_event_t event)
 		begin_time = cstat->begin_time;
 		cstat->diff_time = env_time_diff(end_time, begin_time);
 
-		ready_count = env_atomic64_add_return(&tstat->ready_count, 1);
+		ready_count = odp_atomic_fetch_inc_u64(&tstat->ready_count) + 1;
 
 		/*
 		 * Check whether all cores are done with the step,
@@ -766,7 +765,7 @@ update_test_state(em_event_t event)
 		 */
 		if (unlikely((int)ready_count == tstat->num_cores)) {
 			/* No real need for atomicity here, ran on last core*/
-			env_atomic64_set(&tstat->ready_count, 0);
+			odp_atomic_store_u64(&tstat->ready_count, 0);
 
 			tstat->reset_flag = 1;
 			tstat->samples++;
@@ -981,7 +980,7 @@ alloc_free_per_event(em_event_t event)
 	perf_event_t *perf_event = em_event_pointer(event);
 	env_time_t send_time = perf_event->send_time;
 	int seq = perf_event->seq;
-	uint32_t event_size = em_event_get_size(event);
+	uint32_t event_size = em_event_size(event);
 
 	em_free(event);
 

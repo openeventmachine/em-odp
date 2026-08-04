@@ -82,7 +82,7 @@
 
 /**
  * Test with different scheduled queue types if set to '1':
- * ATOMIC, PARALLEL, PARALLEL_ORDERED
+ * ATOMIC, PARALLEL, ORDERED
  */
 #define QUEUE_TYPE_MIX  1 /* 0=False or 1=True(default) */
 
@@ -92,11 +92,11 @@
  */
 #define QUEUE_TYPE  EM_QUEUE_TYPE_ATOMIC
 /* #define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL */
-/* #define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL_ORDERED */
+/* #define QUEUE_TYPE  EM_QUEUE_TYPE_ORDERED */
 
 /**
  * The number of Queue Type permutations:
- * Three (3) queue types (ATOMIC, PARALLEL, PARALLEL-ORDERED) in
+ * Three (3) queue types (ATOMIC, PARALLEL, ORDERED) in
  * three (3) stages gives 3*3*3 = 27 permutations.
  * Only used if QUEUE_TYPE_MIX is '1'
  */
@@ -948,7 +948,7 @@ queue_types(int cnt)
 	case 1:
 		return EM_QUEUE_TYPE_PARALLEL;
 	default:
-		return EM_QUEUE_TYPE_PARALLEL_ORDERED;
+		return EM_QUEUE_TYPE_ORDERED;
 	}
 }
 

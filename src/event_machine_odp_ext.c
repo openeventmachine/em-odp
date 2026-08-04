@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2023, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -34,8 +34,36 @@
   *
   */
 
-#include <em_include.h>
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdint.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
 #include <event_machine/platform/event_machine_odp_ext.h>
+
+#include "em_chaining.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_inline.h"
+#include "em_pool_types.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
 
 odp_queue_t em_odp_queue_odp(em_queue_t queue)
 {
@@ -58,6 +86,13 @@ em_queue_t em_odp_queue_em(odp_queue_t queue)
 	if (EM_CHECK_LEVEL > 0 &&
 	    unlikely(!queue_elem || queue_elem->valid_check != QUEUE_ELEM_VALID))
 		return EM_QUEUE_UNDEF;
+
+	if (EM_CHECK_LEVEL >= 2 && unlikely(!queue_allocated(queue_elem))) {
+		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_ODP_EXT,
+			       "EM Queue deleted (or not created)! ODP-queue:%" PRIu64 "",
+			       odp_queue_to_u64(queue));
+		return EM_QUEUE_UNDEF;
+	}
 
 	return (em_queue_t)(uintptr_t)queue_elem->queue;
 }
@@ -100,11 +135,12 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 	 */
 	odp_schedule_prio_t odp_prio = odp_schedule_default_prio();
 	em_queue_prio_t prio = EM_QUEUE_PRIO_UNDEF;
-	int num_prio = em_queue_get_num_prio(NULL);
+	int num_prio = em_queue_num_prio(NULL);
 
 	for (int i = 0; i < num_prio; i++) {
-		prio_em2odp(i, &odp_prio/*out*/);
-		if (odp_prio == odp_qinfo.param.sched.prio) {
+		int err = prio_em2odp(i, &odp_prio/*out*/);
+
+		if (!err && odp_prio == odp_qinfo.param.sched.prio) {
 			prio = i;
 			break;
 		}
@@ -132,13 +168,13 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 	em_queue_group_t queue_group;
 	const queue_group_elem_t *qgrp_elem;
 
-	queue_group = em_queue_group_get_first(NULL);
+	queue_group = em_queue_group_first(NULL);
 	while (queue_group != EM_QUEUE_GROUP_UNDEF) {
 		qgrp_elem = queue_group_elem_get(queue_group);
 		if (qgrp_elem &&
 		    qgrp_elem->odp_sched_group == odp_qinfo.param.sched.group)
 			break; /* found match! */
-		queue_group = em_queue_group_get_next();
+		queue_group = em_queue_group_next();
 	}
 	if (unlikely(queue_group == EM_QUEUE_GROUP_UNDEF)) {
 		err_str = "No matching EM Queue Group found";
@@ -156,12 +192,12 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 	/*
 	 * Set up the EM queue based on gathered info
 	 */
-	queue_setup_t setup = {.name = q_name,
-			       .type = queue_type,
-			       .prio = prio,
-			       .atomic_group = EM_ATOMIC_GROUP_UNDEF,
-			       .queue_group = queue_group,
-			       .conf = NULL};
+	em_queue_param_t param;
+
+	em_queue_param_init(&param);
+	param.type = queue_type;
+	param.prio = prio;
+	param.queue_group = queue_group;
 
 	queue = queue_alloc(EM_QUEUE_UNDEF, &err_str);
 	if (unlikely(queue == EM_QUEUE_UNDEF))
@@ -174,8 +210,8 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 		goto err_return;
 	}
 
-	/* Set common queue-elem fields based on 'setup' */
-	queue_setup_common(q_elem, &setup);
+	/* Set common queue-elem fields based on 'param' */
+	queue_setup_common(q_name, &param, q_elem /*in/out*/);
 	/* Set queue-elem fields for a pktin event queue */
 	q_elem->odp_queue = odp_queue;
 	q_elem->flags.is_pktin = true;
@@ -186,7 +222,7 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 	 * Note: The ODP queue context points to the EM queue elem.
 	 * The EM queue context set by the user using the API function
 	 * em_queue_set_context() is accessed through the queue_elem_t::context
-	 * and retrieved with em_queue_get_context() or passed by EM to the
+	 * and retrieved with em_queue_context() or passed by EM to the
 	 * EO-receive function for scheduled queues.
 	 *
 	 * Set the odp context data length (in bytes) for potential prefetching.
@@ -204,7 +240,7 @@ static em_queue_t pktin_event_queue2em(odp_queue_t odp_queue)
 err_return:
 	INTERNAL_ERROR(EM_ERR_OPERATION_FAILED, EM_ESCOPE_ODP_EXT,
 		       "%s (ret=%d)", err_str, ret);
-	if (EM_DEBUG_PRINT && odp_queue != ODP_QUEUE_INVALID)
+	if (EM_DEBUG_PRINT_BASE && odp_queue != ODP_QUEUE_INVALID)
 		odp_queue_print(odp_queue);
 	if (queue != EM_QUEUE_UNDEF)
 		queue_free(queue);
@@ -250,7 +286,8 @@ void em_odp_events2odp(const em_event_t events[/*num*/],
 
 em_event_t em_odp_event2em(odp_event_t odp_event)
 {
-	em_event_t event = event_init_odp(odp_event, false/*!is_extev*/, NULL);
+	em_event_t event = event_init_odp(odp_event, false/*!is_extev*/,
+					  NULL/*disp_q_elem*/, NULL/*ev_hdr__out*/);
 
 	return event;
 }
@@ -264,7 +301,7 @@ void em_odp_events2em(const odp_event_t odp_events[/*num*/],
 	event_hdr_t *ev_hdrs[num];
 
 	event_init_odp_multi(odp_events, events/*out*/, ev_hdrs/*out*/, num,
-			     false/*!is_extev*/);
+			     false/*!is_extev*/, NULL/*disp_q_elem*/);
 }
 
 int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
@@ -282,10 +319,10 @@ int em_odp_pool2odp(em_pool_t pool, odp_pool_t odp_pools[/*out*/], int num)
 		INTERNAL_ERROR(EM_ERR_NOT_CREATED, EM_ESCOPE_ODP_EXT,
 			       "Pool:%" PRI_POOL " not created", pool);
 
-	int num_subpools = MIN(num, pool_elem->num_subpools);
+	const int num_subpools = MIN(num, pool_elem->num_subpools);
 
-	for (int i = 0; i < num_subpools; i++)
-		odp_pools[i] = pool_elem->odp_pool[i];
+	/* copy for(each i): odp_pools[i] = pool_elem->odp_pool[i] */
+	memcpy(odp_pools, pool_elem->odp_pool, num_subpools * sizeof(odp_pool_t));
 
 	/* return the number of odp-pools filled into 'odp_pools[]' */
 	return num_subpools;
@@ -474,8 +511,7 @@ int em_odp_pkt_enqueue(const odp_packet_t pkt_tbl[/*num*/], int num, em_queue_t 
 
 odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group)
 {
-	const queue_group_elem_t *qgrp_elem =
-		queue_group_elem_get(queue_group);
+	const queue_group_elem_t *qgrp_elem = queue_group_elem_get(queue_group);
 
 	if (unlikely(EM_CHECK_LEVEL > 0 && !qgrp_elem)) {
 		INTERNAL_ERROR(EM_ERR_BAD_ARG, EM_ESCOPE_ODP_EXT,

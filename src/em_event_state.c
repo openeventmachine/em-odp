@@ -28,7 +28,37 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_eo.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_libconfig.h"
+#include "em_queue.h"
+#include "em_event_types.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_types.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
 
 static int read_config_file(void);
 
@@ -125,6 +155,8 @@ static const evstate_info_t evstate_info_tbl[] = {
 			       .escope = EM_ESCOPE_DISPATCH},
 	[EVSTATE__DISPATCH_MULTI] = {.str = "em_dispatch(multiple-events)",
 				     .escope = EM_ESCOPE_DISPATCH},
+	[EVSTATE__DISPATCH_AGGR] = {.str = "em_dispatch(aggr-vec inner-event)",
+				    .escope = EM_ESCOPE_DISPATCH},
 	[EVSTATE__DISPATCH_SCHED__FAIL] = {.str = "em_dispatch(drop sched-events)",
 					   .escope = EM_ESCOPE_DISPATCH},
 	[EVSTATE__DISPATCH_LOCAL__FAIL] = {.str = "em_dispatch(drop local-events)",
@@ -311,11 +343,11 @@ esv_error(const evstate_cnt_t cnt,
 	/* current EO-name: */
 	eo_elem = eo_elem_get(curr_eo);
 	if (eo_elem != NULL)
-		eo_get_name(eo_elem, curr_eoname, sizeof(curr_eoname));
+		eo_name(eo_elem, curr_eoname, sizeof(curr_eoname));
 	/* current queue-name: */
 	q_elem = queue_elem_get(curr_queue);
 	if (q_elem != NULL)
-		queue_get_name(q_elem, curr_qname, sizeof(curr_qname));
+		queue_name(q_elem, curr_qname, sizeof(curr_qname));
 
 	const int16_t send_cnt = cnt.send_cnt - SEND_CNT_INIT;
 	uint16_t evgen_cnt = cnt.evgen - EVGEN_INIT;
@@ -341,11 +373,11 @@ esv_error(const evstate_cnt_t cnt,
 		/* previous EO-name: */
 		eo_elem = eo_elem_get(prev_eo);
 		if (eo_elem != NULL)
-			eo_get_name(eo_elem, prev_eoname, sizeof(prev_eoname));
+			eo_name(eo_elem, prev_eoname, sizeof(prev_eoname));
 		/* previous queue-name: */
 		q_elem = queue_elem_get(prev_queue);
 		if (q_elem != NULL)
-			queue_get_name(q_elem, prev_qname, sizeof(prev_qname));
+			queue_name(q_elem, prev_qname, sizeof(prev_qname));
 
 		if (ev_hdr->flags.refs_used) {
 			/* Reference ESV Error, prev state available */
@@ -547,6 +579,9 @@ esv_em2usr_multi(em_event_t ev_tbl[/*in/out*/],
 	evstate_cnt_t new_cnt;
 
 	for (int i = 0; i < num; i++) {
+		if (unlikely(ev_hdr_tbl[i]->event_type == EM_EVENT_TYPE_ODP))
+			continue; /* skip ODP events */
+
 		const bool refs_used = ev_hdr_tbl[i]->flags.refs_used;
 
 		/* Update state-count and return value of all counters (atomic) */
@@ -666,6 +701,9 @@ esv_usr2em_multi(const em_event_t ev_tbl[],
 	evstate_cnt_t new_cnt;
 
 	for (int i = 0; i < num; i++) {
+		if (unlikely(ev_hdr_tbl[i]->event_type == EM_EVENT_TYPE_ODP))
+			continue; /* skip ODP events */
+
 		const bool refs_used = ev_hdr_tbl[i]->flags.refs_used;
 
 		/* Update state-count and return value of all counters (atomic) */
@@ -911,7 +949,7 @@ em_event_t evstate_update(const em_event_t event, event_hdr_t *const ev_hdr,
 	return ret_event;
 }
 
-void evstate_free(em_event_t event, event_hdr_t *const ev_hdr,
+void evstate_free(const em_event_t event, event_hdr_t *const ev_hdr,
 		  const uint16_t api_op)
 {
 	const evstate_cnt_t add = {.evgen = 1, .rsvd = 0,
@@ -920,7 +958,7 @@ void evstate_free(em_event_t event, event_hdr_t *const ev_hdr,
 	esv_usr2em(event, ev_hdr, add, api_op, false);
 }
 
-void evstate_free_revert(em_event_t event, event_hdr_t *const ev_hdr,
+void evstate_free_revert(const em_event_t event, event_hdr_t *const ev_hdr,
 			 const uint16_t api_op)
 {
 	const evstate_cnt_t sub = {.evgen = 1, .rsvd = 0,
@@ -952,6 +990,9 @@ void evstate_free_revert_multi(const em_event_t ev_tbl[],
 em_event_t evstate_em2usr(const em_event_t event, event_hdr_t *const ev_hdr,
 			  const uint16_t api_op)
 {
+	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_ODP))
+		return event;
+
 	const evstate_cnt_t sub = {.evgen = 0, .rsvd = 0,
 				   .ref_cnt = 0, .send_cnt = 1};
 
@@ -961,6 +1002,9 @@ em_event_t evstate_em2usr(const em_event_t event, event_hdr_t *const ev_hdr,
 em_event_t evstate_em2usr_revert(const em_event_t event, event_hdr_t *const ev_hdr,
 				 const uint16_t api_op)
 {
+	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_ODP))
+		return event;
+
 	const evstate_cnt_t add = {.evgen = 0, .rsvd = 0,
 				   .ref_cnt = 0, .send_cnt = 1};
 
@@ -990,6 +1034,9 @@ void evstate_em2usr_revert_multi(em_event_t ev_tbl[/*in/out*/],
 void evstate_usr2em(const em_event_t event, event_hdr_t *const ev_hdr,
 		    const uint16_t api_op)
 {
+	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_ODP))
+		return;
+
 	const evstate_cnt_t add = {.evgen = 1, .rsvd = 0,
 				   .ref_cnt = 0, .send_cnt = 1};
 
@@ -999,6 +1046,9 @@ void evstate_usr2em(const em_event_t event, event_hdr_t *const ev_hdr,
 void evstate_usr2em_revert(const em_event_t event, event_hdr_t *const ev_hdr,
 			   const uint16_t api_op)
 {
+	if (unlikely(ev_hdr->event_type == EM_EVENT_TYPE_ODP))
+		return;
+
 	const evstate_cnt_t sub = {.evgen = 1, .rsvd = 0,
 				   .ref_cnt = 0, .send_cnt = 1};
 
@@ -1132,7 +1182,14 @@ static int read_config_file(void)
 	bool val_bool = false;
 	int ret;
 
-	EM_PRINT("EM ESV config: (EM_ESV_ENABLE=%d)\n", EM_ESV_ENABLE);
+	EM_PRINT("EM ESV config:\n");
+
+	if (unlikely(!EM_ESV_ENABLE)) {
+		EM_PRINT("  ESV is DISABLED (build time)\n");
+		/* ESV disabled at compile time, skip reading config */
+		memset(&em_shm->opt.esv, 0, sizeof(em_shm->opt.esv));
+		return 0;
+	}
 
 	/*
 	 * Option: esv.enable - runtime enable/disable
@@ -1143,10 +1200,10 @@ static int read_config_file(void)
 		EM_LOG(EM_LOG_ERR, "Config option '%s' not found\n", conf_str);
 		return -1;
 	}
+
 	/* store & print the value */
 	em_shm->opt.esv.enable = (int)val_bool;
-	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false",
-		 val_bool);
+	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
 
 	if (!em_shm->opt.esv.enable) {
 		/* Read no more options if ESV is disabled */
@@ -1205,23 +1262,4 @@ em_status_t esv_init(void)
 		return EM_ERR_LIB_FAILED;
 
 	return EM_OK;
-}
-
-void esv_disabled_warn_config(void)
-{
-	const char *conf_str = "esv.enable";
-	bool val_bool = false;
-	int ret;
-
-	EM_PRINT("EM ESV config: (EM_ESV_ENABLE=%d)\n", EM_ESV_ENABLE);
-	EM_PRINT("  ESV disabled\n");
-
-	ret = em_libconfig_lookup_bool(&em_shm->libconfig, conf_str, &val_bool);
-	if (unlikely(!ret))
-		return; /* ESV state option not found in runtime, no warning */
-
-	EM_PRINT("  %s: %s(%d)\n", conf_str, val_bool ? "true" : "false", val_bool);
-
-	if (unlikely(val_bool))
-		EM_PRINT("  WARNING: ESV disabled (build-time) - config file option IGNORED!\n");
 }

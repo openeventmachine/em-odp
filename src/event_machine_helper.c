@@ -29,67 +29,62 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <errno.h>
 #include <libgen.h> /* basename() */
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h> /* ssize_t */
-#include "em_include.h"
+
 #include <odp_api.h>
+
+#include <event_machine.h>
 #include <event_machine/helper/event_machine_debug.h>
+#include <event_machine/helper/event_machine_helper.h>
+#include <event_machine/platform/env/environment.h>
 
-int
-em_error_format_string(char *str, size_t size, em_eo_t eo, em_status_t error,
-		       em_escope_t escope, va_list args)
+#include "em_core.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_inline.h"
+#include "em_event_types.h"
+#include "em_info.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_pool_types.h"
+
+int em_error_format_string(char err_msg[/*out*/], size_t errmsg_sz, em_eo_t eo,
+			   em_status_t error, em_escope_t escope, va_list args)
 {
-	int ret = -1;
-
-	if (!EM_ESCOPE(escope) || (ssize_t)size <= 0)
+	if (!EM_ESCOPE(escope) || !err_msg || (ssize_t)errmsg_sz <= 0)
 		return 0;
 
-	/*
-	 * va_list contains: __FILE__, __func__, __LINE__, (format),
-	 *  ## __VA_ARGS__ as reported by the INTERNAL_ERROR macro.
-	 */
-	char *file = va_arg(args, char*);
-	const char *func = va_arg(args, const char*);
-	const int line = va_arg(args, const int);
-	const char *format = va_arg(args, const char*);
-	const char *base = basename(file);
 	char eo_str[sizeof("EO:xxxxxx-abdc  ") + EM_EO_NAME_LEN];
-	const uint64_t loc_err_cnt = em_locm.error_count;
-	const uint64_t glob_err_cnt = load_global_err_cnt();
 
-	if (eo == EM_EO_UNDEF) {
-		eo_str[0] = '\0';
-	} else {
+	eo_str[0] = '\0';
+
+	if (eo != EM_EO_UNDEF) {
 		char eo_name[EM_EO_NAME_LEN];
-		size_t nlen;
 
-		nlen = em_eo_get_name(eo, eo_name, sizeof(eo_name));
-		eo_name[nlen] = '\0';
-
+		em_eo_name(eo, eo_name, sizeof(eo_name));
 		snprintf(eo_str, sizeof(eo_str),
 			 "EO:%" PRI_EO "-\"%s\"  ", eo, eo_name);
-		eo_str[sizeof(eo_str) - 1] = '\0';
+		/* Both eo_name[] and eo_str[] always '\0'-terminated */
 	}
 
-	ret =
-	snprintf(str, size, "\n"
-		 "EM ERROR:0x%08X  ESCOPE:0x%08X  %s\n"
-		 "core:%02i ecount:%" PRIu64 "(%" PRIu64 ") %s:%i %s()\n",
-		 error, escope, eo_str, em_core_id(),
-		 glob_err_cnt, loc_err_cnt, base, line, func);
+	size_t len = format_errmsg(error, escope, eo_str, args, false,
+				   err_msg /*out*/, errmsg_sz);
 
-	if (ret > 0 && ret < (int64_t)size) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-		ret += vsnprintf(str + ret, size - ret, format, args);
-#pragma GCC diagnostic pop
-		if (ret > 0 && ret < (int64_t)size)
-			ret += snprintf(str + ret, size - ret, "\n");
-	}
-
-	str[size - 1] = '\0';
-
-	return MIN((int64_t)size, ret + 1);
+	return (int)len + 1;
 }
 
 void em_version_print(void)
@@ -102,27 +97,87 @@ void em_info_print(void)
 	print_em_info();
 }
 
-int
-em_core_id_get_physical(int em_core_id)
+int em_core_id_physical(int em_core_id)
 {
-	return logic_to_phys_core_id(em_core_id);
+	const em_locm_t *const locm = &em_locm;
+	int phys_core;
+
+	if (unlikely((const unsigned int)em_core_id >= EM_MAX_CORES))
+		return -1;
+
+	if (locm->core_id == em_core_id)
+		return odp_cpu_id();
+
+	core_map_t *const core_map = &em_shm->core_map;
+	char path[32]; /* path to /proc/[tid]/stat */
+
+	odp_rwlock_read_lock(&core_map->rwlock);
+	memcpy(path, core_map->rwlocked.proc_tid_stat_paths[em_core_id], sizeof(path));
+	odp_rwlock_read_unlock(&core_map->rwlock);
+
+	if (unlikely(path[0] == '\0'))
+		return -1;
+
+	FILE *file = fopen(path, "r");
+
+	if (!file) {
+		EM_LOG(EM_LOG_ERR, "fopen(%s) failed: %s (%d)\n",
+		       path, strerror(errno), errno);
+		return -1;
+	}
+
+	phys_core = read_proc_cpuid(file);
+	fclose(file);
+
+	return phys_core;
 }
 
-void
-em_core_mask_get_physical(em_core_mask_t *phys, const em_core_mask_t *logic)
+void em_core_mask_physical(em_core_mask_t *mask_phys /*out*/,
+			   const em_core_mask_t *mask_emcore)
 {
-	if (em_core_mask_equal(logic, &em_shm->core_map.logic_mask)) {
-		em_core_mask_copy(phys, &em_shm->core_map.phys_mask);
-	} else {
-		em_core_mask_zero(phys);
-		for (int i = 0; i < EM_MAX_CORES; i++) {
-			int phys_core;
+	core_map_t *const core_map = &em_shm->core_map;
+	const int mask_cnt = em_core_mask_count(mask_emcore);
+	int core_em = em_core_mask_first(mask_emcore);
 
-			if (em_core_mask_isset(i, logic)) {
-				phys_core = logic_to_phys_core_id(i);
-				em_core_mask_set(phys_core, phys);
-			}
+	em_core_mask_zero(mask_phys);
+
+	if (unlikely(mask_cnt <= 0 || mask_cnt > EM_MAX_CORES || core_em < 0))
+		return;
+
+	char paths[mask_cnt][32]; /* paths to /proc/[tid]/stat */
+
+	odp_rwlock_read_lock(&core_map->rwlock);
+
+	int f_cnt = 0;
+
+	while (core_em >= 0 && f_cnt < mask_cnt) {
+		memcpy(paths[f_cnt], core_map->rwlocked.proc_tid_stat_paths[core_em],
+		       sizeof(paths[f_cnt]));
+
+		if (unlikely(paths[f_cnt][0] == '\0')) {
+			odp_rwlock_read_unlock(&core_map->rwlock);
+			return;
 		}
+		core_em = em_core_mask_next(mask_emcore, core_em);
+		f_cnt++;
+	}
+
+	odp_rwlock_read_unlock(&core_map->rwlock);
+
+	for (int i = 0; i < f_cnt; i++) {
+		FILE *file = fopen(paths[i], "r");
+		int phys_core;
+
+		if (!file) {
+			EM_LOG(EM_LOG_ERR, "fopen(%s) failed: %s (%d)\n",
+			       paths[i], strerror(errno), errno);
+			return;
+		}
+		phys_core = read_proc_cpuid(file);
+		fclose(file);
+
+		if (phys_core >= 0)
+			em_core_mask_set(phys_core, mask_phys);
 	}
 }
 

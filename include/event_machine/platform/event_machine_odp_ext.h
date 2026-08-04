@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2021, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -40,13 +40,14 @@
 
 #pragma GCC visibility push(default)
 
+#include <odp_api.h>
+
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_timer_hw_specific.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <odp_api.h>
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
 
 /**
  * Get the associated ODP queue.
@@ -260,8 +261,8 @@ odp_schedule_group_t em_odp_qgrp2odp(em_queue_group_t queue_group);
  * This function will initialize the odp packets properly as EM events before
  * enqueueing them into EM.
  * The odp packets might be polled from pktio or some other external source,
- * e.g. the em_conf_t::input.input_poll_fn() function (see em_init()) can use
- * this API to enqueue polled packets into EM queues.
+ * e.g. the em_conf_local_t::input_poll_fn() function (see em_init_local()) can
+ * use this API to enqueue polled packets into EM queues.
  * Inside EM, the application must use em_send...() instead to send/enqueue
  * events into EM queues.
  *

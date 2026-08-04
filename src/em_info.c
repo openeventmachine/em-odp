@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015-2023, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,7 +38,58 @@
 /* sysinfo printouts from the ODP example: odp_sysinfo.c */
 /* SW ISA detection from the <arch>/odp_sysinfo_parse.c files */
 
-#include "em_include.h"
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "em_atomic_group.h"
+#include "em_chaining.h"
+#include "em_core.h"
+#include "em_dispatcher.h"
+#include "em_eo.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_group.h"
+#include "em_hooks.h"
+#include "em_info.h"
+#include "em_libconfig.h"
+#include "em_mem.h"
+#include "em_pool.h"
+#include "em_queue.h"
+#include "em_queue_group.h"
+#include "em_timer.h"
+
+typedef struct {
+	/* EM-cores: */
+	int logic_cores[EM_MAX_CORES];
+	int phys_cores[EM_MAX_CORES];
+	int thr_ids[EM_MAX_CORES];
+	pid_t tids[EM_MAX_CORES];
+	em_core_type_t core_types[EM_MAX_CORES];
+	char proc_tid_stat_paths[EM_MAX_CORES][32];
+
+	/* External EM threads/processes: */
+	pid_t ext_tids[ODP_THREAD_COUNT_MAX];
+	int ext_thr_ids[ODP_THREAD_COUNT_MAX];
+} current_core_map_t;
+
+static ENV_LOCAL current_core_map_t current_core_map;
 
 static const char *cpu_arch_name(odp_cpu_arch_t cpu_arch)
 {
@@ -87,14 +138,12 @@ static const char *arm_isa_name(odp_cpu_arch_arm_t isa)
 		return "ARMv9.1-A";
 	case ODP_CPU_ARCH_ARMV9_2:
 		return "ARMv9.2-A";
-#if ODP_VERSION_API_NUM(1, 42, 1) <= ODP_VERSION_API
 	case ODP_CPU_ARCH_ARMV8_8:
 		return "ARMv8.8-A";
 	case ODP_CPU_ARCH_ARMV8_9:
 		return "ARMv8.9-A";
 	case ODP_CPU_ARCH_ARMV9_3:
 		return "ARMv9.3-A";
-#endif
 	default:
 		return "Unknown";
 	}
@@ -179,12 +228,10 @@ static odp_cpu_arch_arm_t detect_sw_isa_arm(void)
 				return ODP_CPU_ARCH_ARMV8_6;
 			case 7:
 				return ODP_CPU_ARCH_ARMV8_7;
-#if ODP_VERSION_API_NUM(1, 42, 1) <= ODP_VERSION_API
 			case 8:
 				return ODP_CPU_ARCH_ARMV8_8;
 			case 9:
 				return ODP_CPU_ARCH_ARMV8_9;
-#endif
 			default:
 				return ODP_CPU_ARCH_ARM_UNKNOWN;
 			}
@@ -196,10 +243,8 @@ static odp_cpu_arch_arm_t detect_sw_isa_arm(void)
 				return ODP_CPU_ARCH_ARMV9_1;
 			case 2:
 				return ODP_CPU_ARCH_ARMV9_2;
-#if ODP_VERSION_API_NUM(1, 42, 1) <= ODP_VERSION_API
 			case 3:
 				return ODP_CPU_ARCH_ARMV9_3;
-#endif
 			default:
 				return ODP_CPU_ARCH_ARM_UNKNOWN;
 			}
@@ -272,18 +317,129 @@ static odp_cpu_arch_isa_t detect_sw_isa(odp_cpu_arch_t cpu_arch)
 	return sw_isa;
 }
 
+/* Helper to print_core_map_info(): print EM-cores stored in 'cur-map' */
+static void print_em_cores(const current_core_map_t *const cur_map, int cnt)
+{
+	if (unlikely(cnt <= 0))
+		return;
+
+	/* cnt >= 1 up to core_count */
+	const int logic_last = cur_map->logic_cores[cnt - 1];
+	int idx = 0;
+
+	for (int i = 0; i <= logic_last; i++) {
+		if (i == cur_map->logic_cores[idx]) {
+			int phys_core = cur_map->phys_cores[idx];
+			char phys_core_str[20];
+
+			if (phys_core >= 0)
+				snprintf(phys_core_str, sizeof(phys_core_str), "%2d", phys_core);
+			else
+				snprintf(phys_core_str, sizeof(phys_core_str), " ?");
+			phys_core_str[sizeof(phys_core_str) - 1] = '\0';
+
+			EM_PRINT(" %2d            %s           %2d            %s     %" PRIu64 "\n",
+				 cur_map->logic_cores[idx], phys_core_str, cur_map->thr_ids[idx],
+				 cur_map->core_types[idx] == EM_CORE_TYPE_WORKER ? "WRK" : "CTL",
+				 (uint64_t)cur_map->tids[idx]);
+			idx++;
+		} else {
+			EM_PRINT("  -             -            -             -       -\n");
+		}
+	}
+}
+
+/* Helper to print_core_map_info(): print EM external threads/processes stored in 'cur-map' */
+static void print_ext_threads(const current_core_map_t *const cur_map, int ext_cnt)
+{
+	if (unlikely(ext_cnt <= 0))
+		return;
+
+	for (int i = 0; i < ext_cnt; i++) {
+		EM_PRINT("  -             -           %2d            EXT     %" PRIu64 "\n",
+			 cur_map->ext_thr_ids[i], (uint64_t)cur_map->ext_tids[i]);
+	}
+}
+
 void print_core_map_info(void)
 {
-	EM_PRINT("Core mapping: EM-core <-> phys-core <-> ODP-thread\n");
+	core_map_t *const core_map = &em_shm->core_map;
+	current_core_map_t *const cur_map = &current_core_map;
+	const odp_cpumask_t *const logic_mask = &core_map->rwlocked.logic_mask.odp_cpumask;
+	const odp_thrmask_t *const thrmask_extthrs = &core_map->rwlocked.thrmask_extthrs;
 
-	for (int logic_core = 0; logic_core < em_core_count(); logic_core++) {
-		EM_PRINT("                %2i           %2i           %2i\n",
-			 logic_core,
-			 em_core_id_get_physical(logic_core),
-			 logic_to_thr_core_id(logic_core));
+	odp_rwlock_read_lock(&core_map->rwlock);
+
+	/* Read the current mappings for EM_CORE_TYPE_WORKER & _CONTROL */
+	uint32_t cnt = 0;
+	int logic_core = odp_cpumask_first(logic_mask);
+
+	while (logic_core >= 0 && cnt < EM_MAX_CORES) {
+		cur_map->logic_cores[cnt] = logic_core;
+		/* set later: cur_map->phys_cores[cnt] */
+		cur_map->thr_ids[cnt] = core_map->rwlocked.thr_vs_logic.odp_thr[logic_core];
+		cur_map->tids[cnt] = core_map->rwlocked.tids[logic_core];
+		cur_map->core_types[cnt] = core_map->rwlocked.core_types[logic_core];
+		memcpy(cur_map->proc_tid_stat_paths[cnt],
+		       core_map->rwlocked.proc_tid_stat_paths[logic_core],
+		       sizeof(cur_map->proc_tid_stat_paths[cnt]));
+		logic_core = odp_cpumask_next(logic_mask, logic_core);
+		cnt++;
 	}
 
+	/* Ext threads/processes: EM_CORE_TYPE_EXTERNAL */
+	int ext_cnt = 0;
+	int ext_thr = odp_thrmask_first(thrmask_extthrs);
+
+	while (ext_thr >= 0 && ext_cnt < ODP_THREAD_COUNT_MAX) {
+		cur_map->ext_thr_ids[ext_cnt] = ext_thr;
+		cur_map->ext_tids[ext_cnt] = core_map->rwlocked.ext_tids[ext_thr];
+		ext_thr = odp_thrmask_next(thrmask_extthrs, ext_thr);
+		ext_cnt++;
+	}
+
+	odp_rwlock_read_unlock(&core_map->rwlock);
+
+	if (unlikely(cnt == 0 && ext_cnt == 0))
+		goto core_map_error;
+
+	/* read the phys core from the stored /proc/[tid]/stat files */
+	for (uint32_t i = 0; i < cnt; i++) {
+		const char *path = cur_map->proc_tid_stat_paths[i];
+
+		if (unlikely(path[0] == '\0')) {
+			cur_map->phys_cores[i] = -1; /* prints '?' */
+			continue;
+		}
+
+		FILE *file = fopen(path, "r");
+
+		if (!file) {
+			EM_LOG(EM_LOG_ERR, "fopen(%s) failed: %s (%d)\n",
+			       path, strerror(errno), errno);
+			return;
+		}
+		cur_map->phys_cores[i] = read_proc_cpuid(file);
+		fclose(file);
+	}
+
+	/* Print outside of rwlock */
+	EM_PRINT("Core mapping:\n"
+		 "EM-core <-> phys-core <-> ODP-thread <-> type <-> pid\n");
+
+	/* Print EM worker and control cores */
+	print_em_cores(cur_map, cnt);
+
+	/* Print EM external threads/processes: */
+	print_ext_threads(cur_map, ext_cnt);
+
 	EM_PRINT("\n");
+	return;
+
+core_map_error:
+	EM_PRINT("Core mapping:\n"
+		 "EM-core <-> phys-core <-> ODP-thread <-> type <-> pid\n"
+		 "  -             -            -             -       -\n\n");
 }
 
 void print_cpu_arch_info(void)
@@ -324,71 +480,101 @@ static void print_mem_info(void)
 		 "EM local mem size:       %zu B (per core)\n",
 		 sizeof(em_shm_t), sizeof(em_locm_t));
 
-	EM_DBG("\nem_locm_t:\t\t\t offset\t   size\n"
-	       "\t\t\t\t ------\t   ----\n"
-	       "current:\t\t\t%5zu B\t%5zu B\n"
-	       "idle_state:\t\t\t%5zu B\t%5zu B\n"
-	       "core_id:\t\t\t%5zu B\t%5zu B\n"
-	       "event_burst_cnt:\t\t%5zu B\t%5zu B\n"
-	       "atomic_group_released:\t\t%5zu B\t%5zu B\n"
-	       "do_input_poll:\t\t\t%5zu B\t%5zu B\n"
-	       "do_output_drain:\t\t%5zu B\t%5zu B\n"
-	       "is_external_thr:\t\t%5zu B\t%5zu B\n"
-	       "is_sched_paused:\t\t%5zu B\t%5zu B\n"
-	       "dispatch_cnt:\t\t\t%5zu B\t%5zu B\n"
-	       "dispatch_last_run:\t\t%5zu B\t%5zu B\n"
-	       "poll_drain_dispatch_cnt:\t%5zu B\t%5zu B\n"
-	       "poll_drain_dispatch_last_run:\t%5zu B\t%5zu B\n"
-	       "local_queues:\t\t\t%5zu B\t%5zu B\n"
-	       "start_eo_elem:\t\t\t%5zu B\t%5zu B\n"
-	       "error_count:\t\t\t%5zu B\t%5zu B\n"
-	       "log_fn:\t\t\t\t%5zu B\t%5zu B\n"
-	       "sync_api:\t\t\t%5zu B\t%5zu B\n"
-	       "debug_ts[]:\t\t\t%5zu B\t%5zu B\n"
-	       "output_queue_track:\t\t%5zu B\t%5zu B\n"
-	       "end:\t\t\t\t%5zu B\t%5zu B\n\n",
-	       offsetof(em_locm_t, current),
-	       sizeof_field(em_locm_t, current),
-	       offsetof(em_locm_t, idle_state),
-	       sizeof_field(em_locm_t, idle_state),
-	       offsetof(em_locm_t, core_id),
-	       sizeof_field(em_locm_t, core_id),
-	       offsetof(em_locm_t, event_burst_cnt),
-	       sizeof_field(em_locm_t, event_burst_cnt),
-	       offsetof(em_locm_t, atomic_group_released),
-	       sizeof_field(em_locm_t, atomic_group_released),
-	       offsetof(em_locm_t, do_input_poll),
-	       sizeof_field(em_locm_t, do_input_poll),
-	       offsetof(em_locm_t, do_output_drain),
-	       sizeof_field(em_locm_t, do_output_drain),
-	       offsetof(em_locm_t, is_external_thr),
-	       sizeof_field(em_locm_t, is_external_thr),
-	       offsetof(em_locm_t, is_sched_paused),
-	       sizeof_field(em_locm_t, is_sched_paused),
-	       offsetof(em_locm_t, dispatch_cnt),
-	       sizeof_field(em_locm_t, dispatch_cnt),
-	       offsetof(em_locm_t, dispatch_last_run),
-	       sizeof_field(em_locm_t, dispatch_last_run),
-	       offsetof(em_locm_t, poll_drain_dispatch_cnt),
-	       sizeof_field(em_locm_t, poll_drain_dispatch_cnt),
-	       offsetof(em_locm_t, poll_drain_dispatch_last_run),
-	       sizeof_field(em_locm_t, poll_drain_dispatch_last_run),
-	       offsetof(em_locm_t, local_queues),
-	       sizeof_field(em_locm_t, local_queues),
-	       offsetof(em_locm_t, start_eo_elem),
-	       sizeof_field(em_locm_t, start_eo_elem),
-	       offsetof(em_locm_t, error_count),
-	       sizeof_field(em_locm_t, error_count),
-	       offsetof(em_locm_t, log_fn),
-	       sizeof_field(em_locm_t, log_fn),
-	       offsetof(em_locm_t, sync_api),
-	       sizeof_field(em_locm_t, sync_api),
-	       offsetof(em_locm_t, debug_ts),
-	       sizeof_field(em_locm_t, debug_ts),
-	       offsetof(em_locm_t, output_queue_track),
-	       sizeof_field(em_locm_t, output_queue_track),
-	       offsetof(em_locm_t, end),
-	       sizeof_field(em_locm_t, end)
+	DBG_PRINT("\nem_locm_t:\t\t\t offset\t   size\n"
+		  "\t\t\t\t ------\t   ----\n"
+		  "current:\t\t\t%5zu B\t%5zu B\n"
+		  "idle_state:\t\t\t%5zu B\t%5zu B\n"
+		  "dispatch_cnt:\t\t\t%5zu B\t%5zu B\n"
+		  "poll_drain_dispatch_cnt:\t%5zu B\t%5zu B\n"
+		  "event_burst_cnt:\t\t%5zu B\t%5zu B\n"
+		  "core_id:\t\t\t%5zu B\t%5zu B\n"
+		  "local_queues:\t\t\t%5zu B\t%5zu B\n"
+		  "local_event_cnt:\t\t%5zu B\t%5zu B\n"
+		  "input_poll_fn:\t\t\t%5zu B\t%5zu B\n"
+		  "output_drain_fn:\t\t%5zu B\t%5zu B\n"
+		  "atomic_group_released:\t\t%5zu B\t%5zu B\n"
+		  "is_sched_paused:\t\t%5zu B\t%5zu B\n"
+		  "is_em_core:\t\t\t%5zu B\t%5zu B\n"
+		  "is_external_thread:\t\t%5zu B\t%5zu B\n"
+		  "is_term_thread_done:\t\t%5zu B\t%5zu B\n"
+		  "is_core_local_inited:\t\t%5zu B\t%5zu B\n"
+		  "dispatch_last_run:\t\t%5zu B\t%5zu B\n"
+		  "poll_ctrl_interval_time:\t%5zu B\t%5zu B\n"
+		  "poll_drain_dispatch_last_run:\t%5zu B\t%5zu B\n"
+		  "poll_drain_interval_time:\t%5zu B\t%5zu B\n"
+		  "init_pid:\t\t\t%5zu B\t%5zu B\n"
+		  "start_eo_elem:\t\t\t%5zu B\t%5zu B\n"
+		  "error_count:\t\t\t%5zu B\t%5zu B\n"
+		  "log_fn:\t\t\t\t%5zu B\t%5zu B\n"
+		  "vlog_fn:\t\t\t%5zu B\t%5zu B\n"
+		  "sync_api:\t\t\t%5zu B\t%5zu B\n"
+		  "debug_ts[]:\t\t\t%5zu B\t%5zu B\n"
+		  "output_queue_track:\t\t%5zu B\t%5zu B\n"
+		  "conf_local:\t\t\t%5zu B\t%5zu B\n"
+		  "evhdr_nonem:\t\t\t%5zu B\t%5zu B\n"
+		  "end:\t\t\t\t%5zu B\t%5zu B\n\n",
+		  offsetof(em_locm_t, current),
+		  sizeof_field(em_locm_t, current),
+		  offsetof(em_locm_t, idle_state),
+		  sizeof_field(em_locm_t, idle_state),
+		  offsetof(em_locm_t, dispatch_cnt),
+		  sizeof_field(em_locm_t, dispatch_cnt),
+		  offsetof(em_locm_t, poll_drain_dispatch_cnt),
+		  sizeof_field(em_locm_t, poll_drain_dispatch_cnt),
+		  offsetof(em_locm_t, event_burst_cnt),
+		  sizeof_field(em_locm_t, event_burst_cnt),
+		  offsetof(em_locm_t, core_id),
+		  sizeof_field(em_locm_t, core_id),
+		  offsetof(em_locm_t, local_queues),
+		  sizeof_field(em_locm_t, local_queues),
+		  offsetof(em_locm_t, local_event_cnt),
+		  sizeof_field(em_locm_t, local_event_cnt),
+		  offsetof(em_locm_t, input_poll_fn),
+		  sizeof_field(em_locm_t, input_poll_fn),
+		  offsetof(em_locm_t, output_drain_fn),
+		  sizeof_field(em_locm_t, output_drain_fn),
+		  offsetof(em_locm_t, atomic_group_released),
+		  sizeof_field(em_locm_t, atomic_group_released),
+		  offsetof(em_locm_t, is_sched_paused),
+		  sizeof_field(em_locm_t, is_sched_paused),
+		  offsetof(em_locm_t, is_em_core),
+		  sizeof_field(em_locm_t, is_em_core),
+		  offsetof(em_locm_t, is_external_thread),
+		  sizeof_field(em_locm_t, is_external_thread),
+		  offsetof(em_locm_t, is_term_thread_done),
+		  sizeof_field(em_locm_t, is_term_thread_done),
+		  offsetof(em_locm_t, is_core_local_inited),
+		  sizeof_field(em_locm_t, is_core_local_inited),
+		  offsetof(em_locm_t, dispatch_last_run),
+		  sizeof_field(em_locm_t, dispatch_last_run),
+		  offsetof(em_locm_t, poll_ctrl_interval_time),
+		  sizeof_field(em_locm_t, poll_ctrl_interval_time),
+		  offsetof(em_locm_t, poll_drain_dispatch_last_run),
+		  sizeof_field(em_locm_t, poll_drain_dispatch_last_run),
+		  offsetof(em_locm_t, poll_drain_interval_time),
+		  sizeof_field(em_locm_t, poll_drain_interval_time),
+		  offsetof(em_locm_t, init_pid),
+		  sizeof_field(em_locm_t, init_pid),
+		  offsetof(em_locm_t, start_eo_elem),
+		  sizeof_field(em_locm_t, start_eo_elem),
+		  offsetof(em_locm_t, error_count),
+		  sizeof_field(em_locm_t, error_count),
+		  offsetof(em_locm_t, log_fn),
+		  sizeof_field(em_locm_t, log_fn),
+		  offsetof(em_locm_t, vlog_fn),
+		  sizeof_field(em_locm_t, vlog_fn),
+		  offsetof(em_locm_t, sync_api),
+		  sizeof_field(em_locm_t, sync_api),
+		  offsetof(em_locm_t, debug_ts),
+		  sizeof_field(em_locm_t, debug_ts),
+		  offsetof(em_locm_t, output_queue_track),
+		  sizeof_field(em_locm_t, output_queue_track),
+		  offsetof(em_locm_t, conf_local),
+		  sizeof_field(em_locm_t, conf_local),
+		  offsetof(em_locm_t, evhdr_nonem),
+		  sizeof_field(em_locm_t, evhdr_nonem),
+		  offsetof(em_locm_t, end),
+		  sizeof_field(em_locm_t, end)
 	);
 }
 

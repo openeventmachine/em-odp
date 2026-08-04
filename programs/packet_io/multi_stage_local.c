@@ -85,7 +85,7 @@
 
 /**
  * Test with different queue types if set to '1':
- * ATOMIC, PARALLEL, PARALLEL_ORDERED and LOCAL
+ * ATOMIC, PARALLEL, ORDERED and LOCAL
  */
 #define QUEUE_TYPE_MIX  1 /* 0=False or 1=True(default) */
 
@@ -96,11 +96,11 @@
 #define QUEUE_TYPE  EM_QUEUE_TYPE_LOCAL
 /* #define QUEUE_TYPE  EM_QUEUE_TYPE_ATOMIC */
 /* #define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL */
-/* #define QUEUE_TYPE  EM_QUEUE_TYPE_PARALLEL_ORDERED */
+/* #define QUEUE_TYPE  EM_QUEUE_TYPE_ORDERED */
 
 /**
  * The number of Queue Type permutations:
- * Four (4) queue types (LOCAL, ATOMIC, PARALLEL, PARALLEL-ORDERED) in
+ * Four (4) queue types (LOCAL, ATOMIC, PARALLEL, ORDERED) in
  * three (3) stages gives 4*4*4 = 64 permutations.
  * Only used if QUEUE_TYPE_MIX is '1'
  */
@@ -966,7 +966,7 @@ queue_types(int cnt)
 	case 2:
 		return EM_QUEUE_TYPE_PARALLEL;
 	default:
-		return EM_QUEUE_TYPE_PARALLEL_ORDERED;
+		return EM_QUEUE_TYPE_ORDERED;
 	}
 }
 

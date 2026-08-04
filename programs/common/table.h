@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2024, Nokia Solutions and Networks
+ *   Copyright (c) 2024-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -41,6 +41,10 @@
 #ifndef TABLE_H_
 #define TABLE_H_
 
+#include <stdint.h>
+
+#include <odp/helper/odph_api.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,8 +63,6 @@ extern "C" {
  *    - delete key
  * @{
  */
-
-#include <stdint.h>
 
 /**
  * @def TABLE_NAME_LEN

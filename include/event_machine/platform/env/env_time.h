@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2020, Nokia Solutions and Networks
+ *   Copyright (c) 2020-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -38,6 +38,10 @@
 #define _ENV_TIME_H_
 
 #pragma GCC visibility push(default)
+
+#include <stdint.h>
+
+#include <odp_api.h>
 
 #ifdef __cplusplus
 extern "C" {

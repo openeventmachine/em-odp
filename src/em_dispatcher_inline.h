@@ -1,6 +1,6 @@
 /*
  * SPDX-License-Identifier: BSD-3-Clause
- * Copyright (c) 2023, Nokia Solutions and Networks
+ * Copyright (c) 2023-2026, Nokia Solutions and Networks
  */
 
 /**
@@ -11,20 +11,61 @@
 #ifndef EM_DISPATCHER_INLINE_H_
 #define EM_DISPATCHER_INLINE_H_
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
 #include <event_machine/helper/event_machine_debug.h>
+
+#include "em_atomic_group.h"
+#include "em_atomic_group_types.h"
+#include "em_dispatcher_types.h"
+#include "em_eo.h"
+#include "em_eo_types.h"
+#include "em_error.h"
+#include "em_event.h"
+#include "em_event_group.h"
+#include "em_event_group_types.h"
+#include "em_event_inline.h"
+#include "em_event_state.h"
+#include "em_event_types.h"
+#include "em_hook_types.h"
+#include "em_hooks.h"
+#include "em_mem.h"
+#include "em_queue.h"
+#include "em_queue_inline.h"
+#include "em_queue_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/*
+ * Max number of events handled in a single dispatch_events() burst.
+ * dispatch_events() is reached both from the scheduler burst (bounded by
+ * EM_SCHED_MULTI_MAX_BURST) and from the atomic-group burst (bounded by
+ * EM_SCHED_AG_MULTI_MAX_BURST). Use the larger of the two to size the fixed
+ * (non-VLA) event tables on the dispatch fast path.
+ */
+#define DISPATCH_MULTI_MAX_BURST \
+	MAX(EM_SCHED_MULTI_MAX_BURST, EM_SCHED_AG_MULTI_MAX_BURST)
+
 static inline void
-dispatch_multi_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
-		       const int num_events, queue_elem_t *const q_elem,
-		       const bool check_local_qs);
+dispatch_eo_multircv_single(em_event_t event, event_hdr_t *ev_hdr,
+			    queue_elem_t *const q_elem, const bool check_local_qs);
 static inline void
-dispatch_single_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
-			const int num_events, queue_elem_t *const q_elem,
-			const bool check_local_qs);
+dispatch_eo_multircv_burst(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+			   const int num_events, queue_elem_t *const q_elem,
+			   const bool check_local_qs);
+static inline void
+dispatch_eo_rcv_single(em_event_t event, event_hdr_t *ev_hdr,
+		       queue_elem_t *const q_elem, const bool check_local_qs);
+static inline void
+dispatch_eo_rcv_burst(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+		      const int num_events, queue_elem_t *const q_elem,
+		      const bool check_local_qs);
 
 /**
  * Helper: Remove undef-event entries from ev_tbl[]
@@ -112,9 +153,23 @@ dispatch_exit_cb(em_eo_t eo)
 	}
 }
 
+/**
+ * Returns true if any dispatch enter- or exit-callback is registered.
+ *
+ * Compiles to a constant 'false' when EM_DISPATCH_CALLBACKS_ENABLE is 0,
+ * letting callers dead-code-eliminate the callback path entirely.
+ */
+static inline bool
+dispatch_callbacks_registered(void)
+{
+	return EM_DISPATCH_CALLBACKS_ENABLE &&
+	       (em_shm->dispatch_enter_cb_tbl->tbl[0].disp_enter != NULL ||
+		em_shm->dispatch_exit_cb_tbl->tbl[0].disp_exit != NULL);
+}
+
 static inline void
-call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
-		   em_event_t event, event_hdr_t *ev_hdr, queue_elem_t *const q_elem)
+call_eo_rcv_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
+	       em_event_t event, event_hdr_t *ev_hdr, queue_elem_t *const q_elem)
 {
 	em_locm_t *const locm = &em_locm;
 	em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
@@ -155,25 +210,63 @@ call_eo_receive_fn(const em_eo_t eo, const em_receive_func_t eo_receive_func,
 	 * Event belongs to an event_group, update the count and
 	 * if requested send notifications
 	 */
-	if (locm->current.egrp != EM_EVENT_GROUP_UNDEF) {
+	event_group_elem_t *const current_egrp_elem = locm->current.egrp_elem;
+
+	if (current_egrp_elem) {
 		/*
 		 * Atomically decrease the event group count.
 		 * If the new count is zero, send notification events.
 		 */
-		event_group_count_decrement(1);
+		event_group_count_decrement(1, current_egrp_elem);
+		locm->current.egrp_elem = NULL;
 	}
-	locm->current.egrp = EM_EVENT_GROUP_UNDEF;
+}
+
+/**
+ * Fast-path equivalent of call_eo_rcv_fn() for when no dispatch callbacks are
+ * registered.
+ *
+ * The caller must have pre-extracted q_elem->queue, q_elem->context and
+ * q_elem->eo_ctx into locals so they can be passed by value to the
+ * receive function (and, when called from a burst loop, reused across
+ * the loop iterations).
+ *
+ * Marked always_inline because GCC's heuristics may decline to inline this
+ * helper when called from multiple sites with a function pointer call
+ * inside; we rely on inlining for the dispatch fast path to remain fast.
+ */
+__attribute__((always_inline))
+static inline void
+call_eo_rcv_fn__no_cb(const em_receive_func_t eo_receive_func,
+		      em_event_t event, event_hdr_t *const ev_hdr,
+		      const em_queue_t queue, void *const queue_ctx,
+		      void *const eo_ctx)
+{
+	em_locm_t *const locm = &em_locm;
+
+	locm->current.rcv_multi_cnt = 1;
+	event_group_set_local(ev_hdr->egrp, ev_hdr->egrp_gen, 1);
+
+	eo_receive_func(eo_ctx, event, ev_hdr->event_type,
+			queue, queue_ctx);
+
+	event_group_elem_t *const current_egrp_elem = locm->current.egrp_elem;
+
+	if (current_egrp_elem) {
+		event_group_count_decrement(1, current_egrp_elem);
+		locm->current.egrp_elem = NULL;
+	}
 }
 
 /**
  * @note All events belong to the same event group
- * @note Event type dropped from multi-event receive - use em_event_get_type()
+ * @note Event type dropped from multi-event receive - use em_event_type()
  */
 static inline void
-call_eo_receive_multi_fn(const em_eo_t eo,
-			 const em_receive_multi_func_t eo_receive_multi_func,
-			 em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
-			 const int num_events, queue_elem_t *const q_elem)
+call_eo_multircv_fn(const em_eo_t eo,
+		    const em_receive_multi_func_t eo_receive_multi_func,
+		    em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+		    const int num_events, queue_elem_t *const q_elem)
 {
 	em_locm_t *const locm = &em_locm;
 	em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
@@ -205,21 +298,60 @@ call_eo_receive_multi_fn(const em_eo_t eo,
 	 * Event belongs to an event_group, update the count and
 	 * if requested send notifications
 	 */
-	if (locm->current.egrp != EM_EVENT_GROUP_UNDEF) {
+	event_group_elem_t *const current_egrp_elem = locm->current.egrp_elem;
+
+	if (current_egrp_elem) {
 		/*
 		 * Atomically decrease the event group count.
 		 * If the new count is zero, send notification events.
 		 */
-		event_group_count_decrement(num_events);
+		event_group_count_decrement(num_events, current_egrp_elem);
+		locm->current.egrp_elem = NULL;
 	}
-	locm->current.egrp = EM_EVENT_GROUP_UNDEF;
+}
+
+/**
+ * Fast-path equivalent of call_eo_multircv_fn() for when no dispatch callbacks
+ * are registered.
+ *
+ * The caller must have pre-extracted q_elem->queue, q_elem->context and
+ * q_elem->eo_ctx into locals so they can be passed by value to the
+ * receive function (and, when called from a burst loop, reused across
+ * the burst's batches).
+ *
+ * Marked always_inline because GCC's heuristics may decline to inline this
+ * helper when called from multiple sites with a function pointer call
+ * inside; we rely on inlining for the dispatch fast path to remain fast.
+ */
+__attribute__((always_inline))
+static inline void
+call_eo_multircv_fn__no_cb(const em_receive_multi_func_t eo_receive_multi_func,
+			   em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+			   const int num_events,
+			   const em_queue_t queue, void *const queue_ctx,
+			   void *const eo_ctx)
+{
+	em_locm_t *const locm = &em_locm;
+
+	locm->current.rcv_multi_cnt = num_events;
+	event_group_set_local(ev_hdr_tbl[0]->egrp, ev_hdr_tbl[0]->egrp_gen,
+			      num_events);
+
+	eo_receive_multi_func(eo_ctx, ev_tbl, num_events, queue, queue_ctx);
+
+	event_group_elem_t *const current_egrp_elem = locm->current.egrp_elem;
+
+	if (current_egrp_elem) {
+		event_group_count_decrement(num_events, current_egrp_elem);
+		locm->current.egrp_elem = NULL;
+	}
 }
 
 /**
  * @brief Helper to dispatch_local_queues() for a single event
  */
 static inline void
-_dispatch_local(stash_entry_t entry)
+dispatch_local_single(stash_entry_t entry)
 {
 	em_locm_t *const locm = &em_locm;
 	odp_event_t odp_event;
@@ -235,7 +367,7 @@ _dispatch_local(stash_entry_t entry)
 
 	odp_event = (odp_event_t)(uintptr_t)entry.evptr;
 	/* Event might originate from outside (via polled pktio) of EM and need init */
-	event = event_init_odp(odp_event, true/*is_extev*/, &ev_hdr/*out*/);
+	event = event_init_odp(odp_event, true/*is_extev*/, q_elem, &ev_hdr/*out*/);
 
 	if (unlikely(!q_elem || q_elem->state != EM_QUEUE_STATE_READY)) {
 		em_free(event);
@@ -248,24 +380,25 @@ _dispatch_local(stash_entry_t entry)
 	}
 
 	if (q_elem->flags.use_multi_rcv)
-		dispatch_multi_receive(&event, &ev_hdr, 1, q_elem, false);
+		dispatch_eo_multircv_single(event, ev_hdr, q_elem, false);
 	else
-		dispatch_single_receive(&event, &ev_hdr, 1, q_elem, false);
+		dispatch_eo_rcv_single(event, ev_hdr, q_elem, false);
 }
 
 /**
  * @brief Helper to dispatch_local_queues() for multiple events
  */
 static inline void
-_dispatch_local_multi(const stash_entry_t entry_tbl[], const int num)
+dispatch_local_burst(const stash_entry_t entry_tbl[], const int num)
 {
 	em_locm_t *const locm = &em_locm;
 	int idx = 0; /* index into ev_tbl[] & ev_hdr_tbl[] */
 	int ev_cnt;  /* number of events to the same local-queue */
 
-	odp_event_t odp_evtbl[num];
-	em_event_t ev_tbl[num];
-	event_hdr_t *evhdr_tbl[num];
+	/* num <= EM_QUEUE_LOCAL_MULTI_MAX_BURST, use fixed-size (non-VLA) tables */
+	odp_event_t odp_evtbl[EM_QUEUE_LOCAL_MULTI_MAX_BURST];
+	em_event_t ev_tbl[EM_QUEUE_LOCAL_MULTI_MAX_BURST];
+	event_hdr_t *evhdr_tbl[EM_QUEUE_LOCAL_MULTI_MAX_BURST];
 
 	for (int i = 0; i < num; i++)
 		odp_evtbl[i] = (odp_event_t)(uintptr_t)entry_tbl[i].evptr;
@@ -291,7 +424,7 @@ _dispatch_local_multi(const stash_entry_t entry_tbl[], const int num)
 
 		/* Events might originate from outside (via polled pktio) of EM and need init */
 		event_init_odp_multi(&odp_evtbl[idx], ev_tbl/*out*/, evhdr_tbl/*out*/,
-				     ev_cnt, true/*is_extev*/);
+				     ev_cnt, true/*is_extev*/, q_elem);
 
 		if (unlikely(!q_elem || q_elem->state != EM_QUEUE_STATE_READY)) {
 			em_free_multi(ev_tbl, ev_cnt);
@@ -305,9 +438,9 @@ _dispatch_local_multi(const stash_entry_t entry_tbl[], const int num)
 		}
 
 		if (q_elem->flags.use_multi_rcv)
-			dispatch_multi_receive(ev_tbl, evhdr_tbl, ev_cnt, q_elem, false);
+			dispatch_eo_multircv_burst(ev_tbl, evhdr_tbl, ev_cnt, q_elem, false);
 		else
-			dispatch_single_receive(ev_tbl, evhdr_tbl, ev_cnt, q_elem, false);
+			dispatch_eo_rcv_burst(ev_tbl, evhdr_tbl, ev_cnt, q_elem, false);
 
 		idx += ev_cnt;
 	} while (idx < num);
@@ -317,9 +450,9 @@ static inline void
 dispatch_local_queues(const stash_entry_t entry_tbl[], const int num)
 {
 	if (num == 1)
-		_dispatch_local(entry_tbl[0]);
+		dispatch_local_single(entry_tbl[0]);
 	else
-		_dispatch_local_multi(entry_tbl, num);
+		dispatch_local_burst(entry_tbl, num);
 }
 
 static inline void
@@ -349,6 +482,7 @@ check_local_queues(void)
 		if (num <= 0)
 			break;
 
+		locm->local_event_cnt += num;
 		dispatch_local_queues(entry_tbl, num);
 	}
 
@@ -368,113 +502,427 @@ count_same_evgroup(event_hdr_t *ev_hdr_tbl[], const unsigned int num)
 	const em_event_group_t egrp = ev_hdr_tbl[0]->egrp;
 	unsigned int i = 1; /* 2nd hdr */
 
-	if (EM_EVENT_GROUP_SAFE_MODE && egrp != EM_EVENT_GROUP_UNDEF) {
-		const int32_t egrp_gen = ev_hdr_tbl[0]->egrp_gen;
+	if (egrp == EM_EVENT_GROUP_UNDEF) {
+		for (; i < num &&
+		     ev_hdr_tbl[i]->egrp == EM_EVENT_GROUP_UNDEF; i++)
+			;
+	} else {
+		const uint32_t egrp_gen = ev_hdr_tbl[0]->egrp_gen;
 
 		for (; i < num &&
 		     egrp == ev_hdr_tbl[i]->egrp &&
 		     egrp_gen == ev_hdr_tbl[i]->egrp_gen; i++)
-			;
-	} else {
-		for (; i < num &&
-		     egrp == ev_hdr_tbl[i]->egrp; i++)
 			;
 	}
 
 	return i;
 }
 
+/**
+ * Dispatch a single event to an EO multi-receive function
+ *
+ * Optimizes the case of a single event.
+ *
+ * When no dispatch callbacks are registered (the common case), uses
+ * call_eo_multircv_fn__no_cb() to skip the callback-table NULL checks
+ * that call_eo_multircv_fn() would otherwise perform. Falls back to
+ * call_eo_multircv_fn() when any dispatch callback is registered.
+ */
 static inline void
-dispatch_multi_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
-		       const int num_events, queue_elem_t *const q_elem,
-		       const bool check_local_qs)
+dispatch_eo_multircv_single(em_event_t event, event_hdr_t *ev_hdr,
+			    queue_elem_t *const q_elem, const bool check_local_qs)
+{
+	const em_eo_t eo = (em_eo_t)(uintptr_t)q_elem->eo;
+	const em_receive_multi_func_t eo_rcv_multi_fn = q_elem->receive_multi_func;
+
+	if (dispatch_callbacks_registered()) {
+		/*
+		 * Dispatch callbacks are registered - use call_eo_multircv_fn()
+		 * which handles callback invocation including event/context
+		 * modification by callbacks.
+		 */
+		if (check_local_qs) {
+			em_locm_t *const locm = &em_locm;
+
+			locm->event_burst_cnt--;
+			call_eo_multircv_fn(eo, eo_rcv_multi_fn,
+					    &event, &ev_hdr, 1, q_elem);
+			check_local_queues();
+		} else {
+			call_eo_multircv_fn(eo, eo_rcv_multi_fn,
+					    &event, &ev_hdr, 1, q_elem);
+		}
+		return;
+	}
+
+	/*
+	 * No dispatch callbacks - fast path: skip the callback-table lookups
+	 * and pass q_elem fields directly to the receive function.
+	 */
+	const em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
+	void *const queue_ctx = q_elem->context;
+	void *const eo_ctx = q_elem->eo_ctx;
+
+	if (check_local_qs) {
+		em_locm_t *const locm = &em_locm;
+
+		locm->event_burst_cnt--;
+		call_eo_multircv_fn__no_cb(eo_rcv_multi_fn, &event, &ev_hdr, 1,
+					   queue, queue_ctx, eo_ctx);
+		check_local_queues();
+	} else {
+		call_eo_multircv_fn__no_cb(eo_rcv_multi_fn, &event, &ev_hdr, 1,
+					   queue, queue_ctx, eo_ctx);
+	}
+}
+
+/**
+ * Dispatch a burst of events to an EO multi-receive function
+ *
+ * When no dispatch callbacks are registered (the common case), uses
+ * call_eo_multircv_fn__no_cb() with q_elem fields (queue, context, eo_ctx)
+ * read once for the whole burst, eliminating per-batch q_elem loads and
+ * callback-table NULL checks. Falls back to call_eo_multircv_fn() per
+ * batch when any dispatch callback is registered.
+ */
+static inline void
+dispatch_eo_multircv_burst(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+			   const int num_events, queue_elem_t *const q_elem,
+			   const bool check_local_qs)
 {
 	em_locm_t *const locm = &em_locm;
 	const em_eo_t eo = (em_eo_t)(uintptr_t)q_elem->eo;
 	const em_receive_multi_func_t eo_rcv_multi_fn =
 		q_elem->receive_multi_func;
 	int idx = 0; /* index into ev_hdr_tbl[] */
-	int i;
-	int j;
+
+	if (dispatch_callbacks_registered()) {
+		/*
+		 * Dispatch callbacks are registered - fall back to the
+		 * per-batch call_eo_multircv_fn() which handles callback
+		 * invocation including event/context modification by
+		 * callbacks.
+		 */
+		do {
+			/* count same event groups: 1 to (num_events - idx) */
+			const int egrp_cnt = count_same_evgroup(&ev_hdr_tbl[idx],
+								num_events - idx);
+			/*
+			 * Clamp the egrp-end index to num_events to make the
+			 * array bound explicit for static analyzers.
+			 * count_same_evgroup() returns '<= (num_events - idx)'
+			 * by contract, so the MIN() is a no-op at runtime.
+			 */
+			const int egrp_end = MIN(idx + egrp_cnt, num_events);
+			const int max = q_elem->max_events;
+			const int num = MIN(egrp_cnt, max);
+
+			if (check_local_qs) {
+				int j = idx;
+
+				/* Full batches of 'num' events */
+				while (egrp_end - j >= num) {
+					locm->event_burst_cnt -= num;
+					call_eo_multircv_fn(eo, eo_rcv_multi_fn,
+							    &ev_tbl[j], &ev_hdr_tbl[j],
+							    num, q_elem);
+					check_local_queues();
+					j += num;
+				}
+				/* Trailing partial batch, if any */
+				if (j < egrp_end) {
+					locm->event_burst_cnt = 0;
+					call_eo_multircv_fn(eo, eo_rcv_multi_fn,
+							    &ev_tbl[j], &ev_hdr_tbl[j],
+							    egrp_end - j, q_elem);
+					check_local_queues();
+				}
+			} else {
+				int j = idx;
+
+				while (egrp_end - j >= num) {
+					call_eo_multircv_fn(eo, eo_rcv_multi_fn,
+							    &ev_tbl[j], &ev_hdr_tbl[j],
+							    num, q_elem);
+					j += num;
+				}
+				if (j < egrp_end) {
+					call_eo_multircv_fn(eo, eo_rcv_multi_fn,
+							    &ev_tbl[j], &ev_hdr_tbl[j],
+							    egrp_end - j, q_elem);
+				}
+			}
+
+			idx = egrp_end;
+		} while (idx < num_events);
+		return;
+	}
+
+	/*
+	 * No dispatch callbacks - fast path for the whole burst.
+	 * Read q_elem fields once and reuse across all batches to skip the
+	 * per-batch q_elem loads and callback-table lookups that
+	 * call_eo_multircv_fn() would otherwise perform.
+	 */
+	const em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
+	void *const queue_ctx = q_elem->context;
+	void *const eo_ctx = q_elem->eo_ctx;
 
 	do {
-		/* count same event groups: 1 to num_events */
 		const int egrp_cnt = count_same_evgroup(&ev_hdr_tbl[idx],
 							num_events - idx);
+		/* See note above about the egrp_end clamp */
+		const int egrp_end = MIN(idx + egrp_cnt, num_events);
 		const int max = q_elem->max_events;
 		const int num = MIN(egrp_cnt, max);
-		const int rounds = egrp_cnt / num;
-		const int left_over = egrp_cnt % num;
 
 		if (check_local_qs) {
-			j = idx;
-			for (i = 0; i < rounds; i++) {
+			int j = idx;
+
+			/* Full batches of 'num' events */
+			while (egrp_end - j >= num) {
 				locm->event_burst_cnt -= num;
-				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
-							 &ev_tbl[j],
-							 &ev_hdr_tbl[j],
-							 num, q_elem);
+				call_eo_multircv_fn__no_cb(eo_rcv_multi_fn,
+							   &ev_tbl[j], &ev_hdr_tbl[j],
+							   num,
+							   queue, queue_ctx, eo_ctx);
 				check_local_queues();
 				j += num;
 			}
-			if (left_over) {
+			/* Trailing partial batch, if any */
+			if (j < egrp_end) {
 				locm->event_burst_cnt = 0;
-				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
-							 &ev_tbl[j],
-							 &ev_hdr_tbl[j],
-							 left_over, q_elem);
+				call_eo_multircv_fn__no_cb(eo_rcv_multi_fn,
+							   &ev_tbl[j], &ev_hdr_tbl[j],
+							   egrp_end - j,
+							   queue, queue_ctx, eo_ctx);
 				check_local_queues();
 			}
 		} else {
-			j = idx;
-			for (i = 0; i < rounds; i++) {
-				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
-							 &ev_tbl[j],
-							 &ev_hdr_tbl[j],
-							 num, q_elem);
+			int j = idx;
+
+			while (egrp_end - j >= num) {
+				call_eo_multircv_fn__no_cb(eo_rcv_multi_fn,
+							   &ev_tbl[j], &ev_hdr_tbl[j],
+							   num,
+							   queue, queue_ctx, eo_ctx);
 				j += num;
 			}
-			if (left_over) {
-				call_eo_receive_multi_fn(eo, eo_rcv_multi_fn,
-							 &ev_tbl[j],
-							 &ev_hdr_tbl[j],
-							 left_over, q_elem);
+			if (j < egrp_end) {
+				call_eo_multircv_fn__no_cb(eo_rcv_multi_fn,
+							   &ev_tbl[j], &ev_hdr_tbl[j],
+							   egrp_end - j,
+							   queue, queue_ctx, eo_ctx);
 			}
 		}
 
-		idx += egrp_cnt;
+		idx = egrp_end;
 	} while (idx < num_events);
 }
 
+/**
+ * Dispatch a single event to an EO receive function
+ *
+ * Optimizes the case of a single event.
+ *
+ * When no dispatch callbacks are registered (the common case), uses
+ * call_eo_rcv_fn__no_cb() to skip the callback-table NULL checks that
+ * call_eo_rcv_fn() would otherwise perform. Falls back to call_eo_rcv_fn()
+ * when any dispatch callback is registered.
+ */
 static inline void
-dispatch_single_receive(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
-			const int num_events, queue_elem_t *const q_elem,
-			const bool check_local_qs)
+dispatch_eo_rcv_single(em_event_t event, event_hdr_t *ev_hdr,
+		       queue_elem_t *const q_elem, const bool check_local_qs)
 {
-	em_locm_t *const locm = &em_locm;
 	const em_eo_t eo = (em_eo_t)(uintptr_t)q_elem->eo;
 	const em_receive_func_t eo_rcv_fn = q_elem->receive_func;
-	int i;
+
+	if (dispatch_callbacks_registered()) {
+		/*
+		 * Dispatch callbacks are registered - use call_eo_rcv_fn()
+		 * which handles callback invocation including event
+		 * modification by callbacks.
+		 */
+		if (check_local_qs) {
+			em_locm_t *const locm = &em_locm;
+
+			locm->event_burst_cnt--;
+			call_eo_rcv_fn(eo, eo_rcv_fn, event, ev_hdr, q_elem);
+			check_local_queues();
+		} else {
+			call_eo_rcv_fn(eo, eo_rcv_fn, event, ev_hdr, q_elem);
+		}
+		return;
+	}
+
+	/*
+	 * No dispatch callbacks - fast path: skip the callback-table lookups
+	 * and pass q_elem fields directly to the receive function.
+	 */
+	const em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
+	void *const queue_ctx = q_elem->context;
+	void *const eo_ctx = q_elem->eo_ctx;
 
 	if (check_local_qs) {
-		for (i = 0; i < num_events; i++) {
-			locm->event_burst_cnt--;
-			call_eo_receive_fn(eo, eo_rcv_fn,
-					   ev_tbl[i], ev_hdr_tbl[i],
-					   q_elem);
-			check_local_queues();
-		}
+		em_locm_t *const locm = &em_locm;
+
+		locm->event_burst_cnt--;
+		call_eo_rcv_fn__no_cb(eo_rcv_fn, event, ev_hdr,
+				      queue, queue_ctx, eo_ctx);
+		check_local_queues();
 	} else {
-		for (i = 0; i < num_events; i++)
-			call_eo_receive_fn(eo, eo_rcv_fn,
-					   ev_tbl[i], ev_hdr_tbl[i],
-					   q_elem);
+		call_eo_rcv_fn__no_cb(eo_rcv_fn, event, ev_hdr,
+				      queue, queue_ctx, eo_ctx);
 	}
 }
 
 /**
- * Dispatch events - call the EO-receive functions and pass the
- * events for processing
+ * Dispatch an event burst to an EO receive function one by one in a loop.
+ *
+ * When no dispatch callbacks are registered (the common case), uses
+ * call_eo_rcv_fn__no_cb() with q_elem fields (queue, context, eo_ctx)
+ * read once for the whole burst, eliminating per-event q_elem loads and
+ * callback-table NULL checks. Falls back to call_eo_rcv_fn() per event
+ * when any dispatch callback is registered.
+ */
+static inline void
+dispatch_eo_rcv_burst(em_event_t ev_tbl[], event_hdr_t *ev_hdr_tbl[],
+		      const int num_events, queue_elem_t *const q_elem,
+		      const bool check_local_qs)
+{
+	em_locm_t *const locm = &em_locm;
+	const em_eo_t eo = (em_eo_t)(uintptr_t)q_elem->eo;
+	const em_receive_func_t eo_rcv_fn = q_elem->receive_func;
+
+	if (dispatch_callbacks_registered()) {
+		/*
+		 * Dispatch callbacks are registered - fall back to the
+		 * per-event call_eo_rcv_fn() which handles callback
+		 * invocation including event modification by callbacks.
+		 */
+		if (check_local_qs) {
+			for (int i = 0; i < num_events; i++) {
+				locm->event_burst_cnt--;
+				call_eo_rcv_fn(eo, eo_rcv_fn,
+					       ev_tbl[i], ev_hdr_tbl[i],
+					       q_elem);
+				check_local_queues();
+			}
+		} else {
+			for (int i = 0; i < num_events; i++)
+				call_eo_rcv_fn(eo, eo_rcv_fn,
+					       ev_tbl[i], ev_hdr_tbl[i],
+					       q_elem);
+		}
+		return;
+	}
+
+	/*
+	 * No dispatch callbacks - fast path for the whole burst.
+	 * Read q_elem fields once and reuse across all events to skip the
+	 * per-event q_elem loads and callback-table lookups that
+	 * call_eo_rcv_fn() would otherwise perform.
+	 */
+	const em_queue_t queue = (em_queue_t)(uintptr_t)q_elem->queue;
+	void *const queue_ctx = q_elem->context;
+	void *const eo_ctx = q_elem->eo_ctx;
+
+	if (check_local_qs) {
+		for (int i = 0; i < num_events; i++) {
+			locm->event_burst_cnt--;
+			call_eo_rcv_fn__no_cb(eo_rcv_fn,
+					      ev_tbl[i], ev_hdr_tbl[i],
+					      queue, queue_ctx, eo_ctx);
+			check_local_queues();
+		}
+	} else {
+		for (int i = 0; i < num_events; i++)
+			call_eo_rcv_fn__no_cb(eo_rcv_fn,
+					      ev_tbl[i], ev_hdr_tbl[i],
+					      queue, queue_ctx, eo_ctx);
+	}
+}
+
+/**
+ * Helper to dispatch_events() for a single event
+ *
+ * Prepare for calling the EO single- or multi-receive function by converting
+ * (and initializing) the single ODP-event received to an EM-event.
+ *
+ * Optimizes the case of a single event to avoid the overhead of
+ * setting up arrays and loops for multiple events.
+ */
+static inline void
+dispatch_event_single_prepare(odp_event_t odp_event, queue_elem_t *const q_elem)
+{
+	event_hdr_t *ev_hdr;
+	/* Events might originate from outside of EM and need init */
+	em_event_t event = event_init_odp(odp_event, true/*is_extev*/, q_elem, &ev_hdr);
+
+	/*
+	 * Call the Execution Object (EO) receive function.
+	 * Scheduling context may be released during this.
+	 */
+	if (q_elem->flags.use_multi_rcv)
+		dispatch_eo_multircv_single(event, ev_hdr, q_elem, true);
+	else
+		dispatch_eo_rcv_single(event, ev_hdr, q_elem, true);
+}
+
+/**
+ * Helper to dispatch_events() for a burst of events
+ *
+ * Prepare for calling the EO single- or multi-receive function by converting
+ * (and initializing) the burst of ODP-events received to EM-events.
+ */
+static inline void
+dispatch_event_burst_prepare(odp_event_t odp_evtbl[], const int num_events,
+			     queue_elem_t *const q_elem)
+{
+	/* num_events <= DISPATCH_MULTI_MAX_BURST, use fixed-size (non-VLA) tables */
+	event_hdr_t *evhdr_tbl[DISPATCH_MULTI_MAX_BURST];
+	em_event_t ev_tbl[DISPATCH_MULTI_MAX_BURST];
+
+	/* Events might originate from outside of EM and need init */
+	event_init_odp_multi(odp_evtbl, ev_tbl/*out*/, evhdr_tbl/*out*/,
+			     num_events, true/*is_extev*/, q_elem);
+	/*
+	 * Call the Execution Object (EO) receive function.
+	 * Scheduling context may be released during this.
+	 */
+	if (q_elem->flags.use_multi_rcv)
+		dispatch_eo_multircv_burst(ev_tbl, evhdr_tbl, num_events,
+					   q_elem, true);
+	else
+		dispatch_eo_rcv_burst(ev_tbl, evhdr_tbl, num_events,
+				      q_elem, true);
+	}
+
+/**
+ * Dispatch events
+ *
+ * Prepare and convert the received ODP-event(s) to EM-event(s) and finally call
+ * the EO receive function (multi- or single-receive variant) with the EM-events
+ *
+ *  dispatch_events()
+ *  ├─ if num_events == 1
+ *  │   └─ dispatch_event_single_prepare(ODP-event)
+ *  │       ├─ if use_multi_rcv
+ *  │       │   └─ dispatch_eo_multircv_single(EM-event)
+ *  │       │       └─ call_eo_multircv_fn(EM-event)
+ *  │       └─ else
+ *  │           └─ dispatch_eo_rcv_single(EM-event)
+ *  │               └─ call_eo_rcv_fn(EM-event)
+ *  └─ else (num_events > 1)
+ *      └─ dispatch_event_burst_prepare(ODP-events)
+ *          ├─ if use_multi_rcv
+ *          │   └─ dispatch_eo_multircv_burst(EM-events)  (per evgrp batch)
+ *          │       ├─ cb path:    call_eo_multircv_fn()
+ *          │       └─ no-cb path: call_eo_multircv_fn__no_cb()
+ *          └─ else
+ *              └─ dispatch_eo_rcv_burst(EM-events)  (per event)
+ *                  ├─ cb path:    call_eo_rcv_fn()
+ *                  └─ no-cb path: call_eo_rcv_fn__no_cb()
  */
 static inline void
 dispatch_events(odp_event_t odp_evtbl[], const int num_events,
@@ -486,31 +934,18 @@ dispatch_events(odp_event_t odp_evtbl[], const int num_events,
 
 	if (q_type == EM_QUEUE_TYPE_ATOMIC)
 		sched_ctx_type = EM_SCHED_CONTEXT_TYPE_ATOMIC;
-	else if (q_type == EM_QUEUE_TYPE_PARALLEL_ORDERED)
+	else if (q_type == EM_QUEUE_TYPE_ORDERED)
 		sched_ctx_type = EM_SCHED_CONTEXT_TYPE_ORDERED;
 
 	locm->current.sched_context_type = sched_ctx_type;
 	locm->current.sched_q_elem = q_elem;
 	locm->current.q_elem = q_elem; /* before event_init_... for ESV error prints */
-	/* here: locm->current.egrp == EM_EVENT_GROUP_UNDEF */
+	/* here: locm->current.egrp_elem == NULL */
 
-	event_hdr_t *evhdr_tbl[num_events];
-	em_event_t ev_tbl[num_events];
-
-	/* Events might originate from outside of EM and need init */
-	event_init_odp_multi(odp_evtbl, ev_tbl/*out*/, evhdr_tbl/*out*/,
-			     num_events, true/*is_extev*/);
-
-	/*
-	 * Call the Execution Object (EO) receive function.
-	 * Scheduling context may be released during this.
-	 */
-	if (q_elem->flags.use_multi_rcv)
-		dispatch_multi_receive(ev_tbl, evhdr_tbl, num_events,
-				       q_elem, true);
-	else
-		dispatch_single_receive(ev_tbl, evhdr_tbl, num_events,
-					q_elem, true);
+	if (num_events == 1)
+		dispatch_event_single_prepare(odp_evtbl[0], q_elem);
+	else /* num_events > 1 */
+		dispatch_event_burst_prepare(odp_evtbl, num_events, q_elem);
 
 	/*
 	 * Check for buffered events sent to output queues during the previous
@@ -545,9 +980,9 @@ dispatch_poll_ctrl_queue(void)
 			return;
 		locm->dispatch_cnt = poll_interval;
 
-		odp_time_t now = odp_time_global();
+		odp_time_t now = odp_time_local();
 		odp_time_t period = odp_time_diff(now, locm->dispatch_last_run);
-		odp_time_t poll_period = em_shm->opt.dispatch.poll_ctrl_interval_time;
+		odp_time_t poll_period = locm->poll_ctrl_interval_time;
 
 		if (odp_time_cmp(period, poll_period) < 0)
 			return;
@@ -654,7 +1089,7 @@ free_invalid_events(odp_event_t odp_evtbl[], int num)
 	em_event_t ev_tbl[EM_SCHED_MULTI_MAX_BURST];
 
 	event_init_odp_multi(odp_evtbl, ev_tbl/*out*/, ev_hdr_tbl/*out*/,
-			     num, true/*is_extev*/);
+			     num, true/*is_extev*/, NULL/*not a dispatch: always scan*/);
 	em_free_multi(ev_tbl, num);
 }
 
@@ -666,13 +1101,21 @@ dispatch_round(uint64_t sched_wait, uint16_t burst_size,
 	       const em_dispatch_opt_t *opt /*optional, can be NULL*/)
 {
 	odp_queue_t odp_queue;
-	odp_event_t odp_evtbl[burst_size];
+	odp_event_t odp_evtbl[EM_SCHED_MULTI_MAX_BURST];
 	int num;
 
 	dispatch_poll_ctrl_queue();
 
+	/*
+	 * burst_size is validated to be <= EM_SCHED_MULTI_MAX_BURST at the API
+	 * level, but only when EM_CHECK_LEVEL > 0. Clamp defensively so that the
+	 * fixed-size odp_evtbl[] can never be overflowed by odp_schedule_multi()
+	 * if the validation is compiled out (EM_CHECK_LEVEL == 0).
+	 */
+	const int num_req = MIN((int)burst_size, EM_SCHED_MULTI_MAX_BURST);
+
 	num = dispatch_schedule(&odp_queue/*out*/, sched_wait,
-				odp_evtbl/*out[]*/, burst_size);
+				odp_evtbl/*out[]*/, num_req);
 	if (unlikely(num <= 0)) {
 		/*
 		 * No scheduled events available, check if the local queues
@@ -727,7 +1170,7 @@ check_poll_drain_round(unsigned int interval, odp_time_t poll_drain_period)
 
 		locm->poll_drain_dispatch_cnt--;
 		if (locm->poll_drain_dispatch_cnt == 0) {
-			odp_time_t now = odp_time_global();
+			odp_time_t now = odp_time_local();
 			odp_time_t period;
 
 			period = odp_time_diff(now, locm->poll_drain_dispatch_last_run);
@@ -749,15 +1192,15 @@ check_poll_drain_round(unsigned int interval, odp_time_t poll_drain_period)
  *                       'input_poll' and 'output_drain'
  */
 static inline uint64_t
-dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
+dispatch_with_userfn(const uint64_t rounds,
+		     const em_input_poll_func_t input_poll_fn,
+		     const em_output_drain_func_t output_drain_fn)
 {
 	const bool do_forever = rounds == 0 ? true : false;
-	const em_input_poll_func_t input_poll = em_shm->conf.input.input_poll_fn;
-	const em_output_drain_func_t output_drain = em_shm->conf.output.output_drain_fn;
 	const unsigned int poll_interval = em_shm->opt.dispatch.poll_drain_interval;
-	const odp_time_t poll_period = em_shm->opt.dispatch.poll_drain_interval_time;
+	const odp_time_t poll_period = em_locm.poll_drain_interval_time;
 	const uint64_t sched_wait = EM_SCHED_WAIT_ENABLE ?
-				    em_shm->opt.dispatch.sched_wait : ODP_SCHED_NO_WAIT;
+				    em_shm->opt_cache.dispatch.sched_wait : ODP_SCHED_NO_WAIT;
 	int rx_events = 0;
 	uint64_t events = 0;
 	int dispatched_events;
@@ -769,8 +1212,8 @@ dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
 
 		do_poll_drain_round = check_poll_drain_round(poll_interval, poll_period);
 
-		if (do_input_poll && do_poll_drain_round)
-			rx_events = input_poll();
+		if (input_poll_fn && do_poll_drain_round)
+			rx_events = input_poll_fn();
 
 		do {
 			round_events = dispatch_round(sched_wait, EM_SCHED_MULTI_MAX_BURST, NULL);
@@ -780,8 +1223,8 @@ dispatch_with_userfn(uint64_t rounds, bool do_input_poll, bool do_output_drain)
 			 round_events > 0 && (do_forever || i < rounds));
 
 		events += dispatched_events; /* inc ret value*/
-		if (do_output_drain && do_poll_drain_round)
-			(void)output_drain();
+		if (output_drain_fn && do_poll_drain_round)
+			(void)output_drain_fn();
 	}
 
 	return events;
@@ -795,7 +1238,7 @@ dispatch_no_userfn(uint64_t rounds)
 {
 	const bool do_forever = rounds == 0 ? true : false;
 	const uint64_t sched_wait = EM_SCHED_WAIT_ENABLE ?
-				    em_shm->opt.dispatch.sched_wait : ODP_SCHED_NO_WAIT;
+				    em_shm->opt_cache.dispatch.sched_wait : ODP_SCHED_NO_WAIT;
 	uint64_t events = 0;
 
 	if (do_forever) {
@@ -816,16 +1259,17 @@ dispatch_no_userfn(uint64_t rounds)
 static inline uint64_t
 dispatch_duration_with_userfn(const em_dispatch_duration_t *duration,
 			      const em_dispatch_opt_t *opt,
-			      em_dispatch_results_t *results /*out*/,
-			      const bool do_input_poll, const bool do_output_drain)
+			      const em_input_poll_func_t input_poll_fn,
+			      const em_output_drain_func_t output_drain_fn,
+			      em_dispatch_results_t *results /*out*/)
 {
-	const em_input_poll_func_t input_poll = em_shm->conf.input.input_poll_fn;
-	const em_output_drain_func_t output_drain = em_shm->conf.output.output_drain_fn;
 	const unsigned int poll_interval = em_shm->opt.dispatch.poll_drain_interval;
-	const odp_time_t poll_period = em_shm->opt.dispatch.poll_drain_interval_time;
-	const uint64_t sched_wait = odp_schedule_wait_time(opt->wait_ns);
+	const odp_time_t poll_period = em_locm.poll_drain_interval_time;
+	const uint64_t sched_wait = opt->wait_ns == 0 ? ODP_SCHED_NO_WAIT :
+							odp_schedule_wait_time(opt->wait_ns);
 	const uint16_t burst_size = opt->burst_size;
 	bool do_poll_drain_round = false;
+	em_locm_t *const locm = &em_locm;
 
 	const bool duration_forever =
 		duration->select == EM_DISPATCH_DURATION_FOREVER ? true : false;
@@ -845,14 +1289,14 @@ dispatch_duration_with_userfn(const em_dispatch_duration_t *duration,
 			/* check if callback functions should be called */
 			do_poll_drain_round = check_poll_drain_round(poll_interval, poll_period);
 
-			if (do_input_poll && do_poll_drain_round)
-				(void)input_poll();
+			if (input_poll_fn && do_poll_drain_round)
+				(void)input_poll_fn();
 
 			/* dispatch one round */
 			(void)dispatch_round(sched_wait, burst_size, opt);
 
-			if (do_output_drain && do_poll_drain_round)
-				(void)output_drain();
+			if (output_drain_fn && do_poll_drain_round)
+				(void)output_drain_fn();
 		}
 		/* never return */
 	}
@@ -875,14 +1319,14 @@ dispatch_duration_with_userfn(const em_dispatch_duration_t *duration,
 
 	while ((!duration_rounds || rounds < duration->rounds) &&
 	       (!duration_ns || time_ns < stop_ns) &&
-	       (!duration_events || events < duration->events) &&
+	       (!duration_events || events + locm->local_event_cnt < duration->events) &&
 	       (!duration_noev_rounds || noev_rounds < duration->no_events.rounds) &&
 	       (!duration_noev_ns || time_ns < noev_stop_ns)) {
 		/* check if callback functions should be called */
 		do_poll_drain_round = check_poll_drain_round(poll_interval, poll_period);
 
-		if (do_input_poll && do_poll_drain_round)
-			(void)input_poll();
+		if (input_poll_fn && do_poll_drain_round)
+			(void)input_poll_fn();
 
 		/* dispatch one round */
 		int round_events = dispatch_round(sched_wait, burst_size, opt);
@@ -890,8 +1334,8 @@ dispatch_duration_with_userfn(const em_dispatch_duration_t *duration,
 		events += round_events;
 		rounds++;
 
-		if (do_output_drain && do_poll_drain_round)
-			(void)output_drain();
+		if (output_drain_fn && do_poll_drain_round)
+			(void)output_drain_fn();
 
 		if (duration_noev_rounds) {
 			if (round_events == 0)
@@ -925,8 +1369,10 @@ dispatch_duration_no_userfn(const em_dispatch_duration_t *duration,
 			    const em_dispatch_opt_t *opt,
 			    em_dispatch_results_t *results/*out*/)
 {
-	const uint64_t sched_wait = odp_schedule_wait_time(opt->wait_ns);
+	const uint64_t sched_wait = opt->wait_ns == 0 ? ODP_SCHED_NO_WAIT :
+							odp_schedule_wait_time(opt->wait_ns);
 	const uint16_t burst_size = opt->burst_size;
+	em_locm_t *const locm = &em_locm;
 
 	const bool duration_forever =
 		duration->select == EM_DISPATCH_DURATION_FOREVER ? true : false;
@@ -965,7 +1411,7 @@ dispatch_duration_no_userfn(const em_dispatch_duration_t *duration,
 
 	while ((!duration_rounds || rounds < duration->rounds) &&
 	       (!duration_ns || time_ns < stop_ns) &&
-	       (!duration_events || events < duration->events) &&
+	       (!duration_events || events + locm->local_event_cnt < duration->events) &&
 	       (!duration_noev_rounds || noev_rounds < duration->no_events.rounds) &&
 	       (!duration_noev_ns || time_ns < noev_stop_ns)) {
 		/* dispatch one round */

@@ -493,7 +493,7 @@ void test_stop(const appl_conf_t *appl_conf)
 
 	egrp = fractal_shm->egrp_imager;
 	if (!em_event_group_is_ready(egrp)) {
-		num_notifs = em_event_group_get_notif(egrp, 1, notif_tbl);
+		num_notifs = em_event_group_notif(egrp, 1, notif_tbl);
 		stat = em_event_group_abort(egrp);
 		if (stat == EM_OK && num_notifs == 1)
 			em_free(notif_tbl[0].event);
@@ -627,7 +627,6 @@ create_data_events(void)
 			test_fatal_if(index >= ALLOC_EVENTS,
 				      "Event-tbl too small");
 			fractal_shm->data_event_tbl[index++] = event;
-			image_data_event = NULL;
 			x_start += IMAGE_BLOCK_SIZE;
 		}
 	}
@@ -673,7 +672,7 @@ pixel_handler_start(my_eo_context_t *eo_ctx, em_eo_t eo,
 	(void)conf;
 
 	/* Copy EO name */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	queue_name = "queue Pixel handler";
 
@@ -914,7 +913,7 @@ worker_start(my_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Copy EO name */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	queue_name = "queue Worker";
 
@@ -1128,7 +1127,7 @@ imager_start(imager_eo_context_t *eo_ctx, em_eo_t eo, const em_eo_conf_t *conf)
 	(void)conf;
 
 	/* Copy EO name */
-	em_eo_get_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
+	em_eo_name(eo, eo_ctx->name, sizeof(eo_ctx->name));
 
 	/* Create data queue */
 	queue_name = "data queue imager";

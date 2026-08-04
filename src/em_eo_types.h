@@ -37,6 +37,14 @@
  *
  */
 
+#include <odp_api.h>
+
+#include <event_machine.h>
+#include <event_machine/platform/env/environment.h>
+
+#include "misc/list.h"
+#include "misc/objpool.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -44,7 +52,7 @@ extern "C" {
 /**
  * EM EO element
  */
-typedef struct {
+typedef struct eo_elem_t {
 	/** EO name */
 	char name[EM_EO_NAME_LEN] ENV_CACHE_LINE_ALIGNED;
 	/** EO state */
@@ -57,8 +65,13 @@ typedef struct {
 	em_stop_func_t stop_func;
 	/** EO core-local stop function */
 	em_stop_local_func_t stop_local_func;
-
-	int use_multi_rcv; /* true:receive_multi_func(), false:receive_func() */
+	/** EO local start function mode */
+	em_eo_start_local_mode_t start_local_mode;
+	/** EO local stop function mode */
+	em_eo_stop_local_mode_t stop_local_mode;
+	/** Is EO using multi-receive?: true:receive_multi_func(), false:receive_func() */
+	int use_multi_rcv;
+	/** Max number of events passed to the receive-function: can be > 1 for multi-rcv */
 	int max_events;
 	/** EO event receive function */
 	em_receive_func_t receive_func;
@@ -70,11 +83,11 @@ typedef struct {
 	/** EO context data pointer */
 	void *eo_ctx;
 	/** EO elem lock */
-	env_spinlock_t lock;
+	odp_ticketlock_t lock;
 	/** EO queue list */
 	list_node_t queue_list;
 	/** Number of queues */
-	env_atomic32_t num_queues;
+	odp_atomic_u32_t num_queues;
 	/** Buffered events sent during the EO start-function */
 	odp_stash_t stash;
 	/** EO handle */

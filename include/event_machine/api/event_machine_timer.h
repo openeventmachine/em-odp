@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2016-2024, Nokia Solutions and Networks
+ *   Copyright (c) 2016-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -137,13 +137,14 @@
  * abstraction and is created and started via separate ring specific APIs.
  * It has three main differences to the regular periodic timeouts:
  *   1. Only a pre-defined read-only event type can be used and is provided
- *      by the timer (EM_EVENT_TYPE_TIMER_IND).
- *   2. Flow control is not supported. Some implementations may have it,
- *      but the specification does not quarantee any so the user needs to be
- *      prepared to see the same event enqueued multiple times if handling of
- *      the received timeouts is not fast enough.
- *   2. A limited set of period times are supported per timer (the base rate or
- *      an integer multiple thereof).
+ *	by the timer (EM_EVENT_TYPE_TIMER_IND).
+ *   2. Flow control is optional. Set em_timer_attr_t::max_pending_events to
+ *	enable it (check supported range via em_timer_capability()). Without
+ *	flow control, the user needs to be prepared to see the same event
+ *	enqueued multiple times if handling of the received timeouts is not
+ *	fast enough.
+ *   3. A limited set of period times are supported per timer (the base rate or
+ *	an integer multiple thereof).
  *
  * Ring timers can be thought of as a clock face ticking the pointer forward.
  * One cycle around is the base rate (minimum rate). The same timeout can be
@@ -177,7 +178,7 @@
  *	}
  *
  *	// Get the timer tick frequency
- *	uint64_t hz = em_timer_get_freq(tmr);
+ *	uint64_t hz = em_timer_freq(tmr);
  *
  *	// Activate a 10ms timeout from now.
  *	// Very unlikely to fail with valid arguments.
@@ -189,6 +190,11 @@
  *
  */
 #include <inttypes.h>
+
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+#include <event_machine/api/event_machine_event.h>
+#include <event_machine/api/event_machine_timer_hw_specific.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -239,7 +245,7 @@ typedef enum em_tmo_state_t {
 } em_tmo_state_t;
 
 /**
- * Type returned by em_tmo_get_type()
+ * Type returned by em_tmo_type()
  */
 typedef enum em_tmo_type_t {
 	EM_TMO_TYPE_NONE     = 0, /**< unknown or not a timer-related event */
@@ -306,6 +312,32 @@ typedef struct em_timer_ring_param_t {
 } em_timer_ring_param_t;
 
 /**
+ * Periodic timer ring frequency parameters.
+ */
+typedef struct em_timer_ring_freq_param_t {
+	/** Clock source (system specific) */
+	em_timer_clksrc_t clk_src;
+	/**
+	 * Array of constraining frequencies (ascending).
+	 *
+	 * Ownership: as passed to em_timer_ring_freq_attr_init() and
+	 * em_timer_ring_freq_create() this pointer is caller-owned and must
+	 * remain valid until em_timer_ring_freq_create() returns. The array
+	 * contents may be updated in-place by the implementation to reflect
+	 * the closest supported values.
+	 *
+	 * When returned by em_timer_attr() the pointer refers to
+	 * implementation-internal read-only storage that is valid until the
+	 * timer is deleted with em_timer_delete(); do not modify or free it.
+	 */
+	em_fract_u64_t *freq_hz;
+	/** Number of items in freq_hz */
+	uint32_t num;
+	/** Resolution */
+	uint64_t res_ns;
+} em_timer_ring_freq_param_t;
+
+/**
  * EM timer attributes.
  *
  * The type is used when creating a timer or inquiring its configuration later.
@@ -327,7 +359,7 @@ typedef struct em_timer_ring_param_t {
  *
  * @see em_timer_attr_init(), em_timer_create(),
  *      em_timer_ring_attr_init(), em_timer_ring_create(),
- *      em_timer_
+ *      em_timer_attr_init(), em_timer_attr()
  */
 typedef struct em_timer_attr_t {
 	/**
@@ -346,12 +378,48 @@ typedef struct em_timer_attr_t {
 	char name[EM_TIMER_NAME_LEN];
 
 	/**
+	 * Timer priority.
+	 *
+	 * Timeouts from a higher priority timer are served with priority over
+	 * timeouts from a lower priority timer. The prioritization algorithm
+	 * is implementation specific. Lower priority timeouts may get delayed
+	 * due to higher priority timeout processing. Valid values range from
+	 * zero to 'em_timer_capability_t::max_priority' (or
+	 * 'em_timer_capability_t::ring.max_priority' for ring timers).
+	 * The default value is zero (lowest priority).
+	 */
+	uint16_t priority;
+	/**
 	 * Parameters specifically for em_timer_ring_create().
 	 * Used when creating an alternative periodic ring timer.
 	 * (cleared by em_timer_attr_init() since not needed in that case)
 	 */
 	em_timer_ring_param_t ringparam;
-
+	/**
+	 * Parameters specifically for em_timer_ring_freq_create().
+	 * Used when creating an alternative periodic ring timer with frequency
+	 * list.
+	 * (cleared by em_timer_attr_init() since not needed in that case)
+	 */
+	em_timer_ring_freq_param_t freqparam;
+	/**
+	 * Maximum pending events for ring timer flow control.
+	 *
+	 * Only used for ring timers. Default value 0 means no flow control is
+	 * used. Valid values for the max_pending_events can be asked with
+	 * em_timer_capability() and are from
+	 * 'em_timer_capability_t::ring.min_pending_events' to
+	 * 'em_timer_capability_t::ring.max_pending_events'.
+	 * 'em_timer_capability_t::ring.max_pending_events' == 0 means that flow
+	 * control is not supported and this field must be left at 0.
+	 * With flow control, the implementation will ensure that at most this
+	 * many timeout events are pending in the target queue at any time.
+	 * Without flow control, there is no limit to the number of pending
+	 * timeouts. If flow control is requested but not supported, or
+	 * requested values are out of range, an error is returned in the timer
+	 * creation.
+	 */
+	uint32_t max_pending_events;
 	/**
 	 * Internal check - don't touch!
 	 *
@@ -388,17 +456,56 @@ typedef struct em_timer_capability_t {
 	em_timer_res_param_t max_res;
 	/** Longest supported timeout and related resolution */
 	em_timer_res_param_t max_tmo;
+	/** Maximum priority for timer */
+	uint16_t max_priority;
 
 	/** alternate periodic ring */
 	struct {
+		/** Support flags for periodic ring types */
+		struct {
+			/** Support for base multiplier type */
+			uint32_t base_mul : 1;
+			/** Support for frequency list type */
+			uint32_t freq : 1;
+		} support;
 		/** Maximum ring timers */
 		uint32_t max_rings;
 		/** Maximum simultaneous ring timeouts */
 		uint32_t max_num_tmo;
-		/** Minimum base_hz */
+		/** Maximum priority for ring timers */
+		uint16_t max_priority;
+		/**
+		 * Minimum base_hz for base_mul ring timers.
+		 * Valid only when 'support.base_mul' is set, otherwise zero.
+		 */
 		em_fract_u64_t min_base_hz;
-		/** Minimum base_hz */
+		/**
+		 * Maximum base_hz for base_mul ring timers.
+		 * Valid only when 'support.base_mul' is set, otherwise zero.
+		 */
 		em_fract_u64_t max_base_hz;
+		/**
+		 * Minimum allowed value for
+		 * 'em_timer_attr.max_pending_events'. Meaningful only
+		 * when ring.max_pending_events > 0 (flow control supported).
+		 */
+		uint32_t min_pending_events;
+		/**
+		 * Maximum pending events for ring timer flow control
+		 * 'em_timer_attr.max_pending_events'. 0 means that
+		 * flow control is not supported.
+		 */
+		uint32_t max_pending_events;
+		/**
+		 * Minimum frequency for PERIODIC_FREQ ring timers.
+		 * Valid only when 'support.freq' is set, otherwise zero.
+		 */
+		em_fract_u64_t min_freq_hz;
+		/**
+		 * Maximum frequency for PERIODIC_FREQ ring timers.
+		 * Valid only when 'support.freq' is set, otherwise zero.
+		 */
+		em_fract_u64_t max_freq_hz;
 	} ring;
 
 } em_timer_capability_t;
@@ -408,7 +515,7 @@ typedef struct em_timer_capability_t {
  *
  */
 typedef struct em_tmo_args_t {
-	/** can be used with ring timer, see em_tmo_get_userptr */
+	/** can be used with ring timer, see em_tmo_userptr() */
 	void *userptr;
 } em_tmo_args_t;
 
@@ -422,6 +529,10 @@ typedef struct em_tmo_args_t {
  *
  * Always initialize em_timer_attr_t with em_timer_attr_init() before use.
  *
+ * The ring timer specific fields 'ringparam' and 'freqparam' are zeroed by
+ * this call since they are not used by em_timer_create(). For ring timers,
+ * use em_timer_ring_attr_init() or em_timer_ring_freq_attr_init() instead.
+ *
  * This function will not trigger EM error handler calls internally.
  *
  * Example for all defaults
@@ -431,7 +542,7 @@ typedef struct em_tmo_args_t {
  *	em_timer_t tmr = em_timer_create(&tmr_attr);
  * @endcode
  *
- * @param tmr_attr  Pointer to em_timer_attr_t to be initialized
+ * @param[out] tmr_attr  Pointer to em_timer_attr_t to be initialized
  *
  * @see em_timer_capability, em_timer_create
  */
@@ -440,16 +551,29 @@ void em_timer_attr_init(em_timer_attr_t *tmr_attr);
 /**
  * Initialize em_timer_attr_t for periodic ring timers.
  *
- * Initializes em_timer_ring_attr_t according to given values.
+ * Initializes em_timer_attr_t according to given values.
  * After successful return, the attributes can be given to em_timer_ring_create().
  * Note, that if the implementation cannot use the exact given combination it may
  * update the ring_attr values, but always to meet or exceed the given values.
  * The user can read the new values to determine if they were modified.
  * An error is returned if the given values cannot be met.
  *
- * Before creating the ring timer, other values like num_tmo and name can be
- * adjusted as needed. Also, if a non-integer frequency is needed, the base_hz
- * fractional part can be adjusted before em_timer_ring_create().
+ * Before creating the ring timer, other values like num_tmo, name and
+ * max_pending_events can be adjusted as needed. Also, if a non-integer
+ * frequency is needed, the base_hz fractional part can be adjusted before
+ * em_timer_ring_create().
+ *
+ * On successful return ring_attr is initialized with:
+ *  - flags              = EM_TIMER_FLAG_RING
+ *  - ringparam          = { clk_src, base_hz (integer only), max_mul, res_ns }
+ *                         (values may be lowered by the implementation to fit
+ *                         capability limits; res_ns == 0 means ODP default)
+ *  - num_tmo            = EM_ODP_DEFAULT_RING_TMOS, clamped down to
+ *                         capability max if smaller
+ *  - name               = "" (em_timer_ring_create() assigns a default name)
+ *  - priority           = 0
+ *  - max_pending_events = 0 (no flow control)
+ *  - resparam           = zeroed (not used by ring timers)
  *
  * This function will not trigger error handler calls.
  *
@@ -471,6 +595,63 @@ em_status_t em_timer_ring_attr_init(em_timer_attr_t *ring_attr,
 				    uint64_t res_ns);
 
 /**
+ * Initialize em_timer_attr_t for frequency-based periodic ring timers.
+ *
+ * Initializes em_timer_attr_t for use with em_timer_ring_freq_create().
+ * Unlike em_timer_ring_attr_init() which uses a base frequency and multiplier,
+ * this function takes an array of constraining frequencies that define the
+ * allowed periodic timer frequency range for the pool.
+ *
+ * The 'freq_hz' array defines constraining frequencies in ascending order.
+ * Timer frequencies requested later (via em_tmo_set_periodic_ring_freq()) must
+ * be within the range from freq_hz[0] (minimum) to freq_hz[num - 1]
+ * (maximum). Frequencies not present in the array may also be requested but
+ * may suffer from inaccuracies if not exactly compatible with the constraining
+ * frequencies.
+ *
+ * Note, that if the implementation cannot use the exact given combination the
+ * freq_hz array entries may be updated in-place with the closest supported
+ * values. An error is returned if the given values cannot be met.
+ *
+ * Before creating the ring timer, other values like num_tmo, name, priority
+ * and max_pending_events can be adjusted as needed.
+ *
+ * On successful return ring_attr is initialized with:
+ *  - flags              = EM_TIMER_FLAG_RING_FREQ
+ *  - freqparam          = { clk_src, freq_hz, num, res_ns }
+ *                         (res_ns may be updated by the implementation; 0
+ *                         means ODP default. freq_hz array stays owned by
+ *                         the caller and must remain valid until
+ *                         em_timer_ring_freq_create() returns.)
+ *  - num_tmo            = EM_ODP_DEFAULT_RING_TMOS, clamped down to
+ *                         capability max if smaller
+ *  - name               = "" (em_timer_ring_freq_create() assigns a default)
+ *  - priority           = 0
+ *  - max_pending_events = 0 (no flow control)
+ *  - ringparam, resparam = zeroed (not used by freq-based ring timers)
+ *
+ * This function will not trigger error handler calls.
+ *
+ * @param[out]  ring_attr   Pointer to em_timer_attr_t to be initialized
+ * @param       clk_src     Clock source to use (system specific or portable
+ *                          EM_TIMER_CLKSRC_DEFAULT)
+ * @param[in,out] freq_hz   Array of constraining frequencies in hertz
+ *                          (ascending order). May be updated in-place if the
+ *                          implementation adjusts values.
+ * @param       num	    Number of items in 'freq_hz' array (must be >= 1)
+ * @param       res_ns      Required resolution in ns or 0 to accept default
+ *
+ * @return EM_OK if the given clk_src and other values are supported
+ *
+ * @see em_timer_ring_freq_capability(), em_timer_ring_freq_create()
+ */
+em_status_t em_timer_ring_freq_attr_init(em_timer_attr_t *ring_attr,
+					 em_timer_clksrc_t clk_src,
+					 em_fract_u64_t *freq_hz,
+					 uint32_t num,
+					 uint64_t res_ns);
+
+/**
  * Inquire timer capabilities
  *
  * Returns timer capabilities for the given clock source, which is also written
@@ -479,7 +660,7 @@ em_status_t em_timer_ring_attr_init(em_timer_attr_t *ring_attr,
  *
  * This function will not trigger error handler calls internally.
  *
- * @param capa		pointer to em_timer_capability_t to be updated
+ * @param[out] capa	pointer to em_timer_capability_t to be updated
  *			(does not need to be initialized)
  * @param clk_src	Clock source to use for timer
  *			(EM_TIMER_CLKSRC_DEFAULT for system specific default)
@@ -517,9 +698,9 @@ em_status_t em_timer_capability(em_timer_capability_t *capa, em_timer_clksrc_t c
  *
  * This function will not trigger error handler calls internally.
  *
- * @param res      Pointer to em_timer_res_param_t with one field set
- * @param clk_src  Clock source to use for timer
- *                 (EM_TIMER_CLKSRC_DEFAULT for system specific default)
+ * @param[in,out] res      Pointer to em_timer_res_param_t with one field set
+ * @param         clk_src  Clock source to use for timer
+ *                         (EM_TIMER_CLKSRC_DEFAULT for system specific default)
  * @return EM_OK if the input value is supported (res updated)
  *
  * @see em_timer_capability
@@ -542,13 +723,45 @@ em_status_t em_timer_res_capability(em_timer_res_param_t *res, em_timer_clksrc_t
  *
  * This function will not trigger error handler calls.
  *
- * @param ring[in,out]  timer ring parameters to check
+ * @param[in,out] ring  timer ring parameters to check
  *
  * @retval EM_OK                 Parameter combination is supported
  * @retval EM_ERR_NOT_SUPPORTED  Parameters not supported, values updated to closest
  * @retval (other error)         Unsupported arguments
  */
 em_status_t em_timer_ring_capability(em_timer_ring_param_t *ring);
+
+/**
+ * @brief Check frequency-based periodic ring timer capability.
+ *
+ * Returns the ring timer capability for the frequency-based periodic timer type
+ * (ODP_TIMER_TYPE_PERIODIC_FREQ). The parameter 'ring' must be initialized with
+ * the values required by the user. The ring->res_ns can be 0 and gets replaced
+ * by the system default.
+ *
+ * The ring->freq_hz array must contain the constraining frequencies to check,
+ * in ascending order. If EM_OK is returned, the given frequency combination is
+ * supported (or exceeded). If EM_ERR_NOT_SUPPORTED is returned, the freq_hz
+ * array entries are updated in-place with the closest supported values. The
+ * application can then inspect the modified values and decide whether to use
+ * them.
+ *
+ * This can be used to verify valid frequency values before calling
+ * em_timer_ring_freq_create() to avoid error handler calls.
+ *
+ * This function will not trigger error handler calls.
+ *
+ * @param[in,out] ring  Frequency-based ring timer parameters to check.
+ *                      ring->freq_hz array may be updated in-place.
+ *
+ * @retval EM_OK                 Parameter combination is supported
+ * @retval EM_ERR_NOT_SUPPORTED  Frequencies not exactly supported, closest
+ *                               values written to freq_hz array
+ * @retval (other error)         Unsupported arguments
+ *
+ * @see em_timer_ring_freq_attr_init(), em_timer_ring_freq_create()
+ */
+em_status_t em_timer_ring_freq_capability(em_timer_ring_freq_param_t *ring);
 
 /**
  * Create and start a timer resource
@@ -580,11 +793,12 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr);
  *
  * A periodic ring timer is a bit different and will only send
  * EM_EVENT_TYPE_TIMER_IND timeout events, which are automatically provided and
- * cannot be modified. These events can be allocated only via timer APIs.
+ * cannot be modified. These events are allocated internally and do not carry
+ * any user data. User must not allocate or free these events.
  *
  * Example for 1ms ... 125us periodic ring timer (base 1000 hz, multiplier up to 8):
  * @code
- *	em_timer_ring_attr_t attr;
+ *	em_timer_attr_t attr;
  *	if (em_timer_ring_attr_init(&attr, EM_TIMER_CLKSRC_DEFAULT, 1000, 8, 0) != EM_OK) {
  *		// given values not supported
  *	}
@@ -595,6 +809,11 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr);
  *	}
  * @endcode
  *
+ * ring_attr must have been initialized with em_timer_ring_attr_init().
+ * Errors are reported via the EM error handler under
+ * EM_ESCOPE_TIMER_RING_CREATE (e.g. invalid attr, unsupported clock source
+ * or priority, no free timer slot, ODP pool create/start failure).
+ *
  * @param ring_attr  Timer ring parameters to use
  *
  * @return Timer handle on success or EM_TIMER_UNDEF on error
@@ -602,6 +821,64 @@ em_timer_t em_timer_create(const em_timer_attr_t *tmr_attr);
  * @see em_timer_ring_attr_init
  */
 em_timer_t em_timer_ring_create(const em_timer_attr_t *ring_attr);
+
+/**
+ * Create and start a frequency-based periodic ring timer
+ *
+ * Creates a periodic ring timer using ODP_TIMER_TYPE_PERIODIC_FREQ. The
+ * required attributes are given via 'ring_attr', which must have been
+ * initialized with em_timer_ring_freq_attr_init() and optionally adjusted for
+ * the required timing constraints (num_tmo, name, priority, max_pending_events).
+ *
+ * Similar to em_timer_ring_create(), this timer only sends read-only
+ * EM_EVENT_TYPE_TIMER_IND timeout events that are automatically provided and
+ * cannot be modified. These events are allocated internally and do not carry
+ * any user data. The user must not allocate or free these events.
+ *
+ * Unlike the base_mul ring timer variant, the frequency-based ring timer
+ * allows requesting a specific frequency (in Hz) when activating a timeout
+ * via em_tmo_set_periodic_ring_freq(). The allowed frequencies are constrained
+ * by the freq_hz array given during attribute initialization.
+ *
+ * Example:
+ * @code
+ *	em_timer_attr_t attr;
+ *	em_fract_u64_t freqs[2] = {{.integer = 100}, {.integer = 10000}};
+ *
+ *	if (em_timer_ring_freq_attr_init(&attr, EM_TIMER_CLKSRC_DEFAULT,
+ *					 freqs, 2, 0) != EM_OK) {
+ *		// given values not supported
+ *	}
+ *
+ *	em_timer_t tmr = em_timer_ring_freq_create(&attr);
+ *	if (tmr == EM_TIMER_UNDEF) {
+ *		// handle error here or via error handler
+ *	}
+ * @endcode
+ *
+ * ring_attr must have been initialized with em_timer_ring_freq_attr_init().
+ * Errors are reported via the EM error handler under
+ * EM_ESCOPE_TIMER_RING_FREQ_CREATE (e.g. invalid attr, unsupported clock
+ * source or priority, periodic-freq mode not supported by ODP, no free
+ * timer slot, ODP pool create/start failure).
+ *
+ * The em_timer_attr_init_t::freqparam.freq_hz array defines constraining
+ * frequencies for this timer. The requested frequency for a periodic timeout
+ * can be set with em_tmo_set_periodic_ring_freq() and must be within the range
+ * defined by the minimum and maximum frequencies in the freq_hz array.
+ * Frequencies not present in the array may also be requested but may suffer
+ * from inaccuracies if not exactly compatible with the constraining
+ * frequencies.
+ *
+ * @param ring_attr  Timer ring parameters to use. Must have been initialized
+ *                   with em_timer_ring_freq_attr_init().
+ *
+ * @return Timer handle on success or EM_TIMER_UNDEF on error
+ *
+ * @see em_timer_ring_freq_attr_init(), em_timer_ring_freq_capability(),
+ *      em_tmo_set_periodic_ring_freq()
+ */
+em_timer_t em_timer_ring_freq_create(const em_timer_attr_t *ring_attr);
 
 /**
  * Stop and delete a timer
@@ -679,9 +956,9 @@ em_tmo_t em_tmo_create_arg(em_timer_t tmr, em_tmo_flag_t flags, em_queue_t queue
  * The deleted timeout must be inactive i.e. it must be successfully canceled or
  * the last timeout event must have been received (following too late a cancel).
  * A periodic or a periodic ring timeout can be deleted after a successful
- * cancel or after em_tmo_ack() returned EM_ERR_CANCELED. This indicates that
- * the acknowledged timeout is canceled and that it was the last timeout event
- * coming for that periodic timeout.
+ * cancel or after em_tmo_ack()/em_tmo_ring_ack() returned EM_ERR_CANCELED.
+ * This indicates that the acknowledged timeout is canceled and that it was the
+ * last timeout event coming for that periodic timeout.
  *
  * After and during this call, the tmo handle is not valid anymore and must not
  * be used by or passed to other timer APIs.
@@ -720,6 +997,10 @@ em_status_t em_tmo_delete(em_tmo_t tmo);
  * timeout becomes inactive after the oneshot timeout event has been received
  * or after it has been successfully cancelled.
  *
+ * The return code EM_ERR_BUSY indicates that the timeout could not be activated
+ * due to resource limitations. This can be a temporary situation and retrying
+ * with the same or updated arguments will likely succeed.
+ *
  * This function is for activating oneshot timeouts only. To activate
  * periodic timeouts use em_tmo_set_periodic() (or em_tmo_set_periodic_ring()).
  *
@@ -728,8 +1009,11 @@ em_status_t em_tmo_delete(em_tmo_t tmo);
  * @param tmo_ev     Timeout event
  *
  * @retval EM_OK           Success, event taken.
- * @retval EM_ERR_TOONEAR  Failure, the tick value is in past or too close to the
- *                         current time. Error handler not called, event not taken.
+ * @retval EM_ERR_TOONEAR  Failure, the tick value is in past or too close to
+ *                         the current time. Error handler not called,
+ *                         event not taken.
+ * @retval EM_ERR_BUSY     Failure, resources are busy. Error handler not
+ *                         called, event not taken.
  * @retval (other_codes)   Failure, event not taken.
  *
  * @see em_timer_res_capability()
@@ -743,6 +1027,10 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
  * Similar to em_tmo_set_abs(), but instead of an absolute time uses a timeout
  * value relative to the moment of the call.
  *
+ * The return code EM_ERR_BUSY indicates that the timeout could not be activated
+ * due to resource limitations. This can be a temporary situation and retrying
+ * with the same or updated arguments will likely succeed.
+ *
  * This function is for activating oneshot timeouts only. To activate
  * periodic timeouts use em_tmo_set_periodic() (or em_tmo_set_periodic_ring()).
  *
@@ -753,6 +1041,8 @@ em_status_t em_tmo_set_abs(em_tmo_t tmo, em_timer_tick_t ticks_abs,
  * @retval EM_OK           Success, event taken.
  * @retval EM_ERR_TOONEAR  Failure, the tick value is too low.
  *                         Error handler not called, event not taken.
+ * @retval EM_ERR_BUSY     Failure, resources are busy. Error handler not
+ *                         called, event not taken.
  * @retval (other_codes)   Failure, event not taken.
  *
  * @see em_tmo_set_abs(), em_tmo_set_periodic()
@@ -772,6 +1062,10 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
  * first timeout expires. The receiver then needs to call em_tmo_ack() to allow
  * the timer to send the next event for the following period.
  *
+ * The return code EM_ERR_BUSY indicates that the timeout could not be activated
+ * due to resource limitations. This can be a temporary situation and retrying
+ * with the same or updated arguments will likely succeed.
+ *
  * This function can only be used with periodic timeouts (created with flag
  * EM_TMO_FLAG_PERIODIC).
  *
@@ -784,6 +1078,8 @@ em_status_t em_tmo_set_rel(em_tmo_t tmo, em_timer_tick_t ticks_rel,
  * @retval EM_ERR_TOONEAR  Failure, the tick value is in past or too close to
  *                         the current time.
  *                         Error handler not called, event not taken.
+ * @retval EM_ERR_BUSY     Failure, resources are busy. Error handler not
+ *                         called, event not taken.
  * @retval (other_codes)   Failure, event not taken.
  *
  * @see em_tmo_ack()
@@ -804,23 +1100,20 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
  * with a 'multiplier' of 8 will give a 125us period.
  *
  * A timeout event of type EM_EVENT_TYPE_TIMER_IND is automatically allocated,
- * if not provided, and will be sent to the queue given to em_tmo_create() when
- * the timeout expires. The user needs to call em_tmo_ack() when receiving the
- * timeout event, similar as with a regular periodic timeout. However, with a
- * ring timer there is no guaranteed flow control - new events may be sent even
- * before user has called em_tmo_ack(). This means that the same event may be in
+ * and will be sent to the queue given to em_tmo_create() when the timeout
+ * expires. The user needs to call em_tmo_ring_ack() when receiving the timeout
+ * event, similar as with a regular periodic timeout. However, with a ring timer
+ * there is no guaranteed flow control - new events may be sent even before the
+ * user has called em_tmo_ring_ack(). This means that the same event may be in
  * the input queue multiple times if the application can not keep up with the
  * period rate. If the destination queue is not atomic, the same event can also
  * be concurrently received by multiple cores. This is a race hazard the user
  * must prepare for. Additionally, the used timeout event can not be changed via
- * em_tmo_ack(), the actual received event must always be passed to it.
+ * em_tmo_ring_ack(), the actual received event must always be passed to it.
  *
- * The last argument 'tmo_ev' is normally 'EM_EVENT_UNDEF' when activating a new
- * periodic ring timeout. The implementation will in this case use a
- * pre-allocated event. The exception case concerns reuse of a canceled ring
- * timeout event (when em_tmo_ack() returns 'EM_ERR_CANCELED', the event stays
- * with the user and can be reused). Such an event can be recycled via 'tmo_ev'
- * to avoid an extra event free and alloc during reactivation.
+ * The return code EM_ERR_BUSY indicates that the timeout could not be activated
+ * due to resource limitations. This can be a temporary situation and retrying
+ * with the same or updated arguments will likely succeed.
  *
  * This function can only be used with periodic timeouts from a ring timer.
  * The timeout indication event is read-only and can be accessed only via
@@ -829,21 +1122,80 @@ em_status_t em_tmo_set_periodic(em_tmo_t tmo,
  * @param tmo        Timeout handle
  * @param start_abs  Absolute start time (or 0 for period starting at call time)
  * @param multiplier Rate multiplier (period rate = multiplier * timer base_hz)
- * @param tmo_ev     Event of type EM_EVENT_TYPE_TIMER_IND to reuse.
- *                   Normally EM_EVENT_UNDEF.
  *
  * @retval EM_OK		Success
  * @retval EM_ERR_TOONEAR	Failure, start tick value is past or too close
  *				to current time or multiplier is too high.
  * @retval EM_ERR_TOOFAR	Failure, start tick value exceeds one period.
+ * @retval EM_ERR_BUSY          Failure, resources are busy.
  * @retval (other_codes)	Failure
  *
- * @see em_tmo_get_user_ptr(), em_tmo_get_type(), em_timer_create_ring()
+ * @see em_tmo_user_ptr(), em_tmo_type(), em_timer_create_ring()
+ * @see em_tmo_ring_ack()
  */
 em_status_t em_tmo_set_periodic_ring(em_tmo_t tmo,
 				     em_timer_tick_t start_abs,
-				     uint64_t multiplier,
-				     em_event_t tmo_ev);
+				     uint64_t multiplier);
+
+/**
+ * Activate a periodic timeout on a frequency-based periodic ring timer
+ *
+ * Similar to em_tmo_set_periodic_ring(), but instead of a base_hz multiplier,
+ * the timeout rate is specified directly as a frequency in hertz. The given
+ * 'freq_hz' must be within the range of constraining frequencies that were
+ * provided when creating the timer via em_timer_ring_freq_create()
+ * (i.e. from freq_hz[0] to freq_hz[num - 1]). Frequencies that are not
+ * present in the constraining array may also be requested, but these may
+ * suffer from inaccuracies (e.g. drift or jitter) if not exactly compatible
+ * with the constraining frequencies.
+ *
+ * The 'freq_hz' value must be non-zero. An em_fract_u64_t value is non-zero
+ * when 'integer' or 'numer' is non-zero. If 'numer' is non-zero, 'denom' must
+ * also be non-zero.
+ *
+ * Use 'start_abs' value 0 to start the timer relative to current time. To
+ * adjust the offset of timeouts, an absolute tick can also be given, but the
+ * maximum distance from the current time can only be up to one period.
+ *
+ * A timeout event of type EM_EVENT_TYPE_TIMER_IND is automatically allocated,
+ * and will be sent to the queue given to em_tmo_create() when the timeout
+ * expires. The user needs to call em_tmo_ring_ack() when receiving the timeout
+ * event. As with em_tmo_set_periodic_ring(), there is no guaranteed flow
+ * control unless max_pending_events was configured - new events may be sent
+ * even before the user has called em_tmo_ring_ack().
+ *
+ * The return code EM_ERR_BUSY indicates that the timeout could not be activated
+ * due to resource limitations. This can be a temporary situation and retrying
+ * with the same or updated arguments will likely succeed.
+ *
+ * The same inactive tmo handle may be reused with a different 'freq_hz' value
+ * on subsequent calls. Changing 'freq_hz' between calls causes the underlying
+ * implementation timer resource to be freed and re-allocated, which has
+ * timing-cost implications. The tmo must be in EM_TMO_STATE_IDLE
+ * (newly created or successfully canceled) when the frequency is changed.
+ *
+ * This function can only be used with periodic timeouts from a frequency-based
+ * ring timer (created via em_timer_ring_freq_create()). The timeout indication
+ * event is read-only and can be accessed only via accessor APIs.
+ *
+ * @param tmo        Timeout handle
+ * @param start_abs  Absolute start time (or 0 for period starting at call time)
+ * @param freq_hz    Requested periodic frequency in hertz (fractional).
+ *                   Must be non-zero. If 'freq_hz.numer' is non-zero,
+ *                   'freq_hz.denom' must also be non-zero.
+ *
+ * @retval EM_OK		Success
+ * @retval EM_ERR_TOONEAR	Failure, start tick value is past or too close
+ *				to current time.
+ * @retval EM_ERR_TOOFAR	Failure, start tick value exceeds one period.
+ * @retval EM_ERR_BUSY		Failure, resources are busy.
+ * @retval (other_codes)	Failure
+ *
+ * @see em_timer_ring_freq_create(), em_tmo_ring_ack(), em_fract_u64_t
+ */
+em_status_t em_tmo_set_periodic_ring_freq(em_tmo_t tmo,
+					  em_timer_tick_t start_abs,
+					  em_fract_u64_t freq_hz);
 
 /**
  * Cancel a timeout
@@ -860,10 +1212,10 @@ em_status_t em_tmo_set_periodic_ring(em_tmo_t tmo,
  * event will be delivered to the user. In this case, the error 'EM_ERR_TOONEAR'
  * is returned and no valid event is output. The EM error handler is not called
  * is this scenario.
- * The user calls em_tmo_ack() for each received periodic timeout event. The
- * em_tmo_ack() function returns 'EM_ERR_CANCELED' for the last timeout event
- * from the cancelled periodic timeout to let the user know that it is now OK to
- * e.g. delete the timeout.
+ * The user calls em_tmo_ack()/em_tmo_ring_ack() for each received periodic
+ * timeout event. The em_tmo_ack()/em_tmo_ring_ack() function returns
+ * 'EM_ERR_CANCELED' for the last timeout event from the cancelled periodic
+ * timeout to let the user know that it is now OK to e.g. delete the timeout.
  *
  * @param      tmo         Timeout handle
  * @param[out] cur_event   Event handle pointer to return the pending
@@ -877,7 +1229,7 @@ em_status_t em_tmo_set_periodic_ring(em_tmo_t tmo,
  *
  * @see em_tmo_set_abs(), em_tmo_set_rel(), em_tmo_set_periodic(),
  *      em_tmo_set_periodic_ring()
- * @see em_tmo_ack() for periodic timeouts
+ * @see em_tmo_ack(), em_tmo_ring_ack() for periodic timeouts
  */
 em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
 
@@ -924,7 +1276,8 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
  * canceled, the implementation will call the EM error handler in this case
  * (the error/exception can be handled also there).
  *
- * em_tmo_ack() can only be used with periodic timeouts.
+ * em_tmo_ack() can only be used with regular periodic timeouts. For periodic
+ * ring timeouts, use em_tmo_ring_ack() instead.
  *
  * @param tmo          Timeout handle
  * @param next_tmo_ev  Next timeout event handle.
@@ -937,6 +1290,36 @@ em_status_t em_tmo_cancel(em_tmo_t tmo, em_event_t *cur_event);
  * @retval (other_codes)    Failure, event not taken.
  */
 em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev);
+
+/**
+ * Acknowledge a ring timeout event.
+ *
+ * All received periodic ring timeout events must be acknowledged with
+ * em_tmo_ring_ack(). This function can only be used with periodic ring timers.
+ *
+ * The received timeout event must always be passed back via 'tmo_ev' and
+ * must not be freed or modified by the application.
+ *
+ * Timeout acknowledgment is usually done at the end of the EO-receive
+ * function. Unlike em_tmo_ack(), the ring timer implementation manages
+ * timing internally and does not support skip or noskip behavior.
+ *
+ * If the timeout has been canceled, the return value 'EM_ERR_CANCELED'
+ * indicates that this was the last timeout event for the given timeout.
+ * The timeout can then be deleted.
+ *
+ * @param tmo      Timeout handle (must be a ring timeout)
+ * @param tmo_ev   Received timeout event handle (must be the received one)
+ *
+ * @retval EM_OK            Success, event taken.
+ * @retval EM_ERR_CANCELED  Timer cancelled, last event - no further timeout
+ *                          events coming, event taken.
+ * @retval (other_codes)    Failure, event not taken.
+ *
+ * @see em_tmo_ack() for regular periodic timeouts
+ * @see em_tmo_set_periodic_ring(), em_tmo_cancel(), em_timer_ring_create()
+ */
+em_status_t em_tmo_ring_ack(em_tmo_t tmo, em_event_t tmo_ev);
 
 /**
  * Get a list of currently active timers.
@@ -953,7 +1336,7 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev);
  * given 'max'.
  *
  * To only get the current number of active timers, without any timer handles
- * output, use the following: num_timers = em_timer_get_all(NULL, 0);
+ * output, use the following: num_timers = em_timer_list(NULL, 0);
  *
  * @param[out] tmr_list  Pointer to an array of timer handles.
  *                       Use NULL if only interested in the return value.
@@ -962,20 +1345,30 @@ em_status_t em_tmo_ack(em_tmo_t tmo, em_event_t next_tmo_ev);
  *
  * @return The number of active timers
  */
-int em_timer_get_all(em_timer_t *tmr_list, int max);
+int em_timer_list(em_timer_t tmr_list[], int max);
+
+/* Backwards compatible naming ("get") */
+#define em_timer_get_all em_timer_list
 
 /**
  * Get timer attributes
  *
  * Returns the actual capabilities of the given timer.
  *
+ * For frequency-based ring timers the returned 'tmr_attr->freqparam.freq_hz'
+ * points to implementation-internal read-only storage that is valid until the
+ * timer is deleted with em_timer_delete(); do not modify or free it.
+ * 'tmr_attr->freqparam.num' gives the number of valid entries in that array.
+ *
  * @param      tmr       Timer handle
  * @param[out] tmr_attr  Pointer to em_timer_attr_t to fill
  *
  * @return EM_OK on success
  */
-em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr);
+em_status_t em_timer_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr);
 
+/* Backwards compatible naming ("get") */
+#define em_timer_get_attr em_timer_attr
 /**
  * Returns the timer frequency, i.e. ticks per second, for the given timer.
  *
@@ -985,7 +1378,10 @@ em_status_t em_timer_get_attr(em_timer_t tmr, em_timer_attr_t *tmr_attr);
  *
  * @return ticks per second (Hz), or 0 for non-existing timer
  */
-uint64_t em_timer_get_freq(em_timer_t tmr);
+uint64_t em_timer_freq(em_timer_t tmr);
+
+/* Backwards compatible naming ("get") */
+#define em_timer_get_freq em_timer_freq
 
 /**
  * Convert timer ticks to nanoseconds (ns)
@@ -1019,7 +1415,10 @@ em_timer_tick_t em_timer_ns_to_tick(em_timer_t tmr, uint64_t ns);
  *
  * @see em_tmo_state_t
  */
-em_tmo_state_t em_tmo_get_state(em_tmo_t tmo);
+em_tmo_state_t em_tmo_state(em_tmo_t tmo);
+
+/* Backwards compatible naming ("get") */
+#define em_tmo_get_state em_tmo_state
 
 /**
  * Returns the statistic counters for a timeout.
@@ -1038,7 +1437,10 @@ em_tmo_state_t em_tmo_get_state(em_tmo_t tmo);
  *
  * @return EM_OK on success
  */
-em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat);
+em_status_t em_tmo_stats(em_tmo_t tmo, em_tmo_stats_t *stat);
+
+/* Backwards compatible naming ("get") */
+#define em_tmo_get_stats em_tmo_stats
 
 /**
  * Ask if the given event is currently used as a timeout indication event.
@@ -1064,7 +1466,7 @@ em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat);
  * @code
  * em_tmo_t tmo;
  *
- * if (em_tmo_get_type(event, &tmo, false) == EM_TMO_TYPE_PERIODIC)
+ * if (em_tmo_type(event, &tmo, false) == EM_TMO_TYPE_PERIODIC)
  *	retval = em_tmo_ack(tmo, event);
  * @endcode
  *
@@ -1079,7 +1481,10 @@ em_status_t em_tmo_get_stats(em_tmo_t tmo, em_tmo_stats_t *stat);
  *         to a timeout
  * @see em_tmo_type_t
  */
-em_tmo_type_t em_tmo_get_type(em_event_t event, em_tmo_t *tmo, bool reset);
+em_tmo_type_t em_tmo_type(em_event_t event, em_tmo_t *tmo, bool reset);
+
+/* Backwards compatible naming ("get") */
+#define em_tmo_get_type em_tmo_type
 
 /**
  * Returns the optional user pointer for a periodic ring timeout.
@@ -1094,7 +1499,10 @@ em_tmo_type_t em_tmo_get_type(em_event_t event, em_tmo_t *tmo, bool reset);
  * @return A pointer given when creating the associated tmo or
  *         NULL if the event is not a ring timeout event.
  */
-void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo);
+void *em_tmo_userptr(em_event_t event, em_tmo_t *tmo);
+
+/* Backwards compatible naming ("get") */
+#define em_tmo_get_userptr em_tmo_userptr
 
 /**
  * Returns the associated timer handle from a timeout handle
@@ -1102,7 +1510,7 @@ void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo);
  * The associated timer handle is returned from a valid timeout. Can be used to
  * e.g. read the current timer tick without having the timer handle:
  * @code
- * em_timer_tick_t tick = em_timer_current_tick(em_tmo_get_timer(tmo));
+ * em_timer_tick_t tick = em_timer_current_tick(em_tmo_timer(tmo));
  * @endcode
  *
  * @param tmo  Valid timeout handle
@@ -1110,7 +1518,10 @@ void *em_tmo_get_userptr(em_event_t event, em_tmo_t *tmo);
  * @return The associated timer handle or
  *         'EM_TIMER_UNDEF' if the tmo is not valid
  */
-em_timer_t em_tmo_get_timer(em_tmo_t tmo);
+em_timer_t em_tmo_timer(em_tmo_t tmo);
+
+/* Backwards compatible naming ("get") */
+#define em_tmo_get_timer em_tmo_timer
 
 /**
  * Convert a timer handle to an unsigned integer.

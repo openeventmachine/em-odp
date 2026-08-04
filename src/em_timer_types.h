@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2017-2024, Nokia Solutions and Networks
+ *   Copyright (c) 2017-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -31,8 +31,22 @@
 #define EM_TIMER_TYPES_H_
 
 #include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+
 #include <odp_api.h>
+
+#include <event_machine.h>
+
 #include "em_timer_conf.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ODP >= 1.50 has the new periodic timer API with odp_timer_periodic_alloc() etc. */
+#define PRE_1_50_ODP_TIMER_API \
+	(ODP_VERSION_API_NUM(1, 50, 0) > ODP_VERSION_API)
 
 /* per timer (ODP timer pool) */
 typedef struct event_timer_t {
@@ -87,7 +101,16 @@ typedef struct em_timer_timeout_t {
 	em_timer_t timer;		/* related timer (can't lookup from odp timer pool) */
 	odp_pool_t ring_tmo_pool;	/* if ring: this is the pool for odp timeout event */
 	odp_event_t odp_timeout;	/* if ring: this is the pre-allocated odp timeout event */
+#if !PRE_1_50_ODP_TIMER_API
+	const void *user_ptr;		/* user pointer, needed for deferred periodic alloc */
+	uint64_t multiplier;		/* ring: current freq multiplier (0 = not yet allocated) */
+	em_fract_u64_t freq_hz;         /* ring freq: current frequency */
+#endif
 	em_tmo_stats_t stats;		/* per tmo statistics */
 } em_timer_timeout_t;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EM_TIMER_TYPES_H_ */

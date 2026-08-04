@@ -1,7 +1,15 @@
+#ifndef POOL_PERF_H
+#define POOL_PERF_H
+
 #include <getopt.h>
 #include <inttypes.h>
-#include <odp_api.h>
 #include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
 
 #define VERSION "v0.3"
 
@@ -18,8 +26,6 @@
 #if ((MAX_ALLOCS & (MAX_ALLOCS - 1)) != 0)
 #error "MAX_ALLOCS need to be pwr of 2"
 #endif
-
-void test_init(const appl_conf_t *appl_conf);
 
 /* EO context */
 typedef struct app_eo_ctx {
@@ -49,7 +55,6 @@ typedef struct config_data {
 		em_event_type_t type;
 	} pool;
 	unsigned int flush;
-
 } config_data;
 
 /* shared memory data */
@@ -69,14 +74,12 @@ typedef struct perf_shm_t {
 		int64_t time_free;
 
 		uint64_t num_updates;
-
 	} times ODP_ALIGNED_CACHE;
 
 	struct {
 		uint64_t allocs;
 		uint64_t frees;
 		uint64_t events;
-
 	} counts[MAX_CORES];
 
 	em_eo_t eo;
@@ -85,7 +88,7 @@ typedef struct perf_shm_t {
 
 	atomic_int loopcount ODP_ALIGNED_CACHE;
 	uint64_t start_time;
-	odp_spinlock_t lock; /* used with times update */
+	odp_ticketlock_t lock; /* used with times update */
 
 	/* Number of EM cores running the application */
 	unsigned int core_count;
@@ -135,7 +138,6 @@ typedef struct test_msg {
 	/* stack for event handles allocated */
 	event_handle_t events[MAX_ALLOCS];
 	int top;
-
 } test_msg;
 
 /* timing bin data */
@@ -147,22 +149,22 @@ typedef struct {
 /* cmdline arguments */
 
 const struct option longopts[] = {
-	{"loops",		required_argument, NULL, 'l'},
-	{"num",			required_argument, NULL, 'n'},
-	{"events",		required_argument, NULL, 'e'},
-	{"allocs",		required_argument, NULL, 'a'},
-	{"frees",		required_argument, NULL, 'f'},
-	{"window",		required_argument, NULL, 'w'},
-	{"delay",		required_argument, NULL, 'd'},
-	{"size",		required_argument, NULL, 's'},
-	{"pool",		required_argument, NULL, 'p'},
-	{"ignore",		required_argument, NULL, 'i'},
-	{"cache-flush",		required_argument, NULL, 'c'},
-	{"use-multi",		no_argument, NULL, 'm'},
-	{"bypass",		no_argument, NULL, 'b'},
-	{"no-first",		optional_argument, NULL, 't'},
+	{"loops",	required_argument, NULL, 'l'},
+	{"num",		required_argument, NULL, 'n'},
+	{"events",	required_argument, NULL, 'e'},
+	{"allocs",	required_argument, NULL, 'a'},
+	{"frees",	required_argument, NULL, 'f'},
+	{"window",	required_argument, NULL, 'w'},
+	{"delay",	required_argument, NULL, 'd'},
+	{"size",	required_argument, NULL, 's'},
+	{"pool",	required_argument, NULL, 'p'},
+	{"ignore",	required_argument, NULL, 'i'},
+	{"cache-flush",	required_argument, NULL, 'c'},
+	{"use-multi",	no_argument, NULL, 'm'},
+	{"bypass",	no_argument, NULL, 'b'},
+	{"no-first",	optional_argument, NULL, 't'},
 
-	{"help",		no_argument, NULL, 'h'},
+	{"help",	no_argument, NULL, 'h'},
 	{NULL, 0, NULL, 0}
 };
 
@@ -208,3 +210,5 @@ const char *instructions =
 "The printed rates (allocs/sec) are only informational, those include the overheads of keeping and\n"
 "printing statistics plus double schedule round per burst.\n"
 "\n";
+
+#endif /* POOL_PERF_H */

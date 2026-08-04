@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2026, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -108,7 +108,7 @@
  * Note, that event groups may only work with events that are to be handled by
  * an EO, i.e. SW events.
  *
- * OpenEM implementation should internally use a generation count or other
+ * The EM implementation should internally use a generation count or other
  * technique to make sure that em_event_group_abort() can stop a problem
  * propagation, i.e. after a group is aborted (and applied a new count) any
  * potential delayed event(s) from the previous cycle will not cause the new
@@ -127,12 +127,12 @@
  * em_send_group()/em_send_group_multi() to send a reference is wrong.
  */
 
+#include <event_machine/api/event_machine_types.h>
+#include <event_machine/api/event_machine_error.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <event_machine/api/event_machine_types.h>
-#include <event_machine/platform/event_machine_hw_types.h>
 
 /**
  * Create a new event group for fork-join.
@@ -262,7 +262,12 @@ em_event_group_t em_event_group_current(void);
  * One should always send the correct amount of events to an event group, i.e.
  * matching the applied count.
  *
- * Event group is not supported with unscheduled queues.
+ * Sending with an event group to an unscheduled queue is not supported. The
+ * event group count is decremented only when an EO receive function returns;
+ * events on an unscheduled queue are dequeued directly by the application and
+ * no decrement occurs, so the count would never reach zero.
+ * Sending with EM_EVENT_GROUP_UNDEF to an unscheduled queue is allowed (then
+ * equivalent to em_send()).
  *
  * It is not allowed to use event references with event groups since assigning
  * an event that has references to an event group would assign all the
@@ -292,7 +297,12 @@ em_status_t em_send_group(em_event_t event, em_queue_t queue,
  * by the application.
  * The function will not modify the given list of events.
  *
- * Event group is not supported with unscheduled queues.
+ * Sending with an event group to an unscheduled queue is not supported. The
+ * event group count is decremented only when an EO receive function returns;
+ * events on an unscheduled queue are dequeued directly by the application and
+ * no decrement occurs, so the count would never reach zero.
+ * Sending with EM_EVENT_GROUP_UNDEF to an unscheduled queue is allowed (then
+ * equivalent to em_send_multi()).
  *
  * It is not allowed to use event references with event groups since assigning
  * an event that has references to an event group would assign all the
@@ -364,7 +374,7 @@ em_status_t em_event_group_assign(em_event_group_t event_group);
  *
  * Notification events related to the ongoing (to be aborted) cycle can be
  * managed as follows
- * 1) save possible related notifications using em_event_group_get_notif()
+ * 1) save possible related notifications using em_event_group_notif()
  * 2) call em_event_group_abort()
  * 3) IF em_event_group_abort() returns EM_OK the operation was successfully
  *    completed meaning the earlier notifications will not be sent thus the
@@ -373,7 +383,7 @@ em_status_t em_event_group_assign(em_event_group_t event_group);
  *    be sent.
  *
  * This means the synchronization point is em_event_group_abort(), not
- * em_event_group_get_notif() which might return notifications that will still
+ * em_event_group_notif() which might return notifications that will still
  * be sent.
  *
  * @attention Related notification events will not be automatically freed in
@@ -393,9 +403,9 @@ em_status_t em_event_group_abort(em_event_group_t event_group);
  * This returns the current notifications or none (0) if they were already sent
  * (event group completed).
  *
- * @attention	This is not a synchronization point, which means
- *		em_event_group_get_notif() could return notifications which
- *		are just going to be sent and thus should not be touched.
+ * @attention This is not a synchronization point, which means
+ *            em_event_group_notif() could return notifications which
+ *            are just going to be sent and thus should not be touched.
  *
  * @param      event_group   Event group
  * @param      max_notif     Maximum number of notifications to return
@@ -405,29 +415,32 @@ em_status_t em_event_group_abort(em_event_group_t event_group);
  *
  * @see em_event_group_apply(), em_event_group_abort()
  */
-int em_event_group_get_notif(em_event_group_t event_group,
-			     int max_notif, em_notif_t notif_tbl[]);
+int em_event_group_notif(em_event_group_t event_group,
+			 int max_notif, em_notif_t notif_tbl[]);
+
+/* Backwards compatible naming ("get") */
+#define em_event_group_get_notif em_event_group_notif
 
 /**
  * Initialize event group iteration and return the first event group handle.
  *
  * Can be used to initialize the iteration to retrieve all created event groups
- * for debugging or management purposes. Use em_event_group_get_next() after
+ * for debugging or management purposes. Use em_event_group_next() after
  * this call until it returns EM_EVENT_GROUP_UNDEF.
- * A new call to em_event_group_get_first() resets the iteration, which is
+ * A new call to em_event_group_first() resets the iteration, which is
  * maintained per core (thread). The operation should be completed in one go
  * before returning from the EO's event receive function (or start/stop).
  *
  * The number of event groups (output arg 'num') may not match the amount of
- * event groups actually returned by iterating using em_event_group_get_next()
+ * event groups actually returned by iterating using em_event_group_next()
  * if event groups are added or removed in parallel by another core. The order
  * of the returned event group handles is undefined.
  *
  * @code
  *	unsigned int num;
- *	em_event_group_t eg = em_event_group_get_first(&num);
+ *	em_event_group_t eg = em_event_group_first(&num);
  *	while (eg != EM_EVENT_GROUP_UNDEF) {
- *		eg = em_event_group_get_next();
+ *		eg = em_event_group_next();
  *	}
  * @endcode
  *
@@ -435,24 +448,28 @@ int em_event_group_get_notif(em_event_group_t event_group,
  *                   event groups into
  * @return The first event group handle or EM_EVENT_GROUP_UNDEF if none exist
  *
- * @see em_event_group_get_next()
+ * @see em_event_group_next()
  **/
-em_event_group_t
-em_event_group_get_first(unsigned int *num);
+em_event_group_t em_event_group_first(unsigned int *num);
+
+/* Backwards compatible naming ("get") */
+#define em_event_group_get_first em_event_group_first
 
 /**
  * Return the next event group handle.
  *
- * Continues the event group iteration started by em_event_group_get_first() and
+ * Continues the event group iteration started by em_event_group_first() and
  * returns the next event group handle.
  *
  * @return The next event group handle or EM_EVENT_GROUP_UNDEF if the event
  *         group iteration is completed (i.e. no more event groups available).
  *
- * @see em_event_group_get_first()
+ * @see em_event_group_first()
  **/
-em_event_group_t
-em_event_group_get_next(void);
+em_event_group_t em_event_group_next(void);
+
+/* Backwards compatible naming ("get") */
+#define em_event_group_get_next em_event_group_next
 
 /**
  * Convert an event group handle to an unsigned integer

@@ -1,5 +1,5 @@
 /*
- *   Copyright (c) 2015, Nokia Solutions and Networks
+ *   Copyright (c) 2015-2025, Nokia Solutions and Networks
  *   All rights reserved.
  *
  *   Redistribution and use in source and binary forms, with or without
@@ -37,6 +37,21 @@
 #ifndef EM_ERROR_H
 #define EM_ERROR_H
 
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <odp_api.h>
+
+#include <event_machine.h>
+
+#include "em_mem.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Internal error reporting macro
  */
@@ -51,7 +66,7 @@
 	do { \
 		if (unlikely((cond))) { \
 			return INTERNAL_ERROR((error), (escope), \
-				      fmt, ## __VA_ARGS__); \
+					      fmt, ## __VA_ARGS__); \
 		} \
 	} while (0)
 
@@ -76,44 +91,52 @@
 #define EM_PRINT(fmt, ...) EM_LOG(EM_LOG_PRINT, fmt, ## __VA_ARGS__)
 
 /*
- * Print debug message to log (only if EM_DEBUG_PRINT is set)
+ * Print debug message to log (only if related EM_DEBUG_PRINT... is set on)
  */
-#define EM_DBG(fmt, ...) \
+#define EM_DBG(em_dbg_flag, fmt, ...) \
 	do { \
-		if (EM_DEBUG_PRINT == 1) \
+		if (em_dbg_flag) \
 			EM_LOG(EM_LOG_DBG, fmt, ##__VA_ARGS__); \
 	} while (0)
+
+/*
+ * Print debug message to log (only if EM_DEBUG_PRINT_BASE is set on)
+ */
+#define DBG_PRINT(fmt, ...) \
+	EM_DBG(EM_DEBUG_PRINT_BASE, fmt, ## __VA_ARGS__)
+
+const char *err_status_str(em_status_t status);
+const char *escope_api_str(em_escope_t escope);
+const char *escope_internal_str(em_escope_t escope);
+const char *escope_addon_api_str(em_escope_t escope);
+
+size_t format_errmsg(em_status_t error, em_escope_t escope,
+		     const char *eo_str, va_list args, bool early_mode,
+		     char err_msg[/*out*/], size_t errmsg_sz);
 
 /**
  * EM internal error
  * Don't call directly, should _always_ be used from within the error-macros
  */
-em_status_t
-internal_error(em_status_t error, em_escope_t escope, ...);
+em_status_t internal_error(em_status_t error, em_escope_t escope, ...);
 
-em_status_t
-early_log_init(em_log_func_t user_log_fn, em_vlog_func_t user_vlog_fn);
+em_status_t early_log_init(em_log_func_t user_log_fn, em_vlog_func_t user_vlog_fn);
 
-void
-log_init(void);
+void log_init(void);
+void error_init(void);
 
-void
-error_init(void);
-
-em_status_t
-default_error_handler(em_eo_t eo, em_status_t error, em_escope_t escope,
-		      va_list args);
-
-em_status_t
-select_error_handler(em_status_t error, em_escope_t escope, va_list args_list);
-
-uint64_t
-load_global_err_cnt(void);
+em_status_t default_error_handler(em_eo_t eo, em_status_t error,
+				  em_escope_t escope, va_list args);
+em_status_t select_error_handler(em_status_t error, em_escope_t escope,
+				 va_list args_list);
+uint64_t load_global_err_cnt(void);
 
 ODP_PRINTF_FORMAT(2, 3)
 int default_log(em_log_level_t level, const char *fmt, ...);
+int vdefault_log(em_log_level_t level, const char *fmt, va_list args);
 
-int
-vdefault_log(em_log_level_t level, const char *fmt, va_list args);
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* EM_ERROR_H_ */
