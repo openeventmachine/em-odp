@@ -113,4 +113,3 @@ jobs:
         sudo sysctl -w vm.nr_hugepages=512
         grep Huge /proc/meminfo
         sudo /bin/bash ./scripts/robot_test.sh
-
