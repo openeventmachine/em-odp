@@ -12,14 +12,14 @@ env:
 
 jobs:
   Documentation:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install asciidoctor mscgen graphviz doxygen
-        sudo apt-get install libconfig-dev
+        sudo apt-get install -y asciidoctor mscgen graphviz doxygen
+        sudo apt-get install -y libconfig-dev
     - name: Build
       run: ./scripts/build.sh -d
     - name: Before deploy
