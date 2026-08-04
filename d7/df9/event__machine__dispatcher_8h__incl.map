@@ -1,0 +1,20 @@
+<map id="event_machine_dispatcher.h" name="event_machine_dispatcher.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="199,5,407,31"/>
+<area shape="rect" id="Node000002" href="$d4/d11/event__machine__types_8h.html" title=" " alt="" coords="210,167,397,207"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="295,33,279,53,266,80,262,99,266,118,283,154,278,156,261,119,257,99,261,78,274,51,290,29"/>
+<area shape="rect" id="Node000009" href="$d8/d1e/event__machine__error_8h.html" title=" " alt="" coords="275,79,462,119"/>
+<area shape="poly" id="edge8_Node000001_Node000009" title=" " alt="" coords="315,29,346,66,342,70,311,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="5,262,92,287"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="248,209,97,260,95,255,247,204"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="117,262,191,287"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="272,209,187,258,184,253,269,204"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="215,262,290,287"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="294,208,269,251,264,248,290,206"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="314,262,397,287"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="317,206,343,248,339,251,313,208"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="421,262,567,287"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="346,204,457,254,455,259,344,209"/>
+<area shape="rect" id="Node000008" href="$dd/dca/event__machine__config_8h.html" title=" " alt="" coords="591,255,778,295"/>
+<area shape="poly" id="edge7_Node000002_Node000008" title=" " alt="" coords="388,204,588,249,587,254,386,209"/>
+<area shape="poly" id="edge9_Node000009_Node000002" title=" " alt="" coords="356,121,328,157,324,154,352,117"/>
+</map>

@@ -1,0 +1,21 @@
+<map id="event_machine_hooks.h" name="event_machine_hooks.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="145,5,325,31"/>
+<area shape="rect" id="Node000002" href="$dd/dca/event__machine__config_8h.html" title=" " alt="" coords="5,255,192,295"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="231,32,118,244,113,241,226,30"/>
+<area shape="rect" id="Node000003" href="$d4/d11/event__machine__types_8h.html" title=" " alt="" coords="272,167,459,207"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="238,31,243,71,250,95,262,117,284,140,310,157,306,162,280,144,258,120,245,97,238,73,232,31"/>
+<area shape="rect" id="Node000009" href="$d8/d1e/event__machine__error_8h.html" title=" " alt="" coords="272,79,459,119"/>
+<area shape="poly" id="edge9_Node000001_Node000009" title=" " alt="" coords="255,29,324,69,321,74,253,33"/>
+<area shape="poly" id="edge8_Node000003_Node000002" title=" " alt="" coords="308,209,171,253,169,248,306,204"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="217,262,303,287"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="344,209,287,255,283,251,340,205"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="328,262,403,287"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="368,207,368,248,363,248,363,207"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="427,262,501,287"/>
+<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="389,205,442,251,438,255,385,209"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="525,262,608,287"/>
+<area shape="poly" id="edge6_Node000003_Node000007" title=" " alt="" coords="411,204,528,254,526,259,408,209"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="633,262,778,287"/>
+<area shape="poly" id="edge7_Node000003_Node000008" title=" " alt="" coords="441,204,648,256,646,261,439,209"/>
+<area shape="poly" id="edge10_Node000009_Node000003" title=" " alt="" coords="368,119,368,153,363,153,363,119"/>
+</map>

@@ -1,0 +1,26 @@
+var searchData=
+[
+  ['cache_5falloc_5fops_0',['cache_alloc_ops',['../d1/d6f/structem__pool__subpool__stats__t.html#afbe8bc4459e2150bff33f5b15873ebe6',1,'em_pool_subpool_stats_t::cache_alloc_ops'],['../d7/daa/unionem__pool__stats__opt__t.html#a475bb0b3c200f443c5a2fba43eb28537',1,'em_pool_stats_opt_t::cache_alloc_ops'],['../d8/d6f/structem__pool__subpool__stats__selected__t.html#a84a218373755e484e1ae7a378a7b9809',1,'em_pool_subpool_stats_selected_t::cache_alloc_ops']]],
+  ['cache_5favailable_1',['cache_available',['../d7/daa/unionem__pool__stats__opt__t.html#a89db4638059bea5bf864b77328d6455d',1,'em_pool_stats_opt_t::cache_available'],['../d1/d6f/structem__pool__subpool__stats__t.html#a56da1d99fde16051d08ea4bc916f0f62',1,'em_pool_subpool_stats_t::cache_available'],['../d8/d6f/structem__pool__subpool__stats__selected__t.html#aa4bca7de04a51f70b6970099a5a84951',1,'em_pool_subpool_stats_selected_t::cache_available']]],
+  ['cache_5ffree_5fops_2',['cache_free_ops',['../d7/daa/unionem__pool__stats__opt__t.html#a9c4deb3dc799c04a616062cd0e66c621',1,'em_pool_stats_opt_t::cache_free_ops'],['../d1/d6f/structem__pool__subpool__stats__t.html#a3ec9237bafde7242ad6b90a96498e0f1',1,'em_pool_subpool_stats_t::cache_free_ops'],['../d8/d6f/structem__pool__subpool__stats__selected__t.html#aadd20792598738e6565887f7f19796a2',1,'em_pool_subpool_stats_selected_t::cache_free_ops']]],
+  ['cache_5fsize_3',['cache_size',['../d2/db5/structem__pool__cfg__t.html#a783e3e9dafe05be89ccfe13b3949842d',1,'em_pool_cfg_t::cache_size'],['../d4/d3e/structem__pool__info__t.html#aba60a82cb6b2d88054f51976afd9bd53',1,'em_pool_info_t::cache_size']]],
+  ['cfg_5fdefault_4',['cfg_default',['../db/d4e/structlibconfig.html#a22f86c91f2ef8c4680eab4043b73719b',1,'libconfig']]],
+  ['cfg_5fruntime_5',['cfg_runtime',['../db/d4e/structlibconfig.html#aea459f5df191bc0a7f63c72590219b32',1,'libconfig']]],
+  ['clk_5fsrc_6',['clk_src',['../d8/d93/structem__timer__res__param__t.html#a07ed3b3b2e89e83ca36fb2efbc731c45',1,'em_timer_res_param_t::clk_src'],['../de/dcc/structem__timer__ring__param__t.html#af782096bfbf9916456befcf4f6006e5d',1,'em_timer_ring_param_t::clk_src'],['../d6/d1f/structem__timer__ring__freq__param__t.html#a91617a6de8498e47285aa9f14aabf6dc',1,'em_timer_ring_freq_param_t::clk_src']]],
+  ['conf_7',['conf',['../de/dc0/structem__eo__conf__t.html#ad7cea88601f1f1fd9ca99df1f1180670',1,'em_eo_conf_t::conf'],['../d5/d76/structem__queue__conf__t.html#a12c60f727e2c718e3e8cd6671f274930',1,'em_queue_conf_t::conf'],['../d3/da4/structem__shm__t.html#abdd8454592795da60881cb091047ad52',1,'em_shm_t::conf']]],
+  ['conf_5flen_8',['conf_len',['../de/dc0/structem__eo__conf__t.html#a86330762d7504834b63499cfa80b946b',1,'em_eo_conf_t::conf_len'],['../d5/d76/structem__queue__conf__t.html#a5616b0e8beeec2b9fff3be6602917a58',1,'em_queue_conf_t::conf_len']]],
+  ['conf_5flocal_9',['conf_local',['../d7/d4d/structem__locm__t.html#a7d69458e1e43db6ed6adde32bc00a381',1,'em_locm_t']]],
+  ['context_10',['context',['../dc/d6f/structqueue__elem__t.html#a8eb57fad7039eb0c48245c0f01ff5a16',1,'queue_elem_t']]],
+  ['control_5fcore_5fcount_11',['control_core_count',['../dd/d6c/structcore__map__t.html#adb156c4e1ea77a91b2736f24f4c588c1',1,'core_map_t']]],
+  ['control_5fmask_12',['control_mask',['../dd/d6c/structcore__map__t.html#aec12c1c25523643e61a28ddb0e200f83',1,'core_map_t']]],
+  ['core_13',['core',['../d8/d7d/structODP__PACKED.html#ab9c61a79d2e094e66c122fde17102fde',1,'ODP_PACKED::core'],['../d8/ddc/structloc__func__retval__t.html#a3dea86974dfd4ea733ba428efb387ecf',1,'loc_func_retval_t::core']]],
+  ['core_5fcache_5favailable_14',['core_cache_available',['../d7/daa/unionem__pool__stats__opt__t.html#a90a386dcead2a8f93433938b7d5746e7',1,'em_pool_stats_opt_t']]],
+  ['core_5fcount_15',['core_count',['../d6/de0/structem__conf__t.html#a214d73fc680819e102cf079701635a13',1,'em_conf_t']]],
+  ['core_5fid_16',['core_id',['../db/d11/structem__conf__local__t.html#a328003b17fb1cd854a3724ed29fe87e2',1,'em_conf_local_t::core_id'],['../d7/d4d/structem__locm__t.html#a9ddce824380b3390625248132af27960',1,'em_locm_t::core_id']]],
+  ['core_5fmask_17',['core_mask',['../d8/ddc/structloc__func__retval__t.html#ac108a08e7a1faaa4e510acf98736d28e',1,'loc_func_retval_t::core_mask'],['../d8/d5f/structqueue__group__elem__t.html#aabd1de881215fc53925eee2f5ead3c63',1,'queue_group_elem_t::core_mask']]],
+  ['core_5ftype_18',['core_type',['../db/d11/structem__conf__local__t.html#af1d41bca21f0155642236df16ccb1c51',1,'em_conf_local_t']]],
+  ['core_5ftypes_19',['core_types',['../dd/d6c/structcore__map__t.html#a5c593a12eac09bd391eacc8eb3802572',1,'core_map_t']]],
+  ['counts_20',['counts',['../d7/d72/structevent__group__elem__t.html#adf655fb478410b7c25ee2389c1589371',1,'event_group_elem_t']]],
+  ['current_21',['current',['../d7/d4d/structem__locm__t.html#a0ad36580bb394aeb5d4b18c6ddca7daa',1,'em_locm_t']]],
+  ['current_5fcore_5fcount_22',['current_core_count',['../dd/d6c/structcore__map__t.html#a6e00411f446a5f533c6cad546e77e965',1,'core_map_t']]]
+];

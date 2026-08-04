@@ -1,0 +1,7 @@
+<map id="em_timer_capability_t" name="em_timer_capability_t">
+<area shape="rect" id="Node000001" title=" " alt="" coords="93,137,261,163"/>
+<area shape="rect" id="Node000002" href="$d8/d93/structem__timer__res__param__t.html" title=" " alt="" coords="5,5,179,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="109,41,172,136,167,138,105,44"/>
+<area shape="rect" id="Node000003" href="$d6/dfc/structem__fract__u64__t.html" title=" " alt="" coords="203,5,325,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="259,45,245,79,223,115,197,139,193,135,219,112,240,77,254,43"/>
+</map>

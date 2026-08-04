@@ -1,0 +1,56 @@
+<map id="em_queue.h" name="em_queue.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="1470,5,1573,31"/>
+<area shape="rect" id="Node000002" href="$d2/d82/em__atomic__group_8c_source.html" title=" " alt="" coords="14,167,165,192"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1456,22,1119,24,648,32,418,40,221,50,79,64,36,72,15,81,9,91,9,101,22,125,46,147,71,164,68,169,42,151,17,128,4,103,4,89,12,77,34,67,78,58,220,45,418,34,648,27,1118,19,1456,17"/>
+<area shape="rect" id="Node000003" href="$da/d87/em__chaining_8c_source.html" title=" " alt="" coords="26,86,142,111"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="1457,23,1190,28,813,39,432,56,274,68,154,81,121,89,120,83,153,76,273,62,432,51,813,33,1190,23,1457,18"/>
+<area shape="rect" id="Node000004" href="$d1/d33/em__cli_8c_source.html" title=" " alt="" coords="166,86,242,111"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="1457,22,1207,26,859,35,510,52,365,65,255,81,231,88,230,83,254,76,364,60,509,47,859,30,1207,20,1457,17"/>
+<area shape="rect" id="Node000005" href="$d8/d15/em__dispatcher__inline_8h.html" title=" " alt="" coords="267,86,440,111"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="1457,23,1283,26,1034,36,746,53,453,81,407,89,406,83,452,76,745,48,1034,30,1282,21,1457,17"/>
+<area shape="rect" id="Node000008" href="$dd/df5/em__eo_8c_source.html" title=" " alt="" coords="464,86,542,111"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="1456,24,1000,41,741,58,635,69,554,81,530,89,528,83,553,76,634,63,741,52,999,35,1456,18"/>
+<area shape="rect" id="Node000009" href="$d0/d41/em__event_8c_source.html" title=" " alt="" coords="566,86,664,111"/>
+<area shape="poly" id="edge9_Node000001_Node000009" title=" " alt="" coords="1457,22,1315,24,1122,32,901,50,788,64,678,81,649,88,648,83,677,76,787,59,900,45,1121,27,1315,19,1457,16"/>
+<area shape="rect" id="Node000010" href="$d0/db2/em__event__group_8c_source.html" title=" " alt="" coords="689,86,832,111"/>
+<area shape="poly" id="edge10_Node000001_Node000010" title=" " alt="" coords="1457,25,1189,42,1017,59,845,81,807,89,806,83,844,76,1017,54,1188,37,1456,20"/>
+<area shape="rect" id="Node000011" href="$d5/dfc/em__event__state_8c_source.html" title=" " alt="" coords="856,86,995,111"/>
+<area shape="poly" id="edge11_Node000001_Node000011" title=" " alt="" coords="1456,27,1256,47,1009,81,972,89,971,83,1008,76,1255,42,1456,22"/>
+<area shape="rect" id="Node000012" href="$d3/d56/em__info_8c_source.html" title=" " alt="" coords="1020,86,1106,111"/>
+<area shape="poly" id="edge12_Node000001_Node000012" title=" " alt="" coords="1457,28,1302,47,1211,62,1120,81,1095,88,1093,83,1118,76,1210,57,1302,42,1457,23"/>
+<area shape="rect" id="Node000013" href="$d1/db4/em__init_8c_source.html" title=" " alt="" coords="1131,86,1214,111"/>
+<area shape="poly" id="edge13_Node000001_Node000013" title=" " alt="" coords="1457,32,1348,53,1226,81,1203,88,1202,83,1225,76,1347,47,1456,27"/>
+<area shape="rect" id="Node000014" href="$df/dbb/em__internal__event_8c.html" title=" " alt="" coords="1238,86,1392,111"/>
+<area shape="poly" id="edge14_Node000001_Node000014" title=" " alt="" coords="1480,38,1346,88,1344,83,1478,33"/>
+<area shape="rect" id="Node000015" href="$d5/d78/em__pool_8c_source.html" title=" " alt="" coords="1417,86,1506,111"/>
+<area shape="poly" id="edge15_Node000001_Node000015" title=" " alt="" coords="1506,43,1473,87,1468,84,1502,40"/>
+<area shape="rect" id="Node000016" href="$d5/d3a/em__queue_8c_source.html" title=" " alt="" coords="1531,86,1632,111"/>
+<area shape="poly" id="edge16_Node000001_Node000016" title=" " alt="" coords="1541,40,1575,84,1571,87,1537,43"/>
+<area shape="rect" id="Node000017" href="$d9/dca/em__queue__group_8c_source.html" title=" " alt="" coords="1657,86,1802,111"/>
+<area shape="poly" id="edge17_Node000001_Node000017" title=" " alt="" coords="1566,33,1700,83,1698,88,1564,38"/>
+<area shape="rect" id="Node000018" href="$dc/dc9/em__timer_8c_source.html" title=" " alt="" coords="1826,86,1921,111"/>
+<area shape="poly" id="edge18_Node000001_Node000018" title=" " alt="" coords="1587,28,1695,48,1816,76,1840,83,1839,88,1814,81,1694,54,1586,33"/>
+<area shape="rect" id="Node000019" href="$df/d9e/event__machine__atomic__group_8c_source.html" title=" " alt="" coords="1945,79,2120,119"/>
+<area shape="poly" id="edge19_Node000001_Node000019" title=" " alt="" coords="1587,25,1934,76,1945,78,1944,83,1933,81,1586,30"/>
+<area shape="rect" id="Node000020" href="$d6/dd3/event__machine__eo_8c_source.html" title=" " alt="" coords="2144,86,2300,111"/>
+<area shape="poly" id="edge20_Node000001_Node000020" title=" " alt="" coords="1587,21,1828,40,1980,56,2133,76,2173,83,2172,89,2132,81,1979,61,1827,45,1586,26"/>
+<area shape="rect" id="Node000021" href="$da/d32/event__machine__event_8c_source.html" title=" " alt="" coords="2324,86,2501,111"/>
+<area shape="poly" id="edge21_Node000001_Node000021" title=" " alt="" coords="1587,19,1900,37,2105,53,2313,76,2358,83,2357,89,2312,81,2105,58,1900,42,1587,24"/>
+<area shape="rect" id="Node000022" href="$dd/dd2/event__machine__event__group_8c_source.html" title=" " alt="" coords="2525,79,2692,119"/>
+<area shape="poly" id="edge22_Node000001_Node000022" title=" " alt="" coords="1587,18,1750,22,1979,31,2245,49,2514,76,2525,78,2524,83,2513,81,2244,54,1979,36,1749,27,1586,23"/>
+<area shape="rect" id="Node000023" href="$da/d0b/event__machine__init_8c.html" title=" " alt="" coords="2716,86,2877,111"/>
+<area shape="poly" id="edge23_Node000001_Node000023" title=" " alt="" coords="1587,17,1778,18,2054,26,2376,44,2542,58,2705,76,2748,83,2747,89,2704,81,2542,63,2376,50,2054,32,1778,24,1587,22"/>
+<area shape="rect" id="Node000024" href="$dd/df0/event__machine__odp__ext_8c.html" title=" " alt="" coords="2902,86,3094,111"/>
+<area shape="poly" id="edge24_Node000001_Node000024" title=" " alt="" coords="1587,17,1803,18,2125,26,2503,44,2699,58,2890,76,2940,83,2940,89,2889,81,2698,63,2503,49,2125,32,1803,24,1587,22"/>
+<area shape="rect" id="Node000025" href="$dd/dba/event__machine__queue_8c_source.html" title=" " alt="" coords="3118,86,3298,111"/>
+<area shape="poly" id="edge25_Node000001_Node000025" title=" " alt="" coords="1587,18,2330,36,2778,54,2964,64,3106,76,3154,83,3153,89,3105,81,2964,70,2777,59,2330,42,1587,23"/>
+<area shape="rect" id="Node000026" href="$d5/dd9/event__machine__queue__group_8c_source.html" title=" " alt="" coords="3322,79,3492,119"/>
+<area shape="poly" id="edge26_Node000001_Node000026" title=" " alt="" coords="1586,17,2424,33,2936,51,3150,62,3311,76,3323,77,3322,83,3311,81,3149,68,2935,56,2424,39,1586,23"/>
+<area shape="rect" id="Node000027" href="$d1/dc8/event__machine__timer_8c_source.html" title=" " alt="" coords="3516,86,3690,111"/>
+<area shape="poly" id="edge27_Node000001_Node000027" title=" " alt="" coords="1587,17,1958,22,2513,32,3084,50,3324,62,3505,76,3551,83,3550,89,3504,81,3323,67,3084,55,2513,37,1958,27,1586,23"/>
+<area shape="poly" id="edge5_Node000005_Node000002" title=" " alt="" coords="303,118,129,169,127,164,301,113"/>
+<area shape="rect" id="Node000006" href="$de/d33/em__dispatcher_8c_source.html" title=" " alt="" coords="194,167,322,192"/>
+<area shape="poly" id="edge6_Node000005_Node000006" title=" " alt="" coords="331,122,273,169,270,164,327,118"/>
+<area shape="rect" id="Node000007" href="$da/d0d/event__machine__dispatcher_8c_source.html" title=" " alt="" coords="346,167,553,192"/>
+<area shape="poly" id="edge7_Node000005_Node000007" title=" " alt="" coords="380,118,437,164,434,169,376,122"/>
+</map>

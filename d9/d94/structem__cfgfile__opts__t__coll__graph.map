@@ -1,0 +1,10 @@
+<map id="em_cfgfile_opts_t" name="em_cfgfile_opts_t">
+<area shape="rect" id="Node000001" title=" " alt="" coords="15,269,153,295"/>
+<area shape="rect" id="Node000002" href="$d7/daa/unionem__pool__stats__opt__t.html" title=" " alt="" coords="5,5,163,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="87,44,87,269,81,269,81,44"/>
+<area shape="rect" id="Node000004" href="$d2/db5/structem__pool__cfg__t.html" title=" " alt="" coords="115,93,232,119"/>
+<area shape="poly" id="edge4_Node000004_Node000002" title=" " alt="" coords="108,38,163,91,159,95,104,42"/>
+<area shape="rect" id="Node000003" href="$d9/d94/structem__startup__pool__conf__t.html" title=" " alt="" coords="100,181,279,207"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="166,217,100,271,97,267,163,213"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="181,132,190,180,184,181,175,133"/>
+</map>

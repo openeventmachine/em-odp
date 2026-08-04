@@ -1,0 +1,26 @@
+<map id="em_hooks.h" name="em_hooks.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="683,5,785,31"/>
+<area shape="rect" id="Node000002" href="$d8/d15/em__dispatcher__inline_8h.html" title=" " alt="" coords="191,86,365,111"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="670,33,345,89,344,83,669,28"/>
+<area shape="rect" id="Node000005" href="$da/d0d/event__machine__dispatcher_8c_source.html" title=" " alt="" coords="333,167,540,192"/>
+<area shape="poly" id="edge8_Node000001_Node000005" title=" " alt="" coords="670,27,607,33,541,44,483,60,462,70,448,80,437,101,433,124,436,166,431,167,427,124,432,99,444,77,459,65,482,55,540,39,606,28,669,21"/>
+<area shape="rect" id="Node000006" href="$d1/de9/em__hooks_8c_source.html" title=" " alt="" coords="457,86,557,111"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="689,38,541,88,539,83,687,33"/>
+<area shape="rect" id="Node000007" href="$d3/d56/em__info_8c_source.html" title=" " alt="" coords="581,86,668,111"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="708,41,642,88,639,84,705,37"/>
+<area shape="rect" id="Node000008" href="$d1/db4/em__init_8c_source.html" title=" " alt="" coords="693,86,775,111"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="737,44,737,86,731,86,731,44"/>
+<area shape="rect" id="Node000009" href="$da/d32/event__machine__event_8c_source.html" title=" " alt="" coords="800,86,977,111"/>
+<area shape="poly" id="edge9_Node000001_Node000009" title=" " alt="" coords="770,35,867,83,865,88,768,39"/>
+<area shape="rect" id="Node000010" href="$dd/dd2/event__machine__event__group_8c_source.html" title=" " alt="" coords="1001,79,1168,119"/>
+<area shape="poly" id="edge10_Node000001_Node000010" title=" " alt="" coords="799,31,1002,76,1000,81,798,36"/>
+<area shape="rect" id="Node000011" href="$d4/d4a/event__machine__hooks_8c.html" title=" " alt="" coords="1193,86,1371,111"/>
+<area shape="poly" id="edge11_Node000001_Node000011" title=" " alt="" coords="798,24,971,46,1181,76,1224,83,1223,89,1180,81,971,51,798,29"/>
+<area shape="rect" id="Node000012" href="$da/d0b/event__machine__init_8c.html" title=" " alt="" coords="1396,86,1557,111"/>
+<area shape="poly" id="edge12_Node000001_Node000012" title=" " alt="" coords="798,20,1055,39,1219,55,1384,76,1425,83,1425,89,1383,81,1218,61,1054,44,798,26"/>
+<area shape="rect" id="Node000003" href="$d2/d82/em__atomic__group_8c_source.html" title=" " alt="" coords="5,167,156,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="238,119,110,169,108,164,236,114"/>
+<area shape="rect" id="Node000004" href="$de/d33/em__dispatcher_8c_source.html" title=" " alt="" coords="181,167,309,192"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="270,125,252,167,247,165,265,123"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="314,115,415,164,412,169,312,120"/>
+</map>
